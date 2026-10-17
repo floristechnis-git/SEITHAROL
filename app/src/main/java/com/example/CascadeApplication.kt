@@ -1,0 +1,43 @@
+package com.example
+
+import android.app.Application
+import com.example.data.local.CascadeDatabase
+import com.example.data.repository.DownloadRepository
+import com.example.data.repository.MusicRepository
+import com.example.player.AudioPlayerManager
+import com.example.resolver.ResolverEngine
+
+class CascadeApplication : Application() {
+
+    lateinit var database: CascadeDatabase
+        private set
+    lateinit var musicRepository: MusicRepository
+        private set
+    lateinit var downloadRepository: DownloadRepository
+        private set
+    lateinit var resolverEngine: ResolverEngine
+        private set
+    lateinit var audioPlayerManager: AudioPlayerManager
+        private set
+
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+
+        database = CascadeDatabase.getInstance(this)
+        musicRepository = MusicRepository(database)
+        downloadRepository = DownloadRepository(this, database)
+        resolverEngine = ResolverEngine()
+        audioPlayerManager = AudioPlayerManager(this, resolverEngine, musicRepository)
+    }
+
+    override fun onTerminate() {
+        super.onTerminate()
+        audioPlayerManager.release()
+    }
+
+    companion object {
+        lateinit var instance: CascadeApplication
+            private set
+    }
+}

@@ -288,6 +288,7 @@ fun DownloadItemRow(
                             )
                         }
                     }
+                    DownloadState.IDLE, DownloadState.CANCELLED -> {}
                 }
 
                 IconButton(

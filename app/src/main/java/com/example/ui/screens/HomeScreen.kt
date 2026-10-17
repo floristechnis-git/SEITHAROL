@@ -359,7 +359,7 @@ fun HomeScreen(
                         title = playlist.title,
                         subtitle = "${playlist.trackCount} songs",
                         gradientColors = listOf(Color(0xFF4A4A4A), Color(0xFF141414)),
-                        imageUrl = playlist.coverArtUrl,
+                        imageUrl = playlist.coverUrl,
                         onPlayClick = { onNavigateToPlaylist(playlist.id) }
                     )
                 }

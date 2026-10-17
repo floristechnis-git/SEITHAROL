@@ -517,6 +517,8 @@ fun LibraryScreen(
                         }
                     }
                 }
+            }
+
             LibraryTab.HISTORY -> {
                 // Header toggle between Active History (15 Days) and Archived History (> 15 Days)
                 item(span = { GridItemSpan(2) }) {

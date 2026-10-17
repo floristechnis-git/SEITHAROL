@@ -88,18 +88,18 @@ fun AddToPlaylistModal(
                         onCreateNewPlaylist()
                     },
                 shape = RoundedCornerShape(24.dp),
-                color = KangleiDark
+                color = KangleiPillBg
             ) {
                 Row(
                     modifier = Modifier.fillMaxSize(),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(imageVector = Icons.Default.Add, contentDescription = null, tint = Color.White)
+                    Icon(imageVector = Icons.Default.Add, contentDescription = null, tint = KangleiPillText)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "Create new playlist",
-                        color = Color.White,
+                        color = KangleiPillText,
                         fontSize = 14.sp,
                         fontFamily = OutfitFontFamily,
                         fontWeight = FontWeight.Medium
@@ -246,11 +246,14 @@ fun CreatePlaylistDialog(
                         onDismiss()
                     }
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = KangleiDark),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = KangleiPillBg,
+                    contentColor = KangleiPillText
+                ),
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.testTag("create_playlist_confirm_btn")
             ) {
-                Text("Create", color = Color.White, fontFamily = OutfitFontFamily)
+                Text("Create", color = KangleiPillText, fontFamily = OutfitFontFamily)
             }
         },
         dismissButton = {

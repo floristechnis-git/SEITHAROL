@@ -41,7 +41,12 @@ fun TrackCard(
     modifier: Modifier = Modifier,
     rankNumber: Int? = null,
     subtitleText: String? = null,
-    onOptionsClick: (() -> Unit)? = null
+    onOptionsClick: (() -> Unit)? = null,
+    onPlayNextClick: (() -> Unit)? = null,
+    onAddToQueueClick: (() -> Unit)? = null,
+    onAddToPlaylistClick: (() -> Unit)? = null,
+    onGoToArtistClick: ((String) -> Unit)? = null,
+    onRemoveDownloadClick: (() -> Unit)? = null
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
@@ -163,37 +168,89 @@ fun TrackCard(
                 DropdownMenu(
                     expanded = showMenu,
                     onDismissRequest = { showMenu = false },
-                    modifier = Modifier.background(KangleiWhite)
+                    modifier = Modifier.background(KangleiCardElevated)
                 ) {
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                if (track.isDownloaded) "Downloaded Offline (Opus)" else "Download High (Opus 160k)",
-                                color = KangleiTextPrimary
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = if (track.isDownloaded) Icons.Default.Check else Icons.Default.Download,
-                                contentDescription = null,
-                                tint = if (track.isDownloaded) KangleiGreen else KangleiDark
-                            )
-                        },
-                        onClick = {
-                            showMenu = false
-                            if (!track.isDownloaded) onDownloadClick(DownloadTier.HIGH)
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Download Data Saver (64k)", color = KangleiTextPrimary) },
-                        leadingIcon = {
-                            Icon(Icons.Default.CloudDownload, contentDescription = null, tint = KangleiTextSecondary)
-                        },
-                        onClick = {
-                            showMenu = false
-                            onDownloadClick(DownloadTier.DATA_SAVER)
-                        }
-                    )
+                    if (onPlayNextClick != null) {
+                        DropdownMenuItem(
+                            text = { Text("Play Next", color = KangleiTextPrimary) },
+                            leadingIcon = {
+                                Icon(Icons.Default.PlaylistPlay, contentDescription = null, tint = KangleiDark)
+                            },
+                            onClick = {
+                                showMenu = false
+                                onPlayNextClick()
+                            }
+                        )
+                    }
+                    if (onAddToQueueClick != null) {
+                        DropdownMenuItem(
+                            text = { Text("Add to Queue", color = KangleiTextPrimary) },
+                            leadingIcon = {
+                                Icon(Icons.Default.QueueMusic, contentDescription = null, tint = KangleiDark)
+                            },
+                            onClick = {
+                                showMenu = false
+                                onAddToQueueClick()
+                            }
+                        )
+                    }
+                    if (onAddToPlaylistClick != null) {
+                        DropdownMenuItem(
+                            text = { Text("Add to Playlist", color = KangleiTextPrimary) },
+                            leadingIcon = {
+                                Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = KangleiDark)
+                            },
+                            onClick = {
+                                showMenu = false
+                                onAddToPlaylistClick()
+                            }
+                        )
+                    }
+                    if (onGoToArtistClick != null && track.artist.isNotBlank()) {
+                        DropdownMenuItem(
+                            text = { Text("Go to Artist", color = KangleiTextPrimary) },
+                            leadingIcon = {
+                                Icon(Icons.Default.Person, contentDescription = null, tint = KangleiDark)
+                            },
+                            onClick = {
+                                showMenu = false
+                                onGoToArtistClick(track.artist)
+                            }
+                        )
+                    }
+                    if (track.isDownloaded) {
+                        DropdownMenuItem(
+                            text = { Text("Remove Offline Copy", color = KangleiRedHeart) },
+                            leadingIcon = {
+                                Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = KangleiRedHeart)
+                            },
+                            onClick = {
+                                showMenu = false
+                                onRemoveDownloadClick?.invoke()
+                            }
+                        )
+                    } else {
+                        DropdownMenuItem(
+                            text = { Text("Download High (Opus 160k)", color = KangleiTextPrimary) },
+                            leadingIcon = {
+                                Icon(Icons.Default.Download, contentDescription = null, tint = KangleiDark)
+                            },
+                            onClick = {
+                                showMenu = false
+                                onDownloadClick(DownloadTier.HIGH)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Download Data Saver (64k)", color = KangleiTextPrimary) },
+                            leadingIcon = {
+                                Icon(Icons.Default.CloudDownload, contentDescription = null, tint = KangleiTextSecondary)
+                            },
+                            onClick = {
+                                showMenu = false
+                                onDownloadClick(DownloadTier.DATA_SAVER)
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -202,7 +259,7 @@ fun TrackCard(
 
 /**
  * Today's Biggest Hits Card (from Home board):
- * White background, radius 20dp, padding 8dp, image height 110dp radius 14dp, title 14sp, artist 12sp.
+ * White background, radius 20dp, padding 8dp, compact vertical portrait card (136dp width with 120dp square art).
  */
 @Composable
 fun HitCard(
@@ -213,7 +270,7 @@ fun HitCard(
 ) {
     Surface(
         modifier = modifier
-            .width(130.dp)
+            .width(136.dp)
             .clip(RoundedCornerShape(20.dp))
             .clickable(onClick = onClick)
             .testTag("hit_card_${track.id}"),
@@ -224,7 +281,7 @@ fun HitCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(110.dp)
+                    .height(120.dp)
                     .clip(RoundedCornerShape(14.dp))
                     .background(Color(0xFFE8E8E8)),
                 contentAlignment = Alignment.Center
@@ -281,7 +338,7 @@ fun HitCard(
 
 /**
  * Fresh New Music Banner Card (from Home board):
- * Width 260dp, height 150dp, border-radius 22dp, gradient background or image,
+ * Width 280dp, height 160dp, border-radius 22dp, gradient background or image,
  * bottom-right circular play button (44x44, white with black icon).
  */
 @Composable
@@ -295,8 +352,8 @@ fun FreshMusicCard(
 ) {
     Box(
         modifier = modifier
-            .width(260.dp)
-            .height(150.dp)
+            .width(280.dp)
+            .height(160.dp)
             .clip(RoundedCornerShape(22.dp))
             .clickable(onClick = onPlayClick)
             .background(Brush.linearGradient(gradientColors))
@@ -366,7 +423,7 @@ fun FreshMusicCard(
 
 /**
  * Suggested Artist Circular Avatar (from Home board):
- * 110dp width, 110dp circular photo avatar, artist name centered below in 12sp.
+ * 104dp width, 104dp circular photo avatar, artist name centered below in 12sp.
  */
 @Composable
 fun SuggestedArtistItem(
@@ -378,12 +435,12 @@ fun SuggestedArtistItem(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier
-            .width(110.dp)
+            .width(104.dp)
             .clickable(onClick = onClick)
     ) {
         Box(
             modifier = Modifier
-                .size(110.dp)
+                .size(104.dp)
                 .clip(CircleShape)
                 .background(Color(0xFFE0E0E0)),
             contentAlignment = Alignment.Center

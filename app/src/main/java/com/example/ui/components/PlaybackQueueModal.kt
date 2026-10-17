@@ -31,7 +31,7 @@ import com.example.ui.theme.*
 
 /**
  * Playback Queue Modal matching Kanglei Tune design (Screenshot 3).
- * Header: Down arrow (left), "Playback Queue" (center), Close '✕' (right).
+ * Header: Down arrow (left), "Playback Queue" (center), Close 'X' (right).
  * Items: Trash delete icon (left), Album art, Title, Artist, Reorder drag handle (right).
  */
 @Composable

@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
         PlaybackCheckpointEntity::class,
         SponsorSegmentEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class CascadeDatabase : RoomDatabase() {
@@ -39,6 +39,7 @@ abstract class CascadeDatabase : RoomDatabase() {
                     CascadeDatabase::class.java,
                     "cascade_music.db"
                 )
+                    .fallbackToDestructiveMigration()
                     .addCallback(object : Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
@@ -66,8 +67,8 @@ abstract class CascadeDatabase : RoomDatabase() {
                 album = "Imphal Rock Sessions",
                 durationMs = 214000,
                 artUrl = "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80",
-                isDownloaded = true,
-                localPath = "offline_cache/imphal_nights.opus",
+                isDownloaded = false,
+                localPath = null,
                 isLiked = true,
                 genre = "Rock",
                 moodX = 0.85f,
@@ -95,8 +96,8 @@ abstract class CascadeDatabase : RoomDatabase() {
                 album = "Floating Phumdi",
                 durationMs = 248000,
                 artUrl = "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=600&auto=format&fit=crop&q=80",
-                isDownloaded = true,
-                localPath = "offline_cache/loktak_drift.opus",
+                isDownloaded = false,
+                localPath = null,
                 isLiked = true,
                 genre = "Folk-Rock",
                 moodX = 0.65f,
@@ -122,8 +123,8 @@ abstract class CascadeDatabase : RoomDatabase() {
                 album = "Keibul Lamjao",
                 durationMs = 215000,
                 artUrl = "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=600&auto=format&fit=crop&q=80",
-                isDownloaded = true,
-                localPath = "offline_cache/sangai_dawn.opus",
+                isDownloaded = false,
+                localPath = null,
                 isLiked = true,
                 genre = "Folk-Fusion",
                 moodX = 0.40f,
@@ -149,8 +150,8 @@ abstract class CascadeDatabase : RoomDatabase() {
                 album = "Pena Sessions Vol. 1",
                 durationMs = 198000,
                 artUrl = "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&auto=format&fit=crop&q=80",
-                isDownloaded = true,
-                localPath = "offline_cache/pena_echo.opus",
+                isDownloaded = false,
+                localPath = null,
                 isLiked = true,
                 genre = "Acoustic",
                 moodX = 0.35f,
@@ -220,8 +221,8 @@ abstract class CascadeDatabase : RoomDatabase() {
                 album = "Imphal Rock",
                 durationMs = 230000,
                 artUrl = "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=600&auto=format&fit=crop&q=80",
-                isDownloaded = true,
-                localPath = "offline_cache/addicted.opus",
+                isDownloaded = false,
+                localPath = null,
                 isLiked = true,
                 genre = "Rock",
                 moodX = 0.78f,
@@ -265,8 +266,8 @@ abstract class CascadeDatabase : RoomDatabase() {
                 album = "Imphal Rock",
                 durationMs = 195000,
                 artUrl = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=80",
-                isDownloaded = true,
-                localPath = "offline_cache/running_back.opus",
+                isDownloaded = false,
+                localPath = null,
                 isLiked = true,
                 genre = "Rock",
                 moodX = 0.82f,
@@ -288,8 +289,8 @@ abstract class CascadeDatabase : RoomDatabase() {
                 album = "Celebration",
                 durationMs = 260000,
                 artUrl = "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=600&auto=format&fit=crop&q=80",
-                isDownloaded = true,
-                localPath = "offline_cache/ningol_chakouba.opus",
+                isDownloaded = false,
+                localPath = null,
                 isLiked = true,
                 genre = "Folk-Fusion",
                 moodX = 0.60f,
@@ -640,20 +641,6 @@ abstract class CascadeDatabase : RoomDatabase() {
                 PlaylistItemEntity("pl_rap", 0, "kt_song_09")
             )
         )
-
-        for (track in initialTracks.filter { it.isDownloaded }) {
-            downloadDao().insertDownload(
-                DownloadEntity(
-                    trackId = track.id,
-                    tier = "High (Opus 160k)",
-                    state = "COMPLETED",
-                    localPath = track.localPath,
-                    progress = 1.0f,
-                    bytesDownloaded = 4_250_000L,
-                    totalBytes = 4_250_000L
-                )
-            )
-        }
 
         // Seed sample SponsorBlock segment on track 3
         sponsorDao().insertSegments(

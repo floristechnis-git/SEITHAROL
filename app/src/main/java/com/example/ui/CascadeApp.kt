@@ -78,7 +78,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
             Row(modifier = Modifier.fillMaxSize()) {
                 // Navigation Rail
                 NavigationRail(
-                    containerColor = KangleiDark,
+                    containerColor = KangleiNavBg,
                     contentColor = Color.White,
                     header = {
                         Box(
@@ -110,7 +110,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             icon = { Icon(dest.icon, contentDescription = dest.label) },
                             colors = NavigationRailItemDefaults.colors(
                                 selectedIconColor = Color.White,
-                                indicatorColor = KangleiDarkNavActive,
+                                indicatorColor = KangleiNavActive,
                                 unselectedIconColor = Color(0xFFAAAAAA)
                             )
                         )
@@ -124,7 +124,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                         icon = { Icon(Icons.Default.Tune, contentDescription = "Sound Settings") },
                         colors = NavigationRailItemDefaults.colors(
                             selectedIconColor = Color.White,
-                            indicatorColor = KangleiDarkNavActive,
+                            indicatorColor = KangleiNavActive,
                             unselectedIconColor = Color(0xFFAAAAAA)
                         )
                     )
@@ -214,7 +214,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             onShareTrack = { title ->
                                 val sendIntent = Intent().apply {
                                     action = Intent.ACTION_SEND
-                                    putExtra(Intent.EXTRA_TEXT, "Listen to $title on Kanglei Tune!")
+                                    putExtra(Intent.EXTRA_TEXT, "Listen to $title on Seitharol!")
                                     type = "text/plain"
                                 }
                                 context.startActivity(Intent.createChooser(sendIntent, "Share Track"))
@@ -348,7 +348,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                 .height(60.dp)
                                 .testTag("mobile_floating_nav"),
                             shape = RoundedCornerShape(30.dp),
-                            color = KangleiDark,
+                            color = KangleiNavBg,
                             shadowElevation = 10.dp
                         ) {
                             Row(
@@ -361,7 +361,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                     Surface(
                                         modifier = Modifier.size(44.dp),
                                         shape = CircleShape,
-                                        color = if (isSelected) KangleiDarkNavActive else Color.Transparent,
+                                        color = if (isSelected) KangleiNavActive else Color.Transparent,
                                         onClick = {
                                             currentSubScreen = SubScreen.None
                                             currentDestination = dest
@@ -408,7 +408,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                         onShareTrack = { title ->
                             val sendIntent = Intent().apply {
                                 action = Intent.ACTION_SEND
-                                putExtra(Intent.EXTRA_TEXT, "Listen to $title on Kanglei Tune!")
+                                putExtra(Intent.EXTRA_TEXT, "Listen to $title on Seitharol!")
                                 type = "text/plain"
                             }
                             context.startActivity(Intent.createChooser(sendIntent, "Share Track"))

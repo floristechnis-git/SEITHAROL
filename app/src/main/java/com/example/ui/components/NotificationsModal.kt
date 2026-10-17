@@ -85,7 +85,7 @@ fun NotificationsModal(
                         Surface(
                             modifier = Modifier.size(40.dp),
                             shape = CircleShape,
-                            color = Color(0xFFF2F2F2)
+                            color = KangleiCardElevated
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(

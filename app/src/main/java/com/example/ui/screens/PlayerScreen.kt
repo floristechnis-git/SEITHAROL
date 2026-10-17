@@ -109,7 +109,7 @@ fun PlayerScreen(
 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = "PLAYING FROM KANGLEI TUNE",
+                    text = "PLAYING FROM SEITHAROL",
                     color = KangleiTextSecondary,
                     fontSize = 11.sp,
                     fontFamily = OutfitFontFamily,
@@ -407,21 +407,21 @@ fun PlayerScreen(
                     .clickable { viewModel.togglePlayPause() }
                     .testTag("player_main_play_btn"),
                 shape = CircleShape,
-                color = KangleiDark,
+                color = KangleiPillBg,
                 shadowElevation = 8.dp
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     if (playerState.isBuffering) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(28.dp),
-                            color = Color.White,
+                            color = KangleiPillText,
                             strokeWidth = 3.dp
                         )
                     } else {
                         Icon(
                             imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                             contentDescription = "Play/Pause",
-                            tint = Color.White,
+                            tint = KangleiPillText,
                             modifier = Modifier.size(34.dp)
                         )
                     }

@@ -69,7 +69,7 @@ class CascadeViewModel(
     val trendingHits = MutableStateFlow<List<Track>>(emptyList())
     val freshReleases = MutableStateFlow<List<Track>>(emptyList())
     val personalizedTracks = MutableStateFlow<List<Track>>(emptyList())
-    val selectedMood = MutableStateFlow("✨ For You")
+    val selectedMood = MutableStateFlow("For You")
     val isLoadingHome = MutableStateFlow(false)
 
     // Search state
@@ -147,14 +147,14 @@ class CascadeViewModel(
         // Zero-latency instant personalization from local library based on 2-D mood coordinates (§E.5)
         val local = allTracks.value
         val localVibe = when (mood) {
-            "⚡ Energize" -> local.filter { it.moodX >= 0.75f }
-            "☕ Relax" -> local.filter { it.moodX < 0.6f && it.moodY >= 0.7f }
-            "🏋️ Workout" -> local.filter { it.moodX >= 0.8f }
-            "🎯 Focus" -> local.filter { it.genre.contains("Lofi", true) || it.genre.contains("Acoustic", true) || it.moodX < 0.6f }
-            "🎉 Party" -> local.filter { it.moodX >= 0.85f && it.moodY >= 0.75f }
-            "🌙 Romance" -> local.filter { it.moodY >= 0.8f }
-            "🎸 Rock" -> local.filter { it.genre.contains("Rock", true) }
-            "🌿 Folk" -> local.filter { it.genre.contains("Folk", true) }
+            "Energize" -> local.filter { it.moodX >= 0.75f }
+            "Relax" -> local.filter { it.moodX < 0.6f && it.moodY >= 0.7f }
+            "Workout" -> local.filter { it.moodX >= 0.8f }
+            "Focus" -> local.filter { it.genre.contains("Lofi", true) || it.genre.contains("Acoustic", true) || it.moodX < 0.6f }
+            "Party" -> local.filter { it.moodX >= 0.85f && it.moodY >= 0.75f }
+            "Romance" -> local.filter { it.moodY >= 0.8f }
+            "Rock" -> local.filter { it.genre.contains("Rock", true) }
+            "Folk" -> local.filter { it.genre.contains("Folk", true) }
             else -> local
         }
         if (localVibe.isNotEmpty()) {
@@ -189,14 +189,14 @@ class CascadeViewModel(
 
     private suspend fun updatePersonalizedTracks(mood: String) {
         val cat = when (mood) {
-            "⚡ Energize" -> "energize"
-            "☕ Relax" -> "relax"
-            "🏋️ Workout" -> "workout"
-            "🎯 Focus" -> "focus"
-            "🎉 Party" -> "party"
-            "🌙 Romance" -> "romance"
-            "🎸 Rock" -> "rock"
-            "🌿 Folk" -> "folk"
+            "Energize" -> "energize"
+            "Relax" -> "relax"
+            "Workout" -> "workout"
+            "Focus" -> "focus"
+            "Party" -> "party"
+            "Romance" -> "romance"
+            "Rock" -> "rock"
+            "Folk" -> "folk"
             else -> "trending"
         }
         val tracks = NetworkClients.fetchCategoryTracks(cat)
@@ -317,6 +317,21 @@ class CascadeViewModel(
     fun addTrackToPlaylist(playlistId: String, trackId: String) {
         viewModelScope.launch {
             musicRepository.addTrackToPlaylist(playlistId, trackId)
+        }
+    }
+
+    fun togglePlaylistLike(playlist: Playlist) {
+        viewModelScope.launch {
+            musicRepository.togglePlaylistLike(playlist.id, !playlist.isLiked)
+        }
+    }
+
+    fun clearStreamCacheAndReset() {
+        viewModelScope.launch {
+            resolverEngine.clearCache()
+            searchQuery.value = ""
+            onlineSearchResults.value = emptyList()
+            searchSuggestions.value = emptyList()
         }
     }
 

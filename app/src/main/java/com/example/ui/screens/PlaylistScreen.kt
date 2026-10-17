@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -7,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -18,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -27,9 +30,12 @@ import com.example.data.model.Playlist
 import com.example.data.model.Track
 import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
+import com.example.ui.components.AddToPlaylistModal
+import com.example.ui.components.CreatePlaylistModal
 import com.example.ui.components.TrackCard
 import com.example.ui.theme.*
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlaylistScreen(
     playlistId: String,
@@ -40,6 +46,7 @@ fun PlaylistScreen(
     modifier: Modifier = Modifier
 ) {
     BackHandler(onBack = onBack)
+    val context = LocalContext.current
 
     val playlists by viewModel.playlists.collectAsState()
     val allTracks by viewModel.allTracks.collectAsState()
@@ -64,7 +71,9 @@ fun PlaylistScreen(
         }
     }
 
-    var isLiked by remember { mutableStateOf(false) }
+    var showMoreSheet by remember { mutableStateOf(false) }
+    var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
+    var showCreatePlaylistDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = modifier
@@ -111,12 +120,12 @@ fun PlaylistScreen(
                         }
                     }
 
-                    // More button
+                    // More button -> triggers ModalBottomSheet
                     Surface(
                         modifier = Modifier.size(44.dp),
                         shape = CircleShape,
                         color = KangleiGlassDark,
-                        onClick = { /* More actions */ }
+                        onClick = { showMoreSheet = true }
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
@@ -206,7 +215,7 @@ fun PlaylistScreen(
                                     Icon(
                                         imageVector = Icons.Default.PlayArrow,
                                         contentDescription = "Play Playlist",
-                                        tint = KangleiDark,
+                                        tint = Color(0xFF0D0D0D),
                                         modifier = Modifier.size(32.dp)
                                     )
                                 }
@@ -220,10 +229,12 @@ fun PlaylistScreen(
                             )
                         }
 
-                        // Like Playlist
+                        // Like Playlist (Persisted in Room)
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clickable { isLiked = !isLiked }
+                            modifier = Modifier.clickable {
+                                viewModel.togglePlaylistLike(currentPlaylist)
+                            }
                         ) {
                             Surface(
                                 modifier = Modifier.size(48.dp),
@@ -232,16 +243,16 @@ fun PlaylistScreen(
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
-                                        imageVector = if (isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
+                                        imageVector = if (currentPlaylist.isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
                                         contentDescription = "Like",
-                                        tint = if (isLiked) KangleiRedHeart else Color.White,
+                                        tint = if (currentPlaylist.isLiked) KangleiRedHeart else Color.White,
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = if (isLiked) "Liked" else "Like",
+                                text = if (currentPlaylist.isLiked) "Liked" else "Like",
                                 color = Color(0xFFD0D0D0),
                                 fontSize = 11.sp,
                                 fontFamily = OutfitFontFamily
@@ -274,9 +285,147 @@ fun PlaylistScreen(
                 onTrackClick = { viewModel.playTrack(track) },
                 onLikeClick = { viewModel.toggleLike(track) },
                 onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
-                onOptionsClick = { onAddToPlaylist(track) },
+                onPlayNextClick = { viewModel.playNext(track) },
+                onAddToQueueClick = { viewModel.addToQueue(track) },
+                onAddToPlaylistClick = { trackToAddToPlaylist = track },
+                onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
             )
         }
+    }
+
+    // More Options Bottom Sheet
+    if (showMoreSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showMoreSheet = false },
+            containerColor = KangleiWhite,
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 16.dp)
+            ) {
+                Text(
+                    text = currentPlaylist.title,
+                    fontFamily = SyneFontFamily,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = KangleiDark
+                )
+                Text(
+                    text = "${playlistTracks.size} tracks",
+                    fontFamily = OutfitFontFamily,
+                    fontSize = 12.sp,
+                    color = KangleiTextSecondary
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider(color = KangleiBorder)
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Play Next
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                            showMoreSheet = false
+                            playlistTracks.reversed().forEach { viewModel.playNext(it) }
+                        }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.PlaylistPlay, contentDescription = null, tint = KangleiDark)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text("Play Next", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = KangleiDark)
+                }
+
+                // Add all to Queue
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                            showMoreSheet = false
+                            playlistTracks.forEach { viewModel.addToQueue(it) }
+                        }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.QueueMusic, contentDescription = null, tint = KangleiDark)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text("Add all to Queue", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = KangleiDark)
+                }
+
+                // Download Playlist
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                            showMoreSheet = false
+                            playlistTracks.forEach { viewModel.startDownload(it, DownloadTier.HIGH) }
+                        }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Download, contentDescription = null, tint = KangleiDark)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text("Download Playlist", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = KangleiDark)
+                }
+
+                // Share
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                            showMoreSheet = false
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_SUBJECT, currentPlaylist.title)
+                                putExtra(Intent.EXTRA_TEXT, "Listen to '${currentPlaylist.title}' on Seitharol!")
+                            }
+                            context.startActivity(Intent.createChooser(shareIntent, "Share Playlist"))
+                        }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = null, tint = KangleiDark)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text("Share Playlist", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = KangleiDark)
+                }
+            }
+        }
+    }
+
+    // Modal to add track to playlist
+    trackToAddToPlaylist?.let { track ->
+        AddToPlaylistModal(
+            track = track,
+            playlists = playlists,
+            onSelectPlaylist = { pId ->
+                viewModel.addTrackToPlaylist(pId, track.id)
+                trackToAddToPlaylist = null
+            },
+            onCreateNewPlaylist = {
+                showCreatePlaylistDialog = true
+            },
+            onDismiss = {
+                trackToAddToPlaylist = null
+            }
+        )
+    }
+
+    if (showCreatePlaylistDialog) {
+        CreatePlaylistModal(
+            onConfirm = { name ->
+                viewModel.createPlaylist(name, "User created playlist")
+                showCreatePlaylistDialog = false
+            },
+            onDismiss = {
+                showCreatePlaylistDialog = false
+            }
+        )
     }
 }

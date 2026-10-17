@@ -1,13 +1,18 @@
 package com.example.data.repository
 
 import android.content.Context
+import android.util.Log
 import com.example.data.local.*
 import com.example.data.model.*
+import com.example.network.NetworkClients
+import com.example.resolver.ResolverEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import okhttp3.Request
 import java.io.File
+import java.io.FileOutputStream
 
 class MusicRepository(
     private val db: CascadeDatabase
@@ -57,9 +62,14 @@ class MusicRepository(
                 title = it.title,
                 description = it.description,
                 isLocal = it.isLocal,
-                coverUrl = it.coverUrl
+                coverUrl = it.coverUrl,
+                isLiked = it.isLiked
             )
         }
+    }
+
+    suspend fun togglePlaylistLike(playlistId: String, current: Boolean) = withContext(Dispatchers.IO) {
+        playlistDao.setPlaylistLiked(playlistId, !current)
     }
 
     fun getTracksForPlaylist(playlistId: String): Flow<List<Track>> =
@@ -183,7 +193,8 @@ class MusicRepository(
 
 class DownloadRepository(
     private val context: Context,
-    private val db: CascadeDatabase
+    private val db: CascadeDatabase,
+    private val resolverEngine: ResolverEngine
 ) {
     private val downloadDao = db.downloadDao()
     private val trackDao = db.trackDao()
@@ -221,55 +232,117 @@ class DownloadRepository(
 
     suspend fun startDownload(track: Track, tier: DownloadTier) = withContext(Dispatchers.IO) {
         val downloadDir = File(context.filesDir, "downloads").apply { if (!exists()) mkdirs() }
-        val ext = if (tier.codec.contains("Opus")) "opus" else "m4a"
+        val ext = if (tier.codec.contains("Opus", ignoreCase = true)) "opus" else "m4a"
         val destFile = File(downloadDir, "${track.id}_${tier.name.lowercase()}.$ext")
+        val tempFile = File(downloadDir, "${track.id}_${tier.name.lowercase()}.tmp")
 
-        // Insert queued state
-        downloadDao.insertDownload(
-            DownloadEntity(
-                trackId = track.id,
-                tier = tier.label,
-                state = "DOWNLOADING",
-                localPath = destFile.absolutePath,
-                progress = 0.2f,
-                bytesDownloaded = 800_000L,
-                totalBytes = 4_100_000L
+        try {
+            // 1. Initial State in DB
+            downloadDao.insertDownload(
+                DownloadEntity(
+                    trackId = track.id,
+                    tier = tier.label,
+                    state = "DOWNLOADING",
+                    localPath = destFile.absolutePath,
+                    progress = 0.05f,
+                    bytesDownloaded = 0L,
+                    totalBytes = 4_000_000L
+                )
             )
-        )
 
-        // Simulate fast progressive download write (or actual local file creation)
-        if (!destFile.exists()) {
-            destFile.writeText("CASCADE_ENCODED_AUDIO_CONTAINER_${track.id}_${tier.bitrate}")
+            // 2. Resolve stream URL
+            val resolvedStream = resolverEngine.resolveTrack(track)
+            val streamUrl = resolvedStream.streamUrl
+
+            if (streamUrl.isBlank()) {
+                throw IllegalStateException("Empty stream URL resolved for ${track.title}")
+            }
+
+            // 3. Real HTTP byte-streaming using OkHttpClient
+            val request = Request.Builder()
+                .url(streamUrl)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .header("Referer", "https://music.youtube.com/")
+                .build()
+
+            NetworkClients.okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IllegalStateException("HTTP ${response.code} downloading track stream")
+                }
+                val body = response.body ?: throw IllegalStateException("Empty response body")
+                val contentLength = body.contentLength().let { if (it > 0) it else 4_000_000L }
+
+                body.byteStream().use { input ->
+                    FileOutputStream(tempFile).use { output ->
+                        val buffer = ByteArray(8192)
+                        var bytesRead: Int
+                        var totalRead = 0L
+                        var lastProgressUpdate = System.currentTimeMillis()
+
+                        while (input.read(buffer).also { bytesRead = it } != -1) {
+                            output.write(buffer, 0, bytesRead)
+                            totalRead += bytesRead
+
+                            val now = System.currentTimeMillis()
+                            if (now - lastProgressUpdate > 300L) {
+                                lastProgressUpdate = now
+                                val progress = (totalRead.toFloat() / contentLength.toFloat()).coerceIn(0.05f, 0.95f)
+                                downloadDao.updateDownload(
+                                    DownloadEntity(
+                                        trackId = track.id,
+                                        tier = tier.label,
+                                        state = "DOWNLOADING",
+                                        localPath = destFile.absolutePath,
+                                        progress = progress,
+                                        bytesDownloaded = totalRead,
+                                        totalBytes = contentLength
+                                    )
+                                )
+                            }
+                        }
+                        output.flush()
+                    }
+                }
+
+                // Verify binary audio stream (> 10KB to avoid broken file stubs)
+                if (tempFile.exists() && tempFile.length() > 10_240L) {
+                    if (destFile.exists()) destFile.delete()
+                    val renamed = tempFile.renameTo(destFile)
+                    val finalFile = if (renamed) destFile else tempFile
+
+                    downloadDao.updateDownload(
+                        DownloadEntity(
+                            trackId = track.id,
+                            tier = tier.label,
+                            state = "COMPLETED",
+                            localPath = finalFile.absolutePath,
+                            progress = 1.0f,
+                            bytesDownloaded = finalFile.length(),
+                            totalBytes = finalFile.length()
+                        )
+                    )
+                    trackDao.setDownloaded(track.id, true, finalFile.absolutePath)
+                } else {
+                    if (tempFile.exists()) tempFile.delete()
+                    throw IllegalStateException("Downloaded file was corrupt or smaller than 10KB (${tempFile.length()} bytes)")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("DownloadRepository", "Download failed for ${track.id}: ${e.message}", e)
+            if (tempFile.exists()) tempFile.delete()
+            if (destFile.exists() && destFile.length() <= 10_240L) destFile.delete()
+            downloadDao.updateDownload(
+                DownloadEntity(
+                    trackId = track.id,
+                    tier = tier.label,
+                    state = "ERROR",
+                    localPath = null,
+                    progress = 0f,
+                    bytesDownloaded = 0L,
+                    totalBytes = 0L
+                )
+            )
         }
-
-        kotlinx.coroutines.delay(400)
-        downloadDao.updateDownload(
-            DownloadEntity(
-                trackId = track.id,
-                tier = tier.label,
-                state = "FINALIZING",
-                localPath = destFile.absolutePath,
-                progress = 0.85f,
-                bytesDownloaded = 3_500_000L,
-                totalBytes = 4_100_000L
-            )
-        )
-
-        kotlinx.coroutines.delay(300)
-        downloadDao.updateDownload(
-            DownloadEntity(
-                trackId = track.id,
-                tier = tier.label,
-                state = "COMPLETED",
-                localPath = destFile.absolutePath,
-                progress = 1.0f,
-                bytesDownloaded = 4_100_000L,
-                totalBytes = 4_100_000L
-            )
-        )
-
-        // Update track table
-        trackDao.setDownloaded(track.id, true, destFile.absolutePath)
     }
 
     suspend fun deleteDownload(trackId: String) = withContext(Dispatchers.IO) {

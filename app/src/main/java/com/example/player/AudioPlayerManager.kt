@@ -10,6 +10,9 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.example.data.model.LyricsLine
 import com.example.data.model.SponsorSegment
 import com.example.data.model.Track
@@ -23,6 +26,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
 
 enum class RepeatMode {
     OFF,
@@ -98,7 +102,24 @@ class AudioPlayerManager(
     private fun initExoPlayer() {
         try {
             exoPlayer?.release()
+
+            val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+                .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .setDefaultRequestProperties(
+                    mapOf(
+                        "Referer" to "https://music.youtube.com/",
+                        "Range" to "bytes=0-"
+                    )
+                )
+                .setAllowCrossProtocolRedirects(true)
+                .setConnectTimeoutMs(15000)
+                .setReadTimeoutMs(20000)
+
+            val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
+            val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
+
             val builder = ExoPlayer.Builder(context)
+                .setMediaSourceFactory(mediaSourceFactory)
                 .setAudioAttributes(
                     AudioAttributes.Builder()
                         .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -167,8 +188,13 @@ class AudioPlayerManager(
     private fun setupAndPlaySource(sourceUrl: String, track: Track) {
         try {
             val player = exoPlayer ?: return
+            val parsedUri = when {
+                sourceUrl.startsWith("file://") -> Uri.parse(sourceUrl)
+                sourceUrl.startsWith("/") -> Uri.fromFile(File(sourceUrl))
+                else -> Uri.parse(sourceUrl)
+            }
             val mediaItem = MediaItem.Builder()
-                .setUri(Uri.parse(sourceUrl))
+                .setUri(parsedUri)
                 .setMediaId(track.id)
                 .setMediaMetadata(
                     MediaMetadata.Builder()
@@ -353,11 +379,24 @@ class AudioPlayerManager(
                     }
                 }
 
+                // Verify local file if marked as downloaded
+                val safeTrack = if (current.isDownloaded && !current.localPath.isNullOrBlank()) {
+                    val f = File(current.localPath)
+                    if (!f.exists() || f.length() <= 10_240L) {
+                        Log.w(TAG, "Local file missing or corrupted for track ${current.id}, resolving remote stream")
+                        current.copy(isDownloaded = false, localPath = null)
+                    } else {
+                        current
+                    }
+                } else {
+                    current
+                }
+
                 // Resolve Stream using ResolverEngine
-                val stream = resolverEngine.resolveTrack(current)
+                val stream = resolverEngine.resolveTrack(safeTrack)
                 _state.value = _state.value.copy(activeStream = stream)
 
-                setupAndPlaySource(stream.streamUrl, current)
+                setupAndPlaySource(stream.streamUrl, safeTrack)
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading track: ${e.message}", e)
                 _state.value = _state.value.copy(isBuffering = false, isPlaying = false)

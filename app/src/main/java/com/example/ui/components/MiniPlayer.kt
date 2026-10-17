@@ -51,7 +51,7 @@ fun MiniPlayer(
             .clip(RoundedCornerShape(30.dp))
             .clickable(onClick = onExpand)
             .testTag("mini_player_bar"),
-        color = KangleiDark,
+        color = KangleiMiniPlayerBg,
         shape = RoundedCornerShape(30.dp),
         shadowElevation = 8.dp
     ) {

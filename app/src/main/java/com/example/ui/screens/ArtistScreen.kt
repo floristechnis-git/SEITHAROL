@@ -19,20 +19,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.data.model.DownloadTier
 import com.example.data.model.Track
 import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
+import com.example.ui.components.AddToPlaylistModal
+import com.example.ui.components.CreatePlaylistModal
 import com.example.ui.components.TrackCard
 import com.example.ui.theme.*
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ArtistScreen(
     artistName: String,
@@ -45,7 +47,11 @@ fun ArtistScreen(
     BackHandler(onBack = onBack)
 
     val allTracks by viewModel.allTracks.collectAsState()
+    val playlists by viewModel.playlists.collectAsState()
     var isFollowing by remember { mutableStateOf(false) }
+    var showMoreSheet by remember { mutableStateOf(false) }
+    var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
+    var showCreatePlaylistDialog by remember { mutableStateOf(false) }
 
     // Artist songs or filtered
     val artistTracks = remember(artistName, allTracks) {
@@ -91,7 +97,7 @@ fun ArtistScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Back button (44dp pill rgba(255,255,255,0.18))
+                    // Back button (44dp pill)
                     Surface(
                         modifier = Modifier.size(44.dp),
                         shape = CircleShape,
@@ -108,12 +114,12 @@ fun ArtistScreen(
                         }
                     }
 
-                    // More button
+                    // More button -> triggers ModalBottomSheet
                     Surface(
                         modifier = Modifier.size(44.dp),
                         shape = CircleShape,
                         color = KangleiGlassDark,
-                        onClick = { onShareArtist(artistName) }
+                        onClick = { showMoreSheet = true }
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
@@ -144,7 +150,7 @@ fun ArtistScreen(
                     Spacer(modifier = Modifier.height(4.dp))
 
                     Text(
-                        text = "13,994 monthly listeners",
+                        text = "104,820,119 monthly listeners",
                         fontFamily = OutfitFontFamily,
                         fontSize = 13.sp,
                         color = Color(0xFFD0D0D0)
@@ -152,25 +158,25 @@ fun ArtistScreen(
 
                     Spacer(modifier = Modifier.height(20.dp))
 
-                    // Action buttons row: Share (48dp pill), Play (64dp circle), Like (48dp pill)
+                    // Action buttons row: Follow (48dp pill), Play (64dp circle), Radio (48dp pill)
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(28.dp)
                     ) {
-                        // Share
+                        // Follow action
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clickable { onShareArtist(artistName) }
+                            modifier = Modifier.clickable { isFollowing = !isFollowing }
                         ) {
                             Surface(
                                 modifier = Modifier.size(48.dp),
                                 shape = CircleShape,
-                                color = KangleiGlassDarkActive
+                                color = if (isFollowing) KangleiGreen else KangleiGlassDarkActive
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
-                                        imageVector = Icons.Default.Share,
-                                        contentDescription = "Share",
+                                        imageVector = if (isFollowing) Icons.Default.Check else Icons.Default.Add,
+                                        contentDescription = "Follow",
                                         tint = Color.White,
                                         modifier = Modifier.size(20.dp)
                                     )
@@ -178,7 +184,7 @@ fun ArtistScreen(
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Share",
+                                text = if (isFollowing) "Following" else "Follow",
                                 color = Color(0xFFD0D0D0),
                                 fontSize = 11.sp,
                                 fontFamily = OutfitFontFamily
@@ -201,7 +207,7 @@ fun ArtistScreen(
                                     Icon(
                                         imageVector = Icons.Default.PlayArrow,
                                         contentDescription = "Play Artist",
-                                        tint = KangleiDark,
+                                        tint = Color(0xFF0D0D0D),
                                         modifier = Modifier.size(32.dp)
                                     )
                                 }
@@ -215,10 +221,12 @@ fun ArtistScreen(
                             )
                         }
 
-                        // Like
+                        // Radio / Shuffle action
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clickable { isFollowing = !isFollowing }
+                            modifier = Modifier.clickable {
+                                if (artistTracks.isNotEmpty()) viewModel.playQueue(artistTracks.shuffled(), 0)
+                            }
                         ) {
                             Surface(
                                 modifier = Modifier.size(48.dp),
@@ -227,16 +235,16 @@ fun ArtistScreen(
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
-                                        imageVector = if (isFollowing) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
-                                        contentDescription = "Like",
-                                        tint = if (isFollowing) KangleiRedHeart else Color.White,
+                                        imageVector = Icons.Default.Shuffle,
+                                        contentDescription = "Shuffle Radio",
+                                        tint = Color.White,
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = if (isFollowing) "Liked" else "Like",
+                                text = "Shuffle",
                                 color = Color(0xFFD0D0D0),
                                 fontSize = 11.sp,
                                 fontFamily = OutfitFontFamily
@@ -271,8 +279,142 @@ fun ArtistScreen(
                 onTrackClick = { viewModel.playTrack(track) },
                 onLikeClick = { viewModel.toggleLike(track) },
                 onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
+                onPlayNextClick = { viewModel.playNext(track) },
+                onAddToQueueClick = { viewModel.addToQueue(track) },
+                onAddToPlaylistClick = { trackToAddToPlaylist = track },
+                onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
             )
         }
+    }
+
+    // More Options Bottom Sheet
+    if (showMoreSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showMoreSheet = false },
+            containerColor = KangleiWhite,
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 16.dp)
+            ) {
+                Text(
+                    text = artistName,
+                    fontFamily = SyneFontFamily,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = KangleiDark
+                )
+                Text(
+                    text = "${artistTracks.size} tracks available",
+                    fontFamily = OutfitFontFamily,
+                    fontSize = 12.sp,
+                    color = KangleiTextSecondary
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider(color = KangleiBorder)
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Play Next
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                            showMoreSheet = false
+                            artistTracks.reversed().forEach { viewModel.playNext(it) }
+                        }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.PlaylistPlay, contentDescription = null, tint = KangleiDark)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text("Play Next", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = KangleiDark)
+                }
+
+                // Add all to Queue
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                            showMoreSheet = false
+                            artistTracks.forEach { viewModel.addToQueue(it) }
+                        }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.QueueMusic, contentDescription = null, tint = KangleiDark)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text("Add all to Queue", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = KangleiDark)
+                }
+
+                // Download Artist Tracks
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                            showMoreSheet = false
+                            artistTracks.forEach { viewModel.startDownload(it, DownloadTier.HIGH) }
+                        }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Download, contentDescription = null, tint = KangleiDark)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text("Download Artist Tracks", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = KangleiDark)
+                }
+
+                // Share Artist
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                            showMoreSheet = false
+                            onShareArtist(artistName)
+                        }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = null, tint = KangleiDark)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text("Share Artist", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = KangleiDark)
+                }
+            }
+        }
+    }
+
+    // Modal to add track to playlist
+    trackToAddToPlaylist?.let { track ->
+        AddToPlaylistModal(
+            track = track,
+            playlists = playlists,
+            onSelectPlaylist = { pId ->
+                viewModel.addTrackToPlaylist(pId, track.id)
+                trackToAddToPlaylist = null
+            },
+            onCreateNewPlaylist = {
+                showCreatePlaylistDialog = true
+            },
+            onDismiss = {
+                trackToAddToPlaylist = null
+            }
+        )
+    }
+
+    if (showCreatePlaylistDialog) {
+        CreatePlaylistModal(
+            onConfirm = { name ->
+                viewModel.createPlaylist(name, "User created playlist")
+                showCreatePlaylistDialog = false
+            },
+            onDismiss = {
+                showCreatePlaylistDialog = false
+            }
+        )
     }
 }

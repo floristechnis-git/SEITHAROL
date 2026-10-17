@@ -30,6 +30,8 @@ import coil.compose.AsyncImage
 import com.example.data.model.Track
 import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
+import com.example.ui.components.AddToPlaylistModal
+import com.example.ui.components.CreatePlaylistModal
 import com.example.ui.components.TrackCard
 import com.example.ui.theme.*
 
@@ -56,6 +58,8 @@ fun SearchScreen(
     val searchSuggestions by viewModel.searchSuggestions.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
     var selectedTab by remember { mutableStateOf(SearchTab.TOP) }
+    var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
+    var showCreatePlaylistDialog by remember { mutableStateOf(false) }
 
     val quickSearches = remember {
         listOf(
@@ -285,7 +289,7 @@ fun SearchScreen(
                                 .clip(RoundedCornerShape(16.dp))
                                 .clickable { viewModel.setQueryImmediately(suggestion) },
                             shape = RoundedCornerShape(16.dp),
-                            color = Color(0xFFE8E8E8)
+                            color = KangleiCardElevated
                         ) {
                             Box(
                                 contentAlignment = Alignment.Center,
@@ -319,7 +323,7 @@ fun SearchScreen(
                             .clip(RoundedCornerShape(18.dp))
                             .clickable { selectedTab = tab },
                         shape = RoundedCornerShape(18.dp),
-                        color = if (isSelected) KangleiDark else KangleiWhite
+                        color = if (isSelected) KangleiPillBg else KangleiWhite
                     ) {
                         Box(
                             contentAlignment = Alignment.Center,
@@ -327,7 +331,7 @@ fun SearchScreen(
                         ) {
                             Text(
                                 text = tab.label,
-                                color = if (isSelected) Color.White else KangleiDark,
+                                color = if (isSelected) KangleiPillText else KangleiDark,
                                 fontSize = 14.sp,
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal
@@ -546,10 +550,45 @@ fun SearchScreen(
                         onTrackClick = { viewModel.playTrack(track) },
                         onLikeClick = { viewModel.toggleLike(track) },
                         onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
+                        onPlayNextClick = { viewModel.playNext(track) },
+                        onAddToQueueClick = { viewModel.addToQueue(track) },
+                        onAddToPlaylistClick = { trackToAddToPlaylist = track },
+                        onGoToArtistClick = onNavigateToArtist,
+                        onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                     )
                 }
             }
         }
+    }
+
+    // Modal to add track to playlist
+    trackToAddToPlaylist?.let { track ->
+        AddToPlaylistModal(
+            track = track,
+            playlists = playlists,
+            onSelectPlaylist = { pId ->
+                viewModel.addTrackToPlaylist(pId, track.id)
+                trackToAddToPlaylist = null
+            },
+            onCreateNewPlaylist = {
+                showCreatePlaylistDialog = true
+            },
+            onDismiss = {
+                trackToAddToPlaylist = null
+            }
+        )
+    }
+
+    if (showCreatePlaylistDialog) {
+        CreatePlaylistModal(
+            onConfirm = { name ->
+                viewModel.createPlaylist(name, "User created playlist")
+                showCreatePlaylistDialog = false
+            },
+            onDismiss = {
+                showCreatePlaylistDialog = false
+            }
+        )
     }
 }

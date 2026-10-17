@@ -28,6 +28,8 @@ import coil.compose.AsyncImage
 import com.example.data.model.Track
 import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
+import com.example.ui.components.AddToPlaylistModal
+import com.example.ui.components.CreatePlaylistModal
 import com.example.ui.components.FreshMusicCard
 import com.example.ui.components.HitCard
 import com.example.ui.components.SuggestedArtistItem
@@ -73,17 +75,20 @@ fun HomeScreen(
         }
     }
 
+    var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
+    var showCreatePlaylistDialog by remember { mutableStateOf(false) }
+
     val moodChips = remember {
         listOf(
-            "✨ For You",
-            "⚡ Energize",
-            "☕ Relax",
-            "🏋️ Workout",
-            "🎯 Focus",
-            "🎉 Party",
-            "🌙 Romance",
-            "🎸 Rock",
-            "🌿 Folk"
+            "For You",
+            "Energize",
+            "Relax",
+            "Workout",
+            "Focus",
+            "Party",
+            "Romance",
+            "Rock",
+            "Folk"
         )
     }
 
@@ -331,7 +336,7 @@ fun HomeScreen(
                             .clip(RoundedCornerShape(19.dp))
                             .clickable { viewModel.selectMood(mood) },
                         shape = RoundedCornerShape(19.dp),
-                        color = if (isSelected) KangleiDark else KangleiWhite
+                        color = if (isSelected) KangleiPillBg else KangleiWhite
                     ) {
                         Box(
                             contentAlignment = Alignment.Center,
@@ -339,7 +344,7 @@ fun HomeScreen(
                         ) {
                             Text(
                                 text = mood,
-                                color = if (isSelected) Color.White else KangleiDark,
+                                color = if (isSelected) KangleiPillText else KangleiDark,
                                 fontSize = 13.sp,
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
@@ -419,6 +424,7 @@ fun HomeScreen(
                     fontFamily = OutfitFontFamily,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.clickable {
+                        viewModel.setQueryImmediately("Trending Hits")
                         onNavigateToSearch()
                     }
                 )
@@ -570,8 +576,43 @@ fun HomeScreen(
                 onTrackClick = { viewModel.playTrack(track) },
                 onLikeClick = { viewModel.toggleLike(track) },
                 onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
+                onPlayNextClick = { viewModel.playNext(track) },
+                onAddToQueueClick = { viewModel.addToQueue(track) },
+                onAddToPlaylistClick = { trackToAddToPlaylist = track },
+                onGoToArtistClick = { artistName -> onNavigateToArtist(artistName) },
+                onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
             )
         }
+    }
+
+    // Modal to add track to playlist
+    trackToAddToPlaylist?.let { track ->
+        AddToPlaylistModal(
+            track = track,
+            playlists = playlists,
+            onSelectPlaylist = { playlistId ->
+                viewModel.addTrackToPlaylist(playlistId, track.id)
+                trackToAddToPlaylist = null
+            },
+            onCreateNewPlaylist = {
+                showCreatePlaylistDialog = true
+            },
+            onDismiss = {
+                trackToAddToPlaylist = null
+            }
+        )
+    }
+
+    if (showCreatePlaylistDialog) {
+        CreatePlaylistModal(
+            onConfirm = { name ->
+                viewModel.createPlaylist(name, "User created playlist")
+                showCreatePlaylistDialog = false
+            },
+            onDismiss = {
+                showCreatePlaylistDialog = false
+            }
+        )
     }
 }

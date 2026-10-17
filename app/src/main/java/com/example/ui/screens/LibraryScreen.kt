@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -18,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -26,8 +28,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.data.model.Track
 import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
+import com.example.ui.components.AddToPlaylistModal
+import com.example.ui.components.CreatePlaylistModal
 import com.example.ui.components.TrackCard
 import com.example.ui.theme.*
 
@@ -53,6 +58,9 @@ fun LibraryScreen(
     val allTracks by viewModel.allTracks.collectAsState()
 
     var selectedTab by remember { mutableStateOf(LibraryTab.PLAYLISTS) }
+    var librarySearchQuery by remember { mutableStateOf("") }
+    var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
+    var showCreatePlaylistDialog by remember { mutableStateOf(false) }
 
     val albums = remember(allTracks) {
         allTracks.groupBy { it.album }.map { (album, tracks) ->
@@ -68,6 +76,26 @@ fun LibraryScreen(
             Pair("Eastern Rhythms", "https://images.unsplash.com/photo-1518495973542-4542c06a5843?w=400&auto=format&fit=crop&q=80"),
             Pair("Imphal Rock Collective", "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80")
         )
+    }
+
+    val filteredPlaylists = remember(playlists, librarySearchQuery) {
+        if (librarySearchQuery.isBlank()) playlists
+        else playlists.filter { it.title.contains(librarySearchQuery, ignoreCase = true) }
+    }
+
+    val filteredAlbums = remember(albums, librarySearchQuery) {
+        if (librarySearchQuery.isBlank()) albums
+        else albums.filter { it.first.contains(librarySearchQuery, ignoreCase = true) || it.second.contains(librarySearchQuery, ignoreCase = true) }
+    }
+
+    val filteredArtists = remember(artists, librarySearchQuery) {
+        if (librarySearchQuery.isBlank()) artists
+        else artists.filter { it.first.contains(librarySearchQuery, ignoreCase = true) }
+    }
+
+    val filteredDownloaded = remember(downloadedTracks, librarySearchQuery) {
+        if (librarySearchQuery.isBlank()) downloadedTracks
+        else downloadedTracks.filter { it.title.contains(librarySearchQuery, ignoreCase = true) || it.artist.contains(librarySearchQuery, ignoreCase = true) }
     }
 
     LazyVerticalGrid(
@@ -105,7 +133,7 @@ fun LibraryScreen(
                         .clickable(onClick = onCreatePlaylist)
                         .testTag("library_create_playlist_btn"),
                     shape = RoundedCornerShape(18.dp),
-                    color = KangleiDark
+                    color = KangleiPillBg
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 14.dp),
@@ -115,12 +143,12 @@ fun LibraryScreen(
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = null,
-                            tint = Color.White,
+                            tint = KangleiPillText,
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
                             text = "New",
-                            color = Color.White,
+                            color = KangleiPillText,
                             fontSize = 13.sp,
                             fontFamily = OutfitFontFamily,
                             fontWeight = FontWeight.Medium
@@ -130,11 +158,76 @@ fun LibraryScreen(
             }
         }
 
+        // Search Bar in Library: Real-time filtering
+        item(span = { GridItemSpan(2) }) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .testTag("library_search_pill"),
+                color = KangleiWhite,
+                shape = RoundedCornerShape(22.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Search library",
+                        tint = KangleiTextSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    BasicTextField(
+                        value = librarySearchQuery,
+                        onValueChange = { librarySearchQuery = it },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("library_search_input"),
+                        singleLine = true,
+                        textStyle = LocalTextStyle.current.copy(
+                            color = KangleiTextPrimary,
+                            fontSize = 14.sp,
+                            fontFamily = OutfitFontFamily
+                        ),
+                        decorationBox = { innerTextField ->
+                            if (librarySearchQuery.isEmpty()) {
+                                Text(
+                                    text = "Filter your library...",
+                                    color = KangleiTextSecondary,
+                                    fontSize = 14.sp,
+                                    fontFamily = OutfitFontFamily
+                                )
+                            }
+                            innerTextField()
+                        }
+                    )
+                    if (librarySearchQuery.isNotEmpty()) {
+                        IconButton(
+                            onClick = { librarySearchQuery = "" },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Clear search",
+                                tint = KangleiTextSecondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         // Filter Pills: Playlists, Albums, Artists, Downloaded
         item(span = { GridItemSpan(2) }) {
             LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(bottom = 8.dp)
+                modifier = Modifier.padding(bottom = 6.dp)
             ) {
                 items(LibraryTab.values()) { tab ->
                     val isSelected = selectedTab == tab
@@ -144,7 +237,7 @@ fun LibraryScreen(
                             .clip(RoundedCornerShape(18.dp))
                             .clickable { selectedTab = tab },
                         shape = RoundedCornerShape(18.dp),
-                        color = if (isSelected) KangleiDark else KangleiWhite
+                        color = if (isSelected) KangleiPillBg else KangleiWhite
                     ) {
                         Box(
                             contentAlignment = Alignment.Center,
@@ -152,10 +245,10 @@ fun LibraryScreen(
                         ) {
                             Text(
                                 text = tab.label,
-                                color = if (isSelected) Color.White else KangleiDark,
+                                color = if (isSelected) KangleiPillText else KangleiDark,
                                 fontSize = 14.sp,
                                 fontFamily = OutfitFontFamily,
-                                fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
                             )
                         }
                     }
@@ -165,8 +258,8 @@ fun LibraryScreen(
 
         when (selectedTab) {
             LibraryTab.PLAYLISTS -> {
-                // Liked Songs Card: Black square card matching Kanglei Tune design
-                item {
+                // Distinct Hero Liked Songs Card spanning 2 columns
+                item(span = { GridItemSpan(2) }) {
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -178,62 +271,63 @@ fun LibraryScreen(
                         shape = RoundedCornerShape(20.dp),
                         color = KangleiWhite
                     ) {
-                        Column(modifier = Modifier.padding(8.dp)) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Box(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(130.dp)
+                                    .size(72.dp)
                                     .clip(RoundedCornerShape(16.dp))
-                                    .background(KangleiDark),
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(Color(0xFF4A154B), Color(0xFF191414))
+                                        )
+                                    ),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Favorite,
-                                    contentDescription = "Liked",
+                                    contentDescription = "Liked Songs",
                                     tint = Color.White,
-                                    modifier = Modifier.size(40.dp)
+                                    modifier = Modifier.size(32.dp)
                                 )
                             }
 
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 8.dp, bottom = 2.dp, start = 4.dp, end = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Liked Songs",
-                                        color = KangleiDark,
-                                        fontSize = 14.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                    Text(
-                                        text = "${likedTracks.size.coerceAtLeast(68)} songs",
-                                        color = KangleiTextSecondary,
-                                        fontSize = 11.sp,
-                                        fontFamily = OutfitFontFamily
-                                    )
-                                }
+                            Spacer(modifier = Modifier.width(14.dp))
 
-                                Surface(
-                                    modifier = Modifier.size(32.dp),
-                                    shape = CircleShape,
-                                    color = Color(0xFFF2F2F2),
-                                    onClick = {
-                                        if (likedTracks.isNotEmpty()) viewModel.playQueue(likedTracks, 0)
-                                    }
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.PlayArrow,
-                                            contentDescription = "Play",
-                                            tint = KangleiDark,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Liked Songs",
+                                    color = KangleiDark,
+                                    fontSize = 16.sp,
+                                    fontFamily = SyneFontFamily,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "${likedTracks.size} saved tracks • Auto Playlist",
+                                    color = KangleiTextSecondary,
+                                    fontSize = 12.sp,
+                                    fontFamily = OutfitFontFamily
+                                )
+                            }
+
+                            Surface(
+                                modifier = Modifier.size(38.dp),
+                                shape = CircleShape,
+                                color = KangleiPillBg,
+                                onClick = {
+                                    if (likedTracks.isNotEmpty()) viewModel.playQueue(likedTracks, 0)
+                                }
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.PlayArrow,
+                                        contentDescription = "Play",
+                                        tint = KangleiPillText,
+                                        modifier = Modifier.size(18.dp)
+                                    )
                                 }
                             }
                         }
@@ -241,7 +335,7 @@ fun LibraryScreen(
                 }
 
                 // Other Playlists
-                items(playlists) { pl ->
+                items(filteredPlaylists) { pl ->
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -296,7 +390,7 @@ fun LibraryScreen(
                                 Surface(
                                     modifier = Modifier.size(32.dp),
                                     shape = CircleShape,
-                                    color = Color(0xFFF2F2F2),
+                                    color = KangleiCardElevated,
                                     onClick = { onNavigateToPlaylist(pl.id) }
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
@@ -315,8 +409,7 @@ fun LibraryScreen(
             }
 
             LibraryTab.ALBUMS -> {
-                items(albums) { (album, artist, artUrl) ->
-
+                items(filteredAlbums) { (album, artist, artUrl) ->
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -369,36 +462,58 @@ fun LibraryScreen(
             }
 
             LibraryTab.ARTISTS -> {
-                items(artists) { (name, img) ->
-
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
+                // List rows for ARTISTS tab
+                items(filteredArtists, span = { GridItemSpan(2) }) { (name, img) ->
+                    Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onNavigateToArtist(name) }
-                            .padding(8.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable { onNavigateToArtist(name) },
+                        shape = RoundedCornerShape(16.dp),
+                        color = KangleiWhite
                     ) {
-                        Box(
+                        Row(
                             modifier = Modifier
-                                .size(110.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFFE0E0E0))
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            AsyncImage(
-                                model = img,
-                                contentDescription = name,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
+                            Box(
+                                modifier = Modifier
+                                    .size(54.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFE0E0E0))
+                            ) {
+                                AsyncImage(
+                                    model = img,
+                                    contentDescription = name,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = name,
+                                    color = KangleiDark,
+                                    fontSize = 15.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = "Artist",
+                                    color = KangleiTextSecondary,
+                                    fontSize = 12.sp,
+                                    fontFamily = OutfitFontFamily
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.Default.ChevronRight,
+                                contentDescription = null,
+                                tint = KangleiTextSecondary,
+                                modifier = Modifier.size(20.dp)
                             )
                         }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = name,
-                            color = KangleiDark,
-                            fontSize = 13.sp,
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Medium
-                        )
                     }
                 }
             }
@@ -407,7 +522,7 @@ fun LibraryScreen(
                 item(span = { GridItemSpan(2) }) {
                     Column {
                         Text(
-                            text = "${downloadedTracks.size} Offline Tracks",
+                            text = "${filteredDownloaded.size} Offline Tracks",
                             color = KangleiTextSecondary,
                             fontSize = 13.sp,
                             fontFamily = OutfitFontFamily,
@@ -416,16 +531,52 @@ fun LibraryScreen(
                     }
                 }
 
-                items(downloadedTracks, span = { GridItemSpan(2) }) { track ->
+                // List rows for DOWNLOADED tab
+                items(filteredDownloaded, span = { GridItemSpan(2) }) { track ->
                     TrackCard(
                         track = track,
                         isPlaying = playerState.currentTrack?.id == track.id,
                         onTrackClick = { viewModel.playTrack(track) },
                         onLikeClick = { viewModel.toggleLike(track) },
-                        onDownloadClick = { tier -> viewModel.startDownload(track, tier) }
+                        onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
+                        onPlayNextClick = { viewModel.playNext(track) },
+                        onAddToQueueClick = { viewModel.addToQueue(track) },
+                        onAddToPlaylistClick = { trackToAddToPlaylist = track },
+                        onGoToArtistClick = onNavigateToArtist,
+                        onRemoveDownloadClick = { viewModel.removeDownload(track.id) }
                     )
                 }
             }
         }
+    }
+
+    // Modals
+    trackToAddToPlaylist?.let { track ->
+        AddToPlaylistModal(
+            track = track,
+            playlists = playlists,
+            onSelectPlaylist = { playlistId ->
+                viewModel.addTrackToPlaylist(playlistId, track.id)
+                trackToAddToPlaylist = null
+            },
+            onCreateNewPlaylist = {
+                showCreatePlaylistDialog = true
+            },
+            onDismiss = {
+                trackToAddToPlaylist = null
+            }
+        )
+    }
+
+    if (showCreatePlaylistDialog) {
+        CreatePlaylistModal(
+            onConfirm = { name ->
+                viewModel.createPlaylist(name, "User created playlist")
+                showCreatePlaylistDialog = false
+            },
+            onDismiss = {
+                showCreatePlaylistDialog = false
+            }
+        )
     }
 }

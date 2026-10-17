@@ -69,7 +69,8 @@ data class Playlist(
     val description: String,
     val isLocal: Boolean = true,
     val trackCount: Int = 0,
-    val coverUrl: String? = null
+    val coverUrl: String? = null,
+    val isLiked: Boolean = false
 )
 
 enum class SegmentCategory(val displayName: String, val colorHex: Long) {

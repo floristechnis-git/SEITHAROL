@@ -26,8 +26,8 @@ class CascadeApplication : Application() {
 
         database = CascadeDatabase.getInstance(this)
         musicRepository = MusicRepository(database)
-        downloadRepository = DownloadRepository(this, database)
         resolverEngine = ResolverEngine()
+        downloadRepository = DownloadRepository(this, database, resolverEngine)
         audioPlayerManager = AudioPlayerManager(this, resolverEngine, musicRepository)
     }
 

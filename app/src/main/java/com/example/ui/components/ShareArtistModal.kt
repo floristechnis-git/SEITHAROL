@@ -34,7 +34,7 @@ fun ShareArtistModal(
     fun triggerShare() {
         val sendIntent: Intent = Intent().apply {
             action = Intent.ACTION_SEND
-            putExtra(Intent.EXTRA_TEXT, "Listen to $artistName on Kanglei Tune! Pure offline-first music streaming.")
+            putExtra(Intent.EXTRA_TEXT, "Listen to $artistName on Seitharol! Pure offline-first music streaming.")
             type = "text/plain"
         }
         val shareIntent = Intent.createChooser(sendIntent, "Share $artistName via")

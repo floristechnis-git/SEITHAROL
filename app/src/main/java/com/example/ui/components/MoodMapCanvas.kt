@@ -68,7 +68,7 @@ fun MoodMapCanvas(
                 .fillMaxWidth()
                 .height(180.dp)
                 .clip(RoundedCornerShape(14.dp))
-                .background(Color(0xFFF7F7F7))
+                .background(KangleiCardElevated)
         ) {
             Canvas(
                 modifier = Modifier
@@ -142,7 +142,7 @@ fun MoodMapCanvas(
 
             // Quadrant labels overlay
             Text(
-                text = "⚡ High Energy",
+                text = "High Energy",
                 color = KangleiTextSecondary,
                 fontSize = 10.sp,
                 fontFamily = OutfitFontFamily,
@@ -151,7 +151,7 @@ fun MoodMapCanvas(
                     .padding(top = 4.dp)
             )
             Text(
-                text = "🌙 Low Energy",
+                text = "Low Energy",
                 color = KangleiTextSecondary,
                 fontSize = 10.sp,
                 fontFamily = OutfitFontFamily,

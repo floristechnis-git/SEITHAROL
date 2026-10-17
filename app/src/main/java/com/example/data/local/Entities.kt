@@ -32,6 +32,7 @@ data class PlaylistEntity(
     val description: String,
     val isLocal: Boolean = true,
     val coverUrl: String? = null,
+    val isLiked: Boolean = false,
     val createdAt: Long = System.currentTimeMillis()
 )
 

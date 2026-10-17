@@ -193,6 +193,14 @@ fun AddToPlaylistModal(
 }
 
 @Composable
+fun CreatePlaylistModal(
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    CreatePlaylistDialog(onConfirm = onConfirm, onDismiss = onDismiss)
+}
+
+@Composable
 fun CreatePlaylistDialog(
     onConfirm: (String) -> Unit,
     onDismiss: () -> Unit

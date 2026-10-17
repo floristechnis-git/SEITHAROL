@@ -64,7 +64,7 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
     }
 
     // Base64 protobuf for song-only filter
-    private const val SEARCH_PARAMS_SONGS = "EgWKAQIIAWoQEAMQBBAJEAoQBRAREBAQFQ=="
+    private val SEARCH_PARAMS_SONGS = "EgWKAQIIAWoQEAMQBBAJEAoQBRAREBAQFQ=="
 
     override suspend fun searchTracks(query: String, limit: Int): List<NormalizedTrack> =
         withContext(Dispatchers.IO) {

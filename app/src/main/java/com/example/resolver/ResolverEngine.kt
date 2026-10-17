@@ -259,8 +259,4 @@ class ResolverEngine {
         streamCache[track.id] = finalStream
         return finalStream
     }
-
-    fun clearCache() {
-        streamCache.clear()
-    }
 }

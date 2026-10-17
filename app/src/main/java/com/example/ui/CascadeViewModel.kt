@@ -286,6 +286,8 @@ class CascadeViewModel(
         }
     }
 
+    fun removeDownload(trackId: String) = deleteDownload(trackId)
+
     fun setOfflineMode(enabled: Boolean) {
         resolverEngine.setOfflineMode(enabled)
     }

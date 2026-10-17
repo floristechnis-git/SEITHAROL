@@ -36,8 +36,10 @@ class MainActivity : ComponentActivity() {
             }
         }
         setContent {
-            val isDark by viewModel.isDarkMode.collectAsState()
-            CascadeTheme(darkTheme = isDark) {
+            val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
+            val userDarkSetting by viewModel.isDarkMode.collectAsState()
+            val effectiveDark = userDarkSetting ?: systemDark
+            CascadeTheme(darkTheme = effectiveDark) {
                 CascadeApp(viewModel = viewModel)
             }
         }

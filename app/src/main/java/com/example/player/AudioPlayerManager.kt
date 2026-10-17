@@ -379,18 +379,27 @@ class AudioPlayerManager(
                     }
                 }
 
-                // Verify local file if marked as downloaded
-                val safeTrack = if (current.isDownloaded && !current.localPath.isNullOrBlank()) {
-                    val f = File(current.localPath)
-                    if (!f.exists() || f.length() <= 10_240L) {
-                        Log.w(TAG, "Local file missing or corrupted for track ${current.id}, resolving remote stream")
-                        current.copy(isDownloaded = false, localPath = null)
-                    } else {
-                        current
-                    }
+                // Verify local file if marked as downloaded, or search local internal storage
+                val downloadDir = File(context.filesDir, "downloads")
+                val localCandidates = listOfNotNull(
+                    current.localPath?.let { File(it) },
+                    File(downloadDir, "${current.id}_high.opus"),
+                    File(downloadDir, "${current.id}_high.m4a"),
+                    File(downloadDir, "${current.id}_original.opus"),
+                    File(downloadDir, "${current.id}_original.m4a"),
+                    File(downloadDir, "${current.id}_standard.opus"),
+                    File(downloadDir, "${current.id}_standard.m4a"),
+                    File(downloadDir, "${current.id}_data saver.m4a")
+                )
+                val foundLocal = localCandidates.firstOrNull { it.exists() && it.length() > 10_240L }
+                val safeTrack = if (foundLocal != null) {
+                    current.copy(isDownloaded = true, localPath = foundLocal.absolutePath)
                 } else {
-                    current
+                    current.copy(isDownloaded = false, localPath = null)
                 }
+
+                // Record listening history in Room
+                musicRepository.recordPlayHistory(safeTrack)
 
                 // Resolve Stream using ResolverEngine
                 val stream = resolverEngine.resolveTrack(safeTrack)
@@ -414,6 +423,14 @@ class AudioPlayerManager(
             }
         } catch (t: Throwable) {
             Log.w(TAG, "Equalizer not supported on this session: ${t.message}")
+        }
+    }
+
+    fun pause() {
+        val player = exoPlayer ?: return
+        if (player.isPlaying) {
+            player.pause()
+            _state.value = _state.value.copy(isPlaying = false)
         }
     }
 

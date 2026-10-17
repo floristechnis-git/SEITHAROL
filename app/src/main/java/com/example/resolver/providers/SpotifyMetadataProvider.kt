@@ -149,7 +149,7 @@ class SpotifyMetadataProvider : MetadataProvider {
             val albumObj = item.optJSONObject("album")
             val albumName = albumObj?.optString("name") ?: "Single"
 
-            var artUrl = "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80"
+            var artUrl = ""
             val images = albumObj?.optJSONArray("images")
             if (images != null && images.length() > 0) {
                 val img = images.getJSONObject(0).optString("url")

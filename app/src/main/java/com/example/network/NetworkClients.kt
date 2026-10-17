@@ -361,7 +361,7 @@ object NetworkClients {
             }
 
             // 4. High-Res Thumbnail
-            var artUrl = "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80"
+            var artUrl = if (!videoId.isNullOrBlank()) "https://i.ytimg.com/vi/$videoId/hqdefault.jpg" else ""
             val thumbObj = item.optJSONObject("thumbnail")?.optJSONObject("musicThumbnailRenderer")?.optJSONObject("thumbnail")
             val thumbsArray = thumbObj?.optJSONArray("thumbnails")
             if (thumbsArray != null && thumbsArray.length() > 0) {

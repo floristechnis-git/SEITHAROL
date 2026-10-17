@@ -162,7 +162,7 @@ class MediaPlaybackService : Service() {
             val text = currentTrack?.artist ?: "Ready to play"
 
             val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_music_note)
+                .setSmallIcon(R.drawable.ic_splash_logo)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setContentIntent(openPendingIntent)
@@ -239,7 +239,7 @@ class MediaPlaybackService : Service() {
             val playPauseTitle = if (isPlaying) "Pause" else "Play"
 
             val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_music_note)
+                .setSmallIcon(R.drawable.ic_splash_logo)
                 .setContentTitle(track.title)
                 .setContentText(track.artist)
                 .setSubText(if (track.isDownloaded) "Offline" else "Streaming")
@@ -284,6 +284,17 @@ class MediaPlaybackService : Service() {
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
+        }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        try {
+            playerManager?.pause()
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        } catch (e: Exception) {
+            Log.e(TAG, "onTaskRemoved error: ${e.message}")
         }
     }
 

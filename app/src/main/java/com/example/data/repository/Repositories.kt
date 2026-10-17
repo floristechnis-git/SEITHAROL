@@ -12,6 +12,11 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import java.io.File
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import com.example.R
 import java.io.FileOutputStream
 
 class MusicRepository(
@@ -21,6 +26,9 @@ class MusicRepository(
     private val playlistDao = db.playlistDao()
     private val checkpointDao = db.checkpointDao()
     private val sponsorDao = db.sponsorDao()
+    private val historyDao = db.historyDao()
+
+    private val fifteenDaysMillis = 15L * 24 * 60 * 60 * 1000L
 
     fun getAllTracks(): Flow<List<Track>> = trackDao.getAllTracks().map { list ->
         list.map { it.toDomain() }
@@ -38,6 +46,38 @@ class MusicRepository(
         list.map { it.toDomain() }
     }
 
+    fun getActiveHistory(): Flow<List<Track>> {
+        val cutoff = System.currentTimeMillis() - fifteenDaysMillis
+        return historyDao.getActiveHistory(cutoff).map { list ->
+            list.map { it.toDomain() }
+        }
+    }
+
+    fun getArchivedHistory(): Flow<List<Track>> {
+        val cutoff = System.currentTimeMillis() - fifteenDaysMillis
+        return historyDao.getArchivedHistory(cutoff).map { list ->
+            list.map { it.toDomain() }
+        }
+    }
+
+    suspend fun recordPlayHistory(track: Track) = withContext(Dispatchers.IO) {
+        // Cache track metadata in Room for offline access
+        trackDao.insertTrack(track.toEntity())
+        historyDao.insertHistory(
+            PlayHistoryEntity(
+                trackId = track.id,
+                title = track.title,
+                artist = track.artist,
+                album = track.album,
+                durationMs = track.durationMs,
+                artUrl = track.artUrl,
+                genre = track.genre,
+                isLiked = track.isLiked,
+                playedAt = System.currentTimeMillis()
+            )
+        )
+    }
+
     suspend fun getTrackById(id: String): Track? = withContext(Dispatchers.IO) {
         trackDao.getTrackById(id)?.toDomain()
     }
@@ -50,6 +90,16 @@ class MusicRepository(
             val maxV = (centerValence + delta).coerceAtMost(1f)
             trackDao.getTracksByMood(minE, maxE, minV, maxV).map { it.toDomain() }
         }
+
+    suspend fun toggleLike(track: Track) = withContext(Dispatchers.IO) {
+        val existing = trackDao.getTrackById(track.id)
+        if (existing == null) {
+            val newTrack = track.copy(isLiked = true)
+            trackDao.insertTrack(newTrack.toEntity())
+        } else {
+            trackDao.setLiked(track.id, !existing.isLiked)
+        }
+    }
 
     suspend fun toggleLike(id: String, current: Boolean) = withContext(Dispatchers.IO) {
         trackDao.setLiked(id, !current)
@@ -170,6 +220,17 @@ class MusicRepository(
         codec = codec
     )
 
+    private fun PlayHistoryEntity.toDomain() = Track(
+        id = trackId,
+        title = title,
+        artist = artist,
+        album = album,
+        durationMs = durationMs,
+        artUrl = artUrl,
+        genre = genre,
+        isLiked = isLiked
+    )
+
     private fun Track.toEntity() = TrackEntity(
         id = id,
         title = title,
@@ -198,6 +259,57 @@ class DownloadRepository(
 ) {
     private val downloadDao = db.downloadDao()
     private val trackDao = db.trackDao()
+    private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+    private val DOWNLOAD_CHANNEL_ID = "seitharol_download_channel"
+
+    init {
+        createDownloadNotificationChannel()
+    }
+
+    private fun createDownloadNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                DOWNLOAD_CHANNEL_ID,
+                "Seitharol Downloads",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Shows download progress and completion notifications"
+                setShowBadge(false)
+            }
+            notificationManager?.createNotificationChannel(channel)
+        }
+    }
+
+    private fun updateDownloadNotification(title: String, progress: Int, isCompleted: Boolean = false, isFailed: Boolean = false) {
+        try {
+            val notifTitle = when {
+                isFailed -> "Download Failed"
+                isCompleted -> "Download Completed"
+                else -> "Downloading $title"
+            }
+            val notifText = when {
+                isFailed -> "$title • Tap to retry"
+                isCompleted -> "$title is ready for offline playback"
+                else -> "$progress%"
+            }
+            val builder = NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_splash_logo)
+                .setContentTitle(notifTitle)
+                .setContentText(notifText)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setOngoing(!isCompleted && !isFailed)
+
+            if (!isCompleted && !isFailed) {
+                builder.setProgress(100, progress, false)
+            } else {
+                builder.setProgress(0, 0, false)
+            }
+
+            notificationManager?.notify(title.hashCode(), builder.build())
+        } catch (e: Exception) {
+            Log.w("DownloadRepository", "Notification error: ${e.message}")
+        }
+    }
 
     fun getAllDownloads(): Flow<List<DownloadItem>> = downloadDao.getAllDownloads().map { list ->
         list.map { entity ->
@@ -298,6 +410,7 @@ class DownloadRepository(
                                         totalBytes = contentLength
                                     )
                                 )
+                                updateDownloadNotification(track.title, (progress * 100).toInt())
                             }
                         }
                         output.flush()
@@ -322,6 +435,7 @@ class DownloadRepository(
                         )
                     )
                     trackDao.setDownloaded(track.id, true, finalFile.absolutePath)
+                    updateDownloadNotification(track.title, 100, isCompleted = true)
                 } else {
                     if (tempFile.exists()) tempFile.delete()
                     throw IllegalStateException("Downloaded file was corrupt or smaller than 10KB (${tempFile.length()} bytes)")
@@ -341,6 +455,31 @@ class DownloadRepository(
                     bytesDownloaded = 0L,
                     totalBytes = 0L
                 )
+            )
+            updateDownloadNotification(track.title, 0, isFailed = true)
+        }
+    }
+
+    suspend fun retryDownload(trackId: String) = withContext(Dispatchers.IO) {
+        val track = trackDao.getTrackById(trackId)
+        if (track != null) {
+            startDownload(
+                Track(
+                    id = track.id,
+                    title = track.title,
+                    artist = track.artist,
+                    album = track.album,
+                    durationMs = track.durationMs,
+                    artUrl = track.artUrl,
+                    isDownloaded = false,
+                    localPath = null,
+                    isLiked = track.isLiked,
+                    genre = track.genre,
+                    audioUrl = track.audioUrl,
+                    itag = track.itag,
+                    codec = track.codec
+                ),
+                DownloadTier.HIGH
             )
         }
     }

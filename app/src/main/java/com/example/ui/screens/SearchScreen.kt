@@ -74,15 +74,13 @@ fun SearchScreen(
         )
     }
 
-    val allArtists = remember {
-        listOf(
-            Pair("Taylor Swift", "https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=400&auto=format&fit=crop&q=80"),
-            Pair("Coldplay", "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80"),
-            Pair("Ed Sheeran", "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&auto=format&fit=crop&q=80"),
-            Pair("Arijit Singh", "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=400&auto=format&fit=crop&q=80"),
-            Pair("Tapta", "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&auto=format&fit=crop&q=80"),
-            Pair("Ronnie", "https://images.unsplash.com/photo-1518495973542-4542c06a5843?w=400&auto=format&fit=crop&q=80")
-        )
+    val allTracksList by viewModel.allTracks.collectAsState()
+    val historyTracks by viewModel.activeHistory.collectAsState()
+    val allArtists = remember(allTracksList, historyTracks, searchResults) {
+        (searchResults + historyTracks + allTracksList)
+            .filter { it.artist.isNotBlank() && it.artist != "Unknown Artist" }
+            .distinctBy { it.artist }
+            .map { Pair(it.artist, it.artUrl) }
     }
 
     val filteredTracks = searchResults
@@ -161,10 +159,12 @@ fun SearchScreen(
                             decorationBox = { innerTextField ->
                                 if (query.isEmpty()) {
                                     Text(
-                                        text = "Search YouTube Music songs, artists...",
+                                        text = "Search songs, artists, albums...",
                                         color = KangleiTextSecondary,
                                         fontSize = 15.sp,
-                                        fontFamily = OutfitFontFamily
+                                        fontFamily = OutfitFontFamily,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                                 innerTextField()
@@ -217,6 +217,41 @@ fun SearchScreen(
                             fontFamily = OutfitFontFamily,
                             fontWeight = FontWeight.Medium
                         )
+                    }
+                }
+            }
+        }
+
+        // Multi-Source Provider Filter Chips (All, YouTube, Spotify, JioSaavn, Gaana, Downloaded)
+        item {
+            val selectedProvider by viewModel.selectedProviderFilter.collectAsState()
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(bottom = 12.dp)
+            ) {
+                items(com.example.ui.ProviderFilter.values()) { provider ->
+                    val isSelected = selectedProvider == provider
+                    Surface(
+                        modifier = Modifier
+                            .height(34.dp)
+                            .clip(RoundedCornerShape(17.dp))
+                            .clickable { viewModel.selectProviderFilter(provider) },
+                        shape = RoundedCornerShape(17.dp),
+                        color = if (isSelected) KangleiDark else KangleiWhite
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.padding(horizontal = 14.dp)
+                        ) {
+                            Text(
+                                text = provider.label,
+                                color = if (isSelected) KangleiWhite else KangleiDark,
+                                fontSize = 13.sp,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                        }
                     }
                 }
             }

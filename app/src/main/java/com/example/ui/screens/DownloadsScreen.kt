@@ -168,7 +168,8 @@ fun DownloadsScreen(
             items(downloads) { item ->
                 DownloadItemRow(
                     item = item,
-                    onDelete = { viewModel.deleteDownload(item.trackId) }
+                    onDelete = { viewModel.deleteDownload(item.trackId) },
+                    onRetry = { viewModel.retryDownload(item.trackId) }
                 )
             }
         }
@@ -178,7 +179,8 @@ fun DownloadsScreen(
 @Composable
 fun DownloadItemRow(
     item: DownloadItem,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onRetry: () -> Unit
 ) {
     Surface(
         modifier = Modifier
@@ -225,6 +227,69 @@ fun DownloadItemRow(
                     )
                 }
 
+                when (item.state) {
+                    DownloadState.COMPLETED -> {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0x2000E676),
+                            modifier = Modifier.padding(end = 4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = "Completed",
+                                    tint = Color(0xFF00C853),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Saved", color = Color(0xFF00C853), fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = OutfitFontFamily)
+                            }
+                        }
+                    }
+                    DownloadState.ERROR -> {
+                        IconButton(
+                            onClick = onRetry,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Retry download",
+                                tint = Color(0xFFFF5252),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    DownloadState.DOWNLOADING, DownloadState.FINALIZING -> {
+                        Text(
+                            text = "${(item.progress * 100).toInt()}%",
+                            color = KangleiDark,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = OutfitFontFamily,
+                            modifier = Modifier.padding(end = 4.dp)
+                        )
+                    }
+                    DownloadState.QUEUED -> {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0x20FFA000),
+                            modifier = Modifier.padding(end = 4.dp)
+                        ) {
+                            Text(
+                                "Queued",
+                                color = Color(0xFFFFA000),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                fontFamily = OutfitFontFamily,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+
                 IconButton(
                     onClick = onDelete,
                     modifier = Modifier.size(36.dp)
@@ -238,15 +303,24 @@ fun DownloadItemRow(
                 }
             }
 
-            if (item.state != DownloadState.COMPLETED) {
+            if (item.state == DownloadState.DOWNLOADING || item.state == DownloadState.FINALIZING) {
                 Spacer(modifier = Modifier.height(8.dp))
                 LinearProgressIndicator(
                     progress = { item.progress },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(3.dp),
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp)),
                     color = KangleiDark,
                     trackColor = Color(0xFFE0E0E0)
+                )
+            } else if (item.state == DownloadState.ERROR) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Download error • Tap retry or remove",
+                    color = Color(0xFFFF5252),
+                    fontSize = 11.sp,
+                    fontFamily = OutfitFontFamily
                 )
             }
         }

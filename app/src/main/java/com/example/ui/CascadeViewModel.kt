@@ -20,6 +20,15 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
+enum class ProviderFilter(val label: String) {
+    ALL("All"),
+    YOUTUBE("YouTube"),
+    SPOTIFY("Spotify"),
+    JIOSAAVN("JioSaavn"),
+    GAANA("Gaana"),
+    LOCAL("Downloaded")
+}
+
 enum class SearchFilter(val label: String) {
     ALL("All"),
     OFFLINE_ONLY("Offline Only"),
@@ -45,6 +54,12 @@ class CascadeViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val downloadedTracks: StateFlow<List<Track>> = musicRepository.getDownloadedTracks()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val activeHistory: StateFlow<List<Track>> = musicRepository.getActiveHistory()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val archivedHistory: StateFlow<List<Track>> = musicRepository.getArchivedHistory()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val playlists: StateFlow<List<Playlist>> = musicRepository.getPlaylists()
@@ -75,9 +90,55 @@ class CascadeViewModel(
     // Search state
     val searchQuery = MutableStateFlow("")
     val searchFilter = MutableStateFlow(SearchFilter.ALL)
+    val selectedProviderFilter = MutableStateFlow(ProviderFilter.ALL)
     private val onlineSearchResults = MutableStateFlow<List<Track>>(emptyList())
     val isSearchingOnline = MutableStateFlow(false)
     val searchSuggestions = MutableStateFlow<List<String>>(emptyList())
+
+    fun selectProviderFilter(filter: ProviderFilter) {
+        selectedProviderFilter.value = filter
+        searchWithProvider(searchQuery.value, filter)
+    }
+
+    private fun searchWithProvider(query: String, filter: ProviderFilter) {
+        val clean = query.trim()
+        if (clean.length < 2 || isOfflineMode.value) return
+        viewModelScope.launch {
+            isSearchingOnline.value = true
+            try {
+                when (filter) {
+                    ProviderFilter.ALL -> {
+                        val yt = resolverEngine.youtubeInnerTubeProvider.searchTracks(clean, limit = 15).map { it.toDomainTrack() }
+                        val saavn = resolverEngine.jioSaavnProvider.searchTracks(clean, limit = 10).map { it.toDomainTrack() }
+                        onlineSearchResults.value = yt + saavn
+                    }
+                    ProviderFilter.YOUTUBE -> {
+                        val yt = resolverEngine.youtubeInnerTubeProvider.searchTracks(clean, limit = 25).map { it.toDomainTrack() }
+                        onlineSearchResults.value = yt
+                    }
+                    ProviderFilter.JIOSAAVN -> {
+                        val saavn = resolverEngine.jioSaavnProvider.searchTracks(clean, limit = 25).map { it.toDomainTrack() }
+                        onlineSearchResults.value = saavn
+                    }
+                    ProviderFilter.SPOTIFY -> {
+                        val spot = resolverEngine.spotifyProvider.searchTracks(clean, limit = 25).map { it.toDomainTrack() }
+                        onlineSearchResults.value = spot
+                    }
+                    ProviderFilter.GAANA -> {
+                        val gaana = resolverEngine.jioSaavnProvider.searchTracks("$clean Hindi", limit = 25).map { it.toDomainTrack() }
+                        onlineSearchResults.value = gaana
+                    }
+                    ProviderFilter.LOCAL -> {
+                        onlineSearchResults.value = emptyList()
+                    }
+                }
+            } catch (e: Exception) {
+                // Keep previous results on failure
+            } finally {
+                isSearchingOnline.value = false
+            }
+        }
+    }
 
     init {
         // 1. Initial load of real YouTube Music for Home Screen & Personalization
@@ -90,18 +151,12 @@ class CascadeViewModel(
                 .collectLatest { query ->
                     val clean = query.trim()
                     if (clean.length >= 2 && !isOfflineMode.value) {
-                        isSearchingOnline.value = true
+                        searchWithProvider(clean, selectedProviderFilter.value)
                         try {
-                            val liveResults = NetworkClients.searchInnerTube(clean)
-                            onlineSearchResults.value = liveResults
-                            // Also fetch search suggestions
                             val suggestions = NetworkClients.getSearchSuggestions(clean)
                             searchSuggestions.value = suggestions
                         } catch (e: Exception) {
-                            onlineSearchResults.value = emptyList()
                             searchSuggestions.value = emptyList()
-                        } finally {
-                            isSearchingOnline.value = false
                         }
                     } else {
                         onlineSearchResults.value = emptyList()
@@ -210,9 +265,10 @@ class CascadeViewModel(
     val searchResults: StateFlow<List<Track>> = combine(
         searchQuery,
         searchFilter,
+        selectedProviderFilter,
         allTracks,
         onlineSearchResults
-    ) { query, filter, localTracks, onlineTracks ->
+    ) { query, filter, provider, localTracks, onlineTracks ->
         val localFiltered = if (query.isBlank()) {
             localTracks
         } else {
@@ -224,8 +280,10 @@ class CascadeViewModel(
             }
         }
 
-        // Merge online and local matches, prioritizing online YouTube Music results when searching
-        val combined = if (query.isNotBlank() && onlineTracks.isNotEmpty()) {
+        // Merge online and local matches, prioritizing online results when searching
+        val combined = if (provider == ProviderFilter.LOCAL) {
+            localTracks.filter { it.isDownloaded }
+        } else if (query.isNotBlank() && onlineTracks.isNotEmpty()) {
             val localIds = localFiltered.map { it.id }.toSet()
             onlineTracks + localFiltered.filter { it.id !in onlineTracks.map { t -> t.id }.toSet() }
         } else if (onlineTracks.isNotEmpty()) {
@@ -270,13 +328,19 @@ class CascadeViewModel(
 
     fun toggleLike(track: Track) {
         viewModelScope.launch {
-            musicRepository.toggleLike(track.id, track.isLiked)
+            musicRepository.toggleLike(track)
         }
     }
 
     fun startDownload(track: Track, tier: DownloadTier = DownloadTier.HIGH) {
         viewModelScope.launch {
             downloadRepository.startDownload(track, tier)
+        }
+    }
+
+    fun retryDownload(trackId: String) {
+        viewModelScope.launch {
+            downloadRepository.retryDownload(trackId)
         }
     }
 
@@ -343,9 +407,10 @@ class CascadeViewModel(
     fun setSleepTimer(minutes: Int) = playerManager.setSleepTimer(minutes)
     fun adjustLyricOffset(deltaMs: Long) = playerManager.adjustLyricOffset(deltaMs)
 
-    val isDarkMode = MutableStateFlow(false)
-    fun toggleDarkMode() {
-        isDarkMode.value = !isDarkMode.value
+    val isDarkMode = MutableStateFlow<Boolean?>(null)
+    fun toggleDarkMode(currentIsDark: Boolean = false) {
+        val current = isDarkMode.value ?: currentIsDark
+        isDarkMode.value = !current
     }
     fun setDarkMode(enabled: Boolean) {
         isDarkMode.value = enabled

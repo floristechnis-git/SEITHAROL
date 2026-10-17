@@ -40,6 +40,7 @@ enum class LibraryTab(val label: String) {
     PLAYLISTS("Playlists"),
     ALBUMS("Albums"),
     ARTISTS("Artists"),
+    HISTORY("History"),
     DOWNLOADED("Downloaded")
 }
 
@@ -56,8 +57,11 @@ fun LibraryScreen(
     val likedTracks by viewModel.likedTracks.collectAsState()
     val downloadedTracks by viewModel.downloadedTracks.collectAsState()
     val allTracks by viewModel.allTracks.collectAsState()
+    val activeHistory by viewModel.activeHistory.collectAsState()
+    val archivedHistory by viewModel.archivedHistory.collectAsState()
 
     var selectedTab by remember { mutableStateOf(LibraryTab.PLAYLISTS) }
+    var historyViewMode by remember { mutableStateOf("active") } // "active" (15 days) or "archived"
     var librarySearchQuery by remember { mutableStateOf("") }
     var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
@@ -68,14 +72,11 @@ fun LibraryScreen(
         }
     }
 
-    val artists = remember(allTracks) {
-        listOf(
-            Pair("Tapta", "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&auto=format&fit=crop&q=80"),
-            Pair("Ronnie", "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&auto=format&fit=crop&q=80"),
-            Pair("Kanglei Folk Project", "https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=400&auto=format&fit=crop&q=80"),
-            Pair("Eastern Rhythms", "https://images.unsplash.com/photo-1518495973542-4542c06a5843?w=400&auto=format&fit=crop&q=80"),
-            Pair("Imphal Rock Collective", "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80")
-        )
+    val artists = remember(allTracks, likedTracks) {
+        (allTracks + likedTracks)
+            .filter { it.artist.isNotBlank() && it.artist != "Unknown Artist" }
+            .distinctBy { it.artist }
+            .map { Pair(it.artist, it.artUrl) }
     }
 
     val filteredPlaylists = remember(playlists, librarySearchQuery) {
@@ -514,6 +515,94 @@ fun LibraryScreen(
                                 modifier = Modifier.size(20.dp)
                             )
                         }
+                    }
+                }
+            LibraryTab.HISTORY -> {
+                // Header toggle between Active History (15 Days) and Archived History (> 15 Days)
+                item(span = { GridItemSpan(2) }) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            modifier = Modifier
+                                .height(32.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable { historyViewMode = "active" },
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (historyViewMode == "active") KangleiDark else KangleiWhite
+                        ) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.padding(horizontal = 14.dp)
+                            ) {
+                                Text(
+                                    text = "Recent (15 Days) • ${activeHistory.size}",
+                                    color = if (historyViewMode == "active") KangleiWhite else KangleiDark,
+                                    fontSize = 12.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = if (historyViewMode == "active") FontWeight.SemiBold else FontWeight.Normal
+                                )
+                            }
+                        }
+
+                        Surface(
+                            modifier = Modifier
+                                .height(32.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable { historyViewMode = "archived" },
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (historyViewMode == "archived") KangleiDark else KangleiWhite
+                        ) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.padding(horizontal = 14.dp)
+                            ) {
+                                Text(
+                                    text = "Archived (> 15 Days) • ${archivedHistory.size}",
+                                    color = if (historyViewMode == "archived") KangleiWhite else KangleiDark,
+                                    fontSize = 12.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = if (historyViewMode == "archived") FontWeight.SemiBold else FontWeight.Normal
+                                )
+                            }
+                        }
+                    }
+                }
+
+                val currentHistoryList = if (historyViewMode == "active") activeHistory else archivedHistory
+
+                if (currentHistoryList.isEmpty()) {
+                    item(span = { GridItemSpan(2) }) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 40.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (historyViewMode == "active") "No tracks played in the last 15 days" else "No archived history entries",
+                                color = KangleiTextSecondary,
+                                fontFamily = OutfitFontFamily,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                } else {
+                    items(currentHistoryList, span = { GridItemSpan(2) }) { track ->
+                        TrackCard(
+                            track = track,
+                            isPlaying = playerState.currentTrack?.id == track.id,
+                            onTrackClick = { viewModel.playTrack(track) },
+                            onLikeClick = { viewModel.toggleLike(track) },
+                            onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
+                            onPlayNextClick = { viewModel.playNext(track) },
+                            onAddToQueueClick = { viewModel.addToQueue(track) },
+                            onAddToPlaylistClick = { trackToAddToPlaylist = track },
+                            onGoToArtistClick = onNavigateToArtist
+                        )
                     }
                 }
             }

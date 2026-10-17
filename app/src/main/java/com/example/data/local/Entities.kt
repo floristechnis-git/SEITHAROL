@@ -81,3 +81,17 @@ data class SponsorSegmentEntity(
     val endMs: Long,
     val autoSkip: Boolean = true
 )
+
+@Entity(tableName = "play_history")
+data class PlayHistoryEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val trackId: String,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val durationMs: Long,
+    val artUrl: String,
+    val genre: String = "Pop",
+    val isLiked: Boolean = false,
+    val playedAt: Long = System.currentTimeMillis()
+)

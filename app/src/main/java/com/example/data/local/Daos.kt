@@ -128,3 +128,21 @@ interface SponsorDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSegments(segments: List<SponsorSegmentEntity>)
 }
+
+@Dao
+interface HistoryDao {
+    @Query("SELECT * FROM play_history WHERE playedAt >= :sinceTimestamp ORDER BY playedAt DESC")
+    fun getActiveHistory(sinceTimestamp: Long): Flow<List<PlayHistoryEntity>>
+
+    @Query("SELECT * FROM play_history WHERE playedAt < :sinceTimestamp ORDER BY playedAt DESC")
+    fun getArchivedHistory(sinceTimestamp: Long): Flow<List<PlayHistoryEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertHistory(item: PlayHistoryEntity)
+
+    @Query("DELETE FROM play_history WHERE id = :id")
+    suspend fun deleteHistory(id: Long)
+
+    @Query("DELETE FROM play_history")
+    suspend fun clearHistory()
+}

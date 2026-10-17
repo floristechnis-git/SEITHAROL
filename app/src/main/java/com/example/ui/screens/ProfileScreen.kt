@@ -126,11 +126,11 @@ fun ProfileScreen(
                                 .background(Color(0xFF333333)),
                             contentAlignment = Alignment.Center
                         ) {
-                            AsyncImage(
-                                model = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80",
+                            Icon(
+                                imageVector = Icons.Default.Person,
                                 contentDescription = "Profile Photo",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
+                                tint = Color.White,
+                                modifier = Modifier.size(54.dp)
                             )
                         }
 

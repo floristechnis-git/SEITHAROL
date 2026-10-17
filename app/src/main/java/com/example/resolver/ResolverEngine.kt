@@ -204,51 +204,43 @@ class ResolverEngine {
         if (resolvedStream == null) {
             // Primary: On-Device YouTube InnerTube Provider
             try {
-                resolvedStream = youtubeInnerTubeProvider.resolveStream(track.id, preferredKbps = 160)
+                if (track.id.length == 11 && !track.id.contains(" ") && !track.id.startsWith("pl_")) {
+                    resolvedStream = youtubeInnerTubeProvider.resolveStream(track.id, preferredKbps = 160)
+                }
             } catch (e: Exception) {
-                Log.w(TAG, "On-device InnerTube failed for ${track.id}: ${e.message}")
+                Log.w(TAG, "On-device InnerTube direct resolve failed for ${track.id}: ${e.message}")
             }
         }
 
-        // Fallback 1: On-Device JioSaavn search match if YouTube failed
+        // Fallback 1: On-Device YouTube Music search and full audio stream extraction
+        if (resolvedStream == null) {
+            try {
+                val query = "${track.title} ${track.artist}".trim()
+                if (query.isNotBlank()) {
+                    val ytResults = youtubeInnerTubeProvider.searchTracks(query, limit = 3)
+                    val match = ytResults.firstOrNull()
+                    if (match != null && match.sourceId.isNotBlank()) {
+                        resolvedStream = youtubeInnerTubeProvider.resolveStream(match.sourceId, preferredKbps = 160)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "YouTube search fallback failed: ${e.message}")
+            }
+        }
+
+        // Fallback 2: On-Device JioSaavn search match (Full 320kbps AAC stream)
         if (resolvedStream == null) {
             try {
                 val query = "${track.artist} ${track.title}".trim()
-                val results = jioSaavnProvider.searchTracks(query, limit = 3)
-                val match = results.firstOrNull()
-                if (match != null) {
-                    resolvedStream = jioSaavnProvider.resolveStream(match.sourceId, preferredKbps = 320)
+                if (query.isNotBlank()) {
+                    val results = jioSaavnProvider.searchTracks(query, limit = 3)
+                    val match = results.firstOrNull()
+                    if (match != null) {
+                        resolvedStream = jioSaavnProvider.resolveStream(match.sourceId, preferredKbps = 320)
+                    }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "JioSaavn search fallback failed: ${e.message}")
-            }
-        }
-
-        // Fallback 2: Studio Master CDN
-        if (resolvedStream == null) {
-            try {
-                val req = ResolveRequest(
-                    videoId = track.id,
-                    title = track.title,
-                    artist = track.artist
-                )
-                val master = studioResolver.resolve(req)
-                val bestFormat = master.formats.firstOrNull()
-                if (bestFormat != null) {
-                    resolvedStream = ResolvedStream(
-                        videoId = track.id,
-                        streamUrl = bestFormat.url,
-                        itag = 140,
-                        codec = "AAC 256k",
-                        bitrate = "256 kbps",
-                        expiresAtMs = now + (24 * 3600 * 1000L),
-                        isLocal = false,
-                        resolvedBy = "Studio Master CDN",
-                        latencyMs = (System.currentTimeMillis() - startTime).coerceAtLeast(10)
-                    )
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Studio Master fallback failed: ${e.message}")
             }
         }
 

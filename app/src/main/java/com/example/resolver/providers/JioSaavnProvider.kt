@@ -218,8 +218,6 @@ class JioSaavnProvider : AudioStreamProvider {
         var image = item.optString("image", "")
         if (image.isNotBlank()) {
             image = image.replace("150x150", "500x500").replace("http://", "https://")
-        } else {
-            image = "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80"
         }
 
         return SaavnTrackInfo(

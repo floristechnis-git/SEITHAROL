@@ -18,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -197,64 +198,42 @@ fun PlayerScreen(
                 }
             }
         } else {
-            // Center Vinyl Album Art
+            // Modern Edge-to-Edge Rounded Album Artwork Container
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
+                    .weight(1f)
+                    .padding(horizontal = 24.dp, vertical = 12.dp),
                 contentAlignment = Alignment.Center
             ) {
-                // Vinyl Disc
-                Box(
+                val scale by animateFloatAsState(
+                    targetValue = if (playerState.isPlaying) 1f else 0.94f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessLow
+                    ),
+                    label = "artwork_scale"
+                )
+
+                Surface(
                     modifier = Modifier
-                        .size(260.dp)
-                        .shadow(elevation = 20.dp, shape = CircleShape)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.radialGradient(
-                                colors = listOf(
-                                    Color(0xFF222222),
-                                    Color(0xFF0D0D0D),
-                                    Color(0xFF333333),
-                                    Color(0xFF0D0D0D),
-                                    Color(0xFF262626),
-                                    Color(0xFF0D0D0D)
-                                )
-                            )
+                        .size(280.dp)
+                        .scale(scale)
+                        .shadow(
+                            elevation = 24.dp,
+                            shape = RoundedCornerShape(28.dp),
+                            ambientColor = Color(0x33000000),
+                            spotColor = Color(0x55000000)
                         )
-                        .rotate(if (playerState.isPlaying) rotation else 0f),
-                    contentAlignment = Alignment.Center
+                        .clip(RoundedCornerShape(28.dp)),
+                    shape = RoundedCornerShape(28.dp),
+                    color = KangleiWhite
                 ) {
-                    // Outer Groove Ring
-                    Box(
-                        modifier = Modifier
-                            .size(210.dp)
-                            .clip(CircleShape)
-                            .background(Color(0x1AFFFFFF))
-                    )
-
-                    // Center Album Artwork Circle
-                    Box(
-                        modifier = Modifier
-                            .size(120.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFE0E0E0)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        AsyncImage(
-                            model = track.artUrl,
-                            contentDescription = track.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-
-                    // Center Spindle Hole
-                    Box(
-                        modifier = Modifier
-                            .size(20.dp)
-                            .clip(CircleShape)
-                            .background(KangleiBg)
+                    AsyncImage(
+                        model = track.artUrl,
+                        contentDescription = track.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
                     )
                 }
             }
@@ -286,11 +265,17 @@ fun PlayerScreen(
             )
         }
 
-        // Secondary Actions Row (EQ, Timer, Share, Lyrics)
+        // Secondary Actions Row (EQ, Timer, Download, Share, Lyrics, Queue)
+        val downloads by viewModel.activeDownloads.collectAsState()
+        val trackDownload = downloads.firstOrNull { it.trackId == track.id }
+        val isDownloaded = track.isDownloaded || trackDownload?.state == com.example.data.model.DownloadState.COMPLETED
+        val isDownloading = trackDownload?.state == com.example.data.model.DownloadState.DOWNLOADING || trackDownload?.state == com.example.data.model.DownloadState.FINALIZING
+        val downloadProgress = trackDownload?.progress ?: 0f
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 4.dp),
+                .padding(horizontal = 20.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -300,6 +285,54 @@ fun PlayerScreen(
             IconButton(onClick = onOpenSleepTimer) {
                 Icon(Icons.Outlined.Timer, contentDescription = "Sleep Timer", tint = KangleiDark)
             }
+
+            // Real Download Button
+            IconButton(
+                onClick = {
+                    if (!isDownloaded && !isDownloading) {
+                        viewModel.startDownload(track, com.example.data.model.DownloadTier.HIGH)
+                    }
+                },
+                modifier = Modifier.size(40.dp)
+            ) {
+                when {
+                    isDownloaded -> {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = "Downloaded",
+                            tint = Color(0xFF00C853),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    isDownloading -> {
+                        Box(contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(
+                                progress = { downloadProgress },
+                                modifier = Modifier.size(24.dp),
+                                strokeWidth = 2.5.dp,
+                                color = KangleiDark,
+                                trackColor = Color(0xFFE0E0E0)
+                            )
+                            Text(
+                                text = "${(downloadProgress * 100).toInt()}%",
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = KangleiDark,
+                                fontFamily = OutfitFontFamily
+                            )
+                        }
+                    }
+                    else -> {
+                        Icon(
+                            imageVector = Icons.Default.Download,
+                            contentDescription = "Download track",
+                            tint = KangleiDark,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+            }
+
             IconButton(onClick = { onShareTrack(track.title) }) {
                 Icon(Icons.Outlined.Share, contentDescription = "Share", tint = KangleiDark)
             }

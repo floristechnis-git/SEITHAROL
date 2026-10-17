@@ -17,11 +17,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -54,25 +54,59 @@ fun HomeScreen(
     val selectedMood by viewModel.selectedMood.collectAsState()
     val isLoadingHome by viewModel.isLoadingHome.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
+    val activeHistory by viewModel.activeHistory.collectAsState()
+    val likedTracks by viewModel.likedTracks.collectAsState()
 
-    // Priority for Today's Biggest Hits: use real YouTube trendingHits if available, fallback to local
+    // Real trending hits or local fallback
     val displayHits = remember(trendingHits, allTracks) {
-        if (trendingHits.isNotEmpty()) trendingHits.take(12) else allTracks.take(8)
+        if (trendingHits.isNotEmpty()) trendingHits.take(15) else allTracks.take(10)
     }
 
-    // Priority for Personalized Mix: use personalizedTracks if available, fallback to allTracks
+    // Personalized Mix based on mood
     val displayPersonalized = remember(personalizedTracks, allTracks) {
-        if (personalizedTracks.isNotEmpty()) personalizedTracks.take(10) else allTracks
+        if (personalizedTracks.isNotEmpty()) personalizedTracks.take(12) else allTracks.take(10)
     }
 
-    // Priority for Popular Tracks list: combined real music catalog
+    // Fresh releases or fallback
+    val displayFresh = remember(freshReleases, displayHits, allTracks) {
+        if (freshReleases.isNotEmpty()) freshReleases.take(8)
+        else if (displayHits.isNotEmpty()) displayHits.take(8)
+        else allTracks.take(6)
+    }
+
+    // Quick Picks: 4-row grid generated from recent 15-day history and trending
+    val quickPicksTracks = remember(activeHistory, displayHits, allTracks) {
+        val pool = mutableListOf<Track>()
+        pool.addAll(activeHistory)
+        val existingIds = pool.map { it.id }.toSet()
+        for (t in displayHits) {
+            if (t.id !in existingIds) pool.add(t)
+        }
+        for (t in allTracks) {
+            if (t.id !in pool.map { it.id }.toSet()) pool.add(t)
+        }
+        pool.take(16)
+    }
+
+    // Combined catalog for Top Songs list
     val displayPopular = remember(trendingHits, allTracks) {
         if (trendingHits.isNotEmpty()) {
-            val localIds = allTracks.map { it.id }.toSet()
-            trendingHits + allTracks.filter { it.id !in trendingHits.map { t -> t.id }.toSet() }
+            val hitsIds = trendingHits.map { it.id }.toSet()
+            trendingHits + allTracks.filter { it.id !in hitsIds }
         } else {
             allTracks
         }
+    }
+
+    // Dynamic suggested artists derived from listening history, likes, and trending
+    val dynamicArtists = remember(activeHistory, likedTracks, trendingHits, allTracks) {
+        val pool = activeHistory + likedTracks + trendingHits + allTracks
+        pool.filter { it.artist.isNotBlank() && it.artist != "Unknown Artist" && it.artist != "Unknown" }
+            .groupBy { it.artist }
+            .map { (artistName, tracks) ->
+                Pair(artistName, tracks.firstOrNull { !it.artUrl.isNullOrBlank() }?.artUrl ?: "")
+            }
+            .take(12)
     }
 
     var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
@@ -92,6 +126,19 @@ fun HomeScreen(
         )
     }
 
+    val cardGradients = remember {
+        listOf(
+            listOf(Color(0xFF5A4D8C), Color(0xFF1E1736)),
+            listOf(Color(0xFF8C4D5A), Color(0xFF36171E)),
+            listOf(Color(0xFF3B6B5D), Color(0xFF122E25)),
+            listOf(Color(0xFF6B583B), Color(0xFF2E2212)),
+            listOf(Color(0xFF3B5B6B), Color(0xFF12222E)),
+            listOf(Color(0xFF6B3B5B), Color(0xFF2E1225))
+        )
+    }
+
+    val isDarkTheme = LocalIsDarkTheme.current
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -100,7 +147,7 @@ fun HomeScreen(
             .testTag("home_screen"),
         contentPadding = PaddingValues(bottom = 140.dp)
     ) {
-        // Top Bar: Vinyl Logo + App Name on left, Refresh + Notifications + Profile on right
+        // 1. Top Navigation Bar: Clean, well-spaced, no vinyl icon or text clutter
         item {
             Row(
                 modifier = Modifier
@@ -109,65 +156,23 @@ fun HomeScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // Vinyl Logo + App Name
+                Text(
+                    text = "Listen Now",
+                    fontFamily = SyneFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 24.sp,
+                    color = KangleiDark
+                )
+
+                // Action Buttons: Refresh, Notifications, Theme Toggle, Profile Avatar
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.clickable { viewModel.loadHomeScreenMusic() }
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Stylized Vinyl Disc Icon matching HTML radial-gradient
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(
-                                Brush.radialGradient(
-                                    colors = listOf(
-                                        Color(0xFFF2F2F2),
-                                        Color(0xFF0D0D0D),
-                                        Color(0xFF3A3A3A),
-                                        Color(0xFF0D0D0D)
-                                    )
-                                )
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFFF2F2F2))
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(10.dp))
-
-                    Row {
-                        Text(
-                            text = "Kanglei",
-                            fontFamily = SyneFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 17.sp,
-                            color = KangleiDark
-                        )
-                        Text(
-                            text = " Tune",
-                            fontFamily = SyneFontFamily,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 17.sp,
-                            color = KangleiTextSecondary
-                        )
-                    }
-                }
-
-                // Action Buttons: Refresh, Notifications, Profile
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    // Refresh Button (44x44 white circle)
+                    // Refresh Button
                     Surface(
                         modifier = Modifier
-                            .size(44.dp)
+                            .size(42.dp)
                             .testTag("home_refresh_btn"),
                         shape = CircleShape,
                         color = KangleiWhite,
@@ -191,10 +196,10 @@ fun HomeScreen(
                         }
                     }
 
-                    // Notifications Button (44x44 circle)
+                    // Notifications Button
                     Surface(
                         modifier = Modifier
-                            .size(44.dp)
+                            .size(42.dp)
                             .testTag("home_notifications_btn"),
                         shape = CircleShape,
                         color = KangleiWhite,
@@ -210,15 +215,14 @@ fun HomeScreen(
                         }
                     }
 
-                    // Dark Mode Toggle Button (44x44 circle)
-                    val isDarkTheme = LocalIsDarkTheme.current
+                    // Theme Toggle Button
                     Surface(
                         modifier = Modifier
-                            .size(44.dp)
+                            .size(42.dp)
                             .testTag("home_dark_mode_btn"),
                         shape = CircleShape,
                         color = KangleiWhite,
-                        onClick = { viewModel.toggleDarkMode() }
+                        onClick = { viewModel.toggleDarkMode(isDarkTheme) }
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
@@ -230,44 +234,34 @@ fun HomeScreen(
                         }
                     }
 
-                    // Profile Avatar (44x44 circle)
+                    // Profile Avatar (Clean fallback icon instead of hardcoded mock image)
                     Surface(
                         modifier = Modifier
-                            .size(44.dp)
+                            .size(42.dp)
                             .testTag("home_profile_avatar_btn"),
                         shape = CircleShape,
-                        color = Color(0xFF222222),
+                        color = KangleiWhite,
                         onClick = onNavigateToProfile
                     ) {
-                        AsyncImage(
-                            model = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80",
-                            contentDescription = "Profile Avatar",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Person,
+                                contentDescription = "Profile",
+                                tint = KangleiDark,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
                 }
             }
         }
 
-        // Greeting Heading: "Good afternoon"
-        item {
-            Text(
-                text = "Good afternoon",
-                fontFamily = SyneFontFamily,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 30.sp,
-                color = KangleiDark,
-                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 12.dp)
-            )
-        }
-
-        // Search Bar (White pill, 48dp height)
+        // 2. Single-line Search Bar
         item {
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp)
+                    .padding(horizontal = 20.dp, vertical = 4.dp)
                     .height(48.dp)
                     .clip(RoundedCornerShape(24.dp))
                     .clickable(onClick = onNavigateToSearch)
@@ -289,41 +283,20 @@ fun HomeScreen(
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "Search YouTube songs, artists, albums",
+                        text = "Search songs, artists, albums...",
                         color = KangleiTextSecondary,
                         fontSize = 15.sp,
-                        fontFamily = OutfitFontFamily
+                        fontFamily = OutfitFontFamily,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
         }
 
-        // Personalization & Mood Selector Bar
+        // 3. Mood Filter Chips
         item {
-            Spacer(modifier = Modifier.height(18.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "Personalize Your Vibe",
-                    fontFamily = SyneFontFamily,
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 16.sp,
-                    color = KangleiDark
-                )
-                Text(
-                    text = "Live Stream",
-                    fontFamily = OutfitFontFamily,
-                    fontSize = 12.sp,
-                    color = KangleiTextSecondary,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-
+            Spacer(modifier = Modifier.height(8.dp))
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -332,10 +305,10 @@ fun HomeScreen(
                     val isSelected = mood == selectedMood
                     Surface(
                         modifier = Modifier
-                            .height(38.dp)
-                            .clip(RoundedCornerShape(19.dp))
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(18.dp))
                             .clickable { viewModel.selectMood(mood) },
-                        shape = RoundedCornerShape(19.dp),
+                        shape = RoundedCornerShape(18.dp),
                         color = if (isSelected) KangleiPillBg else KangleiWhite
                     ) {
                         Box(
@@ -355,10 +328,162 @@ fun HomeScreen(
             }
         }
 
-        // Personalized Mix For You (Live recommendations based on selected mood)
+        // 4. MAIN CONTENT SECTION 1 (AT THE VERY TOP): Fresh new music & playlists
+        item {
+            Spacer(modifier = Modifier.height(14.dp))
+            Text(
+                text = "Fresh new music & playlists",
+                fontFamily = SyneFontFamily,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 18.sp,
+                color = KangleiDark,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+            )
+
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                itemsIndexed(displayFresh) { index, track ->
+                    FreshMusicCard(
+                        title = track.title,
+                        subtitle = track.artist,
+                        gradientColors = cardGradients[index % cardGradients.size],
+                        imageUrl = track.artUrl,
+                        onPlayClick = { viewModel.playTrack(track) }
+                    )
+                }
+
+                items(playlists) { playlist ->
+                    FreshMusicCard(
+                        title = playlist.title,
+                        subtitle = "${playlist.trackCount} songs",
+                        gradientColors = listOf(Color(0xFF4A4A4A), Color(0xFF141414)),
+                        imageUrl = playlist.coverArtUrl,
+                        onPlayClick = { onNavigateToPlaylist(playlist.id) }
+                    )
+                }
+            }
+        }
+
+        // 5. QUICK PICKS: 4-Row Horizontal Grid
+        if (quickPicksTracks.isNotEmpty()) {
+            item {
+                Spacer(modifier = Modifier.height(24.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "START RADIO FROM A SONG",
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 11.sp,
+                            color = KangleiTextSecondary
+                        )
+                        Text(
+                            text = "Quick Picks",
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 18.sp,
+                            color = KangleiDark
+                        )
+                    }
+
+                    Text(
+                        text = "Play all",
+                        color = KangleiDark,
+                        fontSize = 13.sp,
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.clickable {
+                            viewModel.playQueue(quickPicksTracks, 0)
+                        }
+                    )
+                }
+
+                // Chunk into columns of 4 songs per column
+                val columns = remember(quickPicksTracks) { quickPicksTracks.chunked(4) }
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    items(columns) { columnTracks ->
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            columnTracks.forEach { track ->
+                                QuickPickRow(
+                                    track = track,
+                                    isPlaying = playerState.currentTrack?.id == track.id,
+                                    onClick = { viewModel.playTrack(track) },
+                                    onLikeClick = { viewModel.toggleLike(track) },
+                                    onPlayNextClick = { viewModel.playNext(track) },
+                                    onAddToQueueClick = { viewModel.addToQueue(track) },
+                                    onAddToPlaylistClick = { trackToAddToPlaylist = track },
+                                    onGoToArtistClick = { artistName -> onNavigateToArtist(artistName) }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 6. LISTEN AGAIN: Horizontal carousel from active 15-day Room history
+        if (activeHistory.isNotEmpty()) {
+            item {
+                Spacer(modifier = Modifier.height(24.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Listen Again",
+                        fontFamily = SyneFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 18.sp,
+                        color = KangleiDark
+                    )
+
+                    Text(
+                        text = "Play all",
+                        color = KangleiDark,
+                        fontSize = 13.sp,
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.clickable {
+                            viewModel.playQueue(activeHistory, 0)
+                        }
+                    )
+                }
+
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(activeHistory) { track ->
+                        HitCard(
+                            track = track,
+                            isPlaying = playerState.currentTrack?.id == track.id,
+                            onClick = { viewModel.playTrack(track) }
+                        )
+                    }
+                }
+            }
+        }
+
+        // 7. MIXED FOR YOU / MOOD MIXES
         if (displayPersonalized.isNotEmpty()) {
             item {
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(24.dp))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -370,7 +495,7 @@ fun HomeScreen(
                         text = "$selectedMood Mix",
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 16.sp,
+                        fontSize = 18.sp,
                         color = KangleiDark
                     )
                     Text(
@@ -400,9 +525,9 @@ fun HomeScreen(
             }
         }
 
-        // Section: "Today's biggest hits" (Real Trending YouTube Music)
+        // 8. TODAY'S BIGGEST HITS & NEW RELEASES
         item {
-            Spacer(modifier = Modifier.height(22.dp))
+            Spacer(modifier = Modifier.height(24.dp))
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -411,10 +536,10 @@ fun HomeScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Today's biggest hits",
+                    text = "Today's Biggest Hits",
                     fontFamily = SyneFontFamily,
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 16.sp,
+                    fontSize = 18.sp,
                     color = KangleiDark
                 )
                 Text(
@@ -444,100 +569,35 @@ fun HomeScreen(
             }
         }
 
-        // Section: "Fresh new music"
-        item {
-            Spacer(modifier = Modifier.height(22.dp))
-            Text(
-                text = "Fresh new music & playlists",
-                fontFamily = SyneFontFamily,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 16.sp,
-                color = KangleiDark,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
-            )
+        // 9. SUGGESTED ARTISTS: Dynamically derived from listening history, likes, and trending
+        if (dynamicArtists.isNotEmpty()) {
+            item {
+                Spacer(modifier = Modifier.height(24.dp))
+                Text(
+                    text = "Suggested artists",
+                    fontFamily = SyneFontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 18.sp,
+                    color = KangleiDark,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+                )
 
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                item {
-                    FreshMusicCard(
-                        title = "Global Top 50",
-                        subtitle = "Trending hits",
-                        gradientColors = listOf(Color(0xFF6B6B6B), Color(0xFF161616)),
-                        imageUrl = "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80",
-                        onPlayClick = {
-                            if (displayHits.isNotEmpty()) viewModel.playQueue(displayHits, 0)
-                        },
-                        modifier = Modifier.clickable {
-                            if (displayHits.isNotEmpty()) viewModel.playQueue(displayHits, 0)
-                        }
-                    )
-                }
-                item {
-                    FreshMusicCard(
-                        title = "Imphal Rock Sessions",
-                        subtitle = "Classic Rock",
-                        gradientColors = listOf(Color(0xFF4A4A4A), Color(0xFF0D0D0D)),
-                        imageUrl = "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80",
-                        onPlayClick = {
-                            val rockTracks = allTracks.filter { it.album.contains("Rock") || it.genre.contains("Rock") }
-                            if (rockTracks.isNotEmpty()) viewModel.playQueue(rockTracks, 0)
-                            else onNavigateToPlaylist("pl_imphal_rock")
-                        },
-                        modifier = Modifier.clickable { onNavigateToPlaylist("pl_imphal_rock") }
-                    )
-                }
-                item {
-                    FreshMusicCard(
-                        title = "Pena & Folk Waves",
-                        subtitle = "Acoustic heritage",
-                        gradientColors = listOf(Color(0xFF555555), Color(0xFF222222)),
-                        imageUrl = "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=600&auto=format&fit=crop&q=80",
-                        onPlayClick = {
-                            if (allTracks.isNotEmpty()) viewModel.playQueue(allTracks.shuffled(), 0)
-                        }
-                    )
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    items(dynamicArtists) { (name, imageUrl) ->
+                        SuggestedArtistItem(
+                            name = name,
+                            imageUrl = imageUrl,
+                            onClick = { onNavigateToArtist(name) }
+                        )
+                    }
                 }
             }
         }
 
-        // Section: "Suggested artists"
-        item {
-            Spacer(modifier = Modifier.height(20.dp))
-            Text(
-                text = "Suggested artists",
-                fontFamily = SyneFontFamily,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 16.sp,
-                color = KangleiDark,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
-            )
-
-            val suggestedArtists = listOf(
-                Pair("Ed Sheeran", "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&auto=format&fit=crop&q=80"),
-                Pair("Coldplay", "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&auto=format&fit=crop&q=80"),
-                Pair("Taylor Swift", "https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=400&auto=format&fit=crop&q=80"),
-                Pair("Tapta", "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&auto=format&fit=crop&q=80"),
-                Pair("Ronnie", "https://images.unsplash.com/photo-1518495973542-4542c06a5843?w=400&auto=format&fit=crop&q=80"),
-                Pair("Arijit Singh", "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=400&auto=format&fit=crop&q=80")
-            )
-
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                items(suggestedArtists) { (name, imageUrl) ->
-                    SuggestedArtistItem(
-                        name = name,
-                        imageUrl = imageUrl,
-                        onClick = { onNavigateToArtist(name) }
-                    )
-                }
-            }
-        }
-
-        // Popular Song List
+        // 10. TRENDING SONGS FOR YOU: TrackCard rows with 3-dot overflow menus
         item {
             Spacer(modifier = Modifier.height(24.dp))
             Row(
@@ -548,10 +608,10 @@ fun HomeScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Top Songs & Hits",
+                    text = "Trending Songs For You",
                     fontFamily = SyneFontFamily,
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 16.sp,
+                    fontSize = 18.sp,
                     color = KangleiDark
                 )
 
@@ -614,5 +674,160 @@ fun HomeScreen(
                 showCreatePlaylistDialog = false
             }
         )
+    }
+}
+
+/**
+ * Compact Quick Pick Song Item for 4-song-per-column grid
+ */
+@Composable
+private fun QuickPickRow(
+    track: Track,
+    isPlaying: Boolean,
+    onClick: () -> Unit,
+    onLikeClick: () -> Unit,
+    onPlayNextClick: () -> Unit,
+    onAddToQueueClick: () -> Unit,
+    onAddToPlaylistClick: () -> Unit,
+    onGoToArtistClick: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var showMenu by remember { mutableStateOf(false) }
+
+    Surface(
+        modifier = modifier
+            .width(320.dp)
+            .height(54.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
+        color = if (isPlaying) KangleiWhite else Color.Transparent,
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 8.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFFE0E0E0)),
+                contentAlignment = Alignment.Center
+            ) {
+                AsyncImage(
+                    model = track.artUrl,
+                    contentDescription = track.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                if (isPlaying) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color(0x99000000)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.GraphicEq,
+                            contentDescription = "Playing",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = track.title,
+                    fontFamily = SyneFontFamily,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.sp,
+                    color = KangleiDark,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = track.artist,
+                    fontFamily = OutfitFontFamily,
+                    fontSize = 12.sp,
+                    color = KangleiTextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Box {
+                IconButton(
+                    onClick = { showMenu = true },
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MoreVert,
+                        contentDescription = "Options",
+                        tint = KangleiTextSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Play next") },
+                        leadingIcon = { Icon(Icons.Default.PlaylistPlay, contentDescription = null) },
+                        onClick = {
+                            showMenu = false
+                            onPlayNextClick()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Add to queue") },
+                        leadingIcon = { Icon(Icons.Default.QueueMusic, contentDescription = null) },
+                        onClick = {
+                            showMenu = false
+                            onAddToQueueClick()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Add to playlist") },
+                        leadingIcon = { Icon(Icons.Default.PlaylistAdd, contentDescription = null) },
+                        onClick = {
+                            showMenu = false
+                            onAddToPlaylistClick()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Go to artist") },
+                        leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                        onClick = {
+                            showMenu = false
+                            onGoToArtistClick(track.artist)
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (track.isLiked) "Unlike" else "Like") },
+                        leadingIcon = {
+                            Icon(
+                                if (track.isLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                contentDescription = null
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            onLikeClick()
+                        }
+                    )
+                }
+            }
+        }
     }
 }

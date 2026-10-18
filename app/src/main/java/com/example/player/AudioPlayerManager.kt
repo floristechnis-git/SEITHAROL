@@ -388,6 +388,24 @@ class AudioPlayerManager(
         }
     }
 
+    fun stopPlayback() {
+        positionJob?.cancel()
+        try {
+            exoPlayer?.stop()
+            exoPlayer?.clearMediaItems()
+        } catch (t: Throwable) {
+            // Ignore
+        }
+        _state.value = _state.value.copy(
+            isPlaying = false,
+            isBuffering = false,
+            currentPositionMs = 0L,
+            currentTrack = null,
+            queue = emptyList(),
+            currentIndex = 0
+        )
+    }
+
     fun addToQueue(track: Track) {
         val q = _state.value.queue.toMutableList()
         q.add(track)

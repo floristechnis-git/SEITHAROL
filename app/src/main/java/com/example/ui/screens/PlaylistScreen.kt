@@ -59,8 +59,29 @@ fun PlaylistScreen(
         )
     }
 
-    val playlistTracks = remember(playlistId, allTracks) {
-        if (playlistId.contains("rock", ignoreCase = true)) {
+    var remotePlaylistTracks by remember { mutableStateOf<List<Track>>(emptyList()) }
+    var isLoadingPlaylist by remember { mutableStateOf(false) }
+
+    LaunchedEffect(playlistId) {
+        if (playlistId.startsWith("RD") || playlistId.startsWith("PL") || playlistId.startsWith("VL") || playlistId.startsWith("MPREb_") || playlistId.startsWith("OLAK5uy_")) {
+            isLoadingPlaylist = true
+            try {
+                val tracks = com.example.data.remote.InnerTubeResolver.fetchAndParsePlaylistOrMixTracks(playlistId)
+                if (tracks.isNotEmpty()) {
+                    remotePlaylistTracks = tracks
+                }
+            } catch (e: Exception) {
+                // fallback
+            } finally {
+                isLoadingPlaylist = false
+            }
+        }
+    }
+
+    val playlistTracks = remember(playlistId, allTracks, remotePlaylistTracks) {
+        if (remotePlaylistTracks.isNotEmpty()) {
+            remotePlaylistTracks
+        } else if (playlistId.contains("rock", ignoreCase = true)) {
             val rock = allTracks.filter { it.album.contains("Rock") || it.genre.contains("Rock") }
             if (rock.isNotEmpty()) rock else allTracks.take(6)
         } else if (playlistId.contains("pena", ignoreCase = true)) {

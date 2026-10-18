@@ -279,6 +279,28 @@ class ResolverEngine {
             }
         }
 
+        // Fallback 3: Direct on-device YouTube Music InnerTube (ANDROID_VR / IOS / Piped)
+        if (resolvedStream == null) {
+            try {
+                val directUrl = com.example.data.remote.InnerTubeResolver.resolveStreamUrl(track.id, track.title, track.artist)
+                if (!directUrl.isNullOrBlank()) {
+                    resolvedStream = ResolvedStream(
+                        videoId = track.id,
+                        streamUrl = directUrl,
+                        itag = track.itag,
+                        codec = if (directUrl.contains("opus") || directUrl.contains("webm")) "Opus" else "AAC",
+                        bitrate = "160 kbps",
+                        expiresAtMs = now + (6 * 3600 * 1000L),
+                        isLocal = false,
+                        resolvedBy = "YouTube Music InnerTube Direct (Android VR / iOS)",
+                        latencyMs = 15
+                    )
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "InnerTubeResolver direct stream fallback failed: ${e.message}")
+            }
+        }
+
         val finalStream = resolvedStream
             ?: throw IllegalStateException("Could not resolve stream for track '${track.title}' by '${track.artist}'")
 

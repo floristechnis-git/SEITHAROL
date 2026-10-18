@@ -106,3 +106,25 @@ data class ResolverNode(
     val isSelected: Boolean = false,
     val successRate: Float = 0.99f
 )
+
+data class Artist(
+    val id: String,
+    val name: String,
+    val avatarUrl: String = "",
+    val bannerUrl: String? = null,
+    val bio: String? = null,
+    val tracks: List<Track> = emptyList(),
+    val albums: List<com.example.domain.Album> = emptyList()
+)
+
+data class StreamInfo(
+    val videoId: String,
+    val streamUrl: String,
+    val itag: Int = 251,
+    val codec: String = "Opus",
+    val bitrate: String = "160 kbps",
+    val expiresAtMs: Long = 0L,
+    val isLocal: Boolean = false,
+    val latencyMs: Long = 0L
+)
+

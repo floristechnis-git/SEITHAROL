@@ -86,7 +86,7 @@ fun TrackCard(
                 contentAlignment = Alignment.Center
             ) {
                 AsyncImage(
-                    model = track.artUrl,
+                    model = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
                     contentDescription = "Cover for ${track.title}",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
@@ -287,7 +287,7 @@ fun HitCard(
                 contentAlignment = Alignment.Center
             ) {
                 AsyncImage(
-                    model = track.artUrl,
+                    model = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
                     contentDescription = track.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
@@ -342,6 +342,48 @@ fun HitCard(
  * bottom-right circular play button (44x44, white with black icon).
  */
 @Composable
+fun FreshNewMusicCard(
+    track: Track,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .width(160.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+    ) {
+        // High-res rectangular/rounded artwork — NO circular div/clip inside
+        AsyncImage(
+            model = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
+            contentDescription = track.title,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(160.dp)
+                .clip(RoundedCornerShape(12.dp))
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = track.title,
+            style = MaterialTheme.typography.bodyMedium,
+            fontFamily = SyneFontFamily,
+            fontWeight = FontWeight.Medium,
+            color = KangleiDark,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = track.artist,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = OutfitFontFamily,
+            color = KangleiTextSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
 fun FreshMusicCard(
     title: String,
     subtitle: String,
@@ -360,7 +402,7 @@ fun FreshMusicCard(
     ) {
         if (!imageUrl.isNullOrBlank()) {
             AsyncImage(
-                model = imageUrl,
+                model = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(imageUrl),
                 contentDescription = title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
@@ -399,13 +441,13 @@ fun FreshMusicCard(
             )
         }
 
-        // Circular Play Button on bottom-right
+        // Subtle play indicator on bottom-right (Rounded shape, not obstructing artwork)
         Surface(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(14.dp)
-                .size(44.dp),
-            shape = CircleShape,
+                .size(36.dp),
+            shape = RoundedCornerShape(10.dp),
             color = Color(0xEEFFFFFF),
             onClick = onPlayClick
         ) {
@@ -414,7 +456,7 @@ fun FreshMusicCard(
                     imageVector = Icons.Default.PlayArrow,
                     contentDescription = "Play $title",
                     tint = KangleiDark,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 )
             }
         }
@@ -446,7 +488,7 @@ fun SuggestedArtistItem(
             contentAlignment = Alignment.Center
         ) {
             AsyncImage(
-                model = imageUrl,
+                model = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(imageUrl),
                 contentDescription = name,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()

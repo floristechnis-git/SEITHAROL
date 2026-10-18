@@ -309,6 +309,10 @@ class CascadeViewModel(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun playTrack(track: Track) {
+        if (track.id.startsWith("RD") || track.id.startsWith("VL") || track.id.startsWith("PL") || track.id.startsWith("MPREb_") || track.id.startsWith("OLAK5uy_")) {
+            playPlaylistOrMix(track.id)
+            return
+        }
         viewModelScope.launch {
             // Invariant I3: ensure track is cached in local database
             musicRepository.insertTrack(track)
@@ -321,6 +325,19 @@ class CascadeViewModel(
             tracks.forEach { musicRepository.insertTrack(it) }
         }
         playerManager.playQueue(tracks, startIndex)
+    }
+
+    fun playPlaylistOrMix(playlistId: String) {
+        viewModelScope.launch {
+            try {
+                val tracks = com.example.data.remote.InnerTubeResolver.fetchAndParsePlaylistOrMixTracks(playlistId)
+                if (tracks.isNotEmpty()) {
+                    playQueue(tracks, 0)
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("CascadeViewModel", "Failed to play playlist/mix $playlistId: ${e.message}")
+            }
+        }
     }
 
     fun togglePlayPause() = playerManager.togglePlayPause()
@@ -424,6 +441,7 @@ class CascadeViewModel(
     fun removeFromQueue(index: Int) = playerManager.removeFromQueue(index)
     fun moveTrack(fromIndex: Int, toIndex: Int) = playerManager.moveTrack(fromIndex, toIndex)
     fun clearQueue() = playerManager.clearQueue()
+    fun stopPlayback() = playerManager.stopPlayback()
     fun addToQueue(track: Track) = playerManager.addToQueue(track)
     fun playNext(track: Track) = playerManager.playNext(track)
 

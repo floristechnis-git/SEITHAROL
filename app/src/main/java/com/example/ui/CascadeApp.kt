@@ -138,7 +138,8 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             viewModel = viewModel,
                             playerState = playerState,
                             onBack = { currentSubScreen = SubScreen.None },
-                            onShareArtist = { shareTargetArtist = it }
+                            onShareArtist = { shareTargetArtist = it },
+                            onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) }
                         )
                         is SubScreen.Playlist -> PlaylistScreen(
                             playlistId = sub.playlistId,
@@ -246,7 +247,8 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             viewModel = viewModel,
                             playerState = playerState,
                             onBack = { currentSubScreen = SubScreen.None },
-                            onShareArtist = { shareTargetArtist = it }
+                            onShareArtist = { shareTargetArtist = it },
+                            onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) }
                         )
                     }
                     is SubScreen.Playlist -> {
@@ -335,7 +337,8 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             onExpand = { isPlayerExpanded = true },
                             onTogglePlay = { viewModel.togglePlayPause() },
                             onPrevious = { viewModel.previous() },
-                            onNext = { viewModel.next() }
+                            onNext = { viewModel.next() },
+                            onDismissPlayback = { viewModel.stopPlayback() }
                         )
                     }
 

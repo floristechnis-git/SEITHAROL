@@ -5,37 +5,43 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Vinyl Outer Disc -->
-    <path
-        android:fillColor="#1A1A1A"
-        android:pathData="M54,54m-34,0a34,34 0 1,0 68,0a34,34 0 1,0 -68,0" />
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="1.35"
+        android:scaleY="1.35">
+        <!-- Vinyl Outer Disc -->
+        <path
+            android:fillColor="#1A1A1A"
+            android:pathData="M54,54m-34,0a34,34 0 1,0 68,0a34,34 0 1,0 -68,0" />
 
-    <!-- Vinyl Grooves -->
-    <path
-        android:strokeColor="#2E2E2E"
-        android:strokeWidth="1.2"
-        android:pathData="M54,54m-28,0a28,28 0 1,0 56,0a28,28 0 1,0 -56,0" />
-    <path
-        android:strokeColor="#262626"
-        android:strokeWidth="1.2"
-        android:pathData="M54,54m-22,0a22,22 0 1,0 44,0a22,22 0 1,0 -44,0" />
-    <path
-        android:strokeColor="#2E2E2E"
-        android:strokeWidth="1.2"
-        android:pathData="M54,54m-16,0a16,16 0 1,0 32,0a16,16 0 1,0 -32,0" />
+        <!-- Vinyl Grooves -->
+        <path
+            android:strokeColor="#2E2E2E"
+            android:strokeWidth="1.2"
+            android:pathData="M54,54m-28,0a28,28 0 1,0 56,0a28,28 0 1,0 -56,0" />
+        <path
+            android:strokeColor="#262626"
+            android:strokeWidth="1.2"
+            android:pathData="M54,54m-22,0a22,22 0 1,0 44,0a22,22 0 1,0 -44,0" />
+        <path
+            android:strokeColor="#2E2E2E"
+            android:strokeWidth="1.2"
+            android:pathData="M54,54m-16,0a16,16 0 1,0 32,0a16,16 0 1,0 -32,0" />
 
-    <!-- Center Label Ring -->
-    <path
-        android:fillColor="#E60023"
-        android:pathData="M54,54m-10,0a10,10 0 1,0 20,0a10,10 0 1,0 -20,0" />
+        <!-- Center Label Ring -->
+        <path
+            android:fillColor="#E60023"
+            android:pathData="M54,54m-10,0a10,10 0 1,0 20,0a10,10 0 1,0 -20,0" />
 
-    <!-- Center Spindle Hole -->
-    <path
-        android:fillColor="#0D0D0D"
-        android:pathData="M54,54m-3.5,0a3.5,3.5 0 1,0 7,0a3.5,3.5 0 1,0 -7,0" />
+        <!-- Center Spindle Hole -->
+        <path
+            android:fillColor="#0D0D0D"
+            android:pathData="M54,54m-3.5,0a3.5,3.5 0 1,0 7,0a3.5,3.5 0 1,0 -7,0" />
 
-    <!-- Subtle audio wave accent -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M52.5,51 L55.5,51 A1.5,1.5 0 0,1 57,52.5 L57,55.5 A1.5,1.5 0 0,1 55.5,57 L52.5,57 A1.5,1.5 0 0,1 51,55.5 L51,52.5 A1.5,1.5 0 0,1 52.5,51 Z" />
+        <!-- Subtle audio wave accent -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M52.5,51 L55.5,51 A1.5,1.5 0 0,1 57,52.5 L57,55.5 A1.5,1.5 0 0,1 55.5,57 L52.5,57 A1.5,1.5 0 0,1 51,55.5 L51,52.5 A1.5,1.5 0 0,1 52.5,51 Z" />
+    </group>
 </vector>

@@ -42,6 +42,7 @@ fun ArtistScreen(
     playerState: PlayerState,
     onBack: () -> Unit,
     onShareArtist: (String) -> Unit,
+    onNavigateToPlaylist: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     BackHandler(onBack = onBack)
@@ -56,19 +57,40 @@ fun ArtistScreen(
     // Canonical Artist Profile: group all tracks by normalized name
     // so multiple-source fragments (YouTube + JioSaavn + local) merge into one page.
     val normalizedQuery = artistName.trim().lowercase()
-    val artistTracks = remember(artistName, allTracks) {
-        // Collect tracks that match by normalized artist name (handles cross-source duplicates)
-        val matched = allTracks.filter {
-            it.artist.trim().lowercase().contains(normalizedQuery)
-                    || normalizedQuery.contains(it.artist.trim().lowercase())
+
+    var remoteArtistTracks by remember { mutableStateOf<List<Track>>(emptyList()) }
+    var remoteArtistAlbums by remember { mutableStateOf<List<com.example.domain.Album>>(emptyList()) }
+    var isLoadingArtist by remember { mutableStateOf(false) }
+
+    LaunchedEffect(artistName) {
+        isLoadingArtist = true
+        try {
+            val json = com.example.data.remote.InnerTubeResolver.fetchRealArtistCatalog(artistName)
+            val parsedTracks = com.example.data.remote.InnerTubeResolver.parseTracksFromResponse(json)
+            val parsedAlbums = com.example.data.remote.InnerTubeResolver.fetchRealArtistAlbums(artistName)
+            if (parsedTracks.isNotEmpty()) {
+                remoteArtistTracks = parsedTracks
+            }
+            if (parsedAlbums.isNotEmpty()) {
+                remoteArtistAlbums = parsedAlbums
+            }
+        } catch (e: Exception) {
+            // fallback
+        } finally {
+            isLoadingArtist = false
         }
-        // De-duplicate by normalized title+artist key, keep highest-quality version
-        val deduped = matched
-            .groupBy { "${it.title.trim().lowercase()}|${it.artist.trim().lowercase()}" }
-            .mapValues { (_, tracks) -> tracks.first() }  // pick first (best already sorted by source priority)
-            .values.toList()
-        // Fallback: if no match found, show all tracks
-        deduped.ifEmpty { allTracks }
+    }
+
+    val artistTracks = remember(artistName, allTracks, remoteArtistTracks) {
+        if (remoteArtistTracks.isNotEmpty()) {
+            remoteArtistTracks
+        } else {
+            val matched = allTracks.filter {
+                it.artist.trim().lowercase().contains(normalizedQuery)
+                        || normalizedQuery.contains(it.artist.trim().lowercase())
+            }
+            matched.distinctBy { "${it.title.trim().lowercase()}|${it.artist.trim().lowercase()}" }
+        }
     }
 
     // Canonical avatar: from the source with the most tracks for this artist
@@ -269,6 +291,55 @@ fun ArtistScreen(
                                 color = Color(0xFFD0D0D0),
                                 fontSize = 11.sp,
                                 fontFamily = OutfitFontFamily
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Albums & Singles Section
+        if (remoteArtistAlbums.isNotEmpty()) {
+            item {
+                Spacer(modifier = Modifier.height(18.dp))
+                Text(
+                    text = "Albums & Singles",
+                    fontFamily = SyneFontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 18.sp,
+                    color = KangleiDark,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                )
+                androidx.compose.foundation.lazy.LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    items(remoteArtistAlbums) { album ->
+                        Column(
+                            modifier = Modifier
+                                .width(140.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    onNavigateToPlaylist?.invoke(album.id)
+                                }
+                        ) {
+                            coil.compose.AsyncImage(
+                                model = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(album.thumbnailUrl),
+                                contentDescription = album.title,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(140.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = album.title,
+                                color = KangleiDark,
+                                fontSize = 14.sp,
+                                fontFamily = SyneFontFamily,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }

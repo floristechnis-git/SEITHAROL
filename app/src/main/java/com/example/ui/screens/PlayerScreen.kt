@@ -3,6 +3,7 @@ package com.example.ui.screens
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -17,11 +18,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -29,12 +31,25 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.example.data.remote.InnerTubeResolver
 import com.example.player.PlayerState
 import com.example.player.RepeatMode
 import com.example.ui.CascadeViewModel
+import com.example.ui.components.PlaybackQueueModal
 import com.example.ui.theme.*
 
+/**
+ * YouTube Music & YouTube mobile app inspired Full Player Screen:
+ * 1. Holding/dragging down from the top area smoothly minimizes the Player into MiniPlayer.
+ * 2. Lyrics / Artwork Toggle Swap: "Show Artwork" toggles back to album cover;
+ *    "<>" Maximize button opens the immersive Fullscreen Expanded Lyrics view.
+ * 3. Fullscreen Expanded Lyrics view with top bar (artwork, title, artist, "><" minimize button),
+ *    time-synced scrolling lyrics with active-line glow and scale, and bottom playback bar.
+ * 4. Dark theme palette: #1B1C1C background, #232526 elevated surfaces, #E3E4E2 primary text, #FFB74D accent.
+ */
 @Composable
 fun PlayerScreen(
     viewModel: CascadeViewModel,
@@ -48,27 +63,29 @@ fun PlayerScreen(
     val track = playerState.currentTrack ?: return
     var userSeekingPosition by remember { mutableStateOf<Float?>(null) }
     var showLyrics by remember { mutableStateOf(false) }
+    var showExpandedLyrics by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
 
-    val lyricListState = rememberLazyListState()
+    val inlineLyricListState = rememberLazyListState()
 
-    // Smooth Vinyl rotation animation when playing
-    val infiniteTransition = rememberInfiniteTransition(label = "vinyl_rotation")
-    val rotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(14000, easing = LinearEasing),
-            repeatMode = androidx.compose.animation.core.RepeatMode.Restart
+    // Swipe down to minimize gesture state
+    var swipeOffsetY by remember { mutableFloatStateOf(0f) }
+    var isDismissing by remember { mutableStateOf(false) }
+
+    val animatedSwipeOffset by animateFloatAsState(
+        targetValue = if (isDismissing) 1200f else swipeOffsetY,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMedium
         ),
-        label = "rotation"
+        label = "player_swipe_down"
     )
 
-    // Auto-scroll lyrics
-    LaunchedEffect(playerState.activeLyricIndex) {
-        if (playerState.activeLyricIndex in 0 until playerState.lyricLines.size) {
+    // Auto-scroll inline lyrics
+    LaunchedEffect(playerState.activeLyricIndex, showLyrics) {
+        if (showLyrics && playerState.activeLyricIndex in 0 until playerState.lyricLines.size) {
             val target = (playerState.activeLyricIndex - 2).coerceAtLeast(0)
-            lyricListState.animateScrollToItem(target)
+            inlineLyricListState.animateScrollToItem(target)
         }
     }
 
@@ -82,16 +99,42 @@ fun PlayerScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(KangleiBg)
+            .graphicsLayer {
+                translationY = animatedSwipeOffset.coerceAtLeast(0f)
+                alpha = if (isDismissing) 0f else (1f - (animatedSwipeOffset / 1200f)).coerceIn(0.2f, 1f)
+            }
+            .background(Color(0xFF1B1C1C)) // Dark theme palette background
             .statusBarsPadding()
             .navigationBarsPadding()
             .testTag("full_player_screen")
     ) {
-        // Top Bar: Down arrow, Source badge, Like button
+        // ────────────────────────────────────────────────────────────
+        // Top Area with Swipe-Down Gesture to Minimize
+        // ────────────────────────────────────────────────────────────
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp),
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures(
+                        onDragStart = { swipeOffsetY = 0f },
+                        onDrag = { change, dragAmount ->
+                            if (dragAmount > 0 || swipeOffsetY > 0) {
+                                change.consume()
+                                swipeOffsetY = (swipeOffsetY + dragAmount).coerceAtLeast(0f)
+                            }
+                        },
+                        onDragEnd = {
+                            if (swipeOffsetY > 160f) {
+                                isDismissing = true
+                                onDismiss()
+                            } else {
+                                swipeOffsetY = 0f
+                            }
+                        },
+                        onDragCancel = { swipeOffsetY = 0f }
+                    )
+                },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -100,21 +143,21 @@ fun PlayerScreen(
                 modifier = Modifier
                     .size(44.dp)
                     .clip(CircleShape)
-                    .background(KangleiWhite)
+                    .background(Color(0xFF282A2A))
                     .testTag("player_collapse_btn")
             ) {
                 Icon(
                     imageVector = Icons.Default.KeyboardArrowDown,
                     contentDescription = "Collapse",
-                    tint = KangleiDark,
-                    modifier = Modifier.size(26.dp)
+                    tint = Color(0xFFE3E4E2),
+                    modifier = Modifier.size(28.dp)
                 )
             }
 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     text = "PLAYING FROM SEITHAROL",
-                    color = KangleiTextSecondary,
+                    color = Color(0xFF9EA1A1),
                     fontSize = 11.sp,
                     fontFamily = OutfitFontFamily,
                     fontWeight = FontWeight.SemiBold,
@@ -122,7 +165,7 @@ fun PlayerScreen(
                 )
                 Text(
                     text = if (track.isDownloaded) "Offline Opus • Direct Audio" else "Online Pure Stream",
-                    color = KangleiDark,
+                    color = Color(0xFFFFB74D),
                     fontSize = 12.sp,
                     fontFamily = OutfitFontFamily,
                     fontWeight = FontWeight.Medium
@@ -134,26 +177,30 @@ fun PlayerScreen(
                 modifier = Modifier
                     .size(44.dp)
                     .clip(CircleShape)
-                    .background(KangleiWhite)
+                    .background(Color(0xFF282A2A))
                     .testTag("player_like_btn")
             ) {
                 Icon(
                     imageVector = if (isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
                     contentDescription = "Like",
-                    tint = if (isLiked) KangleiRedHeart else KangleiDark,
+                    tint = if (isLiked) Color(0xFFFF5252) else Color(0xFFE3E4E2),
                     modifier = Modifier.size(22.dp)
                 )
             }
         }
 
+        // ────────────────────────────────────────────────────────────
+        // Middle Area: Album Cover Artwork OR Inline Lyrics View
+        // ────────────────────────────────────────────────────────────
         if (showLyrics) {
-            // Lyrics View Mode
+            // Inline Lyrics Mode
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp)
             ) {
+                // Header with "Show Artwork" (left) & "<>" Maximize button (right)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -161,25 +208,78 @@ fun PlayerScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Synchronized Lyrics",
-                        fontFamily = SyneFontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 18.sp,
-                        color = KangleiDark
-                    )
-                    TextButton(onClick = { showLyrics = false }) {
-                        Text("Show Artwork", fontFamily = OutfitFontFamily, color = KangleiDark)
+                    // Replaced "Synchronized Lyrics" button text with "Show Artwork"
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF282A2A),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable { showLyrics = false }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Image,
+                                contentDescription = null,
+                                tint = Color(0xFFE3E4E2),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Show Artwork",
+                                fontFamily = SyneFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp,
+                                color = Color(0xFFE3E4E2)
+                            )
+                        }
+                    }
+
+                    // "<>" Maximize Button (opens full-screen Expanded Lyrics)
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF282A2A),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable { showExpandedLyrics = true }
+                            .testTag("maximize_lyrics_btn")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                        ) {
+                            Text(
+                                text = "< >",
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 13.sp,
+                                color = Color(0xFFFFB74D)
+                            )
+                            Icon(
+                                imageVector = Icons.Default.OpenInFull,
+                                contentDescription = "Maximize Lyrics",
+                                tint = Color(0xFFFFB74D),
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
                     }
                 }
 
                 if (playerState.lyricLines.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No lyrics available for this track", color = KangleiTextSecondary, fontFamily = OutfitFontFamily)
+                        Text(
+                            text = "No lyrics available for this track",
+                            color = Color(0xFF9EA1A1),
+                            fontFamily = OutfitFontFamily,
+                            fontSize = 15.sp
+                        )
                     }
                 } else {
                     LazyColumn(
-                        state = lyricListState,
+                        state = inlineLyricListState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(vertical = 16.dp)
                     ) {
@@ -187,7 +287,7 @@ fun PlayerScreen(
                             val isCurrent = index == playerState.activeLyricIndex
                             Text(
                                 text = line.text,
-                                color = if (isCurrent) KangleiDark else Color(0xFFA0A0A0),
+                                color = if (isCurrent) Color(0xFFFFB74D) else Color(0xFF757575),
                                 fontSize = if (isCurrent) 20.sp else 16.sp,
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
@@ -201,7 +301,7 @@ fun PlayerScreen(
                 }
             }
         } else {
-            // Modern Edge-to-Edge Rounded Album Artwork Container
+            // High-Resolution Rounded Album Artwork Container (No circle div!)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -220,20 +320,20 @@ fun PlayerScreen(
 
                 Surface(
                     modifier = Modifier
-                        .size(280.dp)
+                        .size(290.dp)
                         .scale(scale)
                         .shadow(
                             elevation = 24.dp,
-                            shape = RoundedCornerShape(28.dp),
-                            ambientColor = Color(0x33000000),
-                            spotColor = Color(0x55000000)
+                            shape = RoundedCornerShape(24.dp),
+                            ambientColor = Color(0x55000000),
+                            spotColor = Color(0x88000000)
                         )
-                        .clip(RoundedCornerShape(28.dp)),
-                    shape = RoundedCornerShape(28.dp),
-                    color = KangleiWhite
+                        .clip(RoundedCornerShape(24.dp)),
+                    shape = RoundedCornerShape(24.dp),
+                    color = Color(0xFF232526)
                 ) {
                     AsyncImage(
-                        model = track.artUrl,
+                        model = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
                         contentDescription = track.title,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
@@ -242,7 +342,9 @@ fun PlayerScreen(
             }
         }
 
-        // Track Details
+        // ────────────────────────────────────────────────────────────
+        // Track Title & Artist Details
+        // ────────────────────────────────────────────────────────────
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -250,9 +352,9 @@ fun PlayerScreen(
         ) {
             Text(
                 text = track.title,
-                color = KangleiDark,
+                color = Color(0xFFE3E4E2),
                 fontFamily = SyneFontFamily,
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = FontWeight.Bold,
                 fontSize = 22.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -260,7 +362,7 @@ fun PlayerScreen(
             Spacer(modifier = Modifier.height(3.dp))
             Text(
                 text = "${track.artist} • ${track.album}",
-                color = KangleiTextSecondary,
+                color = Color(0xFF9EA1A1),
                 fontFamily = OutfitFontFamily,
                 fontSize = 14.sp,
                 maxLines = 1,
@@ -268,7 +370,9 @@ fun PlayerScreen(
             )
         }
 
+        // ────────────────────────────────────────────────────────────
         // Secondary Actions Row (EQ, Timer, Download, Share, Lyrics, Queue)
+        // ────────────────────────────────────────────────────────────
         val downloads by viewModel.activeDownloads.collectAsState()
         val trackDownload = downloads.firstOrNull { it.trackId == track.id }
         val isDownloaded = track.isDownloaded || trackDownload?.state == com.example.data.model.DownloadState.COMPLETED
@@ -283,10 +387,10 @@ fun PlayerScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onOpenEqualizer) {
-                Icon(Icons.Default.Tune, contentDescription = "Equalizer", tint = KangleiDark)
+                Icon(Icons.Default.Tune, contentDescription = "Equalizer", tint = Color(0xFFE3E4E2))
             }
             IconButton(onClick = onOpenSleepTimer) {
-                Icon(Icons.Outlined.Timer, contentDescription = "Sleep Timer", tint = KangleiDark)
+                Icon(Icons.Outlined.Timer, contentDescription = "Sleep Timer", tint = Color(0xFFE3E4E2))
             }
 
             // Real Download Button
@@ -313,14 +417,14 @@ fun PlayerScreen(
                                 progress = { downloadProgress },
                                 modifier = Modifier.size(24.dp),
                                 strokeWidth = 2.5.dp,
-                                color = KangleiDark,
-                                trackColor = Color(0xFFE0E0E0)
+                                color = Color(0xFFFFB74D),
+                                trackColor = Color(0xFF282A2A)
                             )
                             Text(
                                 text = "${(downloadProgress * 100).toInt()}%",
                                 fontSize = 8.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = KangleiDark,
+                                color = Color(0xFFE3E4E2),
                                 fontFamily = OutfitFontFamily
                             )
                         }
@@ -329,7 +433,7 @@ fun PlayerScreen(
                         Icon(
                             imageVector = Icons.Default.Download,
                             contentDescription = "Download track",
-                            tint = KangleiDark,
+                            tint = Color(0xFFE3E4E2),
                             modifier = Modifier.size(22.dp)
                         )
                     }
@@ -337,13 +441,13 @@ fun PlayerScreen(
             }
 
             IconButton(onClick = { onShareTrack(track.title) }) {
-                Icon(Icons.Outlined.Share, contentDescription = "Share", tint = KangleiDark)
+                Icon(Icons.Outlined.Share, contentDescription = "Share", tint = Color(0xFFE3E4E2))
             }
             IconButton(onClick = { showLyrics = !showLyrics }) {
                 Icon(
                     imageVector = Icons.Outlined.Subtitles,
                     contentDescription = "Lyrics",
-                    tint = if (showLyrics) KangleiDark else KangleiTextSecondary
+                    tint = if (showLyrics) Color(0xFFFFB74D) else Color(0xFF9EA1A1)
                 )
             }
             IconButton(
@@ -353,12 +457,14 @@ fun PlayerScreen(
                 Icon(
                     imageVector = Icons.Default.QueueMusic,
                     contentDescription = "Playback Queue (Up Next)",
-                    tint = if (showQueue) KangleiGreen else KangleiDark
+                    tint = if (showQueue) Color(0xFFFFB74D) else Color(0xFFE3E4E2)
                 )
             }
         }
 
-        // Scrubber Slider
+        // ────────────────────────────────────────────────────────────
+        // Scrubber Progress Slider
+        // ────────────────────────────────────────────────────────────
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -374,9 +480,9 @@ fun PlayerScreen(
                     }
                 },
                 colors = SliderDefaults.colors(
-                    thumbColor = KangleiDark,
-                    activeTrackColor = KangleiDark,
-                    inactiveTrackColor = Color(0xFFDCDCDC)
+                    thumbColor = Color(0xFFFFB74D),
+                    activeTrackColor = Color(0xFFFFB74D),
+                    inactiveTrackColor = Color(0xFF333535)
                 ),
                 modifier = Modifier.testTag("player_scrubber")
             )
@@ -389,24 +495,26 @@ fun PlayerScreen(
             ) {
                 Text(
                     text = formatMs(displayPosition),
-                    color = KangleiTextSecondary,
+                    color = Color(0xFF9EA1A1),
                     fontSize = 12.sp,
                     fontFamily = OutfitFontFamily
                 )
                 Text(
                     text = formatMs(totalDuration),
-                    color = KangleiTextSecondary,
+                    color = Color(0xFF9EA1A1),
                     fontSize = 12.sp,
                     fontFamily = OutfitFontFamily
                 )
             }
         }
 
+        // ────────────────────────────────────────────────────────────
         // Playback Controls Row: Shuffle, Prev, Big Play, Next, Repeat
+        // ────────────────────────────────────────────────────────────
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 14.dp),
+                .padding(horizontal = 20.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
@@ -418,7 +526,7 @@ fun PlayerScreen(
                 Icon(
                     imageVector = Icons.Default.Shuffle,
                     contentDescription = "Shuffle",
-                    tint = if (playerState.isShuffle) KangleiDark else Color(0xFFAAAAAA)
+                    tint = if (playerState.isShuffle) Color(0xFFFFB74D) else Color(0xFF888888)
                 )
             }
 
@@ -430,12 +538,12 @@ fun PlayerScreen(
                 Icon(
                     imageVector = Icons.Default.SkipPrevious,
                     contentDescription = "Previous",
-                    tint = KangleiDark,
+                    tint = Color(0xFFE3E4E2),
                     modifier = Modifier.size(32.dp)
                 )
             }
 
-            // Big Play / Pause FAB (64dp circle)
+            // Big Play / Pause FAB (64.dp circle)
             Surface(
                 modifier = Modifier
                     .size(64.dp)
@@ -443,21 +551,21 @@ fun PlayerScreen(
                     .clickable { viewModel.togglePlayPause() }
                     .testTag("player_main_play_btn"),
                 shape = CircleShape,
-                color = KangleiPillBg,
+                color = Color(0xFFE3E4E2),
                 shadowElevation = 8.dp
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     if (playerState.isBuffering) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(28.dp),
-                            color = KangleiPillText,
+                            color = Color(0xFF1B1C1C),
                             strokeWidth = 3.dp
                         )
                     } else {
                         Icon(
                             imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                             contentDescription = "Play/Pause",
-                            tint = KangleiPillText,
+                            tint = Color(0xFF1B1C1C),
                             modifier = Modifier.size(34.dp)
                         )
                     }
@@ -472,7 +580,7 @@ fun PlayerScreen(
                 Icon(
                     imageVector = Icons.Default.SkipNext,
                     contentDescription = "Next",
-                    tint = KangleiDark,
+                    tint = Color(0xFFE3E4E2),
                     modifier = Modifier.size(32.dp)
                 )
             }
@@ -489,12 +597,14 @@ fun PlayerScreen(
                 Icon(
                     imageVector = icon,
                     contentDescription = "Repeat",
-                    tint = if (playerState.repeatMode != RepeatMode.OFF) KangleiDark else Color(0xFFAAAAAA)
+                    tint = if (playerState.repeatMode != RepeatMode.OFF) Color(0xFFFFB74D) else Color(0xFF888888)
                 )
             }
         }
 
+        // ────────────────────────────────────────────────────────────
         // Up Next / Queue Card Button
+        // ────────────────────────────────────────────────────────────
         val nextTrack = if (playerState.currentIndex in 0 until playerState.queue.size - 1) {
             playerState.queue[playerState.currentIndex + 1]
         } else null
@@ -507,7 +617,7 @@ fun PlayerScreen(
                 .clickable { showQueue = true }
                 .testTag("player_upnext_button"),
             shape = RoundedCornerShape(20.dp),
-            color = KangleiWhite,
+            color = Color(0xFF232526),
             tonalElevation = 2.dp
         ) {
             Row(
@@ -526,13 +636,13 @@ fun PlayerScreen(
                         modifier = Modifier
                             .size(36.dp)
                             .clip(CircleShape)
-                            .background(if (LocalIsDarkTheme.current) Color(0xFF2A2A2A) else Color(0xFFEEEEEE)),
+                            .background(Color(0xFF2E3030)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.QueueMusic,
                             contentDescription = "Queue",
-                            tint = KangleiDark,
+                            tint = Color(0xFFFFB74D),
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -544,7 +654,7 @@ fun PlayerScreen(
                                 fontSize = 11.sp,
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = FontWeight.Bold,
-                                color = KangleiTextSecondary,
+                                color = Color(0xFF9EA1A1),
                                 letterSpacing = 1.sp
                             )
                             Spacer(modifier = Modifier.width(6.dp))
@@ -552,7 +662,7 @@ fun PlayerScreen(
                                 text = "• ${playerState.queue.size} in queue",
                                 fontSize = 11.sp,
                                 fontFamily = OutfitFontFamily,
-                                color = KangleiTextTertiary
+                                color = Color(0xFF757575)
                             )
                         }
                         Text(
@@ -560,7 +670,7 @@ fun PlayerScreen(
                             fontSize = 13.sp,
                             fontFamily = OutfitFontFamily,
                             fontWeight = FontWeight.Medium,
-                            color = KangleiDark,
+                            color = Color(0xFFE3E4E2),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -569,7 +679,7 @@ fun PlayerScreen(
 
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = if (LocalIsDarkTheme.current) Color(0xFF2A2A2A) else Color(0xFFF0F0F0),
+                    color = Color(0xFF282A2A),
                     onClick = { showQueue = true }
                 ) {
                     Row(
@@ -582,12 +692,12 @@ fun PlayerScreen(
                             fontSize = 12.sp,
                             fontFamily = OutfitFontFamily,
                             fontWeight = FontWeight.SemiBold,
-                            color = KangleiDark
+                            color = Color(0xFFE3E4E2)
                         )
                         Icon(
                             imageVector = Icons.Default.KeyboardArrowUp,
                             contentDescription = null,
-                            tint = KangleiDark,
+                            tint = Color(0xFFE3E4E2),
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -598,12 +708,308 @@ fun PlayerScreen(
         Spacer(modifier = Modifier.height(8.dp))
     }
 
+    // ────────────────────────────────────────────────────────────
+    // Playback Queue Modal
+    // ────────────────────────────────────────────────────────────
     if (showQueue) {
-        com.example.ui.components.PlaybackQueueModal(
+        PlaybackQueueModal(
             viewModel = viewModel,
             playerState = playerState,
             onDismiss = { showQueue = false }
         )
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // Fullscreen Expanded Lyrics Modal ("<>" Maximize Mode)
+    // ────────────────────────────────────────────────────────────
+    if (showExpandedLyrics) {
+        ExpandedLyricsModal(
+            viewModel = viewModel,
+            playerState = playerState,
+            onDismiss = { showExpandedLyrics = false }
+        )
+    }
+}
+
+/**
+ * Fullscreen Immersive Expanded Lyrics View ("<>" View):
+ * - Top bar: song artwork, title, artist, and "><" minimize button to return to PlayerScreen.
+ * - Time-synced scrolling lyrics with active-line glow and 1.08x scale.
+ * - Bottom playback bar with seekable slider and playback controls (Prev, Play/Pause, Next).
+ */
+@Composable
+fun ExpandedLyricsModal(
+    viewModel: CascadeViewModel,
+    playerState: PlayerState,
+    onDismiss: () -> Unit
+) {
+    val track = playerState.currentTrack ?: return
+    val lyricListState = rememberLazyListState()
+    var userSeekingPosition by remember { mutableStateOf<Float?>(null) }
+
+    val displayPosition = (userSeekingPosition?.toLong() ?: playerState.currentPositionMs).coerceAtLeast(0L)
+    val totalDuration = playerState.durationMs.coerceAtLeast(1000L)
+    val sliderProgress = (displayPosition.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
+
+    // Auto-scroll expanded lyrics smoothly to center active line
+    LaunchedEffect(playerState.activeLyricIndex) {
+        if (playerState.activeLyricIndex in 0 until playerState.lyricLines.size) {
+            val target = (playerState.activeLyricIndex - 3).coerceAtLeast(0)
+            lyricListState.animateScrollToItem(target)
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xFF141414)),
+            color = Color(0xFF141414)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+            ) {
+                // ────────────────────────────────────────────────────────────
+                // Top Bar: Artwork, Title, Artist, & "><" Minimize Button
+                // ────────────────────────────────────────────────────────────
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF282A2A))
+                        ) {
+                            AsyncImage(
+                                model = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
+                                contentDescription = track.title,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = track.title,
+                                color = Color(0xFFE3E4E2),
+                                fontFamily = SyneFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = track.artist,
+                                color = Color(0xFF9EA1A1),
+                                fontFamily = OutfitFontFamily,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    // Minimize Button (>< / CloseFullscreen)
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF282A2A),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable(onClick = onDismiss)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                        ) {
+                            Text(
+                                text = "> <",
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 13.sp,
+                                color = Color(0xFFFFB74D)
+                            )
+                            Icon(
+                                imageVector = Icons.Default.CloseFullscreen,
+                                contentDescription = "Minimize Lyrics",
+                                tint = Color(0xFFFFB74D),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+
+                // ────────────────────────────────────────────────────────────
+                // Time-Synced Scrolling Lyrics with Active-Line Glow & Scale
+                // ────────────────────────────────────────────────────────────
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp)
+                ) {
+                    if (playerState.lyricLines.isEmpty()) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "No lyrics found for this track.",
+                                color = Color(0xFF9EA1A1),
+                                fontFamily = OutfitFontFamily,
+                                fontSize = 16.sp
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            state = lyricListState,
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(top = 40.dp, bottom = 80.dp)
+                        ) {
+                            itemsIndexed(playerState.lyricLines) { index, line ->
+                                val isCurrent = index == playerState.activeLyricIndex
+                                val activeScale by animateFloatAsState(
+                                    targetValue = if (isCurrent) 1.08f else 1.0f,
+                                    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                                    label = "lyric_scale"
+                                )
+
+                                Text(
+                                    text = line.text,
+                                    color = if (isCurrent) Color(0xFFFFB74D) else Color(0xFF6B6E6E),
+                                    fontSize = if (isCurrent) 24.sp else 18.sp,
+                                    fontFamily = SyneFontFamily,
+                                    fontWeight = if (isCurrent) FontWeight.ExtraBold else FontWeight.Medium,
+                                    lineHeight = if (isCurrent) 32.sp else 26.sp,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .scale(activeScale)
+                                        .padding(vertical = 12.dp)
+                                        .clickable { viewModel.seekTo(line.timestampMs) }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // ────────────────────────────────────────────────────────────
+                // Bottom Playback Bar (Progress Slider & Controls)
+                // ────────────────────────────────────────────────────
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF1B1C1C))
+                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                ) {
+                    Slider(
+                        value = sliderProgress,
+                        onValueChange = { frac -> userSeekingPosition = frac * totalDuration },
+                        onValueChangeFinished = {
+                            userSeekingPosition?.let { pos ->
+                                viewModel.seekTo(pos.toLong())
+                                userSeekingPosition = null
+                            }
+                        },
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color(0xFFFFB74D),
+                            activeTrackColor = Color(0xFFFFB74D),
+                            inactiveTrackColor = Color(0xFF333535)
+                        )
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = formatMs(displayPosition),
+                            color = Color(0xFF9EA1A1),
+                            fontSize = 12.sp,
+                            fontFamily = OutfitFontFamily
+                        )
+                        Text(
+                            text = formatMs(totalDuration),
+                            color = Color(0xFF9EA1A1),
+                            fontSize = 12.sp,
+                            fontFamily = OutfitFontFamily
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = { viewModel.previous() },
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SkipPrevious,
+                                contentDescription = "Previous",
+                                tint = Color(0xFFE3E4E2),
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+
+                        Surface(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .clickable { viewModel.togglePlayPause() },
+                            shape = CircleShape,
+                            color = Color(0xFFE3E4E2)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                if (playerState.isBuffering) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(24.dp),
+                                        color = Color(0xFF1B1C1C),
+                                        strokeWidth = 2.5.dp
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                        contentDescription = "Play/Pause",
+                                        tint = Color(0xFF1B1C1C),
+                                        modifier = Modifier.size(30.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        IconButton(
+                            onClick = { viewModel.next() },
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SkipNext,
+                                contentDescription = "Next",
+                                tint = Color(0xFFE3E4E2),
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

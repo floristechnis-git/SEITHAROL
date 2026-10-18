@@ -11,9 +11,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.compose.ui.platform.LocalContext
+import com.example.data.AppPreferences
 import com.example.ui.CascadeApp
 import com.example.ui.CascadeViewModel
 import com.example.ui.CascadeViewModelFactory
+import com.example.ui.screens.OnboardingScreen
 import com.example.ui.splash.SplashScreen
 import com.example.ui.theme.CascadeTheme
 
@@ -40,6 +43,9 @@ class MainActivity : ComponentActivity() {
             }
         }
         setContent {
+            val context = LocalContext.current
+            val appPreferences = remember { AppPreferences(context) }
+            val userSettings by appPreferences.settings.collectAsState()
             val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
             val userDarkSetting by viewModel.isDarkMode.collectAsState()
             val effectiveDark = userDarkSetting ?: systemDark
@@ -48,6 +54,12 @@ class MainActivity : ComponentActivity() {
             CascadeTheme(darkTheme = effectiveDark) {
                 if (!isSplashFinished) {
                     SplashScreen(onSplashFinished = { isSplashFinished = true })
+                } else if (!userSettings.onboarded) {
+                    OnboardingScreen(
+                        onContinue = { name, age ->
+                            appPreferences.saveOnboarding(name, age)
+                        }
+                    )
                 } else {
                     CascadeApp(viewModel = viewModel)
                 }

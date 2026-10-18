@@ -163,7 +163,7 @@ class MediaPlaybackService : Service() {
             val text = currentTrack?.artist ?: "Ready to play"
 
             val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_stat_notification)
+                .setSmallIcon(R.drawable.ic_stat_music_note)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setContentIntent(openPendingIntent)
@@ -240,7 +240,7 @@ class MediaPlaybackService : Service() {
             val playPauseTitle = if (isPlaying) "Pause" else "Play"
 
             val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_stat_notification)
+                .setSmallIcon(R.drawable.ic_stat_music_note)
                 .setContentTitle(track.title)
                 .setContentText(track.artist)
                 .setSubText(if (track.isDownloaded) "Offline" else "Streaming")

@@ -340,7 +340,7 @@ fun PlaybackQueueModal(
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
                                             text = track.title,
-                                            color = if (isPlaying) Color(0xFFFFB74D) else Color(0xFFE3E4E2),
+                                            color = if (isPlaying) Color.White else Color(0xFFE3E4E2),
                                             fontFamily = OutfitFontFamily,
                                             fontWeight = FontWeight.SemiBold,
                                             fontSize = 14.sp,
@@ -353,12 +353,12 @@ fun PlaybackQueueModal(
                                             Box(
                                                 modifier = Modifier
                                                     .clip(RoundedCornerShape(4.dp))
-                                                    .background(Color(0xFFFFB74D).copy(alpha = 0.2f))
+                                                    .background(Color.White.copy(alpha = 0.2f))
                                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                                             ) {
                                                 Text(
                                                     text = "PLAYING",
-                                                    color = Color(0xFFFFB74D),
+                                                    color = Color.White,
                                                     fontSize = 9.sp,
                                                     fontWeight = FontWeight.ExtraBold
                                                 )
@@ -425,7 +425,7 @@ fun PlaybackQueueModal(
                                                 .width(18.dp)
                                                 .height(2.dp)
                                                 .background(
-                                                    if (isDragging) Color(0xFFFFB74D) else Color(0xFF888888),
+                                                    if (isDragging) Color.White else Color(0xFF888888),
                                                     RoundedCornerShape(1.dp)
                                                 )
                                         )
@@ -434,7 +434,7 @@ fun PlaybackQueueModal(
                                                 .width(18.dp)
                                                 .height(2.dp)
                                                 .background(
-                                                    if (isDragging) Color(0xFFFFB74D) else Color(0xFF888888),
+                                                    if (isDragging) Color.White else Color(0xFF888888),
                                                     RoundedCornerShape(1.dp)
                                                 )
                                         )
@@ -490,7 +490,7 @@ fun PlaybackQueueModal(
                                     onCheckedChange = { viewModel.toggleAutoSuggest() },
                                     colors = SwitchDefaults.colors(
                                         checkedThumbColor = Color(0xFF1B1C1C),
-                                        checkedTrackColor = Color(0xFFFFB74D),
+                                        checkedTrackColor = Color.White,
                                         uncheckedThumbColor = Color(0xFF9EA1A1),
                                         uncheckedTrackColor = Color(0xFF2E3030)
                                     )
@@ -505,7 +505,7 @@ fun PlaybackQueueModal(
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
                                 text = "Auto-suggested",
-                                color = Color(0xFFFFB74D),
+                                color = Color.White,
                                 fontFamily = SyneFontFamily,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
@@ -570,7 +570,7 @@ fun PlaybackQueueModal(
                                         Icon(
                                             imageVector = Icons.Default.PlaylistAdd,
                                             contentDescription = "Add to Queue",
-                                            tint = Color(0xFFFFB74D),
+                                            tint = Color.White,
                                             modifier = Modifier.size(20.dp)
                                         )
                                     }
@@ -605,7 +605,7 @@ private fun LandingDropIndicatorLine() {
             modifier = Modifier
                 .size(6.dp)
                 .clip(CircleShape)
-                .background(Color(0xFFFFB74D))
+                .background(Color.White)
         )
         Spacer(modifier = Modifier.width(4.dp))
         // Glowing 2.5dp insertion line
@@ -616,9 +616,9 @@ private fun LandingDropIndicatorLine() {
                 .background(
                     Brush.horizontalGradient(
                         colors = listOf(
-                            Color(0xFFFFB74D),
-                            Color(0xFFFFB74D).copy(alpha = 0.75f),
-                            Color(0xFFFFB74D).copy(alpha = 0.15f)
+                            Color.White,
+                            Color.White.copy(alpha = 0.75f),
+                            Color.White.copy(alpha = 0.15f)
                         )
                     ),
                     shape = RoundedCornerShape(1.25.dp)

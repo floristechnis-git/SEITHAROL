@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
@@ -17,11 +18,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.data.AppPreferences
 import com.example.ui.CascadeViewModel
 import com.example.ui.theme.*
 import kotlinx.coroutines.launch
@@ -35,11 +39,16 @@ fun ProfileScreen(
     onOpenSleepTimer: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val appPreferences = remember { AppPreferences(context) }
+    val userSettings by appPreferences.settings.collectAsState()
+
     val downloadedTracks by viewModel.downloadedTracks.collectAsState()
     val isOfflineMode by viewModel.isOfflineMode.collectAsState()
     val currentPackVersion by viewModel.currentPackVersion.collectAsState()
     val totalDownloadedBytes by viewModel.totalDownloadedBytes.collectAsState()
 
+    var showEditProfileDialog by remember { mutableStateOf(false) }
     var showAccountInfo by remember { mutableStateOf(false) }
     var showSubInfo by remember { mutableStateOf(false) }
     var showClearCacheDialog by remember { mutableStateOf(false) }
@@ -137,7 +146,7 @@ fun ProfileScreen(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         Text(
-                            text = "Joykumar Singh",
+                            text = userSettings.userName.ifBlank { "User Profile" },
                             fontFamily = SyneFontFamily,
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 24.sp,
@@ -147,7 +156,7 @@ fun ProfileScreen(
                         Spacer(modifier = Modifier.height(2.dp))
 
                         Text(
-                            text = "+91 98765 43210 • Standalone Client",
+                            text = if (userSettings.userAge.isNotBlank()) "Age: ${userSettings.userAge} • Seitharol" else "Discover the features yourself.",
                             fontFamily = OutfitFontFamily,
                             fontSize = 12.sp,
                             color = Color(0xFFAAAAAA)
@@ -169,13 +178,13 @@ fun ProfileScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        // Account Card
+                        // Account Card (Opens Edit Name & Age dialog)
                         Surface(
                             modifier = Modifier
                                 .weight(1f)
                                 .height(96.dp)
                                 .clip(RoundedCornerShape(20.dp))
-                                .clickable { showAccountInfo = !showAccountInfo }
+                                .clickable { showEditProfileDialog = true }
                                 .testTag("profile_account_card"),
                             shape = RoundedCornerShape(20.dp),
                             color = KangleiWhite
@@ -193,7 +202,7 @@ fun ProfileScreen(
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Text(
-                                    text = "Account",
+                                    text = "Edit Profile",
                                     fontSize = 14.sp,
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Medium,
@@ -604,6 +613,21 @@ fun ProfileScreen(
             )
         }
 
+        // Edit Name & Age Profile Dialog
+        if (showEditProfileDialog) {
+            EditProfileDialog(
+                initialName = userSettings.userName,
+                initialAge = userSettings.userAge,
+                onDismiss = { showEditProfileDialog = false },
+                onSave = { name, age ->
+                    appPreferences.updateAccount(name, age)
+                    coroutineScope.launch {
+                        snackbarHostState.showSnackbar("Profile details saved successfully.")
+                    }
+                }
+            )
+        }
+
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier
@@ -611,4 +635,84 @@ fun ProfileScreen(
                 .padding(bottom = 100.dp)
         )
     }
+}
+
+@Composable
+fun EditProfileDialog(
+    initialName: String,
+    initialAge: String,
+    onDismiss: () -> Unit,
+    onSave: (name: String, age: String) -> Unit
+) {
+    var name by remember { mutableStateOf(initialName) }
+    var age by remember { mutableStateOf(initialAge) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF1B1C1C),
+        shape = RoundedCornerShape(20.dp),
+        title = {
+            Text(
+                text = "Edit Profile",
+                fontFamily = SyneFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp,
+                color = Color.White
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Name", color = Color.White.copy(alpha = 0.7f)) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color.White,
+                        unfocusedBorderColor = Color.White.copy(alpha = 0.35f),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        cursorColor = Color.White
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = age,
+                    onValueChange = { if (it.all { c -> c.isDigit() } && it.length <= 3) age = it },
+                    label = { Text("Age", color = Color.White.copy(alpha = 0.7f)) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color.White,
+                        unfocusedBorderColor = Color.White.copy(alpha = 0.35f),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        cursorColor = Color.White
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onSave(name.trim(), age.trim())
+                    onDismiss()
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.White,
+                    contentColor = Color.Black
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Save", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = Color.White)
+            }
+        }
+    )
 }

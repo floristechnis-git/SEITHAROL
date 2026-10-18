@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -42,6 +43,25 @@ import com.example.ui.components.CreatePlaylistModal
 import com.example.ui.components.SuggestedArtistItem
 import com.example.ui.theme.*
 import java.util.Calendar
+
+@Composable
+fun LikedPlaylistSvgThumbnail(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .background(Color(0xFF262727), RoundedCornerShape(12.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.size(56.dp)) {
+            drawCircle(color = Color.White.copy(alpha = 0.12f))
+        }
+        Icon(
+            imageVector = Icons.Default.Favorite,
+            contentDescription = "Liked Songs",
+            tint = Color.White,
+            modifier = Modifier.size(32.dp)
+        )
+    }
+}
 
 // UI Data Model for Home Screen Tracks / Mixes / Albums
 data class HomeMediaItem(
@@ -120,27 +140,35 @@ fun HomeScreen(
     val likedTracks by viewModel.likedTracks.collectAsState()
     val isDarkTheme = LocalIsDarkTheme.current
 
-    // Prepare Trending Items
-    val trendingItems = remember(trendingHits, allTracks) {
-        val pool = if (trendingHits.isNotEmpty()) trendingHits else allTracks
+    // Deduplicate pools to ensure no duplicate songs appear
+    val deduplicatedAllTracks = remember(allTracks) {
+        allTracks.distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
+    }
+    val deduplicatedTrendingHits = remember(trendingHits) {
+        trendingHits.distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
+    }
+
+    // Prepare Trending Items (Deduplicated)
+    val trendingItems = remember(deduplicatedTrendingHits, deduplicatedAllTracks) {
+        val pool = if (deduplicatedTrendingHits.isNotEmpty()) deduplicatedTrendingHits else deduplicatedAllTracks
         pool.take(24).map { it.toHomeMediaItem() }
     }
 
-    // Prepare Fresh New Music Items
-    val freshItems = remember(freshReleases, trendingHits, allTracks) {
-        val pool = if (freshReleases.isNotEmpty()) freshReleases
-        else if (trendingHits.isNotEmpty()) trendingHits.take(12)
-        else allTracks.take(12)
+    // Prepare Fresh New Music Items (Deduplicated)
+    val freshItems = remember(freshReleases, deduplicatedTrendingHits, deduplicatedAllTracks) {
+        val pool = if (freshReleases.isNotEmpty()) freshReleases.distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
+        else if (deduplicatedTrendingHits.isNotEmpty()) deduplicatedTrendingHits.take(12)
+        else deduplicatedAllTracks.take(12)
         pool.take(12).map { it.toHomeMediaItem() }
     }
 
     // Prepare YouTube Mixes Shelf (non-filtered RD mixes + dynamic station cards)
-    val youtubeMixes = remember(personalizedTracks, activeHistory, trendingHits) {
+    val youtubeMixes = remember(personalizedTracks, activeHistory, deduplicatedTrendingHits) {
         val mixes = mutableListOf<HomeMediaItem>()
         personalizedTracks.filter { it.id.startsWith("RD") || it.title.contains("Mix", ignoreCase = true) }
             .forEach { mixes.add(it.toHomeMediaItem(isMix = true)) }
 
-        val seedTracks = (activeHistory.take(3) + trendingHits.take(3)).distinctBy { it.id }.take(4)
+        val seedTracks = (activeHistory.take(3) + deduplicatedTrendingHits.take(3)).distinctBy { it.id }.take(4)
         seedTracks.forEach { track ->
             mixes.add(
                 HomeMediaItem(
@@ -156,9 +184,17 @@ fun HomeScreen(
         mixes.distinctBy { it.id }
     }
 
-    // Prepare Featured Albums & Playlists
-    val albumsAndPlaylists = remember(playlists) {
-        playlists.map { playlist ->
+    // Prepare Featured Albums & Playlists (Includes SVG Liked Songs)
+    val albumsAndPlaylists = remember(playlists, likedTracks) {
+        val likedItem = HomeMediaItem(
+            id = "liked_songs",
+            title = "Liked Songs",
+            subtitle = "${likedTracks.size} songs",
+            thumbnailUrl = "",
+            isAlbumOrPlaylist = true
+        )
+        val list = mutableListOf(likedItem)
+        list.addAll(playlists.map { playlist ->
             HomeMediaItem(
                 id = playlist.id,
                 title = playlist.title,
@@ -166,7 +202,8 @@ fun HomeScreen(
                 thumbnailUrl = playlist.coverUrl.orEmpty(),
                 isAlbumOrPlaylist = true
             )
-        }
+        })
+        list
     }
 
     // Prepare Spotify-Style 2-Column "Speed Dial / Quick Picks" Bento Items (2x3 grid = 6 items)
@@ -210,12 +247,10 @@ fun HomeScreen(
         listOf(
             "All",
             "For You",
-            "Energize",
             "Relax",
+            "Energize",
             "Workout",
-            "Focus",
-            "Mixes",
-            "New Releases"
+            "Focus"
         )
     }
 
@@ -224,7 +259,7 @@ fun HomeScreen(
         onRefresh = { viewModel.loadHomeScreenMusic() },
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF1B1C1C)) // Dark theme palette background
+            .background(Color(0xFF0F0F0F)) // Pure Deep Dark Background
             .statusBarsPadding()
             .testTag("home_screen")
     ) {
@@ -233,79 +268,43 @@ fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(26.dp)
         ) {
             // ────────────────────────────────────────────────────────────
-            // Top Navigation & Action Bar
+            // Top Navigation Bar: "SEITHAROL" (Auto-suggest removed)
             // ────────────────────────────────────────────────────────────
             item {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    val isAutoSuggest by viewModel.isAutoSuggestEnabled.collectAsState()
-                    FilterChip(
-                        selected = isAutoSuggest,
-                        onClick = { viewModel.toggleAutoSuggest() },
-                        label = {
-                            Text(
-                                "Auto-Suggest",
-                                fontSize = 11.sp,
-                                fontFamily = OutfitFontFamily,
-                                color = if (isAutoSuggest) Color(0xFF1B1C1C) else Color(0xFFE3E4E2)
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.AutoAwesome,
-                                contentDescription = "Auto-Suggest",
-                                tint = if (isAutoSuggest) Color(0xFF1B1C1C) else Color(0xFFE3E4E2),
-                                modifier = Modifier.size(15.dp)
-                            )
-                        },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Color(0xFFE3E4E2),
-                            containerColor = Color(0xFF282A2A)
-                        ),
-                        modifier = Modifier.height(36.dp)
+                    Text(
+                        text = "SEITHAROL",
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 1.5.sp,
+                        fontFamily = SyneFontFamily
                     )
 
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Surface(
                             modifier = Modifier
                                 .size(40.dp)
-                                .testTag("home_notifications_btn"),
+                                .testTag("home_search_btn"),
                             shape = CircleShape,
-                            color = Color(0xFF242626),
-                            onClick = onOpenNotifications
+                            color = Color(0xFF1B1C1C),
+                            onClick = onNavigateToSearch
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
-                                    imageVector = Icons.Outlined.Notifications,
-                                    contentDescription = "Notifications",
-                                    tint = Color(0xFFE3E4E2),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-
-                        Surface(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .testTag("home_dark_mode_btn"),
-                            shape = CircleShape,
-                            color = Color(0xFF242626),
-                            onClick = { viewModel.toggleDarkMode(isDarkTheme) }
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
-                                    contentDescription = "Theme Toggle",
-                                    tint = Color(0xFFE3E4E2),
-                                    modifier = Modifier.size(18.dp)
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = "Search",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
@@ -315,14 +314,14 @@ fun HomeScreen(
                                 .size(40.dp)
                                 .testTag("home_profile_avatar_btn"),
                             shape = CircleShape,
-                            color = Color(0xFF242626),
+                            color = Color(0xFF1B1C1C),
                             onClick = onNavigateToProfile
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
                                     imageVector = Icons.Default.Person,
                                     contentDescription = "Profile",
-                                    tint = Color(0xFFE3E4E2),
+                                    tint = Color.White,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -341,7 +340,7 @@ fun HomeScreen(
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 24.sp,
-                        color = Color(0xFFE3E4E2)
+                        color = Color.White
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Surface(
@@ -351,7 +350,7 @@ fun HomeScreen(
                             .clip(RoundedCornerShape(24.dp))
                             .clickable(onClick = onNavigateToSearch)
                             .testTag("home_search_bar"),
-                        color = Color(0xFF242626),
+                        color = Color(0xFF1B1C1C),
                         shape = RoundedCornerShape(24.dp)
                     ) {
                         Row(
@@ -363,13 +362,13 @@ fun HomeScreen(
                             Icon(
                                 imageVector = Icons.Default.Search,
                                 contentDescription = "Search",
-                                tint = Color(0xFF9EA1A1),
+                                tint = Color.White.copy(alpha = 0.7f),
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
                                 text = "Search songs, artists, albums, or mixes...",
-                                color = Color(0xFF9EA1A1),
+                                color = Color.White.copy(alpha = 0.6f),
                                 fontSize = 14.sp,
                                 fontFamily = OutfitFontFamily,
                                 maxLines = 1,
@@ -381,7 +380,7 @@ fun HomeScreen(
             }
 
             // ────────────────────────────────────────────────────────────
-            // 1. Sticky Mood & Genre Filter Bar (Top)
+            // 1. YouTube Music Style Category Filter Chips (Pure White active state)
             // ────────────────────────────────────────────────────────────
             item {
                 LazyRow(
@@ -392,14 +391,20 @@ fun HomeScreen(
                         val isSelected = mood.equals(selectedMood, ignoreCase = true) || (mood == "All" && selectedMood == "All")
                         Surface(
                             shape = RoundedCornerShape(20.dp),
-                            color = if (isSelected) Color(0xFFE3E4E2) else Color(0xFF282A2A),
+                            color = if (isSelected) Color.White else Color(0xFF1B1C1C),
                             modifier = Modifier
                                 .clip(RoundedCornerShape(20.dp))
-                                .clickable { viewModel.selectHomeMood(mood) }
+                                .clickable {
+                                    if (isSelected && mood != "All") {
+                                        viewModel.selectHomeMood("All")
+                                    } else {
+                                        viewModel.selectHomeMood(mood)
+                                    }
+                                }
                         ) {
                             Text(
                                 text = mood,
-                                color = if (isSelected) Color(0xFF1B1C1C) else Color(0xFFE3E4E2),
+                                color = if (isSelected) Color.Black else Color.White,
                                 fontFamily = OutfitFontFamily,
                                 fontSize = 13.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
@@ -423,7 +428,7 @@ fun HomeScreen(
                                 .fillMaxWidth()
                                 .height(2.dp)
                                 .clip(RoundedCornerShape(1.dp)),
-                            color = Color(0xFFFFB74D),
+                            color = Color.White,
                             trackColor = Color(0xFF282A2A)
                         )
                     }
@@ -524,7 +529,9 @@ fun HomeScreen(
                         items = albumsAndPlaylists,
                         badgeText = null,
                         onItemClick = { item ->
-                            if (item.id.startsWith("RD") || item.id.startsWith("PL") || item.id.startsWith("VL") || item.id.startsWith("MPREb_") || item.id.startsWith("OLAK5uy_")) {
+                            if (item.id == "liked_songs") {
+                                onNavigateToPlaylist("liked_songs")
+                            } else if (item.id.startsWith("RD") || item.id.startsWith("PL") || item.id.startsWith("VL") || item.id.startsWith("MPREb_") || item.id.startsWith("OLAK5uy_")) {
                                 viewModel.playPlaylistOrMix(item.id)
                             } else {
                                 onNavigateToPlaylist(item.id)
@@ -771,29 +778,14 @@ fun TrendingSongsHorizontalShelf(
                                 .clip(RoundedCornerShape(10.dp))
                         )
 
-                        // Stylized 2-digit rank badge (01, 02, 03...)
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.width(36.dp)
-                        ) {
-                            Text(
-                                text = rank.toString().padStart(2, '0'),
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = if (isTopThree) Color(0xFFFFB74D) else Color(0xFF9E9E9E),
-                                textAlign = TextAlign.Center
-                            )
-                            // Subtle trend indicator dot
-                            Box(
-                                modifier = Modifier
-                                    .padding(top = 2.dp)
-                                    .size(4.dp)
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (isTopThree) Color(0xFFFFB74D) else Color(0xFF4CAF50)
-                                    )
-                            )
-                        }
+                        // Div dot indicator instead of numeric index
+                        Box(
+                            modifier = Modifier
+                                .padding(horizontal = 12.dp)
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(Color.White)
+                        )
 
                         // Song Title & Artist / Album
                         Column(
@@ -803,7 +795,7 @@ fun TrendingSongsHorizontalShelf(
                         ) {
                             Text(
                                 text = track.title,
-                                color = if (isPlaying) Color(0xFFFFB74D) else Color(0xFFE3E4E2),
+                                color = if (isPlaying) Color.White else Color(0xFFE3E4E2),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
@@ -827,7 +819,7 @@ fun TrendingSongsHorizontalShelf(
                                 Icon(
                                     imageVector = if (isPlaying) Icons.Default.GraphicEq else Icons.Default.PlayArrow,
                                     contentDescription = "Play",
-                                    tint = if (isPlaying) Color(0xFFFFB74D) else Color(0xFFE3E4E2),
+                                    tint = if (isPlaying) Color.White else Color(0xFFE3E4E2),
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -1116,12 +1108,18 @@ fun MediaCarouselShelf(
                             .size(164.dp)
                             .clip(RoundedCornerShape(12.dp))
                     ) {
-                        AsyncImage(
-                            model = upgradeThumbnail(item.thumbnailUrl),
-                            contentDescription = item.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
+                        if (item.id == "liked_songs" || item.thumbnailUrl.isBlank()) {
+                            LikedPlaylistSvgThumbnail(
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            AsyncImage(
+                                model = upgradeThumbnail(item.thumbnailUrl),
+                                contentDescription = item.title,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
                         if (badgeText != null) {
                             Surface(
                                 color = Color(0xFF1B1C1C).copy(alpha = 0.85f),
@@ -1132,7 +1130,7 @@ fun MediaCarouselShelf(
                             ) {
                                 Text(
                                     text = badgeText,
-                                    color = Color(0xFFFFB74D),
+                                    color = Color.White,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.ExtraBold,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)

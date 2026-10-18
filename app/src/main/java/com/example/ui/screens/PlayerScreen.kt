@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -22,6 +23,10 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
@@ -41,6 +46,39 @@ import com.example.player.RepeatMode
 import com.example.ui.CascadeViewModel
 import com.example.ui.components.PlaybackQueueModal
 import com.example.ui.theme.*
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+
+@Composable
+fun SvgChevronIcon(
+    isExpanded: Boolean,
+    modifier: Modifier = Modifier.size(26.dp),
+    color: Color = Color.White
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val path = Path().apply {
+            if (isExpanded) {
+                // Downward collapse chevron
+                moveTo(w * 0.22f, h * 0.36f)
+                lineTo(w * 0.50f, h * 0.64f)
+                lineTo(w * 0.78f, h * 0.36f)
+            } else {
+                // Upward expand chevron
+                moveTo(w * 0.22f, h * 0.64f)
+                lineTo(w * 0.50f, h * 0.36f)
+                lineTo(w * 0.78f, h * 0.64f)
+            }
+        }
+        drawPath(
+            path = path,
+            color = color,
+            style = Stroke(width = 2.6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+        )
+    }
+}
 
 /**
  * YouTube Music & YouTube mobile app inspired Full Player Screen:
@@ -68,19 +106,8 @@ fun PlayerScreen(
     var showQueue by remember { mutableStateOf(false) }
 
     val inlineLyricListState = rememberLazyListState()
-
-    // Swipe down to minimize gesture state
-    var swipeOffsetY by remember { mutableFloatStateOf(0f) }
-    var isDismissing by remember { mutableStateOf(false) }
-
-    val animatedSwipeOffset by animateFloatAsState(
-        targetValue = if (isDismissing) 1200f else swipeOffsetY,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioNoBouncy,
-            stiffness = Spring.StiffnessMedium
-        ),
-        label = "player_swipe_down"
-    )
+    val scope = rememberCoroutineScope()
+    val dragOffsetY = remember { Animatable(0f) }
 
     // Auto-scroll inline lyrics
     LaunchedEffect(playerState.activeLyricIndex, showLyrics) {
@@ -90,8 +117,17 @@ fun PlayerScreen(
         }
     }
 
-    val displayPosition = (userSeekingPosition?.toLong() ?: playerState.currentPositionMs).coerceAtLeast(0L)
-    val totalDuration = playerState.durationMs.coerceAtLeast(1000L)
+    // 250ms polling loop to ensure smooth progress slider without latency
+    var localPositionMs by remember(track.id) { mutableLongStateOf(playerState.currentPositionMs) }
+    LaunchedEffect(playerState.isPlaying, track.id) {
+        while (isActive) {
+            localPositionMs = playerState.currentPositionMs
+            delay(250L)
+        }
+    }
+
+    val displayPosition = (userSeekingPosition?.toLong() ?: localPositionMs.takeIf { it > 0 } ?: playerState.currentPositionMs).coerceAtLeast(0L)
+    val totalDuration = if (playerState.durationMs > 0L) playerState.durationMs else (track.durationMs.takeIf { it > 0 } ?: 210000L)
     val sliderProgress = (displayPosition.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
 
     val likedTrackIds by viewModel.likedTrackIds.collectAsState()
@@ -101,16 +137,16 @@ fun PlayerScreen(
         modifier = modifier
             .fillMaxSize()
             .graphicsLayer {
-                translationY = animatedSwipeOffset.coerceAtLeast(0f)
-                alpha = if (isDismissing) 0f else (1f - (animatedSwipeOffset / 1200f)).coerceIn(0.2f, 1f)
+                translationY = dragOffsetY.value.coerceAtLeast(0f)
+                alpha = (1f - (dragOffsetY.value / 1200f)).coerceIn(0.2f, 1f)
             }
-            .background(Color(0xFF1B1C1C)) // Dark theme palette background
+            .background(Color(0xFF0F0F0F)) // Pure Dark theme background
             .statusBarsPadding()
             .navigationBarsPadding()
             .testTag("full_player_screen")
     ) {
         // ────────────────────────────────────────────────────────────
-        // Top Area with Swipe-Down Gesture to Minimize
+        // Top Area with Smooth Spring Drag Gesture to Minimize
         // ────────────────────────────────────────────────────────────
         Row(
             modifier = Modifier
@@ -118,10 +154,34 @@ fun PlayerScreen(
                 .padding(horizontal = 20.dp, vertical = 8.dp)
                 .pointerInput(Unit) {
                     detectVerticalDragGestures(
+                        onDragEnd = {
+                            if (dragOffsetY.value > 250f) {
+                                scope.launch {
+                                    dragOffsetY.animateTo(
+                                        targetValue = 1200f,
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioNoBouncy,
+                                            stiffness = Spring.StiffnessMediumLow
+                                        )
+                                    )
+                                    onDismiss()
+                                }
+                            } else {
+                                scope.launch {
+                                    dragOffsetY.animateTo(
+                                        targetValue = 0f,
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioNoBouncy,
+                                            stiffness = Spring.StiffnessMediumLow
+                                        )
+                                    )
+                                }
+                            }
+                        },
                         onVerticalDrag = { change: PointerInputChange, dragAmount: Float ->
-                            if (dragAmount > 24f) {
-                                change.consume()
-                                onDismiss()
+                            change.consume()
+                            scope.launch {
+                                dragOffsetY.snapTo((dragOffsetY.value + dragAmount).coerceAtLeast(0f))
                             }
                         }
                     )
@@ -137,12 +197,7 @@ fun PlayerScreen(
                     .background(Color(0xFF282A2A))
                     .testTag("player_collapse_btn")
             ) {
-                Icon(
-                    imageVector = Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Collapse",
-                    tint = Color(0xFFE3E4E2),
-                    modifier = Modifier.size(28.dp)
-                )
+                SvgChevronIcon(isExpanded = true, color = Color.White)
             }
 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -156,7 +211,7 @@ fun PlayerScreen(
                 )
                 Text(
                     text = if (track.isDownloaded) "Offline Opus • Direct Audio" else "Online Pure Stream",
-                    color = Color(0xFFFFB74D),
+                    color = Color.White,
                     fontSize = 12.sp,
                     fontFamily = OutfitFontFamily,
                     fontWeight = FontWeight.Medium
@@ -247,12 +302,12 @@ fun PlayerScreen(
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize = 13.sp,
-                                color = Color(0xFFFFB74D)
+                                color = Color.White
                             )
                             Icon(
                                 imageVector = Icons.Default.OpenInFull,
                                 contentDescription = "Maximize Lyrics",
-                                tint = Color(0xFFFFB74D),
+                                tint = Color.White,
                                 modifier = Modifier.size(14.dp)
                             )
                         }
@@ -278,7 +333,7 @@ fun PlayerScreen(
                             val isCurrent = index == playerState.activeLyricIndex
                             Text(
                                 text = line.text,
-                                color = if (isCurrent) Color(0xFFFFB74D) else Color(0xFF757575),
+                                color = if (isCurrent) Color.White else Color(0xFF757575),
                                 fontSize = if (isCurrent) 20.sp else 16.sp,
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
@@ -408,7 +463,7 @@ fun PlayerScreen(
                                 progress = { downloadProgress },
                                 modifier = Modifier.size(24.dp),
                                 strokeWidth = 2.5.dp,
-                                color = Color(0xFFFFB74D),
+                                color = Color.White,
                                 trackColor = Color(0xFF282A2A)
                             )
                             Text(
@@ -438,7 +493,7 @@ fun PlayerScreen(
                 Icon(
                     imageVector = Icons.Outlined.Subtitles,
                     contentDescription = "Lyrics",
-                    tint = if (showLyrics) Color(0xFFFFB74D) else Color(0xFF9EA1A1)
+                    tint = if (showLyrics) Color.White else Color(0xFF9EA1A1)
                 )
             }
             IconButton(
@@ -448,7 +503,7 @@ fun PlayerScreen(
                 Icon(
                     imageVector = Icons.Default.QueueMusic,
                     contentDescription = "Playback Queue (Up Next)",
-                    tint = if (showQueue) Color(0xFFFFB74D) else Color(0xFFE3E4E2)
+                    tint = if (showQueue) Color.White else Color(0xFFE3E4E2)
                 )
             }
         }
@@ -471,9 +526,9 @@ fun PlayerScreen(
                     }
                 },
                 colors = SliderDefaults.colors(
-                    thumbColor = Color(0xFFFFB74D),
-                    activeTrackColor = Color(0xFFFFB74D),
-                    inactiveTrackColor = Color(0xFF333535)
+                    thumbColor = Color.White,
+                    activeTrackColor = Color.White,
+                    inactiveTrackColor = Color.White.copy(alpha = 0.25f)
                 ),
                 modifier = Modifier.testTag("player_scrubber")
             )
@@ -517,7 +572,7 @@ fun PlayerScreen(
                 Icon(
                     imageVector = Icons.Default.Shuffle,
                     contentDescription = "Shuffle",
-                    tint = if (playerState.isShuffle) Color(0xFFFFB74D) else Color(0xFF888888)
+                    tint = if (playerState.isShuffle) Color.White else Color(0xFF888888)
                 )
             }
 
@@ -588,7 +643,7 @@ fun PlayerScreen(
                 Icon(
                     imageVector = icon,
                     contentDescription = "Repeat",
-                    tint = if (playerState.repeatMode != RepeatMode.OFF) Color(0xFFFFB74D) else Color(0xFF888888)
+                    tint = if (playerState.repeatMode != RepeatMode.OFF) Color.White else Color(0xFF888888)
                 )
             }
         }
@@ -633,7 +688,7 @@ fun PlayerScreen(
                         Icon(
                             imageVector = Icons.Default.QueueMusic,
                             contentDescription = "Queue",
-                            tint = Color(0xFFFFB74D),
+                            tint = Color.White,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -834,12 +889,12 @@ fun ExpandedLyricsModal(
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize = 13.sp,
-                                color = Color(0xFFFFB74D)
+                                color = Color.White
                             )
                             Icon(
                                 imageVector = Icons.Default.CloseFullscreen,
                                 contentDescription = "Minimize Lyrics",
-                                tint = Color(0xFFFFB74D),
+                                tint = Color.White,
                                 modifier = Modifier.size(16.dp)
                             )
                         }
@@ -880,7 +935,7 @@ fun ExpandedLyricsModal(
 
                                 Text(
                                     text = line.text,
-                                    color = if (isCurrent) Color(0xFFFFB74D) else Color(0xFF6B6E6E),
+                                    color = if (isCurrent) Color.White else Color(0xFF6B6E6E),
                                     fontSize = if (isCurrent) 24.sp else 18.sp,
                                     fontFamily = SyneFontFamily,
                                     fontWeight = if (isCurrent) FontWeight.ExtraBold else FontWeight.Medium,
@@ -915,9 +970,9 @@ fun ExpandedLyricsModal(
                             }
                         },
                         colors = SliderDefaults.colors(
-                            thumbColor = Color(0xFFFFB74D),
-                            activeTrackColor = Color(0xFFFFB74D),
-                            inactiveTrackColor = Color(0xFF333535)
+                            thumbColor = Color.White,
+                            activeTrackColor = Color.White,
+                            inactiveTrackColor = Color.White.copy(alpha = 0.25f)
                         )
                     )
 

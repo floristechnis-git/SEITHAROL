@@ -561,20 +561,28 @@ fun SearchScreen(
                 }
             }
 
-            if (filteredTracks.isEmpty() && query.isNotBlank() && !isSearchingOnline) {
-                item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(40.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "No songs found for \"$query\"",
-                            color = KangleiTextSecondary,
-                            fontSize = 14.sp,
-                            fontFamily = OutfitFontFamily
-                        )
+            val currentProvider by viewModel.selectedProviderFilter.collectAsState()
+            if (filteredTracks.isEmpty() && (!isSearchingOnline || currentProvider == com.example.ui.ProviderFilter.LOCAL)) {
+                if (query.isNotBlank() || currentProvider == com.example.ui.ProviderFilter.LOCAL) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(40.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
+                                    if (query.isBlank()) "No downloaded songs on this device yet."
+                                    else "No downloaded songs match \"$query\""
+                                } else {
+                                    "No songs found for \"$query\""
+                                },
+                                color = KangleiTextSecondary,
+                                fontSize = 14.sp,
+                                fontFamily = OutfitFontFamily
+                            )
+                        }
                     }
                 }
             } else {

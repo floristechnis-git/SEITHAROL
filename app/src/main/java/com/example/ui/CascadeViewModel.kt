@@ -338,29 +338,41 @@ class CascadeViewModel(
         searchFilter,
         selectedProviderFilter,
         allTracks,
+        downloadedTracks,
         onlineSearchResults
-    ) { query, filter, provider, localTracks, onlineTracks ->
-        val localFiltered = if (query.isBlank()) {
-            localTracks
-        } else {
-            localTracks.filter {
-                it.title.contains(query, ignoreCase = true) ||
-                        it.artist.contains(query, ignoreCase = true) ||
-                        it.album.contains(query, ignoreCase = true) ||
-                        it.genre.contains(query, ignoreCase = true)
-            }
-        }
-
-        // Merge online and local matches, prioritizing online results when searching
+    ) { query, filter, provider, localTracks, downloaded, onlineTracks ->
+        val cleanQuery = query.trim()
         val combined = if (provider == ProviderFilter.LOCAL) {
-            localTracks.filter { it.isDownloaded }
-        } else if (query.isNotBlank() && onlineTracks.isNotEmpty()) {
-            val localIds = localFiltered.map { it.id }.toSet()
-            onlineTracks + localFiltered.filter { it.id !in onlineTracks.map { t -> t.id }.toSet() }
-        } else if (onlineTracks.isNotEmpty()) {
-            onlineTracks
+            val baseList = if (downloaded.isNotEmpty()) downloaded else localTracks.filter { it.isDownloaded }
+            if (cleanQuery.isBlank()) {
+                baseList
+            } else {
+                baseList.filter {
+                    it.title.contains(cleanQuery, ignoreCase = true) ||
+                            it.artist.contains(cleanQuery, ignoreCase = true) ||
+                            it.album.contains(cleanQuery, ignoreCase = true)
+                }
+            }
         } else {
-            localFiltered
+            val localFiltered = if (cleanQuery.isBlank()) {
+                localTracks
+            } else {
+                localTracks.filter {
+                    it.title.contains(cleanQuery, ignoreCase = true) ||
+                            it.artist.contains(cleanQuery, ignoreCase = true) ||
+                            it.album.contains(cleanQuery, ignoreCase = true) ||
+                            it.genre.contains(cleanQuery, ignoreCase = true)
+                }
+            }
+
+            if (cleanQuery.isNotBlank() && onlineTracks.isNotEmpty()) {
+                val onlineIds = onlineTracks.map { it.id }.toSet()
+                onlineTracks + localFiltered.filter { it.id !in onlineIds }
+            } else if (onlineTracks.isNotEmpty()) {
+                onlineTracks
+            } else {
+                localFiltered
+            }
         }
 
         when (filter) {

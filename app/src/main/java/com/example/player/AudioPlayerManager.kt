@@ -146,12 +146,15 @@ class AudioPlayerManager(
                                 }
                                 Player.STATE_READY -> {
                                     val dur = duration.coerceAtLeast(0L)
-                                    val safeDur = if (dur > 0L) dur else _state.value.durationMs
+                                    val safeDur = if (dur > 0L && dur != C.TIME_UNSET) dur else _state.value.durationMs
                                     _state.value = _state.value.copy(
                                         isBuffering = false,
                                         durationMs = safeDur
                                     )
                                     initEqualizer(audioSessionId)
+                                    if (isPlaying) {
+                                        startPositionTracker()
+                                    }
                                 }
                                 Player.STATE_ENDED -> {
                                     onTrackCompleted()
@@ -165,11 +168,14 @@ class AudioPlayerManager(
                         override fun onIsPlayingChanged(isPlaying: Boolean) {
                             _state.value = _state.value.copy(isPlaying = isPlaying)
                             if (isPlaying) {
+                                startPositionTracker()
                                 try {
                                     MediaPlaybackService.startService(context)
                                 } catch (t: Throwable) {
                                     // Non-fatal
                                 }
+                            } else {
+                                positionJob?.cancel()
                             }
                         }
 
@@ -226,6 +232,7 @@ class AudioPlayerManager(
                 isPlaying = true,
                 isBuffering = false
             )
+            startPositionTracker()
             try {
                 MediaPlaybackService.startService(context)
             } catch (t: Throwable) {
@@ -245,7 +252,7 @@ class AudioPlayerManager(
                     if (player.isPlaying) {
                         val pos = player.currentPosition.coerceAtLeast(0L)
                         val dur = player.duration
-                        val safeDur = if (dur > 0L) dur else _state.value.durationMs
+                        val safeDur = if (dur > 0L && dur != C.TIME_UNSET) dur else _state.value.durationMs
 
                         // Check SponsorBlock segments
                         checkSponsorSkip(pos)
@@ -659,23 +666,27 @@ class AudioPlayerManager(
     }
 
     private fun onTrackCompleted() {
-        when (_state.value.repeatMode) {
-            RepeatMode.ONE -> {
-                seekTo(0)
-                exoPlayer?.play()
-                _state.value = _state.value.copy(isPlaying = true)
-            }
-            RepeatMode.ALL -> {
-                next()
-            }
-            RepeatMode.OFF -> {
-                val isLast = _state.value.currentIndex >= _state.value.queue.lastIndex
-                if (isLast) {
-                    _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
-                } else {
+        runCatching {
+            when (_state.value.repeatMode) {
+                RepeatMode.ONE -> {
+                    seekTo(0)
+                    exoPlayer?.play()
+                    _state.value = _state.value.copy(isPlaying = true)
+                }
+                RepeatMode.ALL -> {
                     next()
                 }
+                RepeatMode.OFF -> {
+                    val isLast = _state.value.currentIndex >= _state.value.queue.lastIndex
+                    if (isLast) {
+                        _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
+                    } else {
+                        next()
+                    }
+                }
             }
+        }.onFailure { e ->
+            Log.e(TAG, "Error in onTrackCompleted", e)
         }
     }
 

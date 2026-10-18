@@ -198,7 +198,7 @@ fun MiniPlayer(
                     if (playerState.isBuffering) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
-                            color = Color(0xFFFFB74D),
+                            color = Color.White,
                             strokeWidth = 2.dp
                         )
                     } else {
@@ -234,7 +234,7 @@ fun MiniPlayer(
                     .fillMaxWidth()
                     .height(2.5.dp)
                     .align(Alignment.BottomCenter),
-                color = Color(0xFFFFB74D),
+                color = Color.White,
                 trackColor = Color.Transparent
             )
         }

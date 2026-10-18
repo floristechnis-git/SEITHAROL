@@ -295,30 +295,37 @@ class DownloadRepository(
 
     private fun updateDownloadNotification(title: String, progress: Int, isCompleted: Boolean = false, isFailed: Boolean = false) {
         try {
-            val notifTitle = when {
-                isFailed -> "Download Failed"
-                isCompleted -> "Download Completed"
-                else -> "Downloading $title"
+            val notifId = title.hashCode()
+            if (isCompleted || isFailed) {
+                // 1. Cancel the stuck ongoing progress notification first
+                notificationManager?.cancel(notifId)
+
+                // 2. Post a dismissible completion/failure notification with progress cleared
+                val completedNotification = NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
+                    .setSmallIcon(R.drawable.ic_stat_music_note)
+                    .setContentTitle(if (isFailed) "Download Failed" else "Download Completed")
+                    .setContentText(if (isFailed) "$title • Tap to retry" else "$title is ready for offline playback")
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setOngoing(false)
+                    .setAutoCancel(true)
+                    .setProgress(0, 0, false) // Clears the ongoing progress bar completely
+                    .build()
+
+                notificationManager?.notify(notifId + 10_000, completedNotification)
+                return
             }
-            val notifText = when {
-                isFailed -> "$title • Tap to retry"
-                isCompleted -> "$title is ready for offline playback"
-                else -> "$progress%"
-            }
+
+            val clamped = progress.coerceIn(0, 99)
             val builder = NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_splash_logo)
-                .setContentTitle(notifTitle)
-                .setContentText(notifText)
+                .setSmallIcon(R.drawable.ic_stat_music_note)
+                .setContentTitle("Downloading $title")
+                .setContentText("$clamped%")
                 .setPriority(NotificationCompat.PRIORITY_LOW)
-                .setOngoing(!isCompleted && !isFailed)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setProgress(100, clamped, false)
 
-            if (!isCompleted && !isFailed) {
-                builder.setProgress(100, progress, false)
-            } else {
-                builder.setProgress(0, 0, false)
-            }
-
-            notificationManager?.notify(title.hashCode(), builder.build())
+            notificationManager?.notify(notifId, builder.build())
         } catch (e: Exception) {
             Log.w("DownloadRepository", "Notification error: ${e.message}")
         }

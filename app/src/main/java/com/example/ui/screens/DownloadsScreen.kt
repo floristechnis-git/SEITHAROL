@@ -168,6 +168,11 @@ fun DownloadsScreen(
             items(downloads) { item ->
                 DownloadItemRow(
                     item = item,
+                    onClick = {
+                        if (item.state == DownloadState.COMPLETED) {
+                            viewModel.playDownloadedTrack(item.trackId)
+                        }
+                    },
                     onDelete = { viewModel.deleteDownload(item.trackId) },
                     onRetry = { viewModel.retryDownload(item.trackId) }
                 )
@@ -179,6 +184,7 @@ fun DownloadsScreen(
 @Composable
 fun DownloadItemRow(
     item: DownloadItem,
+    onClick: () -> Unit = {},
     onDelete: () -> Unit,
     onRetry: () -> Unit
 ) {
@@ -186,7 +192,8 @@ fun DownloadItemRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
-            .clip(RoundedCornerShape(16.dp)),
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(enabled = item.state == DownloadState.COMPLETED, onClick = onClick),
         color = KangleiWhite
     ) {
         Column(modifier = Modifier.padding(12.dp)) {

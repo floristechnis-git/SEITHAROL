@@ -53,10 +53,31 @@ fun ArtistScreen(
     var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
 
-    // Artist songs or filtered
+    // Canonical Artist Profile: group all tracks by normalized name
+    // so multiple-source fragments (YouTube + JioSaavn + local) merge into one page.
+    val normalizedQuery = artistName.trim().lowercase()
     val artistTracks = remember(artistName, allTracks) {
-        val filtered = allTracks.filter { it.artist.contains(artistName, ignoreCase = true) }
-        if (filtered.isNotEmpty()) filtered else allTracks
+        // Collect tracks that match by normalized artist name (handles cross-source duplicates)
+        val matched = allTracks.filter {
+            it.artist.trim().lowercase().contains(normalizedQuery)
+                    || normalizedQuery.contains(it.artist.trim().lowercase())
+        }
+        // De-duplicate by normalized title+artist key, keep highest-quality version
+        val deduped = matched
+            .groupBy { "${it.title.trim().lowercase()}|${it.artist.trim().lowercase()}" }
+            .mapValues { (_, tracks) -> tracks.first() }  // pick first (best already sorted by source priority)
+            .values.toList()
+        // Fallback: if no match found, show all tracks
+        deduped.ifEmpty { allTracks }
+    }
+
+    // Canonical avatar: from the source with the most tracks for this artist
+    val canonicalAvatarUrl = remember(artistTracks) {
+        artistTracks
+            .filter { it.artUrl.isNotBlank() }
+            .groupBy { it.artUrl }
+            .maxByOrNull { it.value.size }
+            ?.key ?: ""
     }
 
     val playCounts = listOf(

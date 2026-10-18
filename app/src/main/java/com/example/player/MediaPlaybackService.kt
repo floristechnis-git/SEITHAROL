@@ -1,6 +1,7 @@
 package com.example.player
 
 import android.app.Notification
+import android.net.Uri
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -162,7 +163,7 @@ class MediaPlaybackService : Service() {
             val text = currentTrack?.artist ?: "Ready to play"
 
             val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_splash_logo)
+                .setSmallIcon(R.drawable.ic_stat_notification)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setContentIntent(openPendingIntent)
@@ -239,7 +240,7 @@ class MediaPlaybackService : Service() {
             val playPauseTitle = if (isPlaying) "Pause" else "Play"
 
             val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_splash_logo)
+                .setSmallIcon(R.drawable.ic_stat_notification)
                 .setContentTitle(track.title)
                 .setContentText(track.artist)
                 .setSubText(if (track.isDownloaded) "Offline" else "Streaming")
@@ -285,6 +286,7 @@ class MediaPlaybackService : Service() {
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
         }
+
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {

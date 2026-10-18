@@ -7,10 +7,14 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.example.ui.CascadeApp
 import com.example.ui.CascadeViewModel
 import com.example.ui.CascadeViewModelFactory
+import com.example.ui.splash.SplashScreen
 import com.example.ui.theme.CascadeTheme
 
 class MainActivity : ComponentActivity() {
@@ -39,8 +43,14 @@ class MainActivity : ComponentActivity() {
             val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
             val userDarkSetting by viewModel.isDarkMode.collectAsState()
             val effectiveDark = userDarkSetting ?: systemDark
+            var isSplashFinished by remember { mutableStateOf(false) }
+
             CascadeTheme(darkTheme = effectiveDark) {
-                CascadeApp(viewModel = viewModel)
+                if (!isSplashFinished) {
+                    SplashScreen(onSplashFinished = { isSplashFinished = true })
+                } else {
+                    CascadeApp(viewModel = viewModel)
+                }
             }
         }
     }

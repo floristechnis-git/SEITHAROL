@@ -76,6 +76,9 @@ fun PlayerScreen(
     val totalDuration = playerState.durationMs.coerceAtLeast(1000L)
     val sliderProgress = (displayPosition.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
 
+    val likedTrackIds by viewModel.likedTrackIds.collectAsState()
+    val isLiked = track.id in likedTrackIds || track.isLiked
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -135,9 +138,9 @@ fun PlayerScreen(
                     .testTag("player_like_btn")
             ) {
                 Icon(
-                    imageVector = if (track.isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
+                    imageVector = if (isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
                     contentDescription = "Like",
-                    tint = if (track.isLiked) KangleiRedHeart else KangleiDark,
+                    tint = if (isLiked) KangleiRedHeart else KangleiDark,
                     modifier = Modifier.size(22.dp)
                 )
             }

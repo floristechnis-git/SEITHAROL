@@ -5,6 +5,6 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - RESOLVER_SELF_THROTTLE_RPS=0.5
-      - RESOLVER_MAX_CONCURRENT=4
+      - RESOLVER_SELF_THROTTLE_RPS=10
+      - RESOLVER_MAX_CONCURRENT=16
       - RESOLVER_NODE_TOKEN=cascade_local_token

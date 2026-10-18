@@ -1,14 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <color name="splash_background">#1B1C1C</color>
+
     <!-- System Splash Screen Theme -->
     <style name="Theme.App.Starting" parent="Theme.SplashScreen">
-        <!-- Matches your app's background token (#F2F2F2) -->
-        <item name="windowSplashScreenBackground">#F2F2F2</item>
-        <!-- Your SVG/Vector Logo -->
-        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo</item>
-        <!-- Theme to switch to once loaded -->
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@android:color/transparent</item>
         <item name="postSplashScreenTheme">@style/Theme.MyApplication</item>
     </style>
 
-    <style name="Theme.MyApplication" parent="android:Theme.DeviceDefault.NoActionBar" />
+    <style name="Theme.MyApplication" parent="android:Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@color/splash_background</item>
+        <item name="android:statusBarColor">@color/splash_background</item>
+        <item name="android:navigationBarColor">@color/splash_background</item>
+    </style>
 </resources>

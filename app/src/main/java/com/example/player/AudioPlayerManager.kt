@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.audiofx.Equalizer
 import android.net.Uri
 import android.util.Log
+import android.os.Bundle
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -83,6 +84,7 @@ class AudioPlayerManager(
     private var activeSponsorSegments: List<SponsorSegment> = emptyList()
     private var positionJob: Job? = null
     private var sleepTimerJob: Job? = null
+    private var prefetchedTrackId: String? = null
 
     val presets = listOf(
         EqualizerPreset("Flat", listOf(0f, 0f, 0f, 0f, 0f)),
@@ -174,8 +176,28 @@ class AudioPlayerManager(
                         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                             Log.e(TAG, "ExoPlayer error: ${error.errorCodeName} - ${error.message}", error)
                             _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+                            val current = _state.value.currentTrack
                             coroutineScope.launch {
-                                _skipEvent.emit("Playback note: ${error.localizedMessage ?: "Format switching"}")
+                                val title = current?.title?.ifBlank { "Track" } ?: "Track"
+                                val artist = current?.artist?.ifBlank { "Unknown" } ?: "Unknown"
+                                _skipEvent.emit("Stream interrupted for '$title' by '$artist'. Retrying fallback...")
+                                if (current != null) {
+                                    delay(1000)
+                                    try {
+                                        resolverEngine.clearCache()
+                                        val freshStream = resolverEngine.resolveTrack(current.copy(audioUrl = ""))
+                                        _state.value = _state.value.copy(activeStream = freshStream)
+                                        setupAndPlaySource(freshStream.streamUrl, current)
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Retry failed, skipping to next track", e)
+                                        _skipEvent.emit("Playback failed for '$title'. Skipping to next.")
+                                        if (_state.value.currentIndex < _state.value.queue.lastIndex) {
+                                            next()
+                                        }
+                                    }
+                                } else if (_state.value.currentIndex < _state.value.queue.lastIndex) {
+                                    next()
+                                }
                             }
                         }
                     })
@@ -185,6 +207,7 @@ class AudioPlayerManager(
         }
     }
 
+
     private fun setupAndPlaySource(sourceUrl: String, track: Track) {
         try {
             val player = exoPlayer ?: return
@@ -193,18 +216,7 @@ class AudioPlayerManager(
                 sourceUrl.startsWith("/") -> Uri.fromFile(File(sourceUrl))
                 else -> Uri.parse(sourceUrl)
             }
-            val mediaItem = MediaItem.Builder()
-                .setUri(parsedUri)
-                .setMediaId(track.id)
-                .setMediaMetadata(
-                    MediaMetadata.Builder()
-                        .setTitle(track.title)
-                        .setArtist(track.artist)
-                        .setAlbumTitle(track.album)
-                        .setArtworkUri(if (track.artUrl.isNotBlank()) Uri.parse(track.artUrl) else null)
-                        .build()
-                )
-                .build()
+            val mediaItem = track.toMediaItem(parsedUri)
 
             player.setMediaItem(mediaItem)
             player.prepare()
@@ -248,9 +260,33 @@ class AudioPlayerManager(
                             durationMs = if (safeDur > 0L) safeDur else _state.value.durationMs,
                             activeLyricIndex = activeIdx
                         )
+
+                        // Next-Track Stream Prefetching at 75% progress
+                        if (safeDur > 0L && (pos.toFloat() / safeDur.toFloat()) > 0.75f) {
+                            prefetchNextTrack()
+                        }
                     }
                 }
                 delay(200)
+            }
+        }
+    }
+
+    private fun prefetchNextTrack() {
+        val q = _state.value.queue
+        val nextIndex = _state.value.currentIndex + 1
+        if (nextIndex in q.indices) {
+            val nextTrack = q[nextIndex]
+            if (prefetchedTrackId != nextTrack.id) {
+                prefetchedTrackId = nextTrack.id
+                coroutineScope.launch(Dispatchers.IO) {
+                    try {
+                        Log.d(TAG, "Prefetching stream for next track: ${nextTrack.title} (${nextTrack.id})")
+                        resolverEngine.resolveTrack(nextTrack)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Prefetch failed for ${nextTrack.id}: ${e.message}")
+                    }
+                }
             }
         }
     }
@@ -314,6 +350,35 @@ class AudioPlayerManager(
         }
     }
 
+    /**
+     * Reorders the queue by moving the item at [fromIndex] to [toIndex].
+     * The currently-playing index is updated to follow the moved track.
+     */
+    fun moveTrack(fromIndex: Int, toIndex: Int) {
+        val q = _state.value.queue.toMutableList()
+        if (fromIndex !in q.indices || toIndex !in q.indices || fromIndex == toIndex) return
+        val currentIdx = _state.value.currentIndex
+        val movedTrack = q.removeAt(fromIndex)
+        q.add(toIndex, movedTrack)
+        // Recalculate the current index so the playing track stays correct
+        val newCurrentIndex = when {
+            currentIdx == fromIndex -> toIndex
+            fromIndex < currentIdx && toIndex >= currentIdx -> currentIdx - 1
+            fromIndex > currentIdx && toIndex <= currentIdx -> currentIdx + 1
+            else -> currentIdx
+        }
+        _state.value = _state.value.copy(queue = q, currentIndex = newCurrentIndex)
+        try {
+            exoPlayer?.let { player ->
+                if (fromIndex in 0 until player.mediaItemCount && toIndex in 0 until player.mediaItemCount) {
+                    player.moveMediaItem(fromIndex, toIndex)
+                }
+            }
+        } catch (t: Throwable) {
+            // Ignore if items are resolved dynamically on-demand
+        }
+    }
+
     fun clearQueue() {
         val current = _state.value.currentTrack
         if (current != null) {
@@ -338,6 +403,7 @@ class AudioPlayerManager(
 
     private fun loadAndPlayCurrent() {
         val current = _state.value.queue.getOrNull(_state.value.currentIndex) ?: return
+        prefetchedTrackId = null
         coroutineScope.launch {
             try {
                 val localLyrics = parseLrc(current.lyrics)
@@ -381,8 +447,11 @@ class AudioPlayerManager(
 
                 // Verify local file if marked as downloaded, or search local internal storage
                 val downloadDir = File(context.filesDir, "downloads")
+                val safeId = current.id.replace(Regex("[^A-Za-z0-9_]"), "_")
                 val localCandidates = listOfNotNull(
                     current.localPath?.let { File(it) },
+                    File(downloadDir, "$safeId.audio"),
+                    File(downloadDir, "${current.id}.audio"),
                     File(downloadDir, "${current.id}_high.opus"),
                     File(downloadDir, "${current.id}_high.m4a"),
                     File(downloadDir, "${current.id}_original.opus"),

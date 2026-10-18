@@ -2,9 +2,11 @@ package com.example.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -13,11 +15,14 @@ import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -30,9 +35,11 @@ import com.example.ui.CascadeViewModel
 import com.example.ui.theme.*
 
 /**
- * Playback Queue Modal matching Kanglei Tune design (Screenshot 3).
+ * Playback Queue Modal with real drag-and-drop reordering.
+ *
  * Header: Down arrow (left), "Playback Queue" (center), Close 'X' (right).
- * Items: Trash delete icon (left), Album art, Title, Artist, Reorder drag handle (right).
+ * Items: Trash delete icon (left), Album art, Title, Artist,
+ *        DragHandle (right) — long-press + drag to reorder.
  */
 @Composable
 fun PlaybackQueueModal(
@@ -43,6 +50,13 @@ fun PlaybackQueueModal(
 ) {
     val queue = playerState.queue
     val currentIndex = playerState.currentIndex
+
+    // Drag state
+    var draggingFromIndex by remember { mutableStateOf<Int?>(null) }
+    var draggingToIndex by remember { mutableStateOf<Int?>(null) }
+    var dragOffsetY by remember { mutableStateOf(0f) }
+
+    val listState = rememberLazyListState()
 
     androidx.activity.compose.BackHandler(onBack = onDismiss)
 
@@ -99,7 +113,8 @@ fun PlaybackQueueModal(
                 }
             }
 
-            // Subtitle / Track count info
+            // Subtitle / Track count info + Auto-Suggest toggle
+            val isAutoSuggest by viewModel.isAutoSuggestEnabled.collectAsState()
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -116,18 +131,47 @@ fun PlaybackQueueModal(
                     letterSpacing = 1.sp
                 )
 
-                if (queue.size > 1) {
-                    Text(
-                        text = "Clear Queue",
-                        color = Color(0xFFFF5252),
-                        fontFamily = OutfitFontFamily,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Auto-Suggest chip
+                    Surface(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { viewModel.clearQueue() }
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
+                            .height(28.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable { viewModel.toggleAutoSuggest() }
+                            .testTag("queue_auto_suggest_btn"),
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (isAutoSuggest) KangleiGreen.copy(alpha = 0.25f) else Color(0xFF2A2A2A)
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.padding(horizontal = 10.dp)
+                        ) {
+                            Text(
+                                text = "✦ Auto-Suggest",
+                                color = if (isAutoSuggest) KangleiGreen else Color(0xFFAAAAAA),
+                                fontSize = 11.sp,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    if (queue.size > 1) {
+                        Text(
+                            text = "Clear",
+                            color = Color(0xFFFF5252),
+                            fontFamily = OutfitFontFamily,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { viewModel.clearQueue() }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
                 }
             }
 
@@ -150,6 +194,7 @@ fun PlaybackQueueModal(
                 }
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
@@ -158,15 +203,29 @@ fun PlaybackQueueModal(
                 ) {
                     itemsIndexed(queue, key = { index, track -> "${track.id}_$index" }) { index, track ->
                         val isPlaying = index == currentIndex
+                        val isDragging = draggingFromIndex == index
 
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(14.dp))
                                 .clickable { viewModel.playQueueIndex(index) }
-                                .testTag("queue_item_$index"),
-                            color = if (isPlaying) Color(0xFF262626) else Color(0xFF1E1E1E),
-                            shape = RoundedCornerShape(14.dp)
+                                .testTag("queue_item_$index")
+                                // Visually lift the dragged row
+                                .graphicsLayer {
+                                    if (isDragging) {
+                                        translationY = dragOffsetY
+                                        shadowElevation = 16f
+                                        alpha = 0.95f
+                                    }
+                                },
+                            color = when {
+                                isDragging -> Color(0xFF303030)
+                                isPlaying -> Color(0xFF262626)
+                                else -> Color(0xFF1E1E1E)
+                            },
+                            shape = RoundedCornerShape(14.dp),
+                            shadowElevation = if (isDragging) 8.dp else 0.dp
                         ) {
                             Row(
                                 modifier = Modifier
@@ -253,13 +312,53 @@ fun PlaybackQueueModal(
 
                                 Spacer(modifier = Modifier.width(8.dp))
 
-                                // Drag handle on the right
-                                Icon(
-                                    imageVector = Icons.Default.DragHandle,
-                                    contentDescription = "Reorder",
-                                    tint = Color(0xFF777777),
-                                    modifier = Modifier.size(24.dp)
-                                )
+                                // Real drag handle — long-press to drag and reorder
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .pointerInput(index) {
+                                            detectDragGesturesAfterLongPress(
+                                                onDragStart = {
+                                                    draggingFromIndex = index
+                                                    draggingToIndex = index
+                                                    dragOffsetY = 0f
+                                                },
+                                                onDrag = { change, dragAmount ->
+                                                    change.consume()
+                                                    dragOffsetY += dragAmount.y
+
+                                                    // Estimate the item height (approx 66dp = 66 * density)
+                                                    val itemHeightPx = 66 * density
+                                                    val rawTargetIndex = index + (dragOffsetY / itemHeightPx).toInt()
+                                                    draggingToIndex = rawTargetIndex
+                                                        .coerceIn(0, queue.lastIndex)
+                                                },
+                                                onDragEnd = {
+                                                    val from = draggingFromIndex
+                                                    val to = draggingToIndex
+                                                    if (from != null && to != null && from != to) {
+                                                        viewModel.moveTrack(from, to)
+                                                    }
+                                                    draggingFromIndex = null
+                                                    draggingToIndex = null
+                                                    dragOffsetY = 0f
+                                                },
+                                                onDragCancel = {
+                                                    draggingFromIndex = null
+                                                    draggingToIndex = null
+                                                    dragOffsetY = 0f
+                                                }
+                                            )
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.DragHandle,
+                                        contentDescription = "Drag to reorder",
+                                        tint = Color(0xFF777777),
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
                             }
                         }
                     }

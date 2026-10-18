@@ -115,6 +115,14 @@ class ResolverEngine {
     }
 
     suspend fun resolveTrack(track: Track): ResolvedStream {
+        // Guard: validate critical metadata before any resolution attempt
+        if (track.id.isBlank()) {
+            throw IllegalStateException("Track has a blank ID — cannot resolve stream. Title='${track.title}' Artist='${track.artist}'")
+        }
+        if (track.title.isBlank() || track.artist.isBlank()) {
+            Log.w(TAG, "Track metadata incomplete — id='${track.id}' title='${track.title}' artist='${track.artist}'. Falling back to ID-only resolution.")
+        }
+
         val now = System.currentTimeMillis()
 
         // 1. Verified Local File Priority: must exist and have length > 10KB (eliminates dummy placeholder crashes)
@@ -203,9 +211,19 @@ class ResolverEngine {
 
         if (resolvedStream == null) {
             // Primary: On-Device YouTube InnerTube Provider
+            // Accept any non-blank ID that looks like a YouTube videoId (11 chars, no spaces)
+            // or attempt ID-based resolution for shorter IDs before falling back to search
             try {
-                if (track.id.length == 11 && !track.id.contains(" ") && !track.id.startsWith("pl_")) {
-                    resolvedStream = youtubeInnerTubeProvider.resolveStream(track.id, preferredKbps = 160)
+                val cleanId = track.id.trim()
+                if (cleanId.length == 11 && !cleanId.contains(" ") && !cleanId.startsWith("pl_")) {
+                    resolvedStream = youtubeInnerTubeProvider.resolveStream(cleanId, preferredKbps = 160)
+                } else if (cleanId.isNotBlank() && !cleanId.startsWith("pl_") && !cleanId.all { it.isDigit() }) {
+                    // Non-standard YouTube ID — still try direct resolution
+                    try {
+                        resolvedStream = youtubeInnerTubeProvider.resolveStream(cleanId, preferredKbps = 160)
+                    } catch (e2: Exception) {
+                        Log.d(TAG, "Direct non-standard ID resolution failed, will search: ${e2.message}")
+                    }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "On-device InnerTube direct resolve failed for ${track.id}: ${e.message}")
@@ -215,13 +233,23 @@ class ResolverEngine {
         // Fallback 1: On-Device YouTube Music search and full audio stream extraction
         if (resolvedStream == null) {
             try {
-                val query = "${track.title} ${track.artist}".trim()
+                val title = track.title.trim()
+                val artist = track.artist.trim()
+                // Build the best possible search query from available metadata
+                val query = when {
+                    title.isNotBlank() && artist.isNotBlank() -> "$title $artist"
+                    title.isNotBlank() -> title
+                    artist.isNotBlank() -> artist
+                    else -> ""
+                }
                 if (query.isNotBlank()) {
                     val ytResults = youtubeInnerTubeProvider.searchTracks(query, limit = 3)
                     val match = ytResults.firstOrNull()
                     if (match != null && match.sourceId.isNotBlank()) {
                         resolvedStream = youtubeInnerTubeProvider.resolveStream(match.sourceId, preferredKbps = 160)
                     }
+                } else {
+                    Log.e(TAG, "Cannot search YouTube: both title and artist are blank for track.id='${track.id}'")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "YouTube search fallback failed: ${e.message}")
@@ -231,7 +259,14 @@ class ResolverEngine {
         // Fallback 2: On-Device JioSaavn search match (Full 320kbps AAC stream)
         if (resolvedStream == null) {
             try {
-                val query = "${track.artist} ${track.title}".trim()
+                val artist = track.artist.trim()
+                val title = track.title.trim()
+                val query = when {
+                    artist.isNotBlank() && title.isNotBlank() -> "$artist $title"
+                    title.isNotBlank() -> title
+                    artist.isNotBlank() -> artist
+                    else -> ""
+                }
                 if (query.isNotBlank()) {
                     val results = jioSaavnProvider.searchTracks(query, limit = 3)
                     val match = results.firstOrNull()

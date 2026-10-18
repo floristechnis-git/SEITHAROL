@@ -53,6 +53,10 @@ class CascadeViewModel(
     val likedTracks: StateFlow<List<Track>> = musicRepository.getLikedTracks()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val likedTrackIds: StateFlow<Set<String>> = musicRepository.getLikedTracks()
+        .map { tracks -> tracks.map { it.id }.toSet() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+
     val downloadedTracks: StateFlow<List<Track>> = musicRepository.getDownloadedTracks()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -418,9 +422,92 @@ class CascadeViewModel(
 
     fun playQueueIndex(index: Int) = playerManager.playQueueIndex(index)
     fun removeFromQueue(index: Int) = playerManager.removeFromQueue(index)
+    fun moveTrack(fromIndex: Int, toIndex: Int) = playerManager.moveTrack(fromIndex, toIndex)
     fun clearQueue() = playerManager.clearQueue()
     fun addToQueue(track: Track) = playerManager.addToQueue(track)
     fun playNext(track: Track) = playerManager.playNext(track)
+
+    fun playDownloadedTrack(trackId: String) {
+        viewModelScope.launch {
+            val track = musicRepository.getTrackById(trackId) ?: activeDownloads.value.firstOrNull { it.trackId == trackId }?.let { dl ->
+                Track(
+                    id = dl.trackId,
+                    title = dl.title,
+                    artist = dl.artist,
+                    artUrl = dl.artUrl,
+                    audioUrl = dl.localFilePath ?: "",
+                    localPath = dl.localFilePath,
+                    isDownloaded = true
+                )
+            }
+            if (track != null) {
+                playerManager.playTrack(track)
+            }
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // Auto-Suggest & Non-Repeating Radio
+    // ────────────────────────────────────────────────────────────
+
+    private val recommendationRepository = object : com.example.player.RecommendationRepository {
+        override suspend fun getRelatedTracks(seedTrack: Track): List<Track> {
+            val query = "${seedTrack.title} ${seedTrack.artist}".trim()
+            return try {
+                resolverEngine.youtubeInnerTubeProvider
+                    .searchTracks(query, limit = 10)
+                    .map { it.toDomainTrack() }
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
+
+        override suspend fun getRelatedPlaylists(seedTrack: Track): List<com.example.player.SuggestedPlaylist> {
+            return emptyList()
+        }
+    }
+
+    val autoSuggestManager = com.example.player.AutoSuggestQueueManager(recommendationRepository)
+    val isAutoSuggestEnabled: StateFlow<Boolean> = autoSuggestManager.isAutoSuggestEnabled
+    val suggestedPlaylists: StateFlow<List<com.example.player.SuggestedPlaylist>> = autoSuggestManager.suggestedPlaylists
+
+    fun toggleAutoSuggest() {
+        autoSuggestManager.toggleAutoSuggest()
+        if (autoSuggestManager.isAutoSuggestEnabled.value) {
+            fetchAndAppendSuggestions()
+        }
+    }
+
+    /**
+     * Called after each track finishes (or when Auto-Suggest is enabled).
+     * Fetches related tracks and appends de-duplicated suggestions to the queue.
+     */
+    fun fetchAndAppendSuggestions() {
+        if (!isAutoSuggestEnabled.value) return
+        val seed = playerState.value.currentTrack ?: return
+        viewModelScope.launch {
+            try {
+                val currentQueue = playerState.value.queue
+                val freshTracks = autoSuggestManager.fetchNextSuggestions(seed, currentQueue, maxTracksToAppend = 3)
+                freshTracks.forEach { track ->
+                    musicRepository.insertTrack(track)
+                    playerManager.addToQueue(track)
+                }
+            } catch (e: Exception) {
+                // Non-fatal: Auto-Suggest silently fails
+            }
+        }
+    }
+
+    /** Mark the given track as played so Auto-Suggest won't repeat it. */
+    fun markTrackPlayed(track: Track) {
+        playedTrackKeys.add(track.sessionKey())
+    }
+
+    /** Clear played history (e.g. on new session or manual refresh). */
+    fun clearPlayedHistory() {
+        playedTrackKeys.clear()
+    }
 }
 
 class CascadeViewModelFactory(

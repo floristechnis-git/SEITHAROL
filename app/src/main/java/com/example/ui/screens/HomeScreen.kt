@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,7 +36,9 @@ import com.example.ui.components.HitCard
 import com.example.ui.components.SuggestedArtistItem
 import com.example.ui.components.TrackCard
 import com.example.ui.theme.*
+import java.util.Calendar
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     viewModel: CascadeViewModel,
@@ -139,15 +142,30 @@ fun HomeScreen(
 
     val isDarkTheme = LocalIsDarkTheme.current
 
-    LazyColumn(
+    // Time-of-day greeting
+    val greeting = remember {
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        when (hour) {
+            in 5..11  -> "Good Morning"
+            in 12..16 -> "Good Afternoon"
+            in 17..20 -> "Good Evening"
+            else      -> "Good Night"
+        }
+    }
+
+    PullToRefreshBox(
+        isRefreshing = isLoadingHome,
+        onRefresh = { viewModel.loadHomeScreenMusic() },
         modifier = modifier
             .fillMaxSize()
             .background(KangleiBg)
             .statusBarsPadding()
-            .testTag("home_screen"),
-        contentPadding = PaddingValues(bottom = 140.dp)
+            .testTag("home_screen")
     ) {
-        // 1. Top Navigation Bar: Clean, well-spaced, no vinyl icon or text clutter
+        LazyColumn(
+            contentPadding = PaddingValues(bottom = 140.dp)
+        ) {
+        // 1. Top Navigation Bar: no title text, no manual refresh button
         item {
             Row(
                 modifier = Modifier
@@ -156,46 +174,27 @@ fun HomeScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = "Listen Now",
-                    fontFamily = SyneFontFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 24.sp,
-                    color = KangleiDark
+                // Auto-Suggest Toggle Chip
+                val isAutoSuggest by viewModel.isAutoSuggestEnabled.collectAsState()
+                FilterChip(
+                    selected = isAutoSuggest,
+                    onClick = { viewModel.toggleAutoSuggest() },
+                    label = { Text("Auto-Suggest", fontSize = 11.sp, fontFamily = OutfitFontFamily) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = "Auto-Suggest",
+                            modifier = Modifier.size(15.dp)
+                        )
+                    },
+                    modifier = Modifier.height(36.dp)
                 )
 
-                // Action Buttons: Refresh, Notifications, Theme Toggle, Profile Avatar
+                // Action Buttons: Notifications, Theme Toggle, Profile Avatar
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Refresh Button
-                    Surface(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .testTag("home_refresh_btn"),
-                        shape = CircleShape,
-                        color = KangleiWhite,
-                        onClick = { viewModel.loadHomeScreenMusic() }
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            if (isLoadingHome) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
-                                    strokeWidth = 2.dp,
-                                    color = KangleiDark
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = "Refresh Music",
-                                    tint = KangleiDark,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                    }
-
                     // Notifications Button
                     Surface(
                         modifier = Modifier
@@ -234,7 +233,7 @@ fun HomeScreen(
                         }
                     }
 
-                    // Profile Avatar (Clean fallback icon instead of hardcoded mock image)
+                    // Profile Avatar
                     Surface(
                         modifier = Modifier
                             .size(42.dp)
@@ -254,6 +253,18 @@ fun HomeScreen(
                     }
                 }
             }
+        }
+
+        // 1b. Time-of-day greeting: shown directly below the nav bar, above the search bar
+        item {
+            Text(
+                text = greeting,
+                fontFamily = SyneFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 26.sp,
+                color = KangleiDark,
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 8.dp)
+            )
         }
 
         // 2. Single-line Search Bar
@@ -644,7 +655,8 @@ fun HomeScreen(
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
             )
         }
-    }
+        } // end LazyColumn
+    } // end PullToRefreshBox
 
     // Modal to add track to playlist
     trackToAddToPlaylist?.let { track ->
@@ -676,6 +688,7 @@ fun HomeScreen(
         )
     }
 }
+
 
 /**
  * Compact Quick Pick Song Item for 4-song-per-column grid

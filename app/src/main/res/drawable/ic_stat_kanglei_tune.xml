@@ -1,0 +1,11 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024"
+    android:tint="?attr/colorControlNormal">
+    <!-- Full-bleed foreground musical emblem without the solid background rect -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M511.06,101.69 C550.5,101.84 588.93,107.08 626.34,120 C653.8,130 680,145 705,165 C760,210 800,275 815,350 C830,425 820,505 785,575 C750,645 690,705 620,740 C550,775 470,785 395,765 C320,745 255,695 215,630 C175,565 160,485 175,410 C190,335 235,265 295,215 C355,165 430,101.69 511.06,101.69 Z" />
+</vector>

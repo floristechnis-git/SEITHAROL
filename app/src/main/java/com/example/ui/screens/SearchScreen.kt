@@ -57,6 +57,7 @@ fun SearchScreen(
     val isSearchingOnline by viewModel.isSearchingOnline.collectAsState()
     val searchSuggestions by viewModel.searchSuggestions.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
+    val currentProvider by viewModel.selectedProviderFilter.collectAsState()
     var selectedTab by remember { mutableStateOf(SearchTab.TOP) }
     var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
@@ -224,14 +225,13 @@ fun SearchScreen(
 
         // Multi-Source Provider Filter Chips (All, YouTube, Spotify, JioSaavn, Gaana, Downloaded)
         item {
-            val selectedProvider by viewModel.selectedProviderFilter.collectAsState()
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.padding(bottom = 12.dp)
             ) {
                 items(com.example.ui.ProviderFilter.values()) { provider ->
-                    val isSelected = selectedProvider == provider
+                    val isSelected = currentProvider == provider
                     Surface(
                         modifier = Modifier
                             .height(34.dp)
@@ -561,7 +561,6 @@ fun SearchScreen(
                 }
             }
 
-            val currentProvider by viewModel.selectedProviderFilter.collectAsState()
             if (filteredTracks.isEmpty() && (!isSearchingOnline || currentProvider == com.example.ui.ProviderFilter.LOCAL)) {
                 if (query.isNotBlank() || currentProvider == com.example.ui.ProviderFilter.LOCAL) {
                     item {

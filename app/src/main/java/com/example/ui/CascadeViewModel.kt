@@ -334,16 +334,19 @@ class CascadeViewModel(
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val searchResults: StateFlow<List<Track>> = combine(
-        searchQuery,
-        searchFilter,
-        selectedProviderFilter,
-        allTracks,
-        downloadedTracks,
-        onlineSearchResults
-    ) { query, filter, provider, localTracks, downloaded, onlineTracks ->
+        combine(searchQuery, searchFilter, selectedProviderFilter) { q, filter, provider ->
+            Triple(q, filter, provider)
+        },
+        combine(allTracks, downloadedTracks, onlineSearchResults) { localTracks, downloaded, onlineTracks ->
+            Triple(localTracks, downloaded, onlineTracks)
+        }
+    ) { (query, filter, provider), (localTracks, downloaded, onlineTracks) ->
         val cleanQuery = query.trim()
-        val combined = if (provider == ProviderFilter.LOCAL) {
-            val baseList = if (downloaded.isNotEmpty()) downloaded else localTracks.filter { it.isDownloaded }
+        val allDownloaded: List<Track> = (downloaded + localTracks.filter { it.isDownloaded })
+            .distinctBy { it.id }
+
+        val combined: List<Track> = if (provider == ProviderFilter.LOCAL) {
+            val baseList = if (allDownloaded.isNotEmpty()) allDownloaded else localTracks.filter { it.isDownloaded }
             if (cleanQuery.isBlank()) {
                 baseList
             } else {
@@ -384,6 +387,7 @@ class CascadeViewModel(
             SearchFilter.LOFI -> combined.filter { it.genre.equals("Lo-Fi", ignoreCase = true) }
             SearchFilter.ROCK -> combined.filter { it.genre.contains("Rock", ignoreCase = true) }
             SearchFilter.ACOUSTIC -> combined.filter { it.genre.equals("Acoustic", ignoreCase = true) }
+            else -> combined
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 

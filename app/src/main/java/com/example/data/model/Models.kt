@@ -4,9 +4,9 @@ data class Track(
     val id: String, // YouTube videoId or local ID
     val title: String,
     val artist: String,
-    val album: String,
-    val durationMs: Long,
-    val artUrl: String,
+    val album: String = "",
+    val durationMs: Long = 0L,
+    val artUrl: String = "",
     val isDownloaded: Boolean = false,
     val localPath: String? = null,
     val isLiked: Boolean = false,

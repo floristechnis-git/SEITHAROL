@@ -69,6 +69,11 @@ fun LibraryScreen(
     var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
 
+    val currentHistoryList = remember(activeHistory, archivedHistory, historyViewMode, historySortNewest) {
+        val raw = if (historyViewMode == "active") activeHistory else archivedHistory
+        if (historySortNewest) raw else raw.reversed()
+    }
+
     val albums = remember(allTracks) {
         allTracks.groupBy { it.album }.map { (album, tracks) ->
             Triple(album, tracks.first().artist, tracks.first().artUrl)
@@ -663,11 +668,6 @@ fun LibraryScreen(
                             }
                         }
                     }
-                }
-
-                val rawHistoryList = if (historyViewMode == "active") activeHistory else archivedHistory
-                val currentHistoryList = remember(rawHistoryList, historySortNewest) {
-                    if (historySortNewest) rawHistoryList else rawHistoryList.reversed()
                 }
 
                 if (currentHistoryList.isEmpty()) {

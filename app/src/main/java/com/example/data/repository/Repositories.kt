@@ -77,6 +77,14 @@ class MusicRepository(
             )
         )
     }
+ 
+    suspend fun deleteTrackFromHistory(trackId: String) = withContext(Dispatchers.IO) {
+        historyDao.deleteHistoryByTrackId(trackId)
+    }
+
+    suspend fun clearAllHistory() = withContext(Dispatchers.IO) {
+        historyDao.clearHistory()
+    }
 
     suspend fun getTrackById(id: String): Track? = withContext(Dispatchers.IO) {
         trackDao.getTrackById(id)?.toDomain()

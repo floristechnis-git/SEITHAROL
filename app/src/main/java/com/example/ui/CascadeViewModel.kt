@@ -434,6 +434,8 @@ class CascadeViewModel(
                     id = dl.trackId,
                     title = dl.title,
                     artist = dl.artist,
+                    album = dl.title,
+                    durationMs = 0L,
                     artUrl = dl.artUrl,
                     audioUrl = dl.localFilePath ?: "",
                     localPath = dl.localFilePath,
@@ -446,9 +448,26 @@ class CascadeViewModel(
         }
     }
 
+    fun deleteTrackFromHistory(trackId: String) {
+        viewModelScope.launch {
+            musicRepository.deleteTrackFromHistory(trackId)
+        }
+    }
+
+    fun clearAllHistory() {
+        viewModelScope.launch {
+            musicRepository.clearAllHistory()
+        }
+    }
+
     // ────────────────────────────────────────────────────────────
     // Auto-Suggest & Non-Repeating Radio
     // ────────────────────────────────────────────────────────────
+
+    private val playedTrackKeys = mutableSetOf<String>()
+
+    private fun Track.sessionKey(): String =
+        "${id}_${title.trim().lowercase()}|${artist.trim().lowercase()}"
 
     private val recommendationRepository = object : com.example.player.RecommendationRepository {
         override suspend fun getRelatedTracks(seedTrack: Track): List<Track> {
@@ -502,11 +521,13 @@ class CascadeViewModel(
     /** Mark the given track as played so Auto-Suggest won't repeat it. */
     fun markTrackPlayed(track: Track) {
         playedTrackKeys.add(track.sessionKey())
+        autoSuggestManager.markTrackPlayed(track)
     }
 
     /** Clear played history (e.g. on new session or manual refresh). */
     fun clearPlayedHistory() {
         playedTrackKeys.clear()
+        autoSuggestManager.resetSessionHistory()
     }
 }
 

@@ -143,6 +143,9 @@ interface HistoryDao {
     @Query("DELETE FROM play_history WHERE id = :id")
     suspend fun deleteHistory(id: Long)
 
+    @Query("DELETE FROM play_history WHERE trackId = :trackId")
+    suspend fun deleteHistoryByTrackId(trackId: String)
+
     @Query("DELETE FROM play_history")
     suspend fun clearHistory()
 }

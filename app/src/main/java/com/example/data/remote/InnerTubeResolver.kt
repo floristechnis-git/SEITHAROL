@@ -340,7 +340,20 @@ object InnerTubeResolver {
                 if (lastThumb.isNotBlank()) artUrl = upgradeThumbnailUrl(lastThumb)
             }
 
-            albums.add(Album(id = browseId, title = title, thumbnailUrl = artUrl))
+            var year = ""
+            val subtitleRuns = item.optJSONObject("subtitle")?.optJSONArray("runs")
+                ?: item.optJSONObject("bylineText")?.optJSONArray("runs")
+            if (subtitleRuns != null) {
+                for (i in 0 until subtitleRuns.length()) {
+                    val txt = subtitleRuns.getJSONObject(i).optString("text").trim()
+                    if (txt.length == 4 && txt.all { it.isDigit() }) {
+                        year = txt
+                        break
+                    }
+                }
+            }
+
+            albums.add(Album(id = browseId, title = title, thumbnailUrl = artUrl, year = year))
         }
         return albums.distinctBy { it.id }
     }

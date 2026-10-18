@@ -17,7 +17,7 @@ data class Album(
     val id: String,
     val title: String,
     val thumbnailUrl: String,
-    val year: Int? = null
+    val year: String = ""
 )
 
 data class UnifiedArtistProfile(

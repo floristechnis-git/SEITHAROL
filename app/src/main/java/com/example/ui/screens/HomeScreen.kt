@@ -84,7 +84,6 @@ fun HomeMediaItem.toTrack(): Track {
         album = subtitle.split("•").getOrNull(1)?.trim() ?: "",
         durationMs = 0L,
         artUrl = thumbnailUrl,
-        streamUrl = "",
         genre = "Music",
         isLiked = false
     )
@@ -210,8 +209,9 @@ fun HomeScreen(
     val moodChips = remember {
         listOf(
             "All",
+            "For You",
             "Energize",
-            "Chill",
+            "Relax",
             "Workout",
             "Focus",
             "Mixes",
@@ -389,13 +389,13 @@ fun HomeScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(moodChips) { mood ->
-                        val isSelected = mood.equals(selectedMood, ignoreCase = true) || (mood == "All" && (selectedMood == "For You" || selectedMood == "All"))
+                        val isSelected = mood.equals(selectedMood, ignoreCase = true) || (mood == "All" && selectedMood == "All")
                         Surface(
                             shape = RoundedCornerShape(20.dp),
                             color = if (isSelected) Color(0xFFE3E4E2) else Color(0xFF282A2A),
                             modifier = Modifier
                                 .clip(RoundedCornerShape(20.dp))
-                                .clickable { viewModel.selectMood(mood) }
+                                .clickable { viewModel.selectHomeMood(mood) }
                         ) {
                             Text(
                                 text = mood,
@@ -406,6 +406,26 @@ fun HomeScreen(
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                             )
                         }
+                    }
+                }
+            }
+
+            if (isLoadingHome) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        LinearProgressIndicator(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(2.dp)
+                                .clip(RoundedCornerShape(1.dp)),
+                            color = Color(0xFFFFB74D),
+                            trackColor = Color(0xFF282A2A)
+                        )
                     }
                 }
             }

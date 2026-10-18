@@ -63,34 +63,14 @@ fun PlaylistScreen(
     var isLoadingPlaylist by remember { mutableStateOf(false) }
 
     LaunchedEffect(playlistId) {
-        if (playlistId.startsWith("RD") || playlistId.startsWith("PL") || playlistId.startsWith("VL") || playlistId.startsWith("MPREb_") || playlistId.startsWith("OLAK5uy_")) {
-            isLoadingPlaylist = true
-            try {
-                val tracks = com.example.data.remote.InnerTubeResolver.fetchAndParsePlaylistOrMixTracks(playlistId)
-                if (tracks.isNotEmpty()) {
-                    remotePlaylistTracks = tracks
-                }
-            } catch (e: Exception) {
-                // fallback
-            } finally {
-                isLoadingPlaylist = false
-            }
+        isLoadingPlaylist = true
+        viewModel.loadPlaylistTracks(playlistId) { tracks ->
+            remotePlaylistTracks = tracks
+            isLoadingPlaylist = false
         }
     }
 
-    val playlistTracks = remember(playlistId, allTracks, remotePlaylistTracks) {
-        if (remotePlaylistTracks.isNotEmpty()) {
-            remotePlaylistTracks
-        } else if (playlistId.contains("rock", ignoreCase = true)) {
-            val rock = allTracks.filter { it.album.contains("Rock") || it.genre.contains("Rock") }
-            if (rock.isNotEmpty()) rock else allTracks.take(6)
-        } else if (playlistId.contains("pena", ignoreCase = true)) {
-            val folk = allTracks.filter { it.album.contains("Pena") || it.genre.contains("Folk") || it.genre.contains("Acoustic") }
-            if (folk.isNotEmpty()) folk else allTracks.take(6)
-        } else {
-            allTracks
-        }
-    }
+    val playlistTracks = remotePlaylistTracks
 
     var showMoreSheet by remember { mutableStateOf(false) }
     var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
@@ -298,20 +278,46 @@ fun PlaylistScreen(
         }
 
         // Playlist tracks
-        itemsIndexed(playlistTracks) { index, track ->
-            TrackCard(
-                track = track,
-                isPlaying = playerState.currentTrack?.id == track.id,
-                rankNumber = index + 1,
-                onTrackClick = { viewModel.playTrack(track) },
-                onLikeClick = { viewModel.toggleLike(track) },
-                onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
-                onPlayNextClick = { viewModel.playNext(track) },
-                onAddToQueueClick = { viewModel.addToQueue(track) },
-                onAddToPlaylistClick = { trackToAddToPlaylist = track },
-                onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
-            )
+        if (playlistTracks.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 40.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isLoadingPlaylist) {
+                        CircularProgressIndicator(
+                            color = KangleiDark,
+                            modifier = Modifier.size(36.dp)
+                        )
+                    } else {
+                        Text(
+                            text = "This playlist is empty.\nAdd tracks from Search, Home, or Player to build your playlist.",
+                            color = KangleiTextSecondary,
+                            fontFamily = OutfitFontFamily,
+                            fontSize = 14.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
+            }
+        } else {
+            itemsIndexed(playlistTracks) { index, track ->
+                TrackCard(
+                    track = track,
+                    isPlaying = playerState.currentTrack?.id == track.id,
+                    rankNumber = index + 1,
+                    onTrackClick = { viewModel.playTrack(track) },
+                    onLikeClick = { viewModel.toggleLike(track) },
+                    onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
+                    onPlayNextClick = { viewModel.playNext(track) },
+                    onAddToQueueClick = { viewModel.addToQueue(track) },
+                    onAddToPlaylistClick = { trackToAddToPlaylist = track },
+                    onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
+                )
+            }
         }
     }
 

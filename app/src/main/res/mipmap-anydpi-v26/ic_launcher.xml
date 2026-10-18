@@ -3,12 +3,12 @@
     <background android:drawable="@drawable/ic_launcher_background" />
     <foreground>
         <inset
-            android:drawable="@drawable/ic_launcher_foreground"
-            android:inset="-12%" />
+            android:drawable="@drawable/ic_splash_logo"
+            android:inset="14%" />
     </foreground>
     <monochrome>
         <inset
-            android:drawable="@drawable/ic_launcher_foreground"
-            android:inset="-12%" />
+            android:drawable="@drawable/ic_stat_notification"
+            android:inset="22%" />
     </monochrome>
 </adaptive-icon>

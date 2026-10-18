@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,12 +20,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.data.model.Artist
 import com.example.data.model.DownloadTier
 import com.example.data.model.Track
 import com.example.player.PlayerState
@@ -49,7 +53,10 @@ fun ArtistScreen(
 
     val allTracks by viewModel.allTracks.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
-    var isFollowing by remember { mutableStateOf(false) }
+    val followedArtists by viewModel.followedArtists.collectAsState()
+    val isFollowing = remember(artistName, followedArtists) {
+        followedArtists.any { it.name.equals(artistName, ignoreCase = true) }
+    }
     var showMoreSheet by remember { mutableStateOf(false) }
     var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
@@ -209,7 +216,10 @@ fun ArtistScreen(
                         // Follow action
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clickable { isFollowing = !isFollowing }
+                            modifier = Modifier.clickable {
+                                val avatar = if (artistTracks.isNotEmpty()) artistTracks.first().artUrl else ""
+                                viewModel.toggleFollowArtist(Artist(id = "artist_$artistName", name = artistName, thumbnailUrl = avatar))
+                            }
                         ) {
                             Surface(
                                 modifier = Modifier.size(48.dp),
@@ -314,21 +324,24 @@ fun ArtistScreen(
                     contentPadding = PaddingValues(horizontal = 20.dp),
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    items(remoteArtistAlbums) { album ->
+                    items(
+                        items = remoteArtistAlbums,
+                        key = { album -> album.id }
+                    ) { album ->
                         Column(
                             modifier = Modifier
-                                .width(140.dp)
+                                .width(148.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .clickable {
                                     onNavigateToPlaylist?.invoke(album.id)
                                 }
                         ) {
-                            coil.compose.AsyncImage(
+                            AsyncImage(
                                 model = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(album.thumbnailUrl),
                                 contentDescription = album.title,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
-                                    .size(140.dp)
+                                    .size(148.dp)
                                     .clip(RoundedCornerShape(12.dp))
                             )
                             Spacer(modifier = Modifier.height(6.dp))
@@ -338,6 +351,14 @@ fun ArtistScreen(
                                 fontSize = 14.sp,
                                 fontFamily = SyneFontFamily,
                                 fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = album.year.ifBlank { "Album" },
+                                color = KangleiTextSecondary,
+                                fontSize = 12.sp,
+                                fontFamily = OutfitFontFamily,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )

@@ -1,18 +1,13 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
-    android:viewportWidth="1024"
-    android:viewportHeight="1024">
-    <!-- Outer ring path from ic_splash_logo.svg (translated to 511, 101) -->
-    <group android:translateX="511.06" android:translateY="101.69">
-        <path
-            android:fillColor="#FFFFFF"
-            android:pathData="M0,0 C43.1,0.15 81.53,5.39 118.94,18.31 L123.94,24.31 C84.69,13.75 40.94,6.31 -61.94,9.62 C-174.06,47.31 -302.69,150.23 -362.31,242.12 C-401.25,352.62 -401.29,463.22 -362.56,593.65 C-298.9,692.79 -176.31,790.44 0.5,829.62 C152.9,800.6 298.94,694.31 360.93,601.39 C403.2,490.98 403.27,373.91 357.94,229.31 L332.99,178.59 C394.94,263.39 408.3,395.43 404.94,474.31 C384.93,582.45 302.94,696.31 222.79,766.46 C123.55,814.89 -3.25,833.59 -221.06,766.31 C-350.9,658.95 -406.25,504.27 -406.29,410.68 C-386.57,268.47 -298.33,138.82 -236.01,80.79 C-165.76,34.9 -65.81,5 0,0 Z" />
-    </group>
-    <!-- Central musical emblem -->
-    <group android:translateX="575" android:translateY="271">
-        <path
-            android:fillColor="#FFFFFF"
-            android:pathData="M0,0 L2,0 C5.76,9.54 -2.64,55.68 -10.88,106.25 C-20.12,165.06 -32,239.25 -43.5,310.93 C-57.46,393.93 -70.5,475.06 -78,522 L-82,522 C-69.66,440.28 -55.33,351.94 -41.56,267.56 C-28.94,192.77 -14.63,104.92 0,0 Z" />
-    </group>
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Clean, non-circular musical emblem for status bar notifications -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,3v10.55c-0.59,-0.34 -1.27,-0.55 -2,-0.55 -2.21,0 -4,1.79 -4,4s1.79,4 4,4 4,-1.79 4,-4V7h4V3h-6z"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M18.5,8.5c0.83,1.04 1.5,2.44 1.5,3.5s-0.67,2.46 -1.5,3.5l1.42,1.42c1.25,-1.46 2.08,-3.23 2.08,-4.92s-0.83,-3.46 -2.08,-4.92l-1.42,1.42z"/>
 </vector>

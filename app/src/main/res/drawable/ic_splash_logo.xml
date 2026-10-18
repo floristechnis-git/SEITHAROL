@@ -6,7 +6,7 @@
     android:viewportHeight="1024">
     <path
         android:fillColor="#1B1C1C"
-        android:pathData="M 512, 82 a 430,430 0 1,0 0.1,0 Z" />
+        android:pathData="M0,0 h1024 v1024 h-1024 Z" />
     <group
         android:translateX="644"
         android:translateY="142">

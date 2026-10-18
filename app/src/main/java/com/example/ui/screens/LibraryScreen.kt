@@ -59,6 +59,7 @@ fun LibraryScreen(
     val allTracks by viewModel.allTracks.collectAsState()
     val activeHistory by viewModel.activeHistory.collectAsState()
     val archivedHistory by viewModel.archivedHistory.collectAsState()
+    val followedArtists by viewModel.followedArtists.collectAsState()
 
     var selectedTab by remember { mutableStateOf(LibraryTab.PLAYLISTS) }
     var historyViewMode by remember { mutableStateOf("active") } // "active" (15 days) or "archived"
@@ -97,9 +98,9 @@ fun LibraryScreen(
         else albums.filter { it.first.contains(librarySearchQuery, ignoreCase = true) || it.second.contains(librarySearchQuery, ignoreCase = true) }
     }
 
-    val filteredArtists = remember(artists, librarySearchQuery) {
-        if (librarySearchQuery.isBlank()) artists
-        else artists.filter { it.first.contains(librarySearchQuery, ignoreCase = true) }
+    val filteredArtists = remember(followedArtists, librarySearchQuery) {
+        if (librarySearchQuery.isBlank()) followedArtists
+        else followedArtists.filter { it.name.contains(librarySearchQuery, ignoreCase = true) }
     }
 
     val filteredDownloaded = remember(downloadedTracks, librarySearchQuery) {
@@ -390,7 +391,7 @@ fun LibraryScreen(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = "${pl.trackCount.coerceAtLeast(18)} songs",
+                                        text = if (pl.trackCount == 1) "1 song" else "${pl.trackCount} songs",
                                         color = KangleiTextSecondary,
                                         fontSize = 11.sp,
                                         fontFamily = OutfitFontFamily
@@ -473,57 +474,75 @@ fun LibraryScreen(
             }
 
             LibraryTab.ARTISTS -> {
-                // List rows for ARTISTS tab
-                items(filteredArtists, span = { GridItemSpan(2) }) { (name, img) ->
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .clickable { onNavigateToArtist(name) },
-                        shape = RoundedCornerShape(16.dp),
-                        color = KangleiWhite
-                    ) {
-                        Row(
+                if (filteredArtists.isEmpty()) {
+                    item(span = { GridItemSpan(2) }) {
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(vertical = 40.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(54.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFFE0E0E0))
-                            ) {
-                                AsyncImage(
-                                    model = img,
-                                    contentDescription = name,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = name,
-                                    color = KangleiDark,
-                                    fontSize = 15.sp,
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    text = "Artist",
-                                    color = KangleiTextSecondary,
-                                    fontSize = 12.sp,
-                                    fontFamily = OutfitFontFamily
-                                )
-                            }
-                            Icon(
-                                imageVector = Icons.Default.ChevronRight,
-                                contentDescription = null,
-                                tint = KangleiTextSecondary,
-                                modifier = Modifier.size(20.dp)
+                            Text(
+                                text = "No followed artists yet.\nFollow artists from their profiles to see them here.",
+                                color = KangleiTextSecondary,
+                                fontFamily = OutfitFontFamily,
+                                fontSize = 14.sp,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
                             )
+                        }
+                    }
+                } else {
+                    items(filteredArtists, span = { GridItemSpan(2) }) { artist ->
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable { onNavigateToArtist(artist.name) },
+                            shape = RoundedCornerShape(16.dp),
+                            color = KangleiWhite
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(54.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFFE0E0E0))
+                                ) {
+                                    AsyncImage(
+                                        model = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(artist.thumbnailUrl),
+                                        contentDescription = artist.name,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(14.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = artist.name,
+                                        color = KangleiDark,
+                                        fontSize = 15.sp,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = if (artist.subscriberCount.isNotBlank()) artist.subscriberCount else "Artist",
+                                        color = KangleiTextSecondary,
+                                        fontSize = 12.sp,
+                                        fontFamily = OutfitFontFamily
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Default.ChevronRight,
+                                    contentDescription = null,
+                                    tint = KangleiTextSecondary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 }

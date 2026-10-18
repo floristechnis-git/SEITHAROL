@@ -111,6 +111,8 @@ data class Artist(
     val id: String,
     val name: String,
     val avatarUrl: String = "",
+    val thumbnailUrl: String = avatarUrl,
+    val subscriberCount: String = "",
     val bannerUrl: String? = null,
     val bio: String? = null,
     val tracks: List<Track> = emptyList(),

@@ -3,6 +3,7 @@ package com.example.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.data.model.Artist
 import com.example.data.model.DownloadItem
 import com.example.data.model.DownloadTier
 import com.example.data.model.Playlist
@@ -17,6 +18,8 @@ import com.example.player.PlayerState
 import com.example.resolver.CircuitBreakerState
 import com.example.resolver.ResolverEngine
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -88,8 +91,19 @@ class CascadeViewModel(
     val trendingHits = MutableStateFlow<List<Track>>(emptyList())
     val freshReleases = MutableStateFlow<List<Track>>(emptyList())
     val personalizedTracks = MutableStateFlow<List<Track>>(emptyList())
-    val selectedMood = MutableStateFlow("For You")
+    val selectedMood = MutableStateFlow("All")
     val isLoadingHome = MutableStateFlow(false)
+    val isHomeLoading: StateFlow<Boolean> = isLoadingHome.asStateFlow()
+
+    // ONLY user-liked/followed artists — NO pre-populated mock/JioSaavn/Spotify artists
+    private val _followedArtists = MutableStateFlow<List<Artist>>(emptyList())
+    val followedArtists: StateFlow<List<Artist>> = _followedArtists.asStateFlow()
+
+    // User's custom playlists start with 0 songs when created (no 18-song fake list)
+    private val _userPlaylists = MutableStateFlow<Map<String, List<Track>>>(emptyMap())
+    val userPlaylists: StateFlow<Map<String, List<Track>>> = _userPlaylists.asStateFlow()
+
+    private var moodFetchJob: Job? = null
 
     // Search state
     val searchQuery = MutableStateFlow("")
@@ -201,28 +215,81 @@ class CascadeViewModel(
         }
     }
 
-    fun selectMood(mood: String) {
+    /**
+     * Job for Home Mood Chips: "All", "For You", "Energize", "Relax", "Workout", "Focus", "Mixes", "New Releases"
+     */
+    fun selectHomeMood(mood: String) {
+        if (selectedMood.value == mood && trendingHits.value.isNotEmpty()) return
         selectedMood.value = mood
-        // Zero-latency instant personalization from local library based on 2-D mood coordinates (§E.5)
-        val local = allTracks.value
-        val localVibe = when (mood) {
-            "Energize" -> local.filter { it.moodX >= 0.75f }
-            "Relax" -> local.filter { it.moodX < 0.6f && it.moodY >= 0.7f }
-            "Workout" -> local.filter { it.moodX >= 0.8f }
-            "Focus" -> local.filter { it.genre.contains("Lofi", true) || it.genre.contains("Acoustic", true) || it.moodX < 0.6f }
-            "Party" -> local.filter { it.moodX >= 0.85f && it.moodY >= 0.75f }
-            "Romance" -> local.filter { it.moodY >= 0.8f }
-            "Rock" -> local.filter { it.genre.contains("Rock", true) }
-            "Folk" -> local.filter { it.genre.contains("Folk", true) }
-            else -> local
-        }
-        if (localVibe.isNotEmpty()) {
-            personalizedTracks.value = localVibe
-        }
-        viewModelScope.launch {
-            updatePersonalizedTracks(mood)
+
+        moodFetchJob?.cancel()
+        moodFetchJob = viewModelScope.launch {
+            isLoadingHome.value = true
+            try {
+                val (trendingQuery, freshQuery, mixQuery) = when (mood) {
+                    "For You" -> Triple(
+                        "recommended trending songs",
+                        "new music for you",
+                        "My Supermix YouTube Music"
+                    )
+                    "Energize" -> Triple(
+                        "upbeat energetic hits",
+                        "new dance pop workout songs",
+                        "Energize Mix"
+                    )
+                    "Relax" -> Triple(
+                        "chill relaxing acoustic lofi songs",
+                        "new chill acoustic songs",
+                        "Chill Mix"
+                    )
+                    "Workout" -> Triple(
+                        "workout gym phonk hype music",
+                        "new workout EDM hip hop",
+                        "Workout Mix"
+                    )
+                    "Focus" -> Triple(
+                        "deep focus instrumental study music",
+                        "ambient piano electronic focus",
+                        "Focus Mix"
+                    )
+                    "Mixes" -> Triple(
+                        "top radio hits",
+                        "popular mashups mixes",
+                        "YouTube Music Mixes"
+                    )
+                    "New Releases" -> Triple(
+                        "latest hit singles",
+                        "brand new music releases",
+                        "New Release Mix"
+                    )
+                    else -> Triple(
+                        "trending songs Manipuri Bollywood global hits",
+                        "fresh new music releases",
+                        "My Mix radio"
+                    )
+                }
+
+                // Fetch in parallel from YouTube Music InnerTube (never JioSaavn/Spotify)
+                val trendingDeferred = async { NetworkClients.searchInnerTube(trendingQuery) }
+                val freshDeferred = async { NetworkClients.searchInnerTube(freshQuery) }
+                val mixesDeferred = async { NetworkClients.searchInnerTube(mixQuery) }
+
+                val trending = trendingDeferred.await()
+                val fresh = freshDeferred.await()
+                val mixes = mixesDeferred.await()
+
+                if (trending.isNotEmpty()) trendingHits.value = trending
+                if (fresh.isNotEmpty()) freshReleases.value = fresh
+                if (mixes.isNotEmpty()) personalizedTracks.value = mixes
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                isLoadingHome.value = false
+            }
         }
     }
+
+    fun selectMood(mood: String) = selectHomeMood(mood)
 
     fun setQueryImmediately(newQuery: String) {
         searchQuery.value = newQuery
@@ -395,15 +462,65 @@ class CascadeViewModel(
         }
     }
 
+    /**
+     * Follow / Unfollow Artist (Only YT Music artists liked by the user appear in Library)
+     */
+    fun toggleFollowArtist(artist: Artist) {
+        val current = _followedArtists.value.toMutableList()
+        val existingIndex = current.indexOfFirst { it.id == artist.id || it.name.equals(artist.name, ignoreCase = true) }
+        if (existingIndex >= 0) {
+            current.removeAt(existingIndex)
+        } else {
+            current.add(
+                artist.copy(
+                    thumbnailUrl = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(artist.thumbnailUrl)
+                )
+            )
+        }
+        _followedArtists.value = current
+    }
+
+    /**
+     * Loads exact tracks for a Playlist or Album without any 18-song fake fallback.
+     */
+    fun loadPlaylistTracks(playlistId: String, onResult: (List<Track>) -> Unit) {
+        viewModelScope.launch {
+            // 1. Check if user-created local playlist first
+            val localTracks = _userPlaylists.value[playlistId]
+            if (localTracks != null) {
+                onResult(localTracks)
+                return@launch
+            }
+            val dbTracks = musicRepository.getTracksForPlaylist(playlistId).firstOrNull()
+            if (!dbTracks.isNullOrEmpty()) {
+                onResult(dbTracks)
+                return@launch
+            }
+            // 2. Otherwise fetch from YouTube Music InnerTube
+            val remoteTracks = com.example.data.remote.InnerTubeResolver.fetchAndParsePlaylistOrMixTracks(playlistId)
+            onResult(remoteTracks)
+        }
+    }
+
     fun createPlaylist(title: String, desc: String) {
         viewModelScope.launch {
-            musicRepository.createPlaylist(title, desc)
+            val id = musicRepository.createPlaylist(title, desc)
+            _userPlaylists.value = _userPlaylists.value + (id to emptyList())
         }
     }
 
     fun addTrackToPlaylist(playlistId: String, trackId: String) {
         viewModelScope.launch {
             musicRepository.addTrackToPlaylist(playlistId, trackId)
+            val track = allTracks.value.firstOrNull { it.id == trackId }
+                ?: trendingHits.value.firstOrNull { it.id == trackId }
+                ?: freshReleases.value.firstOrNull { it.id == trackId }
+                ?: personalizedTracks.value.firstOrNull { it.id == trackId }
+                ?: musicRepository.getTrackById(trackId)
+            if (track != null) {
+                val currentList = _userPlaylists.value[playlistId].orEmpty()
+                _userPlaylists.value = _userPlaylists.value + (playlistId to (currentList + track))
+            }
         }
     }
 

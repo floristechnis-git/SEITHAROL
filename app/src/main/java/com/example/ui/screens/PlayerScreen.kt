@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -117,22 +118,12 @@ fun PlayerScreen(
                 .padding(horizontal = 20.dp, vertical = 8.dp)
                 .pointerInput(Unit) {
                     detectVerticalDragGestures(
-                        onDragStart = { swipeOffsetY = 0f },
-                        onDrag = { change, dragAmount ->
-                            if (dragAmount > 0 || swipeOffsetY > 0) {
+                        onVerticalDrag = { change: PointerInputChange, dragAmount: Float ->
+                            if (dragAmount > 24f) {
                                 change.consume()
-                                swipeOffsetY = (swipeOffsetY + dragAmount).coerceAtLeast(0f)
-                            }
-                        },
-                        onDragEnd = {
-                            if (swipeOffsetY > 160f) {
-                                isDismissing = true
                                 onDismiss()
-                            } else {
-                                swipeOffsetY = 0f
                             }
-                        },
-                        onDragCancel = { swipeOffsetY = 0f }
+                        }
                     )
                 },
             verticalAlignment = Alignment.CenterVertically,

@@ -140,6 +140,10 @@ interface HistoryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertHistory(item: PlayHistoryEntity)
 
+    /** Returns the most-recent history row for [trackId] played after [sinceTimestamp], or null. */
+    @Query("SELECT * FROM play_history WHERE trackId = :trackId AND playedAt >= :sinceTimestamp ORDER BY playedAt DESC LIMIT 1")
+    suspend fun getRecentHistoryForTrack(trackId: String, sinceTimestamp: Long): PlayHistoryEntity?
+
     @Query("DELETE FROM play_history WHERE id = :id")
     suspend fun deleteHistory(id: Long)
 

@@ -2,7 +2,6 @@ package com.example.resolver.providers
 
 import android.util.Log
 import com.example.network.NetworkClients
-import com.example.resolver.KotlinJsInterp
 import com.example.resolver.ResolvedStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -13,11 +12,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLDecoder
 
-/**
- * On-Device YouTube Music InnerTube Provider.
- * Completely standalone: performs search and audio stream resolution using direct InnerTube endpoints
- * emulating ANDROID_VR, IOS_MUSIC, and TVHTML5 clients for direct deciphered streams without yt-dlp.
- */
 class YouTubeInnerTubeProvider : AudioStreamProvider {
 
     override val source: SourceType = SourceType.YOUTUBE
@@ -25,81 +19,159 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
     private val TAG = "YouTubeInnerTubeProvider"
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
-    // InnerTube Clients Configuration
-    private val CLIENT_ANDROID_VR = JSONObject().apply {
-        put("clientName", "ANDROID_VR")
-        put("clientVersion", "1.60.19")
-        put("deviceMake", "Oculus")
-        put("deviceModel", "Quest 3")
-        put("osName", "Android")
-        put("osVersion", "12")
-        put("androidSdkVersion", 32)
-        put("hl", "en")
-        put("gl", "US")
-    }
+    private data class ClientProfile(
+        val name: String,
+        val version: String,
+        val clientId: String,
+        val userAgent: String,
+        val playerEndpoint: String,
+        val clientJson: JSONObject,
+        val isEmbedded: Boolean = false
+    )
 
-    private val CLIENT_IOS = JSONObject().apply {
-        put("clientName", "IOS")
-        put("clientVersion", "19.29.1")
-        put("deviceMake", "Apple")
-        put("deviceModel", "iPhone16,2")
-        put("osName", "iOS")
-        put("osVersion", "17.5.1.21F90")
-        put("hl", "en")
-        put("gl", "US")
-    }
+    private val CLIENT_PROFILES = listOf(
+        ClientProfile(
+            name = "ANDROID_VR",
+            version = "1.60.19",
+            clientId = "28",
+            userAgent = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+            clientJson = JSONObject().apply {
+                put("clientName", "ANDROID_VR")
+                put("clientVersion", "1.60.19")
+                put("deviceMake", "Oculus")
+                put("deviceModel", "Quest 3")
+                put("osName", "Android")
+                put("osVersion", "12L")
+                put("androidSdkVersion", 32)
+                put("hl", "en")
+                put("gl", "US")
+            }
+        ),
+        ClientProfile(
+            name = "IOS",
+            version = "19.45.4",
+            clientId = "5",
+            userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
+            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+            clientJson = JSONObject().apply {
+                put("clientName", "IOS")
+                put("clientVersion", "19.45.4")
+                put("deviceMake", "Apple")
+                put("deviceModel", "iPhone16,2")
+                put("osName", "iPhone")
+                put("osVersion", "18.1.0.22B83")
+                put("hl", "en")
+                put("gl", "US")
+            }
+        ),
+        ClientProfile(
+            name = "ANDROID_TESTSUITE",
+            version = "1.9",
+            clientId = "30",
+            userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 12; US) gzip",
+            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+            clientJson = JSONObject().apply {
+                put("clientName", "ANDROID_TESTSUITE")
+                put("clientVersion", "1.9")
+                put("androidSdkVersion", 32)
+                put("osName", "Android")
+                put("osVersion", "12")
+                put("hl", "en")
+                put("gl", "US")
+            }
+        ),
+        ClientProfile(
+            name = "WEB_REMIX",
+            version = "1.20250101.01.00",
+            clientId = "67",
+            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            playerEndpoint = "https://music.youtube.com/youtubei/v1/player?prettyPrint=false",
+            clientJson = JSONObject().apply {
+                put("clientName", "WEB_REMIX")
+                put("clientVersion", "1.20250101.01.00")
+                put("hl", "en")
+                put("gl", "US")
+            }
+        )
+    )
 
-    private val CLIENT_TV = JSONObject().apply {
-        put("clientName", "TVHTML5_SIMPLY_EMBEDDED_PLAYER")
-        put("clientVersion", "2.0")
-        put("hl", "en")
-        put("gl", "US")
-    }
-
-    private val CLIENT_WEB_REMIX = JSONObject().apply {
-        put("clientName", "WEB_REMIX")
-        put("clientVersion", "1.20240101.01.00")
-        put("hl", "en")
-        put("gl", "US")
-    }
-
-    // Base64 protobuf for song-only filter
+    private val CLIENT_WEB_REMIX = CLIENT_PROFILES.last().clientJson
     private val SEARCH_PARAMS_SONGS = "EgWKAQIIAWoQEAMQBBAJEAoQBRAREBAQFQ=="
+
+    /**
+     * Resolves title and artist for a YouTube videoId when Track metadata is blank.
+     */
+    suspend fun fetchMetadataById(videoId: String): Pair<String, String>? = withContext(Dispatchers.IO) {
+        val cleanId = videoId.trim()
+        if (cleanId.isBlank()) return@withContext null
+        try {
+            val url = "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=$cleanId&format=json"
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0")
+                .build()
+            NetworkClients.okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val body = response.body?.string() ?: return@withContext null
+                val json = JSONObject(body)
+                val title = json.optString("title", "").trim()
+                val author = json.optString("author_name", "").removeSuffix(" - Topic").trim()
+                if (title.isNotBlank()) return@withContext title to author
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "oEmbed metadata lookup failed for $cleanId: ${e.message}")
+        }
+        null
+    }
 
     override suspend fun searchTracks(query: String, limit: Int): List<NormalizedTrack> =
         withContext(Dispatchers.IO) {
-            if (query.trim().isBlank()) return@withContext emptyList()
+            val cleanQuery = query.trim()
+            if (cleanQuery.isBlank()) return@withContext emptyList()
             try {
-                val url = "https://music.youtube.com/youtubei/v1/search"
-                val payload = JSONObject().apply {
-                    put("context", JSONObject().apply { put("client", CLIENT_WEB_REMIX) })
-                    put("query", query.trim())
-                    put("params", SEARCH_PARAMS_SONGS)
-                }
+                // 1. Try filtered song search first
+                val songs = executeSearch(cleanQuery, SEARCH_PARAMS_SONGS, limit)
+                if (songs.isNotEmpty()) return@withContext songs
 
-                val request = Request.Builder()
-                    .url(url)
-                    .post(payload.toString().toRequestBody(jsonMediaType))
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                    .header("Referer", "https://music.youtube.com/")
-                    .build()
-
-                NetworkClients.okHttpClient.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) return@withContext emptyList()
-                    val body = response.body?.string() ?: return@withContext emptyList()
-                    parseSearchResponse(JSONObject(body), limit)
-                }
+                // 2. Fallback to unfiltered YouTube Music search (catches videos/remixes/ISRC)
+                executeSearch(cleanQuery, null, limit)
             } catch (e: Exception) {
                 Log.e(TAG, "searchTracks failed: ${e.message}", e)
                 emptyList()
             }
         }
 
+    private fun executeSearch(query: String, params: String?, limit: Int): List<NormalizedTrack> {
+        val url = "https://music.youtube.com/youtubei/v1/search?prettyPrint=false"
+        val payload = JSONObject().apply {
+            put("context", JSONObject().apply { put("client", CLIENT_WEB_REMIX) })
+            put("query", query)
+            if (params != null) put("params", params)
+        }
+
+        val request = Request.Builder()
+            .url(url)
+            .post(payload.toString().toRequestBody(jsonMediaType))
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+            .header("X-YouTube-Client-Name", "67")
+            .header("X-YouTube-Client-Version", "1.20250101.01.00")
+            .header("Origin", "https://music.youtube.com")
+            .header("Referer", "https://music.youtube.com/")
+            .build()
+
+        NetworkClients.okHttpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return emptyList()
+            val body = response.body?.string() ?: return emptyList()
+            return parseSearchResponse(JSONObject(body), limit)
+        }
+    }
+
     override suspend fun getPlaylistTracks(playlistId: String): List<NormalizedTrack> =
         withContext(Dispatchers.IO) {
             val cleanId = if (playlistId.startsWith("VL")) playlistId else "VL$playlistId"
             try {
-                val url = "https://music.youtube.com/youtubei/v1/browse"
+                val url = "https://music.youtube.com/youtubei/v1/browse?prettyPrint=false"
                 val payload = JSONObject().apply {
                     put("context", JSONObject().apply { put("client", CLIENT_WEB_REMIX) })
                     put("browseId", cleanId)
@@ -108,7 +180,9 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                 val request = Request.Builder()
                     .url(url)
                     .post(payload.toString().toRequestBody(jsonMediaType))
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                    .header("X-YouTube-Client-Name", "67")
+                    .header("X-YouTube-Client-Version", "1.20250101.01.00")
                     .header("Referer", "https://music.youtube.com/")
                     .build()
 
@@ -125,29 +199,26 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
 
     override suspend fun resolveStream(sourceId: String, preferredKbps: Int): ResolvedStream =
         withContext(Dispatchers.IO) {
-            val clients = listOf(CLIENT_ANDROID_VR, CLIENT_IOS, CLIENT_TV, CLIENT_WEB_REMIX)
-            var lastException: Exception? = null
+            val errors = mutableListOf<String>()
 
-            for (client in clients) {
+            for (profile in CLIENT_PROFILES) {
                 try {
-                    val stream = resolveWithClient(sourceId, client, preferredKbps)
+                    val stream = resolveWithClient(sourceId, profile, preferredKbps)
                     if (stream != null) return@withContext stream
                 } catch (e: Exception) {
-                    lastException = e
-                    Log.w(TAG, "Client ${client.optString("clientName")} failed for $sourceId: ${e.message}")
+                    errors.add("${profile.name}: ${e.message}")
+                    Log.w(TAG, "Client ${profile.name} failed for $sourceId: ${e.message}")
                 }
             }
 
-            throw lastException ?: IllegalStateException("Failed to resolve stream for YouTube track $sourceId")
+            throw IllegalStateException("YouTube ($sourceId) failed [${errors.joinToString("; ")}]")
         }
 
-    private fun resolveWithClient(videoId: String, clientObj: JSONObject, preferredKbps: Int): ResolvedStream? {
-        val clientName = clientObj.optString("clientName")
-        val url = "https://music.youtube.com/youtubei/v1/player"
+    private fun resolveWithClient(videoId: String, profile: ClientProfile, preferredKbps: Int): ResolvedStream? {
         val payload = JSONObject().apply {
             put("context", JSONObject().apply {
-                put("client", clientObj)
-                if (clientName == "TVHTML5_SIMPLY_EMBEDDED_PLAYER") {
+                put("client", profile.clientJson)
+                if (profile.isEmbedded) {
                     put("thirdParty", JSONObject().apply { put("embedUrl", "https://www.youtube.com") })
                 }
             })
@@ -156,68 +227,65 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             put("racyCheckOk", true)
         }
 
+        val origin = if (profile.playerEndpoint.contains("music.youtube.com")) {
+            "https://music.youtube.com"
+        } else {
+            "https://www.youtube.com"
+        }
+
         val request = Request.Builder()
-            .url(url)
+            .url(profile.playerEndpoint)
             .post(payload.toString().toRequestBody(jsonMediaType))
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            .header("Referer", "https://music.youtube.com/")
+            .header("User-Agent", profile.userAgent)
+            .header("X-YouTube-Client-Name", profile.clientId)
+            .header("X-YouTube-Client-Version", profile.version)
+            .header("Origin", origin)
+            .header("Referer", "$origin/")
             .build()
 
         NetworkClients.okHttpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return null
-            val body = response.body?.string() ?: return null
+            if (!response.isSuccessful) {
+                throw IllegalStateException("HTTP ${response.code}")
+            }
+            val body = response.body?.string() ?: throw IllegalStateException("Empty body")
             val json = JSONObject(body)
 
             val playability = json.optJSONObject("playabilityStatus")
-            val status = playability?.optString("status")
+            val status = playability?.optString("status") ?: "UNKNOWN"
             if (status != "OK") {
-                Log.w(TAG, "Playability status: $status on client $clientName")
-                return null
+                val reason = playability?.optString("reason") ?: ""
+                throw IllegalStateException("$status ($reason)")
             }
 
-            val streamingData = json.optJSONObject("streamingData") ?: return null
-            val adaptiveFormats = streamingData.optJSONArray("adaptiveFormats") ?: return null
+            val streamingData = json.optJSONObject("streamingData")
+                ?: throw IllegalStateException("Missing streamingData")
+
+            val adaptiveFormats = streamingData.optJSONArray("adaptiveFormats")
+            val legacyFormats = streamingData.optJSONArray("formats")
 
             var bestUrl: String? = null
             var bestItag = 251
             var bestBitrate = 0
             var bestCodec = "Opus"
 
-            for (i in 0 until adaptiveFormats.length()) {
-                val f = adaptiveFormats.getJSONObject(i)
-                val mime = f.optString("mimeType", "")
-                if (!mime.startsWith("audio/")) continue
+            fun inspectFormats(formatsArray: JSONArray?) {
+                if (formatsArray == null) return
+                for (i in 0 until formatsArray.length()) {
+                    val f = formatsArray.optJSONObject(i) ?: continue
+                    val mime = f.optString("mimeType", "")
+                    val isAudio = mime.startsWith("audio/") || f.optInt("itag") in listOf(140, 251, 250, 249, 139, 18)
+                    if (!isAudio) continue
 
-                var streamUrl = f.optString("url", "")
-                val cipher = f.optString("signatureCipher", "")
-                val itag = f.optInt("itag", 251)
-                val bitrate = f.optInt("bitrate", 0)
+                    // Only accept direct, unencrypted URLs so we never feed an undeciphered signature to ExoPlayer
+                    val streamUrl = f.optString("url", "")
+                    if (streamUrl.isBlank()) continue
 
-                if (streamUrl.isBlank() && cipher.isNotBlank()) {
-                    val params = parseQueryString(cipher)
-                    val s = params["s"] ?: ""
-                    val sp = params["sp"] ?: "sig"
-                    val baseUrl = params["url"] ?: ""
-                    if (baseUrl.isNotBlank()) {
-                        val decipheredSig = KotlinJsInterp.decipherSignature(s, emptyList())
-                        streamUrl = "$baseUrl&$sp=$decipheredSig"
-                    }
-                }
+                    val itag = f.optInt("itag", 251)
+                    val bitrate = f.optInt("bitrate", 128000)
+                    val isOpus = mime.contains("opus") || itag in listOf(249, 250, 251)
+                    val isAac = mime.contains("mp4a") || mime.contains("aac") || itag in listOf(140, 139, 18)
 
-                if (streamUrl.isNotBlank()) {
-                    if (streamUrl.contains("&n=")) {
-                        val nMatch = Regex("&n=([^&]+)").find(streamUrl)
-                        if (nMatch != null) {
-                            val originalN = nMatch.groupValues[1]
-                            val transformedN = KotlinJsInterp.transformNParam(originalN)
-                            streamUrl = streamUrl.replace("&n=$originalN", "&n=$transformedN")
-                        }
-                    }
-
-                    val isOpus = mime.contains("opus") || itag == 251
-                    val isAac = mime.contains("mp4a") || mime.contains("aac") || itag == 140
-
-                    if (isOpus && bitrate >= 150000 && (bestUrl == null || bitrate > bestBitrate)) {
+                    if (isOpus && bitrate >= 120000 && (bestUrl == null || bitrate > bestBitrate)) {
                         bestUrl = streamUrl
                         bestBitrate = bitrate
                         bestItag = itag
@@ -231,21 +299,32 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                 }
             }
 
-            if (bestUrl != null) {
-                return ResolvedStream(
-                    videoId = videoId,
-                    streamUrl = bestUrl,
-                    itag = bestItag,
-                    codec = bestCodec,
-                    bitrate = "${if (bestBitrate > 0) bestBitrate / 1000 else preferredKbps} kbps",
-                    expiresAtMs = System.currentTimeMillis() + (6 * 3600 * 1000L),
-                    isLocal = false,
-                    resolvedBy = "On-Device InnerTube ($clientName)",
-                    latencyMs = 15
-                )
+            inspectFormats(adaptiveFormats)
+            if (bestUrl == null) {
+                inspectFormats(legacyFormats)
             }
+            if (bestUrl == null) {
+                val hlsUrl = streamingData.optString("hlsManifestUrl", "")
+                if (hlsUrl.isNotBlank()) {
+                    bestUrl = hlsUrl
+                    bestItag = 140
+                    bestCodec = "HLS AAC"
+                }
+            }
+
+            val resolvedUrl = bestUrl ?: throw IllegalStateException("No direct audio URL in formats")
+            return ResolvedStream(
+                videoId = videoId,
+                streamUrl = resolvedUrl,
+                itag = bestItag,
+                codec = bestCodec,
+                bitrate = "${if (bestBitrate > 0) bestBitrate / 1000 else preferredKbps} kbps",
+                expiresAtMs = System.currentTimeMillis() + (6 * 3600 * 1000L),
+                isLocal = false,
+                resolvedBy = "On-Device InnerTube (${profile.name})",
+                latencyMs = 15
+            )
         }
-        return null
     }
 
     private fun parseSearchResponse(json: JSONObject, limit: Int): List<NormalizedTrack> {
@@ -266,7 +345,7 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                     ?.optString("videoId")
             }
 
-            var title = "Unknown Track"
+            var title = ""
             val flexCols = item.optJSONArray("flexColumns")
             if (flexCols != null && flexCols.length() > 0) {
                 val col0Runs = flexCols.getJSONObject(0)
@@ -274,9 +353,16 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                     ?.optJSONObject("text")
                     ?.optJSONArray("runs")
                 if (col0Runs != null && col0Runs.length() > 0) {
-                    title = col0Runs.getJSONObject(0).optString("text", "Unknown Track")
+                    val runObj = col0Runs.getJSONObject(0)
+                    title = runObj.optString("text", "").trim()
+                    if (videoId.isNullOrBlank()) {
+                        videoId = runObj.optJSONObject("navigationEndpoint")
+                            ?.optJSONObject("watchEndpoint")
+                            ?.optString("videoId")
+                    }
                 }
             }
+            if (title.isBlank()) title = "Unknown Track"
 
             val artists = mutableListOf<String>()
             var album = "Single"
@@ -292,7 +378,7 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                     val texts = mutableListOf<String>()
                     for (i in 0 until col1Runs.length()) {
                         val txt = col1Runs.getJSONObject(i).optString("text", "").trim()
-                        if (txt.isNotBlank() && txt != "•") {
+                        if (txt.isNotBlank() && txt != "•" && !txt.equals("Song", ignoreCase = true) && !txt.equals("Video", ignoreCase = true)) {
                             texts.add(txt)
                         }
                     }
@@ -319,7 +405,7 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                 if (lastThumb.isNotBlank()) artUrl = lastThumb
             }
 
-            if (!videoId.isNullOrBlank() && title.isNotBlank()) {
+            if (!videoId.isNullOrBlank()) {
                 results.add(
                     NormalizedTrack(
                         source = SourceType.YOUTUBE,
@@ -373,22 +459,5 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             }
             else -> 210000L
         }
-    }
-
-    private fun parseQueryString(query: String): Map<String, String> {
-        val map = mutableMapOf<String, String>()
-        for (part in query.split("&")) {
-            val idx = part.indexOf("=")
-            if (idx > 0) {
-                val key = part.substring(0, idx)
-                val value = try {
-                    URLDecoder.decode(part.substring(idx + 1), "UTF-8")
-                } catch (e: Exception) {
-                    part.substring(idx + 1)
-                }
-                map[key] = value
-            }
-        }
-        return map
     }
 }

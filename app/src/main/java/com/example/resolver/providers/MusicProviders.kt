@@ -29,7 +29,7 @@ data class NormalizedTrack(
     val isPlayableNatively: Boolean = true
 ) {
     val primaryArtist: String
-        get() = artists.firstOrNull()?.trim() ?: "Unknown Artist"
+        get() = artists.firstOrNull { it.isNotBlank() }?.trim() ?: "Unknown Artist"
 
     fun toDomainTrack(): Track {
         val moodX = ((Math.abs(sourceId.hashCode()) % 100) / 100f).coerceIn(0.2f, 0.9f)

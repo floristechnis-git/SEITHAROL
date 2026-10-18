@@ -4,17 +4,12 @@ import android.util.Log
 
 /**
  * Pure Kotlin port of yt_dlp/jsinterp.py semantics (§A.4 Problem 1).
- * Handles signature permutations (reverse, slice, splice, swap) and throttle 'n' transforms
- * without requiring native QuickJS or C++ dependencies.
  */
 object KotlinJsInterp {
     private const val TAG = "KotlinJsInterp"
 
-    /**
-     * Deciphers a scrambled signature string according to operations extracted from player JS.
-     * Common operations: reverse(), slice(n), swap(0, n).
-     */
     fun decipherSignature(s: String, operations: List<CipherOp>): String {
+        if (operations.isEmpty()) return s
         val chars = s.toCharArray()
         var list = chars.toMutableList()
 
@@ -26,10 +21,12 @@ object KotlinJsInterp {
                     list = list.drop(count).toMutableList()
                 }
                 OpType.SWAP -> {
-                    val target = op.arg % list.size
-                    val temp = list[0]
-                    list[0] = list[target]
-                    list[target] = temp
+                    if (list.isNotEmpty()) {
+                        val target = op.arg % list.size
+                        val temp = list[0]
+                        list[0] = list[target]
+                        list[target] = temp
+                    }
                 }
             }
         }
@@ -37,28 +34,11 @@ object KotlinJsInterp {
     }
 
     /**
-     * Transforms the 'n' throttling parameter to prevent 403 Forbidden / bandwidth throttling.
-     * Port of standard yt-dlp throttle decipher algorithms.
+     * Preserves the 'n' parameter on direct mobile/VR InnerTube streams rather than
+     * corrupting it with a static permutation.
      */
     fun transformNParam(n: String): String {
-        if (n.isBlank()) return n
-        try {
-            val chars = n.toMutableList()
-            // Standard modular permutation applied by YouTube's player.js throttle function
-            val len = chars.size
-            if (len < 4) return n
-
-            for (i in 0 until len / 2) {
-                val j = (i * 3 + 7) % len
-                val tmp = chars[i]
-                chars[i] = chars[j]
-                chars[j] = tmp
-            }
-            return chars.joinToString("")
-        } catch (e: Exception) {
-            Log.w(TAG, "Error transforming n param: ${e.message}")
-            return n
-        }
+        return n
     }
 
     enum class OpType { REVERSE, SPLICE, SWAP }

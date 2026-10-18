@@ -57,18 +57,50 @@ object InnerTubeResolver {
         clientVersion: String
     ): String? {
         return try {
+            val isAndroidVr = clientName == "ANDROID_VR"
+            val isIos = clientName == "IOS"
             val body = JSONObject().apply {
                 put("videoId", videoId)
+                put("contentCheckOk", true)
+                put("racyCheckOk", true)
                 put("context", JSONObject().apply {
                     put("client", JSONObject().apply {
                         put("clientName", clientName)
                         put("clientVersion", clientVersion)
                         put("hl", "en")
-                        put("gl", "IN")
+                        put("gl", "US")
+                        if (isAndroidVr) {
+                            put("deviceMake", "Oculus")
+                            put("deviceModel", "Quest 3")
+                            put("osName", "Android")
+                            put("osVersion", "12")
+                            put("androidSdkVersion", 32)
+                        } else if (isIos) {
+                            put("deviceMake", "Apple")
+                            put("deviceModel", "iPhone16,2")
+                            put("osName", "iOS")
+                            put("osVersion", "17.5.1.21F90")
+                        }
                     })
                 })
             }
-            val response = postJson("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", body)
+            // ANDROID_VR uses www.youtube.com; IOS/WEB use music.youtube.com
+            val endpoint = if (isAndroidVr || isIos)
+                "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+            else
+                "https://music.youtube.com/youtubei/v1/player?prettyPrint=false"
+
+            val userAgent = when {
+                isAndroidVr -> "com.google.android.apps.youtube.vr.oculus/$clientVersion (Linux; U; Android 12; Quest 3 Build/SQ3A.220705.003.A1) gzip"
+                isIos -> "com.google.ios.youtube/$clientVersion (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)"
+                else -> "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            val response = postJson(endpoint, body, userAgent)
+            val playability = response.optJSONObject("playabilityStatus")
+            if (playability?.optString("status") != "OK") {
+                Log.w(TAG, "Playability=${playability?.optString("status")} for $videoId on $clientName")
+                return null
+            }
             val streamingData = response.optJSONObject("streamingData") ?: return null
             val adaptiveFormats = streamingData.optJSONArray("adaptiveFormats") ?: return null
 
@@ -96,15 +128,19 @@ object InnerTubeResolver {
         val instances = listOf(
             "https://pipedapi.kavin.rocks",
             "https://api.piped.privacydev.net",
-            "https://piped-api.lunar.icu"
+            "https://piped-api.lunar.icu",
+            "https://pipedapi.adminforge.de",
+            "https://piped-api.garudalinux.org",
+            "https://piped.yt/api"
         )
         for (instance in instances) {
             try {
                 val conn = (URL("$instance/streams/$videoId").openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
-                    connectTimeout = 4000
-                    readTimeout = 4000
-                    setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                    connectTimeout = 6000
+                    readTimeout = 8000
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    setRequestProperty("Accept", "application/json")
                 }
                 if (conn.responseCode == 200) {
                     val text = conn.inputStream.bufferedReader().use { it.readText() }
@@ -126,7 +162,7 @@ object InnerTubeResolver {
                     }
                 }
             } catch (e: Exception) {
-                // Try next piped instance
+                Log.w(TAG, "Piped instance $instance failed for $videoId: ${e.message}")
             }
         }
         return null
@@ -409,15 +445,20 @@ object InnerTubeResolver {
         })
     }
 
-    private fun postJson(endpoint: String, payload: JSONObject): JSONObject {
+    private fun postJson(
+        endpoint: String,
+        payload: JSONObject,
+        userAgent: String = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    ): JSONObject {
         val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             doOutput = true
-            connectTimeout = 10_000
-            readTimeout = 10_000
+            connectTimeout = 12_000
+            readTimeout = 12_000
             setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
+            setRequestProperty("User-Agent", userAgent)
             setRequestProperty("Origin", "https://music.youtube.com")
+            setRequestProperty("X-Goog-Api-Format-Version", "1")
         }
         conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
         val responseText = conn.inputStream.bufferedReader().use { it.readText() }

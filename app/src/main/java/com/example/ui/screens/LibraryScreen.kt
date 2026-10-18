@@ -75,10 +75,13 @@ fun LibraryScreen(
         if (historySortNewest) raw else raw.reversed()
     }
 
-    val albums = remember(allTracks) {
-        allTracks.groupBy { it.album }.map { (album, tracks) ->
-            Triple(album, tracks.first().artist, tracks.first().artUrl)
-        }
+    val albums = remember(likedTracks) {
+        likedTracks
+            .filter { it.album.isNotBlank() && it.album != "Single" && it.album != it.title }
+            .groupBy { it.album }
+            .map { (album, tracks) ->
+                Triple(album, tracks.first().artist, tracks.first().artUrl)
+            }
     }
 
     val artists = remember(allTracks, likedTracks) {

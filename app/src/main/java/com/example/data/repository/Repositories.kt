@@ -61,6 +61,11 @@ class MusicRepository(
     }
 
     suspend fun recordPlayHistory(track: Track) = withContext(Dispatchers.IO) {
+        // Skip duplicate: same track played within the last 5 minutes counts as one play
+        val fiveMinutesAgo = System.currentTimeMillis() - 5 * 60 * 1000L
+        val existing = historyDao.getRecentHistoryForTrack(track.id, fiveMinutesAgo)
+        if (existing != null) return@withContext
+
         // Cache track metadata in Room for offline access
         trackDao.insertTrack(track.toEntity())
         historyDao.insertHistory(

@@ -2,6 +2,7 @@ package com.seitharol.ui.discover
 
 import android.content.Intent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.VerticalPager
@@ -16,6 +17,7 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -31,8 +33,10 @@ import com.seitharol.data.download.DownloadProvider
 import com.seitharol.data.download.DownloadTaskState
 import com.seitharol.domain.model.NormalizedTrack
 import com.seitharol.player.AudioPlayerManager
+import com.seitharol.ui.history.HeartSvgIcon
 import com.seitharol.ui.home.SearchMagnifierSvgIcon
 import com.seitharol.ui.search.BackArrowSvgIcon
+
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -341,7 +345,7 @@ private fun DiscoverShortPage(
                     label = "Like",
                     onClick = onLikeClick
                 ) {
-                    com.seitharol.ui.search.HeartSvgIcon(
+                    HeartSvgIcon(
                         filled = track.isLiked,
                         tint = if (track.isLiked) Color(0xFFFF4E45) else Color.White,
                         modifier = Modifier.size(22.dp)

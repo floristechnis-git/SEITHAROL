@@ -83,9 +83,7 @@ fun LibraryScreen(
         }
     }
 
-    PullToRefreshBox(
-        isRefreshing = isRefreshingLibrary,
-        onRefresh = { viewModel.refreshLibrary() },
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(SeitharolBg)

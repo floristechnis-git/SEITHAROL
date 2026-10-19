@@ -41,9 +41,7 @@ fun DownloadsScreen(
 
     val totalMb = totalBytes / (1024 * 1024)
 
-    PullToRefreshBox(
-        isRefreshing = isRefreshingLibrary,
-        onRefresh = { viewModel.refreshLibrary() },
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(SeitharolBg)
@@ -197,6 +195,7 @@ fun DownloadsScreen(
             }
         }
     }
+}
 }
 
 @Composable

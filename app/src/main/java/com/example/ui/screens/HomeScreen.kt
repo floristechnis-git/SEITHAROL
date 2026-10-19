@@ -19,7 +19,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -268,9 +267,7 @@ fun HomeScreen(
         )
     }
 
-    PullToRefreshBox(
-        isRefreshing = isLoadingHome,
-        onRefresh = { viewModel.loadHomeScreenMusic() },
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color(0xFF0F0F0F)) // Pure Deep Dark Background

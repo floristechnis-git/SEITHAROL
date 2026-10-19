@@ -107,15 +107,7 @@ fun PlaylistScreen(
     var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
 
-    PullToRefreshBox(
-        isRefreshing = isLoadingPlaylist,
-        onRefresh = {
-            isLoadingPlaylist = true
-            viewModel.loadPlaylistTracks(playlistId) { tracks ->
-                remotePlaylistTracks = tracks
-                isLoadingPlaylist = false
-            }
-        },
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(SeitharolBg)
@@ -521,3 +513,5 @@ fun PlaylistScreen(
         )
     }
 }
+}
+

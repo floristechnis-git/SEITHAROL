@@ -12,11 +12,13 @@ import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 import kotlin.math.abs
 
-enum class AudioQuality(val label: String, val saavnSuffix: String) {
-    LOW("96 kbps (Data Saver)", "_96.mp4"),
-    HIGH("160 kbps (Standard)", "_160.mp4"),
-    EXTREME("320 kbps / Lossless", "_320.mp4")
-}
+private val AudioQuality.saavnSuffix: String
+    get() = when (this.name.uppercase()) {
+        "LOW" -> "_96.mp4"
+        "NORMAL", "MEDIUM" -> "_160.mp4"
+        else -> "_320.mp4"
+    }
+
 
 data class TrackMetadata(
     val id: String,

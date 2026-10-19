@@ -232,57 +232,58 @@ class MusicRepository(
         tracks.forEach { trackDao.insertTrack(it.toEntity()) }
     }
 
-    private fun TrackEntity.toDomain() = Track(
-        id = id,
-        title = title,
-        artist = artist,
-        album = album,
-        durationMs = durationMs,
-        artUrl = artUrl,
-        isDownloaded = isDownloaded,
-        localPath = localPath,
-        isLiked = isLiked,
-        lyrics = lyrics,
-        genre = genre,
-        moodX = moodX,
-        moodY = moodY,
-        loudnessGainDb = loudnessGainDb,
-        audioUrl = audioUrl,
-        itag = itag,
-        codec = codec
-    )
-
-    private fun PlayHistoryEntity.toDomain() = Track(
-        id = trackId,
-        title = title,
-        artist = artist,
-        album = album,
-        durationMs = durationMs,
-        artUrl = artUrl,
-        genre = genre,
-        isLiked = isLiked
-    )
-
-    private fun Track.toEntity() = TrackEntity(
-        id = id,
-        title = title,
-        artist = artist,
-        album = album,
-        durationMs = durationMs,
-        artUrl = artUrl,
-        isDownloaded = isDownloaded,
-        localPath = localPath,
-        isLiked = isLiked,
-        lyrics = lyrics,
-        genre = genre,
-        moodX = moodX,
-        moodY = moodY,
-        loudnessGainDb = loudnessGainDb,
-        audioUrl = audioUrl,
-        itag = itag,
-        codec = codec
-    )
 }
+
+fun TrackEntity.toDomain() = Track(
+    id = id,
+    title = title,
+    artist = artist,
+    album = album,
+    durationMs = durationMs,
+    artUrl = artUrl,
+    isDownloaded = isDownloaded,
+    localPath = localPath,
+    isLiked = isLiked,
+    lyrics = lyrics,
+    genre = genre,
+    moodX = moodX,
+    moodY = moodY,
+    loudnessGainDb = loudnessGainDb,
+    audioUrl = audioUrl,
+    itag = itag,
+    codec = codec
+)
+
+fun PlayHistoryEntity.toDomain() = Track(
+    id = trackId,
+    title = title,
+    artist = artist,
+    album = album,
+    durationMs = durationMs,
+    artUrl = artUrl,
+    genre = genre,
+    isLiked = isLiked
+)
+
+fun Track.toEntity() = TrackEntity(
+    id = id,
+    title = title,
+    artist = artist,
+    album = album,
+    durationMs = durationMs,
+    artUrl = artUrl,
+    isDownloaded = isDownloaded,
+    localPath = localPath,
+    isLiked = isLiked,
+    lyrics = lyrics,
+    genre = genre,
+    moodX = moodX,
+    moodY = moodY,
+    loudnessGainDb = loudnessGainDb,
+    audioUrl = audioUrl,
+    itag = itag,
+    codec = codec
+)
 
 class DownloadRepository(
     private val context: Context,

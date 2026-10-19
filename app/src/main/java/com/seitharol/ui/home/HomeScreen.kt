@@ -32,6 +32,14 @@ import com.example.R
 import com.seitharol.data.resolver.TrackMetadata
 import java.util.Calendar
 
+data class PlaylistSummary(
+    val id: String,
+    val title: String,
+    val trackCount: Int = 0,
+    val firstVideoThumbnailUrl: String? = null,
+    val isLikedSongsCard: Boolean = false
+)
+
 val HOME_MOOD_CATEGORIES = listOf(
     "Energize",
     "Trending",

@@ -24,6 +24,9 @@ import androidx.compose.ui.unit.dp
 import com.example.data.model.Track
 import com.example.ui.components.*
 import com.example.ui.screens.*
+import com.example.ui.screens.DownloadsScreen
+import com.example.ui.screens.HistoryScreen
+import com.example.ui.screens.LikedSongsScreen
 import com.example.ui.theme.*
 import com.seitharol.ui.components.HomeNavSvgIcon
 import com.seitharol.ui.settings.InfoDetailScreen

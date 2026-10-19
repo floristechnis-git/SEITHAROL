@@ -361,7 +361,11 @@ fun LibraryScreen(
                     }
                     Box {
                         IconButton(onClick = { showItemMenu = true }) {
-                            Text("⋮", style = MaterialTheme.typography.titleLarge, color = SeitharolDark)
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "More",
+                                tint = SeitharolDark
+                            )
                         }
                         DropdownMenu(
                             expanded = showItemMenu,
@@ -387,6 +391,7 @@ fun LibraryScreen(
             }
         }
     }
+}
 }
 
 /**

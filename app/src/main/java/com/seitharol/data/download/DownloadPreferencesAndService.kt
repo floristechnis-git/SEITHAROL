@@ -55,8 +55,8 @@ class DownloadPreferencesAndService(private val context: Context) {
     }
 
     fun getPreferredFormat(): DownloadFormat {
-        val saved = prefs.getString("preferred_format", DownloadFormat.FLAC.name) ?: DownloadFormat.FLAC.name
-        return runCatching { DownloadFormat.valueOf(saved) }.getOrDefault(DownloadFormat.FLAC)
+        val saved = prefs.getString("preferred_format", DownloadFormat.MP3.name) ?: DownloadFormat.MP3.name
+        return runCatching { DownloadFormat.valueOf(saved) }.getOrDefault(DownloadFormat.MP3)
     }
 
     fun recordProviderAndFormatSelection(provider: DownloadProvider, format: DownloadFormat) {

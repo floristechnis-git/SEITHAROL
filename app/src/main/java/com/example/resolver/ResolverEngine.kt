@@ -54,7 +54,7 @@ class ResolverEngine {
             ),
             ResolverNode(
                 id = "node_jiosaavn",
-                name = "On-Device JioSaavn (320kbps Hi-Fi)",
+                name = "On-Device JioSaavn (160kbps Good Quality)",
                 url = "https://www.jiosaavn.com",
                 trustZone = ModelTrustZone.ZONE_1_DEVICE,
                 pingMs = 12,
@@ -246,7 +246,7 @@ class ResolverEngine {
         // 6. Direct JioSaavn ID resolution
         if (resolvedStream == null && isSaavn && rawId.isNotBlank() && !isSpotify && !isYouTubeId) {
             try {
-                resolvedStream = jioSaavnProvider.resolveStream(rawId, preferredKbps = 320)
+                resolvedStream = jioSaavnProvider.resolveStream(rawId, preferredKbps = 160)
             } catch (e: Exception) {
                 failures.add("JioSaavnDirect: ${e.message}")
                 Log.w(TAG, "JioSaavn resolution failed for $rawId: ${e.message}")
@@ -272,27 +272,21 @@ class ResolverEngine {
             else -> ""
         }
 
-        // 8. Fallback 1: On-Device JioSaavn search + 320kbps AAC DES decryption
-        if (resolvedStream == null && searchQuery.isNotBlank()) {
+        // 8. Fallback 1: On-Device YouTube Music search + stream extraction (ranked by TrackMatcher)
+        if (resolvedStream == null && !isSaavn && searchQuery.isNotBlank()) {
             try {
-                val results = jioSaavnProvider.searchTracks(searchQuery, limit = 5)
-                for (candidate in results) {
-                    try {
-                        resolvedStream = jioSaavnProvider.resolveStream(candidate.sourceId, preferredKbps = 320)
-                        if (resolvedStream != null) break
-                    } catch (_: Exception) {}
-                }
-            } catch (e: Exception) {
-                failures.add("JioSaavnSearch: ${e.message}")
-                Log.w(TAG, "JioSaavn search fallback failed: ${e.message}")
-            }
-        }
-
-        // 9. Fallback 2: On-Device YouTube Music search + stream extraction
-        if (resolvedStream == null && searchQuery.isNotBlank()) {
-            try {
-                val ytResults = youtubeInnerTubeProvider.searchTracks(searchQuery, limit = 5)
-                for (candidate in ytResults) {
+                val ytResults = youtubeInnerTubeProvider.searchTracks(searchQuery, limit = 10)
+                val targetTrack = NormalizedTrack(
+                    source = SourceType.YOUTUBE,
+                    sourceId = rawId,
+                    title = effectiveTitle,
+                    artists = listOf(effectiveArtist.ifBlank { "Various Artists" }),
+                    album = track.album,
+                    durationMs = track.durationMs,
+                    isPlayableNatively = true
+                )
+                val ranked = trackMatcher.rankCandidates(targetTrack, ytResults)
+                for (candidate in ranked) {
                     if (candidate.sourceId.isBlank()) continue
                     try {
                         resolvedStream = youtubeInnerTubeProvider.resolveStream(candidate.sourceId, preferredKbps = 160)
@@ -302,6 +296,32 @@ class ResolverEngine {
             } catch (e: Exception) {
                 failures.add("YouTubeSearch: ${e.message}")
                 Log.w(TAG, "YouTube search fallback failed: ${e.message}")
+            }
+        }
+
+        // 9. Fallback 2: On-Device JioSaavn search + 160kbps AAC DES decryption
+        if (resolvedStream == null && searchQuery.isNotBlank()) {
+            try {
+                val results = jioSaavnProvider.searchTracks(searchQuery, limit = 5)
+                val targetTrack = NormalizedTrack(
+                    source = SourceType.JIOSAAVN,
+                    sourceId = rawId,
+                    title = effectiveTitle,
+                    artists = listOf(effectiveArtist.ifBlank { "Various Artists" }),
+                    album = track.album,
+                    durationMs = track.durationMs,
+                    isPlayableNatively = true
+                )
+                val rankedSaavn = trackMatcher.rankCandidates(targetTrack, results)
+                for (candidate in (if (rankedSaavn.isNotEmpty()) rankedSaavn else results)) {
+                    try {
+                        resolvedStream = jioSaavnProvider.resolveStream(candidate.sourceId, preferredKbps = 160)
+                        if (resolvedStream != null) break
+                    } catch (_: Exception) {}
+                }
+            } catch (e: Exception) {
+                failures.add("JioSaavnSearch: ${e.message}")
+                Log.w(TAG, "JioSaavn search fallback failed: ${e.message}")
             }
         }
 

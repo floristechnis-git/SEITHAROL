@@ -89,8 +89,16 @@ class JioSaavnProvider : AudioStreamProvider {
 
     override suspend fun resolveStream(sourceId: String, preferredKbps: Int): ResolvedStream =
         withContext(Dispatchers.IO) {
-            val info = getTrackInfo(sourceId)
+            var info = getTrackInfo(sourceId)
                 ?: throw IllegalStateException("Failed to fetch JioSaavn details for id $sourceId")
+
+            // If encryptedMediaUrl is missing from search cache, force fetch full details from API
+            if (info.encryptedMediaUrl.isBlank()) {
+                fetchSongDetails(sourceId)?.let { detailed ->
+                    info = detailed
+                    trackCache[sourceId] = detailed
+                }
+            }
 
             val decryptedUrl = when {
                 info.encryptedMediaUrl.isNotBlank() -> {

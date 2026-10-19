@@ -523,6 +523,7 @@ object NetworkClients {
                     3 -> msStr.toLongOrNull() ?: 0L
                     else -> 0L
                 }
+                val totalMs = (min * 60 * 1000L) + (sec * 1000L) + ms
                 val sanitized = match.groupValues[4].replace("{", "").replace("}", "").trim()
                 if (sanitized.isNotBlank()) {
                     val parts = sanitized.split("^")

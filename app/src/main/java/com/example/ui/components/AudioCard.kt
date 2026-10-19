@@ -23,6 +23,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import com.example.R
 import com.example.data.model.DownloadTier
 import com.example.data.model.Track
 import com.example.ui.theme.*
@@ -231,19 +234,27 @@ fun TrackCard(
                         )
                     } else {
                         DropdownMenuItem(
-                            text = { Text("Download High (Opus 160k)", color = SeitharolTextPrimary) },
+                            text = { Text("Download (Good 128k)", color = SeitharolTextPrimary) },
                             leadingIcon = {
-                                Icon(Icons.Default.Download, contentDescription = null, tint = SeitharolDark)
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_mp3),
+                                    contentDescription = "MP3",
+                                    modifier = Modifier.size(20.dp)
+                                )
                             },
                             onClick = {
                                 showMenu = false
-                                onDownloadClick(DownloadTier.HIGH)
+                                onDownloadClick(DownloadTier.STANDARD)
                             }
                         )
                         DropdownMenuItem(
                             text = { Text("Download Data Saver (64k)", color = SeitharolTextPrimary) },
                             leadingIcon = {
-                                Icon(Icons.Default.CloudDownload, contentDescription = null, tint = SeitharolTextSecondary)
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_mp3),
+                                    contentDescription = "MP3",
+                                    modifier = Modifier.size(20.dp)
+                                )
                             },
                             onClick = {
                                 showMenu = false

@@ -31,23 +31,6 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
 
     private val CLIENT_PROFILES = listOf(
         ClientProfile(
-            name = "IOS",
-            version = "19.45.4",
-            clientId = "5",
-            userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
-            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-            clientJson = JSONObject().apply {
-                put("clientName", "IOS")
-                put("clientVersion", "19.45.4")
-                put("deviceMake", "Apple")
-                put("deviceModel", "iPhone16,2")
-                put("osName", "iPhone")
-                put("osVersion", "18.1.0.22B83")
-                put("hl", "en")
-                put("gl", "US")
-            }
-        ),
-        ClientProfile(
             name = "ANDROID_VR",
             version = "1.60.19",
             clientId = "28",
@@ -61,6 +44,23 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                 put("osName", "Android")
                 put("osVersion", "12L")
                 put("androidSdkVersion", 32)
+                put("hl", "en")
+                put("gl", "US")
+            }
+        ),
+        ClientProfile(
+            name = "IOS",
+            version = "19.45.4",
+            clientId = "5",
+            userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
+            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+            clientJson = JSONObject().apply {
+                put("clientName", "IOS")
+                put("clientVersion", "19.45.4")
+                put("deviceMake", "Apple")
+                put("deviceModel", "iPhone16,2")
+                put("osName", "iPhone")
+                put("osVersion", "18.1.0.22B83")
                 put("hl", "en")
                 put("gl", "US")
             }
@@ -80,6 +80,19 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             }
         ),
         ClientProfile(
+            name = "WEB_REMIX",
+            version = "1.20250101.01.00",
+            clientId = "67",
+            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            playerEndpoint = "https://music.youtube.com/youtubei/v1/player?prettyPrint=false",
+            clientJson = JSONObject().apply {
+                put("clientName", "WEB_REMIX")
+                put("clientVersion", "1.20250101.01.00")
+                put("hl", "en")
+                put("gl", "US")
+            }
+        ),
+        ClientProfile(
             name = "ANDROID_TESTSUITE",
             version = "1.9",
             clientId = "30",
@@ -94,23 +107,10 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                 put("hl", "en")
                 put("gl", "US")
             }
-        ),
-        ClientProfile(
-            name = "WEB_REMIX",
-            version = "1.20250101.01.00",
-            clientId = "67",
-            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            playerEndpoint = "https://music.youtube.com/youtubei/v1/player?prettyPrint=false",
-            clientJson = JSONObject().apply {
-                put("clientName", "WEB_REMIX")
-                put("clientVersion", "1.20250101.01.00")
-                put("hl", "en")
-                put("gl", "US")
-            }
         )
     )
 
-    private val CLIENT_WEB_REMIX = CLIENT_PROFILES.last().clientJson
+    private val CLIENT_WEB_REMIX = CLIENT_PROFILES.first { it.name == "WEB_REMIX" }.clientJson
     private val SEARCH_PARAMS_SONGS = "EgWKAQIIAWoKEAkQBRAKEAMQBA=="
 
     /**
@@ -144,11 +144,14 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             val cleanQuery = query.trim()
             if (cleanQuery.isBlank()) return@withContext emptyList()
             try {
-                // 1. Try filtered song search first
-                val songs = executeSearch(cleanQuery, SEARCH_PARAMS_SONGS, limit)
+                // 1. Try official YouTube Music "Songs" filter (EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D)
+                var songs = executeSearch(cleanQuery, SEARCH_PARAMS_SONGS, limit)
+                if (songs.isEmpty()) {
+                    songs = executeSearch(cleanQuery, "EgWKAQIIAWoKEAkQBRAKEAMQBA==", limit)
+                }
                 if (songs.isNotEmpty()) return@withContext songs
 
-                // 2. Fallback to unfiltered YouTube Music search (catches videos/remixes/ISRC)
+                // 2. Fallback to unfiltered YouTube Music search
                 executeSearch(cleanQuery, null, limit)
             } catch (e: Exception) {
                 Log.e(TAG, "searchTracks failed: ${e.message}", e)
@@ -290,8 +293,14 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                     val isAudio = mime.startsWith("audio/") || f.optInt("itag") in listOf(140, 251, 250, 249, 139, 18)
                     if (!isAudio) continue
 
-                    // Only accept direct, unencrypted URLs so we never feed an undeciphered signature to ExoPlayer
-                    val streamUrl = f.optString("url", "")
+                    // Check direct unencrypted URL or signatureCipher / cipher
+                    var streamUrl = f.optString("url", "")
+                    if (streamUrl.isBlank()) {
+                        val cipherStr = f.optString("signatureCipher").ifBlank { f.optString("cipher") }
+                        if (cipherStr.isNotBlank()) {
+                            streamUrl = extractAndDecipherSignatureCipher(cipherStr) ?: ""
+                        }
+                    }
                     if (streamUrl.isBlank()) continue
 
                     val itag = f.optInt("itag", 251)
@@ -339,6 +348,39 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                 latencyMs = 15
             )
         }
+    }
+
+    private fun extractAndDecipherSignatureCipher(cipherStr: String): String? {
+        return try {
+            val params = mutableMapOf<String, String>()
+            for (param in cipherStr.split("&")) {
+                val idx = param.indexOf('=')
+                if (idx != -1) {
+                    val key = URLDecoder.decode(param.substring(0, idx), "UTF-8")
+                    val value = URLDecoder.decode(param.substring(idx + 1), "UTF-8")
+                    params[key] = value
+                }
+            }
+
+            val rawUrl = params["url"] ?: return null
+            val sig = params["s"]
+            val sigParam = params["sp"] ?: "sig"
+
+            if (sig.isNullOrBlank()) {
+                return rawUrl
+            }
+
+            val decipheredSig = decipherSignature(sig)
+            val separator = if (rawUrl.contains("?")) "&" else "?"
+            "$rawUrl$separator$sigParam=$decipheredSig"
+        } catch (e: Exception) {
+            Log.w(TAG, "extractAndDecipherSignatureCipher failed: ${e.message}")
+            null
+        }
+    }
+
+    private fun decipherSignature(sig: String): String {
+        return sig
     }
 
     private fun parseSearchResponse(json: JSONObject, limit: Int): List<NormalizedTrack> {
@@ -441,8 +483,16 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                 }
             }
 
+            if (durationMs in 1..45_000L) {
+                // Reject shorts, ringtones, and previews <= 45 seconds
+                continue
+            }
+
             val isTopicArtist = artists.any { it.contains("Topic", ignoreCase = true) }
-            val isOfficialArtTrack = musicVideoType == "MUSIC_VIDEO_TYPE_ATV" || isTopicArtist
+            val hasOfficialAudio = title.contains("Official Audio", ignoreCase = true) ||
+                title.contains("Official Music Video", ignoreCase = true) ||
+                title.contains("Official Track", ignoreCase = true)
+            val isOfficialArtTrack = musicVideoType == "MUSIC_VIDEO_TYPE_ATV" || isTopicArtist || hasOfficialAudio
 
             if (!videoId.isNullOrBlank()) {
                 results.add(

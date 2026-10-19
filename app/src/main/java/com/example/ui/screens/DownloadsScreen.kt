@@ -20,6 +20,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import com.example.R
 import com.example.data.model.DownloadItem
 import com.example.data.model.DownloadState
 import com.example.ui.CascadeViewModel
@@ -121,7 +124,14 @@ fun DownloadsScreen(
                         }
                         Column {
                             Text("Format", color = SeitharolTextSecondary, fontSize = 11.sp, fontFamily = OutfitFontFamily)
-                            Text("Opus 160k", color = SeitharolDark, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = OutfitFontFamily)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_mp3),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp).padding(end = 4.dp)
+                                )
+                                Text("Opus 160k", color = SeitharolDark, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = OutfitFontFamily)
+                            }
                         }
                     }
                 }
@@ -227,12 +237,19 @@ fun DownloadItemRow(
                         fontFamily = OutfitFontFamily,
                         fontWeight = FontWeight.Medium
                     )
-                    Text(
-                        text = "${item.artist} • ${item.tier.label}",
-                        color = SeitharolTextSecondary,
-                        fontSize = 12.sp,
-                        fontFamily = OutfitFontFamily
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Image(
+                            painter = painterResource(id = R.drawable.ic_mp3),
+                            contentDescription = item.tier.label,
+                            modifier = Modifier.size(12.dp).padding(end = 4.dp)
+                        )
+                        Text(
+                            text = "${item.artist} • ${item.tier.label}",
+                            color = SeitharolTextSecondary,
+                            fontSize = 12.sp,
+                            fontFamily = OutfitFontFamily
+                        )
+                    }
                 }
 
                 when (item.state) {

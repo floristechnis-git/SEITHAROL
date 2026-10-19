@@ -228,6 +228,10 @@ class MusicRepository(
         trackDao.insertTrack(track.toEntity())
     }
 
+    suspend fun insertTracks(tracks: List<Track>) = withContext(Dispatchers.IO) {
+        tracks.forEach { trackDao.insertTrack(it.toEntity()) }
+    }
+
     private fun TrackEntity.toDomain() = Track(
         id = id,
         title = title,
@@ -356,9 +360,9 @@ class DownloadRepository(
                 artUrl = track?.artUrl ?: "",
                 tier = when (entity.tier) {
                     "Data Saver" -> DownloadTier.DATA_SAVER
-                    "Standard" -> DownloadTier.STANDARD
+                    "High" -> DownloadTier.HIGH
                     "Original" -> DownloadTier.ORIGINAL
-                    else -> DownloadTier.HIGH
+                    else -> DownloadTier.STANDARD
                 },
                 progress = entity.progress,
                 downloadedBytes = entity.bytesDownloaded,
@@ -497,6 +501,13 @@ class DownloadRepository(
 
     suspend fun retryDownload(trackId: String) = withContext(Dispatchers.IO) {
         val track = trackDao.getTrackById(trackId)
+        val existingDl = downloadDao.getDownload(trackId)
+        val tier = when (existingDl?.tier) {
+            "Data Saver" -> DownloadTier.DATA_SAVER
+            "High" -> DownloadTier.HIGH
+            "Original" -> DownloadTier.ORIGINAL
+            else -> DownloadTier.STANDARD
+        }
         if (track != null) {
             startDownload(
                 Track(
@@ -514,7 +525,7 @@ class DownloadRepository(
                     itag = track.itag,
                     codec = track.codec
                 ),
-                DownloadTier.HIGH
+                tier
             )
         }
     }

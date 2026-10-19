@@ -56,7 +56,7 @@ data class DownloadItem(
     val title: String,
     val artist: String,
     val artUrl: String,
-    val tier: DownloadTier = DownloadTier.HIGH,
+    val tier: DownloadTier = DownloadTier.STANDARD,
     val progress: Float = 0f,
     val downloadedBytes: Long = 0L,
     val totalBytes: Long = 0L,

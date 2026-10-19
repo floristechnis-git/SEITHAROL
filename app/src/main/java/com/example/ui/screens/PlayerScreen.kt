@@ -555,7 +555,7 @@ fun PlayerScreen(
             IconButton(
                 onClick = {
                     if (!isDownloaded && !isDownloading) {
-                        viewModel.startDownload(track, com.example.data.model.DownloadTier.HIGH)
+                        viewModel.startDownload(track, com.example.data.model.DownloadTier.STANDARD)
                     }
                 },
                 modifier = Modifier.size(40.dp)
@@ -925,6 +925,7 @@ fun ExpandedLyricsModal(
     val track = playerState.currentTrack ?: return
     val lyricListState = rememberLazyListState()
     var userSeekingPosition by remember { mutableStateOf<Float?>(null) }
+    var isUserDraggingSlider by remember { mutableStateOf(false) }
 
     val displayPosition = (userSeekingPosition?.toLong() ?: playerState.currentPositionMs).coerceAtLeast(0L)
     val totalDuration = playerState.durationMs.coerceAtLeast(1000L)

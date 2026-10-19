@@ -1,5 +1,6 @@
 package com.example.ui
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -44,7 +45,7 @@ enum class SearchFilter(val label: String) {
 class CascadeViewModel(
     private val musicRepository: MusicRepository,
     private val downloadRepository: DownloadRepository,
-    private val resolverEngine: ResolverEngine,
+    val resolverEngine: ResolverEngine,
     val playerManager: AudioPlayerManager
 ) : ViewModel() {
 
@@ -491,7 +492,7 @@ class CascadeViewModel(
         }
     }
 
-    fun startDownload(track: Track, tier: DownloadTier = DownloadTier.HIGH) {
+    fun startDownload(track: Track, tier: DownloadTier = DownloadTier.STANDARD) {
         viewModelScope.launch {
             downloadRepository.startDownload(track, tier)
         }
@@ -577,7 +578,7 @@ class CascadeViewModel(
         viewModelScope.launch {
             val id = musicRepository.createPlaylist(title, desc, initialTrack?.artUrl)
             if (initialTrack != null) {
-                musicRepository.insertTracks(listOf(initialTrack))
+                musicRepository.insertTrack(initialTrack)
                 musicRepository.addTrackToPlaylist(id, initialTrack.id)
                 _userPlaylists.value = _userPlaylists.value + (id to listOf(initialTrack))
             } else {

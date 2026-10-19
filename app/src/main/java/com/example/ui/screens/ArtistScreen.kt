@@ -461,7 +461,7 @@ fun ArtistScreen(
                         .clip(RoundedCornerShape(12.dp))
                         .clickable {
                             showMoreSheet = false
-                            artistTracks.forEach { viewModel.startDownload(it, DownloadTier.HIGH) }
+                            artistTracks.forEach { viewModel.startDownload(it, DownloadTier.STANDARD) }
                         }
                         .padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically

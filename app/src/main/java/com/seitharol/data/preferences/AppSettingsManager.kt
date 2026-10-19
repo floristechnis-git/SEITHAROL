@@ -15,8 +15,8 @@ enum class ThemeMode(val label: String) {
 
 data class PersistedSettingsState(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
-    val streamingQuality: AudioQuality = AudioQuality.HIGH,
-    val downloadQuality: AudioQuality = AudioQuality.HIGH,
+    val streamingQuality: AudioQuality = AudioQuality.NORMAL,
+    val downloadQuality: AudioQuality = AudioQuality.NORMAL,
     val eqBandsDb: List<Float> = listOf(0f, 0f, 0f, 0f, 0f),
     val eqEnabled: Boolean = false,
     val sleepTimerMinutes: Int = 0,
@@ -34,15 +34,15 @@ class AppSettingsManager(context: Context) {
 
     private fun loadFromPrefs(): PersistedSettingsState {
         val themeName = prefs.getString(KEY_THEME_MODE, ThemeMode.SYSTEM.name) ?: ThemeMode.SYSTEM.name
-        val streamName = prefs.getString(KEY_STREAM_QUALITY, AudioQuality.HIGH.name) ?: AudioQuality.HIGH.name
-        val downloadName = prefs.getString(KEY_DOWNLOAD_QUALITY, AudioQuality.HIGH.name) ?: AudioQuality.HIGH.name
+        val streamName = prefs.getString(KEY_STREAM_QUALITY, AudioQuality.NORMAL.name) ?: AudioQuality.NORMAL.name
+        val downloadName = prefs.getString(KEY_DOWNLOAD_QUALITY, AudioQuality.NORMAL.name) ?: AudioQuality.NORMAL.name
         val bands = (0 until 5).map { idx ->
             prefs.getFloat("${KEY_EQ_BAND_PREFIX}$idx", 0f)
         }
         return PersistedSettingsState(
             themeMode = runCatching { ThemeMode.valueOf(themeName) }.getOrDefault(ThemeMode.SYSTEM),
-            streamingQuality = runCatching { AudioQuality.valueOf(streamName) }.getOrDefault(AudioQuality.HIGH),
-            downloadQuality = runCatching { AudioQuality.valueOf(downloadName) }.getOrDefault(AudioQuality.HIGH),
+            streamingQuality = runCatching { AudioQuality.valueOf(streamName) }.getOrDefault(AudioQuality.NORMAL),
+            downloadQuality = runCatching { AudioQuality.valueOf(downloadName) }.getOrDefault(AudioQuality.NORMAL),
             eqBandsDb = bands,
             eqEnabled = prefs.getBoolean(KEY_EQ_ENABLED, false),
             sleepTimerMinutes = prefs.getInt(KEY_SLEEP_TIMER, 0),

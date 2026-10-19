@@ -205,7 +205,7 @@ fun PlaylistScreen(
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier.clickable {
-                                filteredTracks.forEach { viewModel.startDownload(it, DownloadTier.HIGH) }
+                                filteredTracks.forEach { viewModel.startDownload(it, DownloadTier.STANDARD) }
                             }
                         ) {
                             Surface(
@@ -394,7 +394,7 @@ fun PlaylistScreen(
                     color = SeitharolDark
                 )
                 Text(
-                    text = "${playlistTracks.size} tracks",
+                    text = "${remotePlaylistTracks.size} tracks",
                     fontFamily = OutfitFontFamily,
                     fontSize = 12.sp,
                     color = SeitharolTextSecondary
@@ -410,7 +410,7 @@ fun PlaylistScreen(
                         .clip(RoundedCornerShape(12.dp))
                         .clickable {
                             showMoreSheet = false
-                            playlistTracks.reversed().forEach { viewModel.playNext(it) }
+                            remotePlaylistTracks.reversed().forEach { viewModel.playNext(it) }
                         }
                         .padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -427,7 +427,7 @@ fun PlaylistScreen(
                         .clip(RoundedCornerShape(12.dp))
                         .clickable {
                             showMoreSheet = false
-                            playlistTracks.forEach { viewModel.addToQueue(it) }
+                            remotePlaylistTracks.forEach { viewModel.addToQueue(it) }
                         }
                         .padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -444,7 +444,7 @@ fun PlaylistScreen(
                         .clip(RoundedCornerShape(12.dp))
                         .clickable {
                             showMoreSheet = false
-                            playlistTracks.forEach { viewModel.startDownload(it, DownloadTier.HIGH) }
+                            remotePlaylistTracks.forEach { viewModel.startDownload(it, DownloadTier.STANDARD) }
                         }
                         .padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically

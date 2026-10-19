@@ -24,16 +24,16 @@ object InnerTubeStreamExtractor {
 
     val FALLBACK_CLIENTS = listOf(
         InnerTubeClientConfig(
-            clientName = "IOS",
-            clientVersion = "19.45.4",
-            userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
-            clientId = "5"
-        ),
-        InnerTubeClientConfig(
             clientName = "ANDROID_VR",
             clientVersion = "1.60.19",
             userAgent = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
             clientId = "28"
+        ),
+        InnerTubeClientConfig(
+            clientName = "IOS",
+            clientVersion = "19.45.4",
+            userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
+            clientId = "5"
         ),
         InnerTubeClientConfig(
             clientName = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
@@ -55,7 +55,7 @@ object InnerTubeStreamExtractor {
      */
     suspend fun resolveWorkingStreamUrl(
         videoId: String,
-        preferredQuality: AudioQuality = AudioQuality.HIGH
+        preferredQuality: AudioQuality = AudioQuality.NORMAL
     ): Result<String> = withContext(Dispatchers.IO) {
         var lastError: Throwable? = null
 
@@ -118,7 +118,18 @@ object InnerTubeStreamExtractor {
         for (i in 0 until adaptiveFormats.length()) {
             val fmt = adaptiveFormats.getJSONObject(i)
             val mimeType = fmt.optString("mimeType", "")
-            val url = fmt.optString("url", "")
+            var url = fmt.optString("url", "")
+            if (url.isBlank()) {
+                val cipher = fmt.optString("signatureCipher").ifBlank { fmt.optString("cipher") }
+                if (cipher.isNotBlank()) {
+                    for (param in cipher.split("&")) {
+                        if (param.startsWith("url=")) {
+                            url = java.net.URLDecoder.decode(param.substring(4), "UTF-8")
+                            break
+                        }
+                    }
+                }
+            }
             if (mimeType.startsWith("audio/") && url.isNotBlank()) {
                 val bitrate = fmt.optInt("bitrate", 128000) / 1000
                 audioStreams.add(bitrate to url)

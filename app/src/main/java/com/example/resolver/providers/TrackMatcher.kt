@@ -30,9 +30,13 @@ class TrackMatcher(
                 val isrcQuery = track.isrc
                 try {
                     val ytCandidates = youtubeProvider.searchTracks(isrcQuery, limit = 5)
-                    val bestYt = pickBestCandidate(track, ytCandidates)
-                    if (bestYt != null) {
-                        return@withContext youtubeProvider.resolveStream(bestYt.sourceId, preferredKbps)
+                    val ranked = rankCandidates(track, ytCandidates)
+                    for (cand in ranked) {
+                        try {
+                            return@withContext youtubeProvider.resolveStream(cand.sourceId, preferredKbps)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "ISRC candidate ${cand.sourceId} failed: ${e.message}")
+                        }
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "ISRC search on YouTube failed: ${e.message}")
@@ -46,9 +50,13 @@ class TrackMatcher(
 
             try {
                 val ytCandidates = youtubeProvider.searchTracks(query, limit = 10)
-                val best = pickBestCandidate(track, ytCandidates)
-                if (best != null) {
-                    return@withContext youtubeProvider.resolveStream(best.sourceId, preferredKbps)
+                val ranked = rankCandidates(track, ytCandidates)
+                for (cand in ranked) {
+                    try {
+                        return@withContext youtubeProvider.resolveStream(cand.sourceId, preferredKbps)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "YouTube candidate ${cand.sourceId} failed: ${e.message}")
+                    }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "YouTube text search match failed: ${e.message}")
@@ -57,46 +65,63 @@ class TrackMatcher(
             // 3. Fallback: Query JioSaavn Provider
             try {
                 val saavnCandidates = jioSaavnProvider.searchTracks(query, limit = 5)
-                val bestSaavn = pickBestCandidate(track, saavnCandidates)
-                if (bestSaavn != null) {
-                    return@withContext jioSaavnProvider.resolveStream(bestSaavn.sourceId, preferredKbps)
+                val rankedSaavn = rankCandidates(track, saavnCandidates)
+                for (cand in rankedSaavn) {
+                    try {
+                        return@withContext jioSaavnProvider.resolveStream(cand.sourceId, preferredKbps)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "JioSaavn candidate ${cand.sourceId} failed: ${e.message}")
+                    }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "JioSaavn search match failed: ${e.message}")
             }
 
-            // 4. Last resort: If candidates list was non-empty, resolve first YouTube candidate
-            val fallbackCandidates = youtubeProvider.searchTracks(track.title, limit = 3)
-            val first = pickBestCandidate(track, fallbackCandidates) ?: fallbackCandidates.firstOrNull()
-                ?: throw IllegalStateException("Could not match stream for track '${track.title}' by '${track.primaryArtist}'")
+            // 4. Last resort: If candidates list was non-empty, resolve fallback candidates
+            val fallbackCandidates = youtubeProvider.searchTracks(track.title, limit = 5)
+            val rankedFallback = rankCandidates(track, fallbackCandidates)
+            for (cand in rankedFallback) {
+                try {
+                    return@withContext youtubeProvider.resolveStream(cand.sourceId, preferredKbps)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Fallback candidate ${cand.sourceId} failed: ${e.message}")
+                }
+            }
 
-            youtubeProvider.resolveStream(first.sourceId, preferredKbps)
+            throw IllegalStateException("Could not match stream for track '${track.title}' by '${track.primaryArtist}'")
         }
 
     private val BANNED_MODIFIERS = listOf(
         "remix", "re-mix", "loop", "extended", "1 hour", "10 hours", "hour version",
         "slowed", "reverb", "cover", "live", "tribute", "karaoke",
         "instrumental", "parody", "sped up", "nightcore", "8d", "mashup",
+        "dj", "status", "ringtone", "lofi", "lo-fi",
         "bass boosted", "fan made", "unofficial"
     )
 
     fun pickBestCandidate(target: NormalizedTrack, candidates: List<NormalizedTrack>): NormalizedTrack? {
-        if (candidates.isEmpty()) return null
+        return rankCandidates(target, candidates).firstOrNull()
+    }
+
+    fun rankCandidates(target: NormalizedTrack, candidates: List<NormalizedTrack>): List<NormalizedTrack> {
+        if (candidates.isEmpty()) return emptyList()
 
         val targetQueryLower = "${target.title} ${target.primaryArtist}".lowercase()
         val normQueryTitle = normalizeText(target.title)
         val normQueryArtist = normalizeText(target.primaryArtist)
         val targetDurationSec = (target.durationMs / 1000L).toInt()
 
-        val scored = candidates.map { candidate ->
-            candidate to scoreCandidate(candidate, normQueryTitle, normQueryArtist, targetQueryLower, targetDurationSec)
-        }
-
-        return scored
-            .filter { it.second > -50 } // Filter out hard-penalized fake remixes
-            .maxByOrNull { it.second }
-            ?.first
-            ?: candidates.firstOrNull()
+        return candidates
+            .filter { it.durationMs > 45_000L || targetDurationSec <= 45 }
+            .map { candidate ->
+                candidate to scoreCandidate(candidate, normQueryTitle, normQueryArtist, targetQueryLower, targetDurationSec)
+            }
+            .filter { it.second > -400 } // Filter out heavily penalized fake remixes
+            .sortedWith(
+                compareByDescending<Pair<NormalizedTrack, Int>> { it.first.isArtTrack || it.first.artists.any { a -> a.contains("Topic", ignoreCase = true) } }
+                    .thenByDescending { it.second }
+            )
+            .map { it.first }
     }
 
     private fun scoreCandidate(
@@ -112,53 +137,59 @@ class TrackMatcher(
         val normCandArtist = normalizeText(c.primaryArtist)
         val isTopicChannel = c.artists.any { it.contains("Topic", ignoreCase = true) }
 
-        // 1. Prioritize Official Art Tracks (ATV) & "- Topic" Channels (+100, UGC: -150)
-        when {
-            c.isArtTrack || isTopicChannel -> score += 100
-            else -> score -= 150
+        // 1. Reject shorts / previews (<= 45 seconds)
+        if (c.durationMs in 1..45_000L && targetDurationSec > 45) {
+            return -1000
         }
 
-        // 2. Official Album Metadata Presence
+        // 2. Prioritize Official Art Tracks (ATV) & "- Topic" Channels (+150, UGC: -150)
+        when {
+            c.isArtTrack || isTopicChannel -> score += 150
+            candTitleLower.contains("official audio") -> score += 100
+            else -> score -= 100
+        }
+
+        // 3. Official Album Metadata Presence
         if (c.album.isNotBlank() && !c.album.equals("Single", ignoreCase = true)) {
             score += 25
         }
 
-        // 3. Strict Unrequested Remix / Loop / Edit Filtering
+        // 4. Strict Unrequested Remix / Loop / Edit Filtering
         for (keyword in BANNED_MODIFIERS) {
             val requestedInQuery = rawQueryLower.contains(keyword)
             val presentInCandidate = candTitleLower.contains(keyword) || c.artists.any { it.contains(keyword, ignoreCase = true) }
             if (presentInCandidate && !requestedInQuery) {
-                score -= 300 // Hard penalty for unrequested remix/loop/edit
+                score -= 400 // Hard penalty for unrequested remix/loop/edit
             }
         }
 
-        // 4. Exact Title & Artist Matching
+        // 5. Exact Title & Artist Matching
         if (normCandTitle == normQueryTitle) {
-            score += 50
+            score += 60
         } else if (normCandTitle.contains(normQueryTitle) || normQueryTitle.contains(normCandTitle)) {
-            score += 25
+            score += 30
         } else {
             score -= 40
         }
 
         val cleanChannel = normalizeText(c.primaryArtist.removeSuffix("- Topic").trim())
         if (normCandArtist == normQueryArtist || cleanChannel == normQueryArtist) {
-            score += 60
+            score += 70
         } else if (normCandArtist.contains(normQueryArtist) || normQueryArtist.contains(normCandArtist)) {
-            score += 30
+            score += 35
         } else {
             score -= 50
         }
 
-        // 5. Strict Duration Proximity Scoring (within +-5 seconds of canonical track)
-        if (targetDurationSec > 0 && c.durationMs > 0) {
+        // 6. Strict Duration Proximity Scoring (against canonical track)
+        if (targetDurationSec > 45 && c.durationMs > 0) {
             val candDurationSec = (c.durationMs / 1000L).toInt()
             val diff = abs(candDurationSec - targetDurationSec)
             score += when {
-                diff <= 2 -> 50
-                diff <= 5 -> 35
-                diff <= 10 -> -80
-                else -> -150 // Rejects out-of-range streams (> 5s difference)
+                diff <= 3 -> 60
+                diff <= 7 -> 40
+                diff <= 15 -> 15
+                else -> -350 // Rejects out-of-range streams (> 15s difference)
             }
         }
 

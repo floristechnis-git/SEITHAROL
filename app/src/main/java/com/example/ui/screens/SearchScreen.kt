@@ -38,7 +38,8 @@ import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
 import com.example.ui.components.AddToPlaylistModal
 import com.example.ui.components.CreatePlaylistModal
-import com.example.ui.components.TrackCard
+import com.example.R
+import androidx.compose.ui.res.painterResource
 import com.example.ui.theme.*
 
 enum class SearchTab(val label: String) {
@@ -55,6 +56,7 @@ fun SearchScreen(
     playerState: PlayerState,
     onNavigateToPlaylist: (String) -> Unit,
     onNavigateToArtist: (String) -> Unit,
+    onNavigateToHome: () -> Unit = {},
     onOpenDiscover: () -> Unit = {},
     onPlayTrackAndMaximize: (Track) -> Unit = { viewModel.playTrack(it) },
     modifier: Modifier = Modifier
@@ -227,7 +229,7 @@ fun SearchScreen(
             }
         }
 
-        // Multi-Source Provider Filter Chips (All, YouTube, Spotify, JioSaavn, Downloaded)
+        // Multi-Source Provider Filter Chips (All, YouTube, JioSaavn, Downloaded)
         item {
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 20.dp),
@@ -244,17 +246,70 @@ fun SearchScreen(
                         shape = RoundedCornerShape(17.dp),
                         color = if (isSelected) SeitharolDark else SeitharolWhite
                     ) {
-                        Box(
-                            contentAlignment = Alignment.Center,
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
                             modifier = Modifier.padding(horizontal = 14.dp)
                         ) {
-                            Text(
-                                text = provider.label,
-                                color = if (isSelected) SeitharolWhite else SeitharolDark,
-                                fontSize = 13.sp,
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
-                            )
+                            when (provider) {
+                                com.example.ui.ProviderFilter.YOUTUBE -> {
+                                    androidx.compose.foundation.Image(
+                                        painter = painterResource(id = R.drawable.ic_youtube),
+                                        contentDescription = "YouTube",
+                                        modifier = Modifier
+                                            .size(18.dp)
+                                            .padding(end = 6.dp)
+                                    )
+                                    Text(
+                                        text = provider.label,
+                                        color = if (isSelected) SeitharolWhite else SeitharolDark,
+                                        fontSize = 13.sp,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                    )
+                                }
+                                com.example.ui.ProviderFilter.JIOSAAVN -> {
+                                    androidx.compose.foundation.Image(
+                                        painter = painterResource(id = R.drawable.ic_jiosaavn),
+                                        contentDescription = "JioSaavn",
+                                        modifier = Modifier.height(18.dp)
+                                    )
+                                }
+                                com.example.ui.ProviderFilter.LOCAL -> {
+                                    Icon(
+                                        imageVector = Icons.Default.CloudDownload,
+                                        contentDescription = "Downloaded",
+                                        tint = if (isSelected) SeitharolWhite else SeitharolDark,
+                                        modifier = Modifier
+                                            .size(16.dp)
+                                            .padding(end = 4.dp)
+                                    )
+                                    Text(
+                                        text = provider.label,
+                                        color = if (isSelected) SeitharolWhite else SeitharolDark,
+                                        fontSize = 13.sp,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                    )
+                                }
+                                com.example.ui.ProviderFilter.ALL -> {
+                                    Icon(
+                                        imageVector = Icons.Default.Public,
+                                        contentDescription = "All Sources",
+                                        tint = if (isSelected) SeitharolWhite else SeitharolDark,
+                                        modifier = Modifier
+                                            .size(16.dp)
+                                            .padding(end = 4.dp)
+                                    )
+                                    Text(
+                                        text = provider.label,
+                                        color = if (isSelected) SeitharolWhite else SeitharolDark,
+                                        fontSize = 13.sp,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -379,6 +434,8 @@ fun SearchScreen(
                     }
                 }
             }
+        }
+
         // Discover Entry Card (Placed directly above the "Artists" section)
         item {
             com.seitharol.ui.search.DiscoverEntryCard(

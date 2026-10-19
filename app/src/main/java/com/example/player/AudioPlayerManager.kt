@@ -562,7 +562,7 @@ class AudioPlayerManager(
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading track: ${e.message}", e)
                 _state.value = _state.value.copy(isBuffering = false, isPlaying = false)
-                val friendlyMessage = com.example.util.ErrorFormatter.toUserFriendlyMessage(e, context, safeTrack.title)
+                val friendlyMessage = com.example.util.ErrorFormatter.toUserFriendlyMessage(e, context, current.title)
                 _skipEvent.emit(friendlyMessage)
                 if (_state.value.currentIndex < _state.value.queue.lastIndex) {
                     next()

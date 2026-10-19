@@ -22,6 +22,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import com.example.R
 import com.seitharol.data.download.DownloadFormat
 import com.seitharol.data.download.DownloadPreferencesAndService
 import com.seitharol.data.download.DownloadProvider
@@ -415,9 +418,20 @@ fun DownloadProviderFormatBottomSheet(
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 DownloadFormat.entries.forEach { format ->
+                    val formatIconRes = when (format) {
+                        DownloadFormat.MP3 -> R.drawable.ic_mp3
+                        DownloadFormat.FLAC -> R.drawable.ic_flac
+                    }
                     FilterChip(
                         selected = selectedFormat == format,
                         onClick = { selectedFormat = format },
+                        leadingIcon = {
+                            Image(
+                                painter = painterResource(id = formatIconRes),
+                                contentDescription = format.label,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
                         label = { Text(format.label) }
                     )
                 }
@@ -432,6 +446,13 @@ fun DownloadProviderFormatBottomSheet(
 
             sortedProviders.forEachIndexed { index, provider ->
                 val usageCount = downloadService.getUsageCount(provider)
+                val providerIconRes = when (provider) {
+                    DownloadProvider.AMAZON -> R.drawable.ic_amazon_music
+                    DownloadProvider.TIDAL -> R.drawable.ic_tidal
+                    DownloadProvider.QOBUZ -> R.drawable.ic_qobuz
+                    DownloadProvider.JIOSAAVN -> R.drawable.ic_jiosaavn_icon
+                }
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -444,7 +465,21 @@ fun DownloadProviderFormatBottomSheet(
                         selected = selectedProvider == provider,
                         onClick = { selectedProvider = provider }
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            painter = painterResource(id = providerIconRes),
+                            contentDescription = provider.displayName,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(provider.displayName, fontWeight = FontWeight.SemiBold)

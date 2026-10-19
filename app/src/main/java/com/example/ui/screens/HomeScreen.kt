@@ -967,11 +967,11 @@ fun TrendingSongsHorizontalShelf(
                                             )
                                         }
                                         DropdownMenuItem(
-                                            text = { Text("Download High (160k)", color = Color(0xFFE3E4E2)) },
+                                            text = { Text("Download (Standard)", color = Color(0xFFE3E4E2)) },
                                             leadingIcon = { Icon(Icons.Default.CloudDownload, null, tint = Color(0xFF9EA1A1)) },
                                             onClick = {
                                                 showMenu = false
-                                                onDownload(track, DownloadTier.HIGH)
+                                                onDownload(track, DownloadTier.STANDARD)
                                             }
                                         )
                                     }

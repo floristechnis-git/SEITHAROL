@@ -398,6 +398,7 @@ fun ClampedSwipeToDeleteRow(
     val maxRevealPx = with(density) { -88.dp.toPx() }
     val offsetX = remember { Animatable(0f) }
 
+    Box(modifier = Modifier.fillMaxWidth()) {
         // Background Delete Action Button - only visible when actively dragged
         val isSwiping = offsetX.value < -4f
         if (isSwiping) {

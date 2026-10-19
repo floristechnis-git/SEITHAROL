@@ -57,7 +57,8 @@ data class PlayerState(
     val bassBoostPercent: Float = 25f,
     val loudnessGainDb: Float = 0f,
     val currentPresetName: String = "Flat",
-    val sleepTimerMinutesLeft: Int = 0
+    val sleepTimerMinutesLeft: Int = 0,
+    val isSingleTrackPlayback: Boolean = false
 )
 
 /**
@@ -85,6 +86,17 @@ class AudioPlayerManager(
     private var positionJob: Job? = null
     private var sleepTimerJob: Job? = null
     private var prefetchedTrackId: String? = null
+    private var trackRetryCount = 0
+    private var lastFailedTrackId: String? = null
+
+    val playerInstance: ExoPlayer?
+        get() = exoPlayer
+
+    private val _activePreviewTrackId = MutableStateFlow<String?>(null)
+    val activePreviewTrackId: StateFlow<String?> = _activePreviewTrackId.asStateFlow()
+
+    private val _isPreviewPlaying = MutableStateFlow(false)
+    val isPreviewPlaying: StateFlow<Boolean> = _isPreviewPlaying.asStateFlow()
 
     val presets = listOf(
         EqualizerPreset("Flat", listOf(0f, 0f, 0f, 0f, 0f)),
@@ -167,15 +179,13 @@ class AudioPlayerManager(
 
                         override fun onIsPlayingChanged(isPlaying: Boolean) {
                             _state.value = _state.value.copy(isPlaying = isPlaying)
+                            startPositionTracker()
                             if (isPlaying) {
-                                startPositionTracker()
                                 try {
                                     MediaPlaybackService.startService(context)
                                 } catch (t: Throwable) {
                                     // Non-fatal
                                 }
-                            } else {
-                                positionJob?.cancel()
                             }
                         }
 
@@ -186,19 +196,41 @@ class AudioPlayerManager(
                             coroutineScope.launch {
                                 val title = current?.title?.ifBlank { "Track" } ?: "Track"
                                 val artist = current?.artist?.ifBlank { "Unknown" } ?: "Unknown"
-                                _skipEvent.emit("Stream interrupted for '$title' by '$artist'. Retrying fallback...")
+
                                 if (current != null) {
-                                    delay(1000)
+                                    if (lastFailedTrackId != current.id) {
+                                        lastFailedTrackId = current.id
+                                        trackRetryCount = 0
+                                    }
+
+                                    if (trackRetryCount >= 3) {
+                                        Log.w(TAG, "Max retries (3) reached for '$title'. Skipping to next track.")
+                                        _skipEvent.emit("Playback failed for '$title' after 3 retry attempts. Skipping to next.")
+                                        trackRetryCount = 0
+                                        lastFailedTrackId = null
+                                        if (_state.value.currentIndex < _state.value.queue.lastIndex) {
+                                            next()
+                                        }
+                                        return@launch
+                                    }
+
+                                    trackRetryCount++
+                                    _skipEvent.emit("Stream interrupted for '$title' by '$artist' (attempt $trackRetryCount/3), retrying fallback...")
+                                    delay(800)
                                     try {
                                         resolverEngine.clearCache()
                                         val freshStream = resolverEngine.resolveTrack(current.copy(audioUrl = ""))
                                         _state.value = _state.value.copy(activeStream = freshStream)
                                         setupAndPlaySource(freshStream.streamUrl, current)
                                     } catch (e: Exception) {
-                                        Log.e(TAG, "Retry failed, skipping to next track", e)
-                                        _skipEvent.emit("Playback failed for '$title'. Skipping to next.")
-                                        if (_state.value.currentIndex < _state.value.queue.lastIndex) {
-                                            next()
+                                        Log.e(TAG, "Retry attempt $trackRetryCount failed: ${e.message}", e)
+                                        if (trackRetryCount >= 3) {
+                                            _skipEvent.emit("Playback failed for '$title'. Skipping to next.")
+                                            trackRetryCount = 0
+                                            lastFailedTrackId = null
+                                            if (_state.value.currentIndex < _state.value.queue.lastIndex) {
+                                                next()
+                                            }
                                         }
                                     }
                                 } else if (_state.value.currentIndex < _state.value.queue.lastIndex) {
@@ -312,21 +344,26 @@ class AudioPlayerManager(
 
     fun playQueue(tracks: List<Track>, startIndex: Int = 0) {
         if (tracks.isEmpty()) return
+        trackRetryCount = 0
+        lastFailedTrackId = null
         _state.value = _state.value.copy(
             queue = tracks,
-            currentIndex = startIndex.coerceIn(0, tracks.lastIndex)
+            currentIndex = startIndex.coerceIn(0, tracks.lastIndex),
+            isSingleTrackPlayback = false
         )
         loadAndPlayCurrent()
     }
 
     fun playTrack(track: Track) {
+        trackRetryCount = 0
+        lastFailedTrackId = null
         val currentQueue = _state.value.queue.toMutableList()
         val index = currentQueue.indexOfFirst { it.id == track.id }
         if (index != -1) {
-            _state.value = _state.value.copy(currentIndex = index)
+            _state.value = _state.value.copy(currentIndex = index, isSingleTrackPlayback = true)
         } else {
             currentQueue.add(0, track)
-            _state.value = _state.value.copy(queue = currentQueue, currentIndex = 0)
+            _state.value = _state.value.copy(queue = currentQueue, currentIndex = 0, isSingleTrackPlayback = true)
         }
         loadAndPlayCurrent()
     }
@@ -473,23 +510,36 @@ class AudioPlayerManager(
                 // Verify local file if marked as downloaded, or search local internal storage
                 val downloadDir = File(context.filesDir, "downloads")
                 val safeId = current.id.replace(Regex("[^A-Za-z0-9_]"), "_")
-                val localCandidates = listOfNotNull(
-                    current.localPath?.let { File(it) },
-                    File(downloadDir, "$safeId.audio"),
-                    File(downloadDir, "${current.id}.audio"),
-                    File(downloadDir, "${current.id}_high.opus"),
-                    File(downloadDir, "${current.id}_high.m4a"),
-                    File(downloadDir, "${current.id}_original.opus"),
-                    File(downloadDir, "${current.id}_original.m4a"),
-                    File(downloadDir, "${current.id}_standard.opus"),
-                    File(downloadDir, "${current.id}_standard.m4a"),
-                    File(downloadDir, "${current.id}_data saver.m4a")
-                )
-                val foundLocal = localCandidates.firstOrNull { it.exists() && it.length() > 10_240L }
-                val safeTrack = if (foundLocal != null) {
-                    current.copy(isDownloaded = true, localPath = foundLocal.absolutePath)
+                val isContentUri = current.localPath?.startsWith("content://") == true
+                val isContentReadable = if (isContentUri) {
+                    runCatching {
+                        context.contentResolver.openAssetFileDescriptor(Uri.parse(current.localPath), "r")?.use { afd ->
+                            afd.length != 0L
+                        } ?: false
+                    }.getOrDefault(false)
+                } else false
+
+                val safeTrack = if (isContentReadable) {
+                    current.copy(isDownloaded = true, localPath = current.localPath)
                 } else {
-                    current.copy(isDownloaded = false, localPath = null)
+                    val localCandidates = listOfNotNull(
+                        current.localPath?.takeIf { !it.startsWith("content://") }?.let { File(it.removePrefix("file://")) },
+                        File(downloadDir, "$safeId.audio"),
+                        File(downloadDir, "${current.id}.audio"),
+                        File(downloadDir, "${current.id}_high.opus"),
+                        File(downloadDir, "${current.id}_high.m4a"),
+                        File(downloadDir, "${current.id}_original.opus"),
+                        File(downloadDir, "${current.id}_original.m4a"),
+                        File(downloadDir, "${current.id}_standard.opus"),
+                        File(downloadDir, "${current.id}_standard.m4a"),
+                        File(downloadDir, "${current.id}_data saver.m4a")
+                    )
+                    val foundLocal = localCandidates.firstOrNull { it.exists() && it.length() > 0L }
+                    if (foundLocal != null) {
+                        current.copy(isDownloaded = true, localPath = foundLocal.absolutePath)
+                    } else {
+                        current.copy(isDownloaded = false, localPath = null)
+                    }
                 }
 
                 // Record listening history in Room
@@ -520,6 +570,43 @@ class AudioPlayerManager(
         }
     }
 
+    fun playPreview(trackId: String, previewUrl: String) {
+        val player = exoPlayer ?: return
+        if (_activePreviewTrackId.value == trackId && player.isPlaying) return
+
+        _activePreviewTrackId.value = trackId
+        player.repeatMode = Player.REPEAT_MODE_ONE
+        val mediaItem = MediaItem.Builder()
+            .setMediaId("preview_$trackId")
+            .setUri(Uri.parse(previewUrl))
+            .build()
+        player.setMediaItem(mediaItem)
+        player.prepare()
+        player.playWhenReady = true
+        _isPreviewPlaying.value = true
+    }
+
+    fun pausePreview() {
+        exoPlayer?.let { player ->
+            if (_activePreviewTrackId.value != null) {
+                player.playWhenReady = false
+                player.pause()
+                _isPreviewPlaying.value = false
+            }
+        }
+    }
+
+    fun stopPreviewAndClear() {
+        exoPlayer?.let { player ->
+            if (_activePreviewTrackId.value != null) {
+                player.stop()
+                player.repeatMode = Player.REPEAT_MODE_OFF
+                _activePreviewTrackId.value = null
+                _isPreviewPlaying.value = false
+            }
+        }
+    }
+
     fun pause() {
         val player = exoPlayer ?: return
         if (player.isPlaying) {
@@ -545,8 +632,10 @@ class AudioPlayerManager(
     }
 
     fun seekTo(positionMs: Long) {
-        exoPlayer?.seekTo(positionMs.coerceAtLeast(0L))
-        _state.value = _state.value.copy(currentPositionMs = positionMs)
+        val clamped = positionMs.coerceAtLeast(0L)
+        exoPlayer?.seekTo(clamped)
+        val activeIdx = _state.value.lyricLines.indexOfLast { it.timestampMs <= clamped + _state.value.lyricOffsetMs }
+        _state.value = _state.value.copy(currentPositionMs = clamped, activeLyricIndex = activeIdx)
     }
 
     fun next() {
@@ -692,22 +781,60 @@ class AudioPlayerManager(
 
     private fun parseLrc(lrcText: String): List<LyricsLine> {
         if (lrcText.isBlank()) return emptyList()
-        val lines = mutableListOf<LyricsLine>()
-        val regex = Regex("\\[(\\d{2}):(\\d{2})\\.(\\d{2,3})\\](.*)")
-        lrcText.lineSequence().forEach { line ->
+        val rawEntries = mutableListOf<Triple<Long, String, String?>>()
+        val regex = Regex("""\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?](.*)""")
+
+        for (line in lrcText.lines()) {
             val match = regex.find(line.trim())
             if (match != null) {
-                val (m, s, ms, text) = match.destructured
-                val min = m.toLongOrNull() ?: 0L
-                val sec = s.toLongOrNull() ?: 0L
-                val milli = if (ms.length == 2) (ms.toLongOrNull() ?: 0L) * 10 else ms.toLongOrNull() ?: 0L
-                val timestampMs = (min * 60 + sec) * 1000L + milli
-                if (text.isNotBlank()) {
-                    lines.add(LyricsLine(timestampMs, text.trim()))
+                val min = match.groupValues[1].toLongOrNull() ?: 0L
+                val sec = match.groupValues[2].toLongOrNull() ?: 0L
+                val fracStr = match.groupValues[3].padEnd(3, '0').take(3)
+                val ms = fracStr.toLongOrNull() ?: 0L
+                val timeMs = (min * 60_000L) + (sec * 1_000L) + ms
+                val (primary, translation) = cleanCaretTranslation(match.groupValues[4])
+                rawEntries.add(Triple(timeMs, primary, translation))
+            }
+        }
+
+        if (rawEntries.isEmpty()) return emptyList()
+        rawEntries.sortBy { it.first }
+
+        val output = mutableListOf<LyricsLine>()
+        val firstVocalTime = rawEntries.first().first
+        if (firstVocalTime >= 4500L) {
+            output.add(LyricsLine(timestampMs = 0L, text = "", isInstrumental = true))
+        }
+
+        for (i in rawEntries.indices) {
+            val (startMs, primary, translation) = rawEntries[i]
+            val nextStartMs = if (i + 1 < rawEntries.size) rawEntries[i + 1].first else startMs + 5000L
+            if (primary.isBlank()) {
+                output.add(LyricsLine(timestampMs = startMs, text = "", isInstrumental = true))
+            } else {
+                val vocalDuration = nextStartMs - startMs
+                if (vocalDuration > 8000L) {
+                    val vocalEnd = startMs + 4500L
+                    output.add(LyricsLine(timestampMs = startMs, text = primary, translation = translation, isInstrumental = false))
+                    output.add(LyricsLine(timestampMs = vocalEnd, text = "", isInstrumental = true))
+                } else {
+                    output.add(LyricsLine(timestampMs = startMs, text = primary, translation = translation, isInstrumental = false))
                 }
             }
         }
-        return lines.sortedBy { it.timestampMs }
+        return output
+    }
+
+    private fun cleanCaretTranslation(rawText: String): Pair<String, String?> {
+        val sanitized = rawText.replace("{", "").replace("}", "").trim()
+        if (!sanitized.contains("^")) {
+            return sanitized to null
+        }
+        val parts = sanitized.split("^")
+        val primary = parts[0].trim()
+        val secondary = parts.getOrNull(1)?.trim()
+            ?.takeIf { it.isNotEmpty() && !it.equals(primary, ignoreCase = true) }
+        return primary to secondary
     }
 
     fun release() {

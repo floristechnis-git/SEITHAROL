@@ -109,20 +109,10 @@ fun ArtistScreen(
             ?.key ?: ""
     }
 
-    val playCounts = listOf(
-        "16,511,874",
-        "599,211,082",
-        "405,207,652",
-        "34,821,001",
-        "28,140,990",
-        "19,420,110",
-        "12,850,340"
-    )
-
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .background(KangleiBg)
+            .background(SeitharolBg)
             .testTag("artist_screen"),
         contentPadding = PaddingValues(bottom = 140.dp)
     ) {
@@ -151,7 +141,7 @@ fun ArtistScreen(
                     Surface(
                         modifier = Modifier.size(44.dp),
                         shape = CircleShape,
-                        color = KangleiGlassDark,
+                        color = SeitharolGlassDark,
                         onClick = onBack
                     ) {
                         Box(contentAlignment = Alignment.Center) {
@@ -168,7 +158,7 @@ fun ArtistScreen(
                     Surface(
                         modifier = Modifier.size(44.dp),
                         shape = CircleShape,
-                        color = KangleiGlassDark,
+                        color = SeitharolGlassDark,
                         onClick = { showMoreSheet = true }
                     ) {
                         Box(contentAlignment = Alignment.Center) {
@@ -200,7 +190,7 @@ fun ArtistScreen(
                     Spacer(modifier = Modifier.height(4.dp))
 
                     Text(
-                        text = "104,820,119 monthly listeners",
+                        text = if (isLoadingArtist) "Loading tracks..." else if (artistTracks.isNotEmpty()) "${artistTracks.size} songs • Official Artist" else "Official Artist",
                         fontFamily = OutfitFontFamily,
                         fontSize = 13.sp,
                         color = Color(0xFFD0D0D0)
@@ -224,7 +214,7 @@ fun ArtistScreen(
                             Surface(
                                 modifier = Modifier.size(48.dp),
                                 shape = CircleShape,
-                                color = if (isFollowing) KangleiGreen else KangleiGlassDarkActive
+                                color = if (isFollowing) SeitharolGreen else SeitharolGlassDarkActive
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
@@ -284,7 +274,7 @@ fun ArtistScreen(
                             Surface(
                                 modifier = Modifier.size(48.dp),
                                 shape = CircleShape,
-                                color = KangleiGlassDarkActive
+                                color = SeitharolGlassDarkActive
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
@@ -317,7 +307,7 @@ fun ArtistScreen(
                     fontFamily = SyneFontFamily,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 18.sp,
-                    color = KangleiDark,
+                    color = SeitharolDark,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
                 )
                 androidx.compose.foundation.lazy.LazyRow(
@@ -347,7 +337,7 @@ fun ArtistScreen(
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
                                 text = album.title,
-                                color = KangleiDark,
+                                color = SeitharolDark,
                                 fontSize = 14.sp,
                                 fontFamily = SyneFontFamily,
                                 fontWeight = FontWeight.Medium,
@@ -356,7 +346,7 @@ fun ArtistScreen(
                             )
                             Text(
                                 text = album.year.ifBlank { "Album" },
-                                color = KangleiTextSecondary,
+                                color = SeitharolTextSecondary,
                                 fontSize = 12.sp,
                                 fontFamily = OutfitFontFamily,
                                 maxLines = 1,
@@ -376,19 +366,19 @@ fun ArtistScreen(
                 fontFamily = SyneFontFamily,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 18.sp,
-                color = KangleiDark,
+                color = SeitharolDark,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
             )
         }
 
         // Numbered track list
         itemsIndexed(artistTracks) { index, track ->
-            val plays = playCounts.getOrElse(index) { "12,410,200" }
+            val subtitle = if (track.album.isNotBlank() && track.album != "Single" && track.album != track.title) track.album else track.artist
             TrackCard(
                 track = track,
                 isPlaying = playerState.currentTrack?.id == track.id,
                 rankNumber = index + 1,
-                subtitleText = plays,
+                subtitleText = subtitle,
                 onTrackClick = { viewModel.playTrack(track) },
                 onLikeClick = { viewModel.toggleLike(track) },
                 onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
@@ -405,7 +395,7 @@ fun ArtistScreen(
     if (showMoreSheet) {
         ModalBottomSheet(
             onDismissRequest = { showMoreSheet = false },
-            containerColor = KangleiWhite,
+            containerColor = SeitharolWhite,
             shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
         ) {
             Column(
@@ -418,16 +408,16 @@ fun ArtistScreen(
                     fontFamily = SyneFontFamily,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = KangleiDark
+                    color = SeitharolDark
                 )
                 Text(
                     text = "${artistTracks.size} tracks available",
                     fontFamily = OutfitFontFamily,
                     fontSize = 12.sp,
-                    color = KangleiTextSecondary
+                    color = SeitharolTextSecondary
                 )
                 Spacer(modifier = Modifier.height(16.dp))
-                HorizontalDivider(color = KangleiBorder)
+                HorizontalDivider(color = SeitharolBorder)
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Play Next
@@ -442,9 +432,9 @@ fun ArtistScreen(
                         .padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.PlaylistPlay, contentDescription = null, tint = KangleiDark)
+                    Icon(Icons.Default.PlaylistPlay, contentDescription = null, tint = SeitharolDark)
                     Spacer(modifier = Modifier.width(16.dp))
-                    Text("Play Next", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = KangleiDark)
+                    Text("Play Next", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
                 }
 
                 // Add all to Queue
@@ -459,9 +449,9 @@ fun ArtistScreen(
                         .padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.QueueMusic, contentDescription = null, tint = KangleiDark)
+                    Icon(Icons.Default.QueueMusic, contentDescription = null, tint = SeitharolDark)
                     Spacer(modifier = Modifier.width(16.dp))
-                    Text("Add all to Queue", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = KangleiDark)
+                    Text("Add all to Queue", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
                 }
 
                 // Download Artist Tracks
@@ -476,9 +466,9 @@ fun ArtistScreen(
                         .padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Download, contentDescription = null, tint = KangleiDark)
+                    Icon(Icons.Default.Download, contentDescription = null, tint = SeitharolDark)
                     Spacer(modifier = Modifier.width(16.dp))
-                    Text("Download Artist Tracks", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = KangleiDark)
+                    Text("Download Artist Tracks", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
                 }
 
                 // Share Artist
@@ -493,9 +483,9 @@ fun ArtistScreen(
                         .padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Share, contentDescription = null, tint = KangleiDark)
+                    Icon(Icons.Default.Share, contentDescription = null, tint = SeitharolDark)
                     Spacer(modifier = Modifier.width(16.dp))
-                    Text("Share Artist", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = KangleiDark)
+                    Text("Share Artist", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
                 }
             }
         }
@@ -522,7 +512,8 @@ fun ArtistScreen(
     if (showCreatePlaylistDialog) {
         CreatePlaylistModal(
             onConfirm = { name ->
-                viewModel.createPlaylist(name, "User created playlist")
+                viewModel.createPlaylist(name, "User created playlist", trackToAddToPlaylist)
+                trackToAddToPlaylist = null
                 showCreatePlaylistDialog = false
             },
             onDismiss = {

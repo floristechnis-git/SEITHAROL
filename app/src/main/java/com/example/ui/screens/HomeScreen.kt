@@ -42,6 +42,7 @@ import com.example.ui.components.AddToPlaylistModal
 import com.example.ui.components.CreatePlaylistModal
 import com.example.ui.components.SuggestedArtistItem
 import com.example.ui.theme.*
+import com.seitharol.ui.components.PlaylistThumbnailWithBadge
 import java.util.Calendar
 
 @Composable
@@ -111,7 +112,7 @@ fun HomeMediaItem.toTrack(): Track {
 
 /**
  * Modern, multi-tiered streaming home screen architecture inspired by YouTube Music, Spotify, and Amazon Music.
- * Uses the Kanglei Tune dark theme palette:
+ * Uses the SEITHAROL dark theme palette:
  * - Background: #1B1C1C
  * - Elevated surfaces: #232526 / #282A2A
  * - Primary text: #E3E4E2
@@ -162,19 +163,19 @@ fun HomeScreen(
         pool.take(12).map { it.toHomeMediaItem() }
     }
 
-    // Prepare YouTube Mixes Shelf (non-filtered RD mixes + dynamic station cards)
-    val youtubeMixes = remember(personalizedTracks, activeHistory, deduplicatedTrendingHits) {
+    // Prepare YouTube Mixes Shelf (real RDAMVM mixes, no fake "+ Mix" tags)
+    val youtubeMixes = remember(personalizedTracks, activeHistory) {
         val mixes = mutableListOf<HomeMediaItem>()
-        personalizedTracks.filter { it.id.startsWith("RD") || it.title.contains("Mix", ignoreCase = true) }
+        personalizedTracks.filter { it.id.startsWith("RD") }
             .forEach { mixes.add(it.toHomeMediaItem(isMix = true)) }
 
-        val seedTracks = (activeHistory.take(3) + deduplicatedTrendingHits.take(3)).distinctBy { it.id }.take(4)
+        val seedTracks = activeHistory.distinctBy { it.id }.take(4)
         seedTracks.forEach { track ->
             mixes.add(
                 HomeMediaItem(
                     id = if (track.id.startsWith("RD")) track.id else "RDAMVM${track.id}",
-                    title = "${track.title} Mix",
-                    subtitle = "${track.artist}, ${track.genre} & more",
+                    title = track.title,
+                    subtitle = "${track.artist} Radio",
                     thumbnailUrl = track.artUrl,
                     isMix = true,
                     originalTrack = track
@@ -184,25 +185,32 @@ fun HomeScreen(
         mixes.distinctBy { it.id }
     }
 
-    // Prepare Featured Albums & Playlists (Includes SVG Liked Songs)
+    // Prepare Featured Albums & Playlists (Liked Songs once on far left, non-empty playlists only)
     val albumsAndPlaylists = remember(playlists, likedTracks) {
-        val likedItem = HomeMediaItem(
-            id = "liked_songs",
-            title = "Liked Songs",
-            subtitle = "${likedTracks.size} songs",
-            thumbnailUrl = "",
-            isAlbumOrPlaylist = true
-        )
-        val list = mutableListOf(likedItem)
-        list.addAll(playlists.map { playlist ->
+        val likedItem = if (likedTracks.isNotEmpty()) {
             HomeMediaItem(
-                id = playlist.id,
-                title = playlist.title,
-                subtitle = "${playlist.trackCount} tracks",
-                thumbnailUrl = playlist.coverUrl.orEmpty(),
+                id = "liked_songs",
+                title = "Liked Songs",
+                subtitle = "${likedTracks.size} songs",
+                thumbnailUrl = likedTracks.first().artUrl,
                 isAlbumOrPlaylist = true
             )
-        })
+        } else null
+        val list = mutableListOf<HomeMediaItem>()
+        if (likedItem != null) list.add(likedItem)
+        list.addAll(
+            playlists
+                .filter { it.trackCount > 0 && !it.coverUrl.isNullOrBlank() }
+                .map { playlist ->
+                    HomeMediaItem(
+                        id = playlist.id,
+                        title = playlist.title,
+                        subtitle = "${playlist.trackCount} tracks",
+                        thumbnailUrl = playlist.coverUrl.orEmpty(),
+                        isAlbumOrPlaylist = true
+                    )
+                }
+        )
         list
     }
 
@@ -247,11 +255,31 @@ fun HomeScreen(
         listOf(
             "All",
             "For You",
-            "Relax",
             "Energize",
+            "Relax",
             "Workout",
             "Focus"
         )
+    }
+
+    // First-Launch Empty State: When listening history is empty, show only clean centered message
+    if (activeHistory.isEmpty()) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(Color(0xFF0F0F0F))
+                .statusBarsPadding(),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "Ready to play your first song",
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                color = Color(0xFF9EA1A1),
+                fontFamily = OutfitFontFamily,
+                textAlign = TextAlign.Center
+            )
+        }
+        return
     }
 
     PullToRefreshBox(
@@ -274,7 +302,7 @@ fun HomeScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                        .padding(horizontal = 20.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -340,7 +368,8 @@ fun HomeScreen(
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 24.sp,
-                        color = Color.White
+                        color = Color.White,
+                        modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Surface(
@@ -431,6 +460,64 @@ fun HomeScreen(
                             color = Color.White,
                             trackColor = Color(0xFF282A2A)
                         )
+                    }
+                }
+            }
+
+            // ────────────────────────────────────────────────────────────
+            // First-launch empty state (when offline or loading hasn't completed yet)
+            // ────────────────────────────────────────────────────────────
+            if (!isLoadingHome && trendingItems.isEmpty() && freshItems.isEmpty() && quickDialItems.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 32.dp, vertical = 48.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CloudOff,
+                                contentDescription = null,
+                                tint = Color(0xFF4A4A4A),
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Text(
+                                text = "No content loaded yet",
+                                color = Color(0xFFB0B0B0),
+                                fontFamily = SyneFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 17.sp
+                            )
+                            Text(
+                                text = "Check your internet connection\nand tap Retry to load music.",
+                                color = Color(0xFF757575),
+                                fontFamily = OutfitFontFamily,
+                                fontSize = 14.sp,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Surface(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(24.dp))
+                                    .clickable { viewModel.loadHomeScreenMusic() }
+                                    .testTag("home_retry_btn"),
+                                shape = RoundedCornerShape(24.dp),
+                                color = Color.White
+                            ) {
+                                Text(
+                                    text = "  Retry  ",
+                                    color = Color(0xFF0F0F0F),
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 14.sp,
+                                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -591,7 +678,8 @@ fun HomeScreen(
     if (showCreatePlaylistDialog) {
         CreatePlaylistModal(
             onConfirm = { name ->
-                viewModel.createPlaylist(name, "User created playlist")
+                viewModel.createPlaylist(name, "User created playlist", trackToAddToPlaylist)
+                trackToAddToPlaylist = null
                 showCreatePlaylistDialog = false
             },
             onDismiss = {
@@ -778,14 +866,8 @@ fun TrendingSongsHorizontalShelf(
                                 .clip(RoundedCornerShape(10.dp))
                         )
 
-                        // Div dot indicator instead of numeric index
-                        Box(
-                            modifier = Modifier
-                                .padding(horizontal = 12.dp)
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(Color.White)
-                        )
+                        // Clean space without stray div dot
+                        Spacer(modifier = Modifier.width(12.dp))
 
                         // Song Title & Artist / Album
                         Column(
@@ -1108,18 +1190,11 @@ fun MediaCarouselShelf(
                             .size(164.dp)
                             .clip(RoundedCornerShape(12.dp))
                     ) {
-                        if (item.id == "liked_songs" || item.thumbnailUrl.isBlank()) {
-                            LikedPlaylistSvgThumbnail(
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            AsyncImage(
-                                model = upgradeThumbnail(item.thumbnailUrl),
-                                contentDescription = item.title,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
+                        PlaylistThumbnailWithBadge(
+                            firstTrackThumbnailUrl = item.thumbnailUrl.takeIf { it.isNotBlank() },
+                            size = 164.dp,
+                            cornerRadius = 12.dp
+                        )
                         if (badgeText != null) {
                             Surface(
                                 color = Color(0xFF1B1C1C).copy(alpha = 0.85f),

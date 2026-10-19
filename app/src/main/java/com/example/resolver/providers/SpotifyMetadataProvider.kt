@@ -82,33 +82,107 @@ class SpotifyMetadataProvider : MetadataProvider {
                 }
             }
 
-            // Fallback: Embed scraper for query
+            // Fallback for search: If user pasted a Spotify track or playlist URL
+            if (query.contains("spotify.com/playlist/") || query.startsWith("spotify:playlist:")) {
+                return@withContext getPlaylistTracks(query)
+            }
             emptyList()
         }
 
     override suspend fun getPlaylistTracks(playlistId: String): List<NormalizedTrack> =
         withContext(Dispatchers.IO) {
-            val token = getAnonymousToken() ?: return@withContext emptyList()
-            try {
-                val cleanId = playlistId.removePrefix("spotify:playlist:").removePrefix("https://open.spotify.com/playlist/")
-                val url = "https://api.spotify.com/v1/playlists/$cleanId/tracks?limit=50"
-                val request = Request.Builder()
-                    .url(url)
-                    .header("Authorization", "Bearer $token")
-                    .header("User-Agent", "Mozilla/5.0")
-                    .build()
+            val cleanId = playlistId
+                .removePrefix("spotify:playlist:")
+                .removePrefix("https://open.spotify.com/playlist/")
+                .substringBefore("?")
+                .trim()
 
-                NetworkClients.okHttpClient.newCall(request).execute().use { response ->
-                    if (response.isSuccessful) {
-                        val body = response.body?.string() ?: ""
-                        return@withContext parseSpotifyPlaylistJson(body)
+            val token = getAnonymousToken()
+            if (token != null) {
+                try {
+                    val url = "https://api.spotify.com/v1/playlists/$cleanId/tracks?limit=50"
+                    val request = Request.Builder()
+                        .url(url)
+                        .header("Authorization", "Bearer $token")
+                        .header("User-Agent", "Mozilla/5.0")
+                        .build()
+
+                    NetworkClients.okHttpClient.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val body = response.body?.string() ?: ""
+                            val tracks = parseSpotifyPlaylistJson(body)
+                            if (tracks.isNotEmpty()) return@withContext tracks
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "getPlaylistTracks failed: ${e.message}", e)
+                }
+            }
+
+            // Fallback: Embed scraper without needing token
+            fetchPlaylistViaEmbed(cleanId)
+        }
+
+    private fun fetchPlaylistViaEmbed(playlistId: String): List<NormalizedTrack> {
+        try {
+            val url = "https://open.spotify.com/embed/playlist/$playlistId"
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .header("Referer", "https://open.spotify.com/")
+                .build()
+
+            NetworkClients.okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return emptyList()
+                val body = response.body?.string() ?: return emptyList()
+                val marker = "<script id=\"__NEXT_DATA__\" type=\"application/json\">"
+                val start = body.indexOf(marker)
+                if (start == -1) return emptyList()
+                val jsonStart = start + marker.length
+                val jsonEnd = body.indexOf("</script>", jsonStart)
+                if (jsonEnd == -1) return emptyList()
+
+                val jsonStr = body.substring(jsonStart, jsonEnd).trim()
+                val nextData = JSONObject(jsonStr)
+                val entity = nextData.optJSONObject("props")?.optJSONObject("pageProps")?.optJSONObject("state")?.optJSONObject("data")?.optJSONObject("entity")
+                val trackList = entity?.optJSONArray("trackList") ?: return emptyList()
+
+                val results = mutableListOf<NormalizedTrack>()
+                for (i in 0 until trackList.length()) {
+                    val item = trackList.optJSONObject(i) ?: continue
+                    val title = item.optString("title", item.optString("name", ""))
+                    val rawUri = item.optString("uri", "")
+                    val id = if (rawUri.isNotBlank()) rawUri.substringAfterLast(":") else "spot_$i"
+                    val subtitle = item.optString("subtitle", "")
+                    val durationMs = item.optLong("duration", 210000L)
+                    val artUrl = item.optString("coverArt", item.optString("thumbnailUrl", ""))
+
+                    val artists = if (subtitle.isNotBlank()) {
+                        subtitle.split(",").map { it.trim() }
+                    } else listOf("Various Artists")
+
+                    if (title.isNotBlank()) {
+                        results.add(
+                            NormalizedTrack(
+                                source = SourceType.SPOTIFY,
+                                sourceId = id,
+                                title = title,
+                                artists = artists,
+                                album = "Spotify Playlist",
+                                durationMs = durationMs,
+                                artUrl = artUrl,
+                                isPlayableNatively = false
+                            )
+                        )
                     }
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "getPlaylistTracks failed: ${e.message}", e)
+                return results
             }
-            emptyList()
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchPlaylistViaEmbed failed: ${e.message}")
+            return emptyList()
         }
+    }
 
     private fun parseSpotifySearchJson(body: String): List<NormalizedTrack> {
         val json = JSONObject(body)

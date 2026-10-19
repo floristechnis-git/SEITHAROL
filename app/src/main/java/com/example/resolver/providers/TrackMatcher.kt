@@ -11,9 +11,11 @@ import kotlin.math.abs
  * Matches metadata-only tracks (such as Spotify imports or tracks with isPlayableNatively = false)
  * to real on-device playable audio streams from YouTubeInnerTubeProvider or JioSaavnProvider.
  *
- * Prioritizes:
+ * Strictly prioritizes:
  * 1. Exact ISRC match
- * 2. Artist - Title search scored by duration proximity (±15s window) and token overlap
+ * 2. Official Art Track Videos (MUSIC_VIDEO_TYPE_ATV / "- Topic" channels)
+ * 3. Exact artist & title match with strict duration proximity (±5 seconds)
+ * 4. Hard-penalizes and filters out unofficial remixes, loops, and edited audio
  */
 class TrackMatcher(
     private val youtubeProvider: YouTubeInnerTubeProvider,
@@ -65,53 +67,110 @@ class TrackMatcher(
 
             // 4. Last resort: If candidates list was non-empty, resolve first YouTube candidate
             val fallbackCandidates = youtubeProvider.searchTracks(track.title, limit = 3)
-            val first = fallbackCandidates.firstOrNull()
+            val first = pickBestCandidate(track, fallbackCandidates) ?: fallbackCandidates.firstOrNull()
                 ?: throw IllegalStateException("Could not match stream for track '${track.title}' by '${track.primaryArtist}'")
 
             youtubeProvider.resolveStream(first.sourceId, preferredKbps)
         }
 
-    private fun pickBestCandidate(target: NormalizedTrack, candidates: List<NormalizedTrack>): NormalizedTrack? {
+    private val BANNED_MODIFIERS = listOf(
+        "remix", "re-mix", "loop", "extended", "1 hour", "10 hours", "hour version",
+        "slowed", "reverb", "cover", "live", "tribute", "karaoke",
+        "instrumental", "parody", "sped up", "nightcore", "8d", "mashup",
+        "bass boosted", "fan made", "unofficial"
+    )
+
+    fun pickBestCandidate(target: NormalizedTrack, candidates: List<NormalizedTrack>): NormalizedTrack? {
         if (candidates.isEmpty()) return null
 
-        var bestCandidate: NormalizedTrack? = null
-        var highestScore = -1f
+        val targetQueryLower = "${target.title} ${target.primaryArtist}".lowercase()
+        val normQueryTitle = normalizeText(target.title)
+        val normQueryArtist = normalizeText(target.primaryArtist)
+        val targetDurationSec = (target.durationMs / 1000L).toInt()
 
-        val targetTokens = tokenize("${target.title} ${target.primaryArtist}")
+        val scored = candidates.map { candidate ->
+            candidate to scoreCandidate(candidate, normQueryTitle, normQueryArtist, targetQueryLower, targetDurationSec)
+        }
 
-        for (candidate in candidates) {
-            val candTokens = tokenize("${candidate.title} ${candidate.primaryArtist}")
-            val overlap = targetTokens.count { it in candTokens }
-            val tokenScore = if (targetTokens.isNotEmpty()) overlap.toFloat() / targetTokens.size else 0.5f
+        return scored
+            .filter { it.second > -50 } // Filter out hard-penalized fake remixes
+            .maxByOrNull { it.second }
+            ?.first
+            ?: candidates.firstOrNull()
+    }
 
-            // Duration delta penalty (duration proximity within 12 seconds)
-            val durDelta = abs(candidate.durationMs - target.durationMs)
-            val durScore = when {
-                durDelta < 4000L -> 1.0f
-                durDelta < 12000L -> 0.85f
-                durDelta < 25000L -> 0.6f
-                else -> 0.2f
-            }
+    private fun scoreCandidate(
+        c: NormalizedTrack,
+        normQueryTitle: String,
+        normQueryArtist: String,
+        rawQueryLower: String,
+        targetDurationSec: Int
+    ): Int {
+        var score = 0
+        val candTitleLower = c.title.lowercase()
+        val normCandTitle = normalizeText(c.title)
+        val normCandArtist = normalizeText(c.primaryArtist)
+        val isTopicChannel = c.artists.any { it.contains("Topic", ignoreCase = true) }
 
-            // Combined score (60% tokens, 40% duration)
-            val totalScore = (tokenScore * 0.6f) + (durScore * 0.4f)
+        // 1. Prioritize Official Art Tracks (ATV) & "- Topic" Channels (+100, UGC: -150)
+        when {
+            c.isArtTrack || isTopicChannel -> score += 100
+            else -> score -= 150
+        }
 
-            if (totalScore > highestScore) {
-                highestScore = totalScore
-                bestCandidate = candidate
+        // 2. Official Album Metadata Presence
+        if (c.album.isNotBlank() && !c.album.equals("Single", ignoreCase = true)) {
+            score += 25
+        }
+
+        // 3. Strict Unrequested Remix / Loop / Edit Filtering
+        for (keyword in BANNED_MODIFIERS) {
+            val requestedInQuery = rawQueryLower.contains(keyword)
+            val presentInCandidate = candTitleLower.contains(keyword) || c.artists.any { it.contains(keyword, ignoreCase = true) }
+            if (presentInCandidate && !requestedInQuery) {
+                score -= 300 // Hard penalty for unrequested remix/loop/edit
             }
         }
 
-        // Return best candidate if it meets reasonable threshold
-        return if (highestScore >= 0.4f) bestCandidate else candidates.firstOrNull()
+        // 4. Exact Title & Artist Matching
+        if (normCandTitle == normQueryTitle) {
+            score += 50
+        } else if (normCandTitle.contains(normQueryTitle) || normQueryTitle.contains(normCandTitle)) {
+            score += 25
+        } else {
+            score -= 40
+        }
+
+        val cleanChannel = normalizeText(c.primaryArtist.removeSuffix("- Topic").trim())
+        if (normCandArtist == normQueryArtist || cleanChannel == normQueryArtist) {
+            score += 60
+        } else if (normCandArtist.contains(normQueryArtist) || normQueryArtist.contains(normCandArtist)) {
+            score += 30
+        } else {
+            score -= 50
+        }
+
+        // 5. Strict Duration Proximity Scoring (within +-5 seconds of canonical track)
+        if (targetDurationSec > 0 && c.durationMs > 0) {
+            val candDurationSec = (c.durationMs / 1000L).toInt()
+            val diff = abs(candDurationSec - targetDurationSec)
+            score += when {
+                diff <= 2 -> 50
+                diff <= 5 -> 35
+                diff <= 10 -> -80
+                else -> -150 // Rejects out-of-range streams (> 5s difference)
+            }
+        }
+
+        return score
     }
 
-    private fun tokenize(text: String): Set<String> {
-        return text.lowercase()
-            .replace(Regex("""[^\p{L}\p{Nd}]+"""), " ")
-            .split(" ")
-            .filter { it.length > 1 }
-            .toSet()
+    private fun normalizeText(input: String): String {
+        return input.lowercase()
+            .replace(Regex("""\(.*?\)|\(.*?\)|\[.*?]"""), "")
+            .replace(Regex("""[^a-z0-9\s]"""), "")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
     }
 
     private fun cleanTitle(title: String): String {

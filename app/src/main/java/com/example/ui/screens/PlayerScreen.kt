@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -39,6 +40,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import com.seitharol.ui.components.FullscreenExpandSvgIcon
+import com.seitharol.ui.components.InstrumentalGapMusicNoteIndicator
 import coil.compose.AsyncImage
 import com.example.data.remote.InnerTubeResolver
 import com.example.player.PlayerState
@@ -84,7 +91,7 @@ fun SvgChevronIcon(
  * YouTube Music & YouTube mobile app inspired Full Player Screen:
  * 1. Holding/dragging down from the top area smoothly minimizes the Player into MiniPlayer.
  * 2. Lyrics / Artwork Toggle Swap: "Show Artwork" toggles back to album cover;
- *    "<>" Maximize button opens the immersive Fullscreen Expanded Lyrics view.
+ *    Fullscreen Expand SVG Maximize button opens the immersive Fullscreen Expanded Lyrics view.
  * 3. Fullscreen Expanded Lyrics view with top bar (artwork, title, artist, "><" minimize button),
  *    time-synced scrolling lyrics with active-line glow and scale, and bottom playback bar.
  * 4. Dark theme palette: #1B1C1C background, #232526 elevated surfaces, #E3E4E2 primary text, #FFB74D accent.
@@ -100,33 +107,46 @@ fun PlayerScreen(
     modifier: Modifier = Modifier
 ) {
     val track = playerState.currentTrack ?: return
+    var isUserDraggingSlider by remember { mutableStateOf(false) }
     var userSeekingPosition by remember { mutableStateOf<Float?>(null) }
     var showLyrics by remember { mutableStateOf(false) }
     var showExpandedLyrics by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
 
+    // Conditional "Up Next" bottom bar:
+    // If played as a single track, hide until user clicks Queue button at least once.
+    // Can be swiped down to hide, and reappears when clicking Queue button.
+    var hasClickedQueueButton by remember(track.id, playerState.isSingleTrackPlayback) {
+        mutableStateOf(!playerState.isSingleTrackPlayback)
+    }
+    var isUpNextVisible by remember(track.id, playerState.isSingleTrackPlayback) {
+        mutableStateOf(!playerState.isSingleTrackPlayback)
+    }
+
     val inlineLyricListState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val dragOffsetY = remember { Animatable(0f) }
 
-    // Auto-scroll inline lyrics
-    LaunchedEffect(playerState.activeLyricIndex, showLyrics) {
-        if (showLyrics && playerState.activeLyricIndex in 0 until playerState.lyricLines.size) {
+    // Smooth auto-scroll inline lyrics with 2500ms idle debounce on user touch/drag
+    var isUserScrollingInlineLyrics by remember { mutableStateOf(false) }
+    LaunchedEffect(inlineLyricListState.isScrollInProgress) {
+        if (inlineLyricListState.isScrollInProgress) {
+            isUserScrollingInlineLyrics = true
+        } else if (isUserScrollingInlineLyrics) {
+            delay(2500L)
+            isUserScrollingInlineLyrics = false
+        }
+    }
+
+    LaunchedEffect(playerState.activeLyricIndex, showLyrics, isUserScrollingInlineLyrics) {
+        if (showLyrics && !isUserScrollingInlineLyrics && playerState.activeLyricIndex in 0 until playerState.lyricLines.size) {
             val target = (playerState.activeLyricIndex - 2).coerceAtLeast(0)
             inlineLyricListState.animateScrollToItem(target)
         }
     }
 
-    // 250ms polling loop to ensure smooth progress slider without latency
-    var localPositionMs by remember(track.id) { mutableLongStateOf(playerState.currentPositionMs) }
-    LaunchedEffect(playerState.isPlaying, track.id) {
-        while (isActive) {
-            localPositionMs = playerState.currentPositionMs
-            delay(250L)
-        }
-    }
-
-    val displayPosition = (userSeekingPosition?.toLong() ?: localPositionMs.takeIf { it > 0 } ?: playerState.currentPositionMs).coerceAtLeast(0L)
+    val displayPosition = (if (isUserDraggingSlider) userSeekingPosition?.toLong() else null)
+        ?: playerState.currentPositionMs.coerceAtLeast(0L)
     val totalDuration = if (playerState.durationMs > 0L) playerState.durationMs else (track.durationMs.takeIf { it > 0 } ?: 210000L)
     val sliderProgress = (displayPosition.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
 
@@ -283,7 +303,7 @@ fun PlayerScreen(
                         }
                     }
 
-                    // "<>" Maximize Button (opens full-screen Expanded Lyrics)
+                    // Fullscreen Expand SVG Maximize Button (opens full-screen Expanded Lyrics)
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = Color(0xFF282A2A),
@@ -294,21 +314,19 @@ fun PlayerScreen(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
                         ) {
-                            Text(
-                                text = "< >",
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 13.sp,
-                                color = Color.White
+                            FullscreenExpandSvgIcon(
+                                tint = Color(0xFFE3E4E2),
+                                modifier = Modifier.size(15.dp)
                             )
-                            Icon(
-                                imageVector = Icons.Default.OpenInFull,
-                                contentDescription = "Maximize Lyrics",
-                                tint = Color.White,
-                                modifier = Modifier.size(14.dp)
+                            Text(
+                                text = "Fullscreen",
+                                fontFamily = SyneFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp,
+                                color = Color(0xFFE3E4E2)
                             )
                         }
                     }
@@ -324,25 +342,91 @@ fun PlayerScreen(
                         )
                     }
                 } else {
-                    LazyColumn(
-                        state = inlineLyricListState,
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(vertical = 16.dp)
-                    ) {
-                        itemsIndexed(playerState.lyricLines) { index, line ->
-                            val isCurrent = index == playerState.activeLyricIndex
-                            Text(
-                                text = line.text,
-                                color = if (isCurrent) Color.White else Color(0xFF757575),
-                                fontSize = if (isCurrent) 20.sp else 16.sp,
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 8.dp)
-                                    .clickable { viewModel.seekTo(line.timestampMs) }
-                            )
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        LazyColumn(
+                            state = inlineLyricListState,
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(top = 28.dp, bottom = 48.dp)
+                        ) {
+                            itemsIndexed(playerState.lyricLines) { index, line ->
+                                val isCurrent = index == playerState.activeLyricIndex
+                                if (line.isInstrumental) {
+                                    // Instrumental gap — show animated pulsing Music Note SVG indicator
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 10.dp),
+                                        contentAlignment = Alignment.CenterStart
+                                    ) {
+                                        InstrumentalGapMusicNoteIndicator(
+                                            tint = if (isCurrent) Color.White else Color(0xFF555555),
+                                            modifier = Modifier
+                                        )
+                                    }
+                                } else {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 8.dp)
+                                            .clickable { viewModel.seekTo(line.timestampMs) }
+                                    ) {
+                                        Text(
+                                            text = line.text,
+                                            color = if (isCurrent) Color.White else Color(0xFF757575),
+                                            fontSize = if (isCurrent) 20.sp else 16.sp,
+                                            fontFamily = OutfitFontFamily,
+                                            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                        if (!line.translation.isNullOrBlank()) {
+                                            Text(
+                                                text = line.translation,
+                                                color = if (isCurrent) Color(0xFFB0B0B0) else Color(0xFF505050),
+                                                fontSize = if (isCurrent) 14.sp else 12.sp,
+                                                fontFamily = OutfitFontFamily,
+                                                fontWeight = FontWeight.Normal,
+                                                modifier = Modifier.padding(top = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
+
+                        // Top Cloudy Gradient Mask (soft atmospheric fog)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                                .align(Alignment.TopCenter)
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(
+                                            Color(0xFF0F0F0F),
+                                            Color(0xFF0F0F0F).copy(alpha = 0.8f),
+                                            Color(0xFF0F0F0F).copy(alpha = 0.25f),
+                                            Color.Transparent
+                                        )
+                                    )
+                                )
+                        )
+
+                        // Bottom Cloudy Gradient Mask (soft atmospheric fog)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp)
+                                .align(Alignment.BottomCenter)
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(
+                                            Color.Transparent,
+                                            Color(0xFF0F0F0F).copy(alpha = 0.25f),
+                                            Color(0xFF0F0F0F).copy(alpha = 0.8f),
+                                            Color(0xFF0F0F0F)
+                                        )
+                                    )
+                                )
+                        )
                     }
                 }
             }
@@ -406,14 +490,42 @@ fun PlayerScreen(
                 overflow = TextOverflow.Ellipsis
             )
             Spacer(modifier = Modifier.height(3.dp))
-            Text(
-                text = "${track.artist} • ${track.album}",
-                color = Color(0xFF9EA1A1),
-                fontFamily = OutfitFontFamily,
-                fontSize = 14.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            // Artist name is clickable — isolated to artist only (not album)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = track.artist,
+                    color = Color(0xFF9EA1A1),
+                    fontFamily = OutfitFontFamily,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) {
+                            if (track.artist.isNotBlank()) {
+                                onDismiss()
+                                viewModel.navigateToArtist(track.artist)
+                            }
+                        }
+                        .testTag("player_artist_name")
+                )
+                if (track.album.isNotBlank() && track.album != track.title && track.album != "Single") {
+                    Text(
+                        text = "• ${track.album}",
+                        color = Color(0xFF757575),
+                        fontFamily = OutfitFontFamily,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
         }
 
         // ────────────────────────────────────────────────────────────
@@ -497,7 +609,11 @@ fun PlayerScreen(
                 )
             }
             IconButton(
-                onClick = { showQueue = true },
+                onClick = {
+                    hasClickedQueueButton = true
+                    isUpNextVisible = true
+                    showQueue = true
+                },
                 modifier = Modifier.testTag("player_queue_button")
             ) {
                 Icon(
@@ -518,12 +634,16 @@ fun PlayerScreen(
         ) {
             Slider(
                 value = sliderProgress,
-                onValueChange = { frac -> userSeekingPosition = frac * totalDuration },
+                onValueChange = { frac ->
+                    isUserDraggingSlider = true
+                    userSeekingPosition = frac * totalDuration
+                },
                 onValueChangeFinished = {
                     userSeekingPosition?.let { pos ->
                         viewModel.seekTo(pos.toLong())
-                        userSeekingPosition = null
                     }
+                    userSeekingPosition = null
+                    isUserDraggingSlider = false
                 },
                 colors = SliderDefaults.colors(
                     thumbColor = Color.White,
@@ -655,97 +775,110 @@ fun PlayerScreen(
             playerState.queue[playerState.currentIndex + 1]
         } else null
 
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 6.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .clickable { showQueue = true }
-                .testTag("player_upnext_button"),
-            shape = RoundedCornerShape(20.dp),
-            color = Color(0xFF232526),
-            tonalElevation = 2.dp
+        AnimatedVisibility(
+            visible = isUpNextVisible && hasClickedQueueButton,
+            enter = slideInVertically(initialOffsetY = { it }),
+            exit = slideOutVertically(targetOffsetY = { it })
         ) {
-            Row(
+            Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .padding(horizontal = 24.dp, vertical = 6.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures { _, dragAmount ->
+                            if (dragAmount > 18f) {
+                                isUpNextVisible = false
+                            }
+                        }
+                    }
+                    .clickable { showQueue = true }
+                    .testTag("player_upnext_button"),
+                shape = RoundedCornerShape(20.dp),
+                color = Color(0xFF232526),
+                tonalElevation = 2.dp
             ) {
                 Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF2E3030)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.QueueMusic,
-                            contentDescription = "Queue",
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "UP NEXT",
-                                fontSize = 11.sp,
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF9EA1A1),
-                                letterSpacing = 1.sp
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "• ${playerState.queue.size} in queue",
-                                fontSize = 11.sp,
-                                fontFamily = OutfitFontFamily,
-                                color = Color(0xFF757575)
-                            )
-                        }
-                        Text(
-                            text = nextTrack?.let { "${it.title} • ${it.artist}" } ?: "Tap to view upcoming tracks",
-                            fontSize = 13.sp,
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFFE3E4E2),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFF282A2A),
-                    onClick = { showQueue = true }
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Text(
-                            text = "Up Next",
-                            fontSize = 12.sp,
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFFE3E4E2)
-                        )
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowUp,
-                            contentDescription = null,
-                            tint = Color(0xFFE3E4E2),
-                            modifier = Modifier.size(16.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF2E3030)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.QueueMusic,
+                                contentDescription = "Queue",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "UP NEXT",
+                                    fontSize = 11.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF9EA1A1),
+                                    letterSpacing = 1.sp
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "• ${playerState.queue.size} in queue",
+                                    fontSize = 11.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    color = Color(0xFF757575)
+                                )
+                            }
+                            Text(
+                                text = nextTrack?.let { "${it.title} • ${it.artist}" } ?: "Tap to view upcoming tracks",
+                                fontSize = 13.sp,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.Medium,
+                                color = Color(0xFFE3E4E2),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF282A2A),
+                        onClick = { showQueue = true }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "Up Next",
+                                fontSize = 12.sp,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFE3E4E2)
+                            )
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowUp,
+                                contentDescription = null,
+                                tint = Color(0xFFE3E4E2),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -797,9 +930,19 @@ fun ExpandedLyricsModal(
     val totalDuration = playerState.durationMs.coerceAtLeast(1000L)
     val sliderProgress = (displayPosition.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
 
-    // Auto-scroll expanded lyrics smoothly to center active line
-    LaunchedEffect(playerState.activeLyricIndex) {
-        if (playerState.activeLyricIndex in 0 until playerState.lyricLines.size) {
+    // Smooth auto-scroll expanded lyrics with 2500ms idle debounce on user drag
+    var isUserScrollingExpandedLyrics by remember { mutableStateOf(false) }
+    LaunchedEffect(lyricListState.isScrollInProgress) {
+        if (lyricListState.isScrollInProgress) {
+            isUserScrollingExpandedLyrics = true
+        } else if (isUserScrollingExpandedLyrics) {
+            delay(2500L)
+            isUserScrollingExpandedLyrics = false
+        }
+    }
+
+    LaunchedEffect(playerState.activeLyricIndex, isUserScrollingExpandedLyrics) {
+        if (!isUserScrollingExpandedLyrics && playerState.activeLyricIndex in 0 until playerState.lyricLines.size) {
             val target = (playerState.activeLyricIndex - 3).coerceAtLeast(0)
             lyricListState.animateScrollToItem(target)
         }
@@ -871,7 +1014,7 @@ fun ExpandedLyricsModal(
                         }
                     }
 
-                    // Minimize Button (>< / CloseFullscreen)
+                    // Minimize Button (CloseFullscreen)
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = Color(0xFF282A2A),
@@ -879,18 +1022,10 @@ fun ExpandedLyricsModal(
                             .clip(RoundedCornerShape(16.dp))
                             .clickable(onClick = onDismiss)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                         ) {
-                            Text(
-                                text = "> <",
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 13.sp,
-                                color = Color.White
-                            )
                             Icon(
                                 imageVector = Icons.Default.CloseFullscreen,
                                 contentDescription = "Minimize Lyrics",
@@ -933,124 +1068,220 @@ fun ExpandedLyricsModal(
                                     label = "lyric_scale"
                                 )
 
-                                Text(
-                                    text = line.text,
-                                    color = if (isCurrent) Color.White else Color(0xFF6B6E6E),
-                                    fontSize = if (isCurrent) 24.sp else 18.sp,
-                                    fontFamily = SyneFontFamily,
-                                    fontWeight = if (isCurrent) FontWeight.ExtraBold else FontWeight.Medium,
-                                    lineHeight = if (isCurrent) 32.sp else 26.sp,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .scale(activeScale)
-                                        .padding(vertical = 12.dp)
-                                        .clickable { viewModel.seekTo(line.timestampMs) }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // ────────────────────────────────────────────────────────────
-                // Bottom Playback Bar (Progress Slider & Controls)
-                // ────────────────────────────────────────────────────
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xFF1B1C1C))
-                        .padding(horizontal = 20.dp, vertical = 12.dp)
-                ) {
-                    Slider(
-                        value = sliderProgress,
-                        onValueChange = { frac -> userSeekingPosition = frac * totalDuration },
-                        onValueChangeFinished = {
-                            userSeekingPosition?.let { pos ->
-                                viewModel.seekTo(pos.toLong())
-                                userSeekingPosition = null
-                            }
-                        },
-                        colors = SliderDefaults.colors(
-                            thumbColor = Color.White,
-                            activeTrackColor = Color.White,
-                            inactiveTrackColor = Color.White.copy(alpha = 0.25f)
-                        )
-                    )
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = formatMs(displayPosition),
-                            color = Color(0xFF9EA1A1),
-                            fontSize = 12.sp,
-                            fontFamily = OutfitFontFamily
-                        )
-                        Text(
-                            text = formatMs(totalDuration),
-                            color = Color(0xFF9EA1A1),
-                            fontSize = 12.sp,
-                            fontFamily = OutfitFontFamily
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(
-                            onClick = { viewModel.previous() },
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.SkipPrevious,
-                                contentDescription = "Previous",
-                                tint = Color(0xFFE3E4E2),
-                                modifier = Modifier.size(32.dp)
-                            )
-                        }
-
-                        Surface(
-                            modifier = Modifier
-                                .size(56.dp)
-                                .clip(CircleShape)
-                                .clickable { viewModel.togglePlayPause() },
-                            shape = CircleShape,
-                            color = Color(0xFFE3E4E2)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                if (playerState.isBuffering) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(24.dp),
-                                        color = Color(0xFF1B1C1C),
-                                        strokeWidth = 2.5.dp
-                                    )
+                                if (line.isInstrumental) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .scale(activeScale)
+                                            .padding(vertical = 14.dp),
+                                        contentAlignment = Alignment.CenterStart
+                                    ) {
+                                        InstrumentalGapMusicNoteIndicator(
+                                            tint = if (isCurrent) Color.White else Color(0xFF555555),
+                                            modifier = Modifier
+                                        )
+                                    }
                                 } else {
-                                    Icon(
-                                        imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                        contentDescription = "Play/Pause",
-                                        tint = Color(0xFF1B1C1C),
-                                        modifier = Modifier.size(30.dp)
-                                    )
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .scale(activeScale)
+                                            .padding(vertical = 12.dp)
+                                            .clickable { viewModel.seekTo(line.timestampMs) }
+                                    ) {
+                                        Text(
+                                            text = line.text,
+                                            color = if (isCurrent) Color.White else Color(0xFF6B6E6E),
+                                            fontSize = if (isCurrent) 24.sp else 18.sp,
+                                            fontFamily = SyneFontFamily,
+                                            fontWeight = if (isCurrent) FontWeight.ExtraBold else FontWeight.Medium,
+                                            lineHeight = if (isCurrent) 32.sp else 26.sp,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                        if (!line.translation.isNullOrBlank()) {
+                                            Text(
+                                                text = line.translation,
+                                                color = if (isCurrent) Color(0xFFB0B0B0) else Color(0xFF454848),
+                                                fontSize = if (isCurrent) 16.sp else 13.sp,
+                                                fontFamily = OutfitFontFamily,
+                                                fontWeight = FontWeight.Normal,
+                                                modifier = Modifier.padding(top = 4.dp)
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
 
-                        IconButton(
-                            onClick = { viewModel.next() },
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.SkipNext,
-                                contentDescription = "Next",
-                                tint = Color(0xFFE3E4E2),
-                                modifier = Modifier.size(32.dp)
+                        // Top Cloudy Gradient Mask (soft atmospheric fog)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp)
+                                .align(Alignment.TopCenter)
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(
+                                            Color(0xFF141414),
+                                            Color(0xFF141414).copy(alpha = 0.8f),
+                                            Color(0xFF141414).copy(alpha = 0.25f),
+                                            Color.Transparent
+                                        )
+                                    )
+                                )
+                        )
+
+                        // Bottom Cloudy Gradient Mask (soft atmospheric fog)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(68.dp)
+                                .align(Alignment.BottomCenter)
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(
+                                            Color.Transparent,
+                                            Color(0xFF141414).copy(alpha = 0.25f),
+                                            Color(0xFF141414).copy(alpha = 0.8f),
+                                            Color(0xFF141414)
+                                        )
+                                    )
+                                )
+                        )
+                    }
+                }
+
+                // ────────────────────────────────────────────────────────────
+                // Bottom Playback Bar (Curved Aesthetic Container with Top Border Glow)
+                // ────────────────────────────────────────────────────────────
+                Surface(
+                    shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                    color = Color(0xFF1B1D1D),
+                    tonalElevation = 8.dp,
+                    shadowElevation = 24.dp,
+                    border = BorderStroke(
+                        width = 1.dp,
+                        brush = Brush.verticalGradient(
+                            listOf(
+                                Color.White.copy(alpha = 0.14f),
+                                Color.White.copy(alpha = 0.02f)
                             )
+                        )
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color(0xFF222425),
+                                        Color(0xFF151617)
+                                    )
+                                )
+                            )
+                            .padding(horizontal = 20.dp, vertical = 14.dp)
+                            .navigationBarsPadding()
+                    ) {
+                        Slider(
+                            value = sliderProgress,
+                            onValueChange = { frac ->
+                                isUserDraggingSlider = true
+                                userSeekingPosition = frac * totalDuration
+                            },
+                            onValueChangeFinished = {
+                                userSeekingPosition?.let { pos ->
+                                    viewModel.seekTo(pos.toLong())
+                                }
+                                userSeekingPosition = null
+                                isUserDraggingSlider = false
+                            },
+                            colors = SliderDefaults.colors(
+                                thumbColor = Color.White,
+                                activeTrackColor = Color.White,
+                                inactiveTrackColor = Color.White.copy(alpha = 0.25f)
+                            )
+                        )
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = formatMs(displayPosition),
+                                color = Color(0xFF9EA1A1),
+                                fontSize = 12.sp,
+                                fontFamily = OutfitFontFamily
+                            )
+                            Text(
+                                text = formatMs(totalDuration),
+                                color = Color(0xFF9EA1A1),
+                                fontSize = 12.sp,
+                                fontFamily = OutfitFontFamily
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(
+                                onClick = { viewModel.previous() },
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.SkipPrevious,
+                                    contentDescription = "Previous",
+                                    tint = Color(0xFFE3E4E2),
+                                    modifier = Modifier.size(32.dp)
+                                )
+                            }
+
+                            Surface(
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(CircleShape)
+                                    .clickable { viewModel.togglePlayPause() },
+                                shape = CircleShape,
+                                color = Color(0xFFE3E4E2)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    if (playerState.isBuffering) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(24.dp),
+                                            color = Color(0xFF1B1C1C),
+                                            strokeWidth = 2.5.dp
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                            contentDescription = "Play/Pause",
+                                            tint = Color(0xFF1B1C1C),
+                                            modifier = Modifier.size(30.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            IconButton(
+                                onClick = { viewModel.next() },
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.SkipNext,
+                                    contentDescription = "Next",
+                                    tint = Color(0xFFE3E4E2),
+                                    modifier = Modifier.size(32.dp)
+                                )
+                            }
                         }
                     }
                 }

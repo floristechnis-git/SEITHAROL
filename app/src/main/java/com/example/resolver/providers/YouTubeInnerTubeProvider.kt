@@ -31,6 +31,23 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
 
     private val CLIENT_PROFILES = listOf(
         ClientProfile(
+            name = "IOS",
+            version = "19.45.4",
+            clientId = "5",
+            userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
+            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+            clientJson = JSONObject().apply {
+                put("clientName", "IOS")
+                put("clientVersion", "19.45.4")
+                put("deviceMake", "Apple")
+                put("deviceModel", "iPhone16,2")
+                put("osName", "iPhone")
+                put("osVersion", "18.1.0.22B83")
+                put("hl", "en")
+                put("gl", "US")
+            }
+        ),
+        ClientProfile(
             name = "ANDROID_VR",
             version = "1.60.19",
             clientId = "28",
@@ -49,18 +66,15 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             }
         ),
         ClientProfile(
-            name = "IOS",
-            version = "19.45.4",
-            clientId = "5",
-            userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
+            name = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+            version = "2.0",
+            clientId = "85",
+            userAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/11.50) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.0 Safari/605.1.15",
             playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+            isEmbedded = true,
             clientJson = JSONObject().apply {
-                put("clientName", "IOS")
-                put("clientVersion", "19.45.4")
-                put("deviceMake", "Apple")
-                put("deviceModel", "iPhone16,2")
-                put("osName", "iPhone")
-                put("osVersion", "18.1.0.22B83")
+                put("clientName", "TVHTML5_SIMPLY_EMBEDDED_PLAYER")
+                put("clientVersion", "2.0")
                 put("hl", "en")
                 put("gl", "US")
             }
@@ -97,7 +111,7 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
     )
 
     private val CLIENT_WEB_REMIX = CLIENT_PROFILES.last().clientJson
-    private val SEARCH_PARAMS_SONGS = "EgWKAQIIAWoQEAMQBBAJEAoQBRAREBAQFQ=="
+    private val SEARCH_PARAMS_SONGS = "EgWKAQIIAWoKEAkQBRAKEAMQBA=="
 
     /**
      * Resolves title and artist for a YouTube videoId when Track metadata is blank.
@@ -405,6 +419,31 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                 if (lastThumb.isNotBlank()) artUrl = lastThumb
             }
 
+            val overlay = item.optJSONObject("overlay")?.optJSONObject("musicItemThumbnailOverlayRenderer")
+            val playBtn = overlay?.optJSONObject("content")?.optJSONObject("musicPlayButtonRenderer")
+            val watchEndpoint = playBtn?.optJSONObject("playNavigationEndpoint")?.optJSONObject("watchEndpoint")
+            val musicVideoType = watchEndpoint?.optJSONObject("watchEndpointMusicSupportedConfigs")
+                ?.optJSONObject("watchEndpointMusicConfig")
+                ?.optString("musicVideoType", "") ?: ""
+
+            var viewsCount = 0L
+            if (flexCols != null) {
+                for (c in 0 until flexCols.length()) {
+                    val runs = flexCols.getJSONObject(c).optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+                        ?.optJSONObject("text")?.optJSONArray("runs")
+                    if (runs != null) {
+                        for (r in 0 until runs.length()) {
+                            val txt = runs.getJSONObject(r).optString("text", "")
+                            val v = parseViewsCount(txt)
+                            if (v > viewsCount) viewsCount = v
+                        }
+                    }
+                }
+            }
+
+            val isTopicArtist = artists.any { it.contains("Topic", ignoreCase = true) }
+            val isOfficialArtTrack = musicVideoType == "MUSIC_VIDEO_TYPE_ATV" || isTopicArtist
+
             if (!videoId.isNullOrBlank()) {
                 results.add(
                     NormalizedTrack(
@@ -415,12 +454,36 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                         album = album,
                         durationMs = durationMs,
                         artUrl = artUrl,
-                        isPlayableNatively = true
+                        isPlayableNatively = true,
+                        isArtTrack = isOfficialArtTrack,
+                        viewsCount = viewsCount
                     )
                 )
             }
         }
-        return results
+        return results.sortedWith(
+            compareByDescending<NormalizedTrack> { it.isArtTrack }
+                .thenByDescending { it.viewsCount }
+        )
+    }
+
+    suspend fun getRadioTracks(videoId: String): List<NormalizedTrack> = withContext(Dispatchers.IO) {
+        val radioPlaylistId = if (videoId.startsWith("RDAMVM")) videoId else "RDAMVM$videoId"
+        getPlaylistTracks(radioPlaylistId)
+    }
+
+    private fun parseViewsCount(txt: String): Long {
+        val clean = txt.trim().lowercase()
+        if (!clean.contains("view") && !clean.contains("play")) return 0L
+        val numStr = clean.replace(Regex("""[^0-9.kmbt]"""), "")
+        return try {
+            when {
+                numStr.endsWith("b") -> (numStr.dropLast(1).toDouble() * 1_000_000_000).toLong()
+                numStr.endsWith("m") -> (numStr.dropLast(1).toDouble() * 1_000_000).toLong()
+                numStr.endsWith("k") -> (numStr.dropLast(1).toDouble() * 1_000).toLong()
+                else -> numStr.toLongOrNull() ?: 0L
+            }
+        } catch (e: Exception) { 0L }
     }
 
     private fun findItemRenderers(obj: Any, outList: MutableList<JSONObject>) {

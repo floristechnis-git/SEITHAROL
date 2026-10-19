@@ -17,9 +17,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -27,6 +30,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.ui.platform.LocalFocusManager
 import com.example.data.model.Track
 import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
@@ -47,9 +53,10 @@ enum class SearchTab(val label: String) {
 fun SearchScreen(
     viewModel: CascadeViewModel,
     playerState: PlayerState,
-    onNavigateToHome: () -> Unit = {},
-    onNavigateToArtist: (String) -> Unit,
     onNavigateToPlaylist: (String) -> Unit,
+    onNavigateToArtist: (String) -> Unit,
+    onOpenDiscover: () -> Unit = {},
+    onPlayTrackAndMaximize: (Track) -> Unit = { viewModel.playTrack(it) },
     modifier: Modifier = Modifier
 ) {
     val query by viewModel.searchQuery.collectAsState()
@@ -77,10 +84,17 @@ fun SearchScreen(
 
     val allTracksList by viewModel.allTracks.collectAsState()
     val historyTracks by viewModel.activeHistory.collectAsState()
+
+    // Verified Artists Only (filter out unverified remix/loop uploaders)
     val allArtists = remember(allTracksList, historyTracks, searchResults) {
+        val bannedModifiers = listOf("remix", "loop", "extended", "1 hour", "slowed", "reverb", "cover", "8d", "nightcore", "mashup", "bass boosted")
         (searchResults + historyTracks + allTracksList)
-            .filter { it.artist.isNotBlank() && it.artist != "Unknown Artist" }
-            .distinctBy { it.artist }
+            .filter { track ->
+                track.artist.isNotBlank() &&
+                track.artist != "Unknown Artist" &&
+                bannedModifiers.none { mod -> track.artist.contains(mod, ignoreCase = true) }
+            }
+            .distinctBy { it.artist.lowercase() }
             .map { Pair(it.artist, it.artUrl) }
     }
 
@@ -99,131 +113,121 @@ fun SearchScreen(
         }
     }
 
+    // Auto-focus keyboard when the search screen is opened
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+        keyboardController?.show()
+    }
+
+    // Auto-dismiss keyboard when user scrolls search results
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) {
+            focusManager.clearFocus()
+            keyboardController?.hide()
+        }
+    }
+
     LazyColumn(
+        state = listState,
         modifier = modifier
             .fillMaxSize()
-            .background(KangleiBg)
+            .background(SeitharolBg)
             .statusBarsPadding()
             .testTag("search_screen"),
         contentPadding = PaddingValues(bottom = 140.dp)
     ) {
-        // Top Search Header: Input pill + Cancel button
+        // Full-Width Search Bar (no Cancel button; Back arrow when empty, Clear ✕ when text present)
         item {
-            Row(
+            Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                    .height(48.dp),
+                shape = RoundedCornerShape(24.dp),
+                color = SeitharolWhite
             ) {
-                // White Pill Input Container (48dp height, radius 24dp)
-                Surface(
+                Row(
                     modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp),
-                    shape = RoundedCornerShape(24.dp),
-                    color = KangleiWhite
+                        .fillMaxSize()
+                        .padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Search",
-                            tint = KangleiDark,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        BasicTextField(
-                            value = query,
-                            onValueChange = { viewModel.searchQuery.value = it },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("search_input_field"),
-                            singleLine = true,
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                                imeAction = androidx.compose.ui.text.input.ImeAction.Search
-                            ),
-                            keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                                onSearch = { viewModel.setQueryImmediately(query) }
-                            ),
-                            textStyle = TextStyle(
-                                color = KangleiDark,
-                                fontSize = 15.sp,
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.Normal
-                            ),
-                            cursorBrush = SolidColor(KangleiDark),
-                            decorationBox = { innerTextField ->
-                                if (query.isEmpty()) {
-                                    Text(
-                                        text = "Search songs, artists, albums...",
-                                        color = KangleiTextSecondary,
-                                        fontSize = 15.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                innerTextField()
-                            }
-                        )
-                        if (isSearchingOnline) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                                color = KangleiDark
-                            )
-                        } else if (query.isNotEmpty()) {
-                            IconButton(
-                                onClick = { viewModel.searchQuery.value = "" },
-                                modifier = Modifier.size(28.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Clear search",
-                                    tint = KangleiTextSecondary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // "Cancel" button: when there is no text in the search bar, brings user back to home
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = Color.Transparent,
-                    modifier = Modifier
-                        .testTag("search_cancel_button")
-                        .clickable {
-                            if (query.trim().isEmpty()) {
+                    IconButton(
+                        onClick = {
+                            if (query.isEmpty()) {
+                                focusManager.clearFocus()
+                                keyboardController?.hide()
                                 onNavigateToHome()
                             } else {
                                 viewModel.searchQuery.value = ""
                             }
-                        }
-                ) {
-                    Box(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
-                        contentAlignment = Alignment.Center
+                        },
+                        modifier = Modifier.size(32.dp)
                     ) {
-                        Text(
-                            text = "Cancel",
-                            color = KangleiDark,
+                        Icon(
+                            imageVector = if (query.isEmpty()) Icons.AutoMirrored.Filled.ArrowBack else Icons.Default.Close,
+                            contentDescription = if (query.isEmpty()) "Back" else "Clear search",
+                            tint = SeitharolDark,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    BasicTextField(
+                        value = query,
+                        onValueChange = { viewModel.searchQuery.value = it },
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(focusRequester)
+                            .testTag("search_input_field"),
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            imeAction = androidx.compose.ui.text.input.ImeAction.Search
+                        ),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                            onSearch = {
+                                focusManager.clearFocus()
+                                keyboardController?.hide()
+                                viewModel.setQueryImmediately(query)
+                            }
+                        ),
+                        textStyle = TextStyle(
+                            color = SeitharolDark,
                             fontSize = 15.sp,
                             fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Normal
+                        ),
+                        cursorBrush = SolidColor(SeitharolDark),
+                        decorationBox = { innerTextField ->
+                            if (query.isEmpty()) {
+                                Text(
+                                    text = "Search songs, official artists, albums...",
+                                    color = SeitharolTextSecondary,
+                                    fontSize = 15.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            innerTextField()
+                        }
+                    )
+                    if (isSearchingOnline) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = SeitharolDark
                         )
                     }
                 }
             }
         }
 
-        // Multi-Source Provider Filter Chips (All, YouTube, Spotify, JioSaavn, Gaana, Downloaded)
+        // Multi-Source Provider Filter Chips (All, YouTube, Spotify, JioSaavn, Downloaded)
         item {
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 20.dp),
@@ -238,7 +242,7 @@ fun SearchScreen(
                             .clip(RoundedCornerShape(17.dp))
                             .clickable { viewModel.selectProviderFilter(provider) },
                         shape = RoundedCornerShape(17.dp),
-                        color = if (isSelected) KangleiDark else KangleiWhite
+                        color = if (isSelected) SeitharolDark else SeitharolWhite
                     ) {
                         Box(
                             contentAlignment = Alignment.Center,
@@ -246,7 +250,7 @@ fun SearchScreen(
                         ) {
                             Text(
                                 text = provider.label,
-                                color = if (isSelected) KangleiWhite else KangleiDark,
+                                color = if (isSelected) SeitharolWhite else SeitharolDark,
                                 fontSize = 13.sp,
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
@@ -265,7 +269,7 @@ fun SearchScreen(
                     fontFamily = SyneFontFamily,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 15.sp,
-                    color = KangleiDark,
+                    color = SeitharolDark,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
                 )
 
@@ -281,7 +285,7 @@ fun SearchScreen(
                                 .clip(RoundedCornerShape(17.dp))
                                 .clickable { viewModel.setQueryImmediately(quickQuery) },
                             shape = RoundedCornerShape(17.dp),
-                            color = KangleiWhite
+                            color = SeitharolWhite
                         ) {
                             Row(
                                 modifier = Modifier
@@ -293,12 +297,12 @@ fun SearchScreen(
                                 Icon(
                                     imageVector = Icons.Default.TrendingUp,
                                     contentDescription = null,
-                                    tint = KangleiTextSecondary,
+                                    tint = SeitharolTextSecondary,
                                     modifier = Modifier.size(14.dp)
                                 )
                                 Text(
                                     text = quickQuery,
-                                    color = KangleiDark,
+                                    color = SeitharolDark,
                                     fontSize = 13.sp,
                                     fontFamily = OutfitFontFamily
                                 )
@@ -324,7 +328,7 @@ fun SearchScreen(
                                 .clip(RoundedCornerShape(16.dp))
                                 .clickable { viewModel.setQueryImmediately(suggestion) },
                             shape = RoundedCornerShape(16.dp),
-                            color = KangleiCardElevated
+                            color = SeitharolCardElevated
                         ) {
                             Box(
                                 contentAlignment = Alignment.Center,
@@ -332,7 +336,7 @@ fun SearchScreen(
                             ) {
                                 Text(
                                     text = suggestion,
-                                    color = KangleiDark,
+                                    color = SeitharolDark,
                                     fontSize = 12.sp,
                                     fontFamily = OutfitFontFamily
                                 )
@@ -358,7 +362,7 @@ fun SearchScreen(
                             .clip(RoundedCornerShape(18.dp))
                             .clickable { selectedTab = tab },
                         shape = RoundedCornerShape(18.dp),
-                        color = if (isSelected) KangleiPillBg else KangleiWhite
+                        color = if (isSelected) SeitharolPillBg else SeitharolWhite
                     ) {
                         Box(
                             contentAlignment = Alignment.Center,
@@ -366,7 +370,7 @@ fun SearchScreen(
                         ) {
                             Text(
                                 text = tab.label,
-                                color = if (isSelected) KangleiPillText else KangleiDark,
+                                color = if (isSelected) SeitharolPillText else SeitharolDark,
                                 fontSize = 14.sp,
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal
@@ -375,6 +379,11 @@ fun SearchScreen(
                     }
                 }
             }
+        // Discover Entry Card (Placed directly above the "Artists" section)
+        item {
+            com.seitharol.ui.search.DiscoverEntryCard(
+                onOpenDiscover = onOpenDiscover
+            )
         }
 
         // Matching Artists (shown if TOP, ARTISTS, or query matches)
@@ -386,7 +395,7 @@ fun SearchScreen(
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 16.sp,
-                        color = KangleiDark,
+                        color = SeitharolDark,
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
                     )
                 }
@@ -426,7 +435,7 @@ fun SearchScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = name,
-                                    color = KangleiDark,
+                                    color = SeitharolDark,
                                     fontSize = 15.sp,
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Medium,
@@ -435,7 +444,7 @@ fun SearchScreen(
                                 )
                                 Text(
                                     text = "Artist",
-                                    color = KangleiTextSecondary,
+                                    color = SeitharolTextSecondary,
                                     fontSize = 12.sp,
                                     fontFamily = OutfitFontFamily
                                 )
@@ -444,7 +453,7 @@ fun SearchScreen(
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
                                 contentDescription = "View Artist",
-                                tint = KangleiDark,
+                                tint = SeitharolDark,
                                 modifier = Modifier.size(16.dp)
                             )
                         }
@@ -463,7 +472,7 @@ fun SearchScreen(
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 16.sp,
-                        color = KangleiDark,
+                        color = SeitharolDark,
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
                     )
                 }
@@ -503,7 +512,7 @@ fun SearchScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = pl.title,
-                                    color = KangleiDark,
+                                    color = SeitharolDark,
                                     fontSize = 15.sp,
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Medium,
@@ -512,7 +521,7 @@ fun SearchScreen(
                                 )
                                 Text(
                                     text = pl.description,
-                                    color = KangleiTextSecondary,
+                                    color = SeitharolTextSecondary,
                                     fontSize = 12.sp,
                                     fontFamily = OutfitFontFamily,
                                     maxLines = 1,
@@ -523,7 +532,7 @@ fun SearchScreen(
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
                                 contentDescription = "Open Playlist",
-                                tint = KangleiDark,
+                                tint = SeitharolDark,
                                 modifier = Modifier.size(16.dp)
                             )
                         }
@@ -548,14 +557,14 @@ fun SearchScreen(
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 16.sp,
-                        color = KangleiDark
+                        color = SeitharolDark
                     )
                     if (filteredTracks.isNotEmpty()) {
                         Text(
                             text = "${filteredTracks.size} results",
                             fontFamily = OutfitFontFamily,
                             fontSize = 12.sp,
-                            color = KangleiTextSecondary
+                            color = SeitharolTextSecondary
                         )
                     }
                 }
@@ -577,7 +586,7 @@ fun SearchScreen(
                                 } else {
                                     "No songs found for \"$query\""
                                 },
-                                color = KangleiTextSecondary,
+                                color = SeitharolTextSecondary,
                                 fontSize = 14.sp,
                                 fontFamily = OutfitFontFamily
                             )
@@ -589,7 +598,11 @@ fun SearchScreen(
                     TrackCard(
                         track = track,
                         isPlaying = playerState.currentTrack?.id == track.id,
-                        onTrackClick = { viewModel.playTrack(track) },
+                        onTrackClick = {
+                            focusManager.clearFocus()
+                            keyboardController?.hide()
+                            onPlayTrackAndMaximize(track)
+                        },
                         onLikeClick = { viewModel.toggleLike(track) },
                         onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
                         onPlayNextClick = { viewModel.playNext(track) },
@@ -625,7 +638,8 @@ fun SearchScreen(
     if (showCreatePlaylistDialog) {
         CreatePlaylistModal(
             onConfirm = { name ->
-                viewModel.createPlaylist(name, "User created playlist")
+                viewModel.createPlaylist(name, "User created playlist", trackToAddToPlaylist)
+                trackToAddToPlaylist = null
                 showCreatePlaylistDialog = false
             },
             onDismiss = {

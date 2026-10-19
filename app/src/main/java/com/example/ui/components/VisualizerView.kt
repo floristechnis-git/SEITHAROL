@@ -12,7 +12,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import com.example.ui.theme.KangleiDark
+import com.example.ui.theme.SeitharolDark
 import kotlin.math.sin
 
 @Composable
@@ -31,7 +31,7 @@ fun AudioVisualizer(
         label = "phase"
     )
 
-    val darkColor = KangleiDark
+    val darkColor = SeitharolDark
 
     Canvas(
         modifier = modifier

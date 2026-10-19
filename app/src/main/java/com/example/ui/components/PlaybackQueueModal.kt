@@ -127,7 +127,7 @@ fun PlaybackQueueModal(
         modifier = modifier
             .fillMaxSize()
             .testTag("playback_queue_modal"),
-        color = Color(0xFF1B1C1C) // Kanglei Tune Dark Palette
+        color = Color(0xFF1B1C1C) // SEITHAROL Dark Palette
     ) {
         Column(
             modifier = Modifier

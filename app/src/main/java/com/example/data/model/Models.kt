@@ -30,7 +30,9 @@ data class Track(
 
 data class LyricsLine(
     val timestampMs: Long,
-    val text: String
+    val text: String,
+    val translation: String? = null,
+    val isInstrumental: Boolean = false
 )
 
 enum class DownloadTier(val label: String, val bitrate: String, val codec: String) {

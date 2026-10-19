@@ -17,11 +17,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.AppPreferences
 import com.example.player.EqualizerPreset
 import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
@@ -36,32 +38,35 @@ fun SoundSettingsScreen(
 ) {
     BackHandler(onBack = onBack)
 
-    var isHighQuality by remember { mutableStateOf(true) }
+    val context = LocalContext.current
+    val appPreferences = remember { AppPreferences(context) }
+    val userSettings by appPreferences.settings.collectAsState()
+
     var selectedPreset by remember { mutableStateOf(playerState.currentPresetName) }
 
-    // 6-band frequency values: 60Hz, 150Hz, 400Hz, 1kHz, 2.4kHz, 15kHz in dB (-12 to +12)
-    var band60 by remember { mutableFloatStateOf(4f) }
-    var band150 by remember { mutableFloatStateOf(2f) }
-    var band400 by remember { mutableFloatStateOf(0f) }
-    var band1k by remember { mutableFloatStateOf(1f) }
-    var band2_4k by remember { mutableFloatStateOf(3f) }
-    var band15k by remember { mutableFloatStateOf(5f) }
+    // 5-band frequency values: 60Hz, 230Hz, 910Hz, 3.6kHz, 14kHz in dB (-12 to +12)
+    var band60 by remember { mutableFloatStateOf(userSettings.eqBandsDb.getOrElse(0) { 0f }) }
+    var band230 by remember { mutableFloatStateOf(userSettings.eqBandsDb.getOrElse(1) { 0f }) }
+    var band910 by remember { mutableFloatStateOf(userSettings.eqBandsDb.getOrElse(2) { 0f }) }
+    var band3_6k by remember { mutableFloatStateOf(userSettings.eqBandsDb.getOrElse(3) { 0f }) }
+    var band14k by remember { mutableFloatStateOf(userSettings.eqBandsDb.getOrElse(4) { 0f }) }
 
     val presets = listOf(
-        Pair("Acoustic", listOf(3f, 2f, 1f, 2f, 3f, 4f)),
-        Pair("Bass Booster", listOf(9f, 6f, 3f, 0f, -2f, -3f)),
-        Pair("Dance", listOf(7f, 4f, 0f, 3f, 5f, 6f)),
-        Pair("Electronic", listOf(8f, 5f, -1f, 3f, 6f, 7f)),
-        Pair("Flat", listOf(0f, 0f, 0f, 0f, 0f, 0f))
+        Pair("Acoustic", listOf(3f, 2f, 1f, 3f, 4f)),
+        Pair("Bass Booster", listOf(8f, 5f, 2f, -1f, -2f)),
+        Pair("Dance", listOf(6f, 4f, 1f, 4f, 6f)),
+        Pair("Electronic", listOf(7f, 5f, 0f, 5f, 7f)),
+        Pair("Flat", listOf(0f, 0f, 0f, 0f, 0f))
     )
 
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .background(KangleiBg)
+            .background(SeitharolBg)
             .statusBarsPadding()
             .testTag("sound_settings_screen"),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 140.dp)
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 140.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // Top Bar: Close (X) icon on left, Title centered
         item {
@@ -77,176 +82,251 @@ fun SoundSettingsScreen(
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Close",
-                        tint = KangleiDark,
+                        tint = SeitharolDark,
                         modifier = Modifier.size(22.dp)
                     )
                 }
 
                 Text(
-                    text = "Sound settings",
+                    text = "Settings",
                     fontFamily = SyneFontFamily,
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 16.sp,
-                    color = KangleiDark,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 17.sp,
+                    color = SeitharolDark,
                     modifier = Modifier.align(Alignment.Center)
                 )
             }
         }
 
-        // Quality Options Card (White card, radius 20dp)
+        // 1. Appearance (System Default / Dark / Light theme)
         item {
-            Spacer(modifier = Modifier.height(16.dp))
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(20.dp),
-                color = KangleiWhite
+                color = SeitharolWhite
             ) {
-                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
-                    // Option 1: Good quality
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { isHighQuality = false }
-                            .padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        // Radio circle
-                        Box(
-                            modifier = Modifier
-                                .padding(top = 2.dp)
-                                .size(20.dp)
-                                .clip(CircleShape)
-                                .background(if (!isHighQuality) KangleiDark else Color.Transparent)
-                                .padding(if (!isHighQuality) 5.dp else 1.5.dp)
-                                .clip(CircleShape)
-                                .background(if (!isHighQuality) Color.White else Color(0xFF8A8A8A))
-                        )
-                        Column {
-                            Text(
-                                text = "Good quality",
-                                fontSize = 15.sp,
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.Medium,
-                                color = KangleiDark
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "Optimal when connecting via a mobile network",
-                                fontSize = 12.sp,
-                                fontFamily = OutfitFontFamily,
-                                color = KangleiTextSecondary
-                            )
-                        }
-                    }
-
-                    HorizontalDivider(color = KangleiDivider, thickness = 1.dp)
-
-                    // Option 2: High quality
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { isHighQuality = true }
-                            .padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        // Radio circle
-                        Box(
-                            modifier = Modifier
-                                .padding(top = 2.dp)
-                                .size(20.dp)
-                                .clip(CircleShape)
-                                .background(if (isHighQuality) KangleiDark else Color.Transparent)
-                                .padding(if (isHighQuality) 5.dp else 1.5.dp)
-                                .clip(CircleShape)
-                                .background(if (isHighQuality) Color.White else Color(0xFF8A8A8A))
-                        )
-                        Column {
-                            Text(
-                                text = "High quality",
-                                fontSize = 15.sp,
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.Medium,
-                                color = KangleiDark
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "Balanced sound at different frequencies. Requires high speed internet connection",
-                                fontSize = 12.sp,
-                                fontFamily = OutfitFontFamily,
-                                color = KangleiTextSecondary
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Theme Appearance Card
-        item {
-            val isDark = LocalIsDarkTheme.current
-            Spacer(modifier = Modifier.height(16.dp))
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("sound_settings_theme_card"),
-                shape = RoundedCornerShape(20.dp),
-                color = KangleiWhite
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Dark Mode",
-                            fontSize = 15.sp,
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Medium,
-                            color = KangleiDark
-                        )
-                        Text(
-                            text = if (isDark) "Active: Sleek Dark theme" else "Active: Clean Light theme",
-                            fontSize = 12.sp,
-                            fontFamily = OutfitFontFamily,
-                            color = KangleiTextSecondary
-                        )
-                    }
-
-                    Switch(
-                        checked = isDark,
-                        onCheckedChange = { viewModel.setDarkMode(it) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = KangleiGreen,
-                            uncheckedThumbColor = Color.White,
-                            uncheckedTrackColor = Color(0xFFCCCCCC)
-                        )
-                    )
-                }
-            }
-        }
-
-        // Equalizer Section Card
-        item {
-            Spacer(modifier = Modifier.height(20.dp))
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                color = KangleiWhite
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(18.dp)) {
                     Text(
-                        text = "Equalizer",
+                        text = "Appearance",
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 17.sp,
-                        color = KangleiDark
+                        fontSize = 16.sp,
+                        color = SeitharolDark
                     )
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    val themeOptions = listOf(
+                        Triple("SYSTEM", "Use Device Theme (System Default)", "Automatically matches system light/dark theme"),
+                        Triple("DARK", "Dark Mode", "Deep OLED dark appearance"),
+                        Triple("LIGHT", "Light Mode", "Clean stone light appearance")
+                    )
+
+                    themeOptions.forEach { (key, title, subtitle) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    appPreferences.setThemeMode(key)
+                                    viewModel.setDarkMode(key == "DARK")
+                                }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = userSettings.themeMode == key,
+                                onClick = {
+                                    appPreferences.setThemeMode(key)
+                                    viewModel.setDarkMode(key == "DARK")
+                                }
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = title,
+                                    fontSize = 14.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.Medium,
+                                    color = SeitharolDark
+                                )
+                                Text(
+                                    text = subtitle,
+                                    fontSize = 11.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    color = SeitharolTextSecondary
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Sound Quality (Streaming bitrate)
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                color = SeitharolWhite
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Text(
+                        text = "Sound Quality (Streaming)",
+                        fontFamily = SyneFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp,
+                        color = SeitharolDark
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    val streamQualities = listOf(
+                        Triple("LOW", "Low (96 kbps)", "Data saver mode for slow mobile connections"),
+                        Triple("NORMAL", "Normal (160 kbps)", "Standard AAC streaming quality"),
+                        Triple("HIGH", "High (320 kbps)", "Studio fidelity with canonical audio resolution")
+                    )
+
+                    streamQualities.forEach { (key, label, desc) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { appPreferences.setStreamingQuality(key) }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = userSettings.streamingQuality == key,
+                                onClick = { appPreferences.setStreamingQuality(key) }
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = label,
+                                    fontSize = 14.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.Medium,
+                                    color = SeitharolDark
+                                )
+                                Text(
+                                    text = desc,
+                                    fontSize = 11.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    color = SeitharolTextSecondary
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Download Quality
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                color = SeitharolWhite
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Text(
+                        text = "Download Quality",
+                        fontFamily = SyneFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp,
+                        color = SeitharolDark
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    val downloadQualities = listOf(
+                        Triple("NORMAL", "Normal (160 kbps)", "Faster downloads, compact storage footprint"),
+                        Triple("HIGH", "High (320 kbps)", "Maximum offline audio fidelity")
+                    )
+
+                    downloadQualities.forEach { (key, label, desc) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { appPreferences.setDownloadQuality(key) }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = userSettings.downloadQuality == key,
+                                onClick = { appPreferences.setDownloadQuality(key) }
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = label,
+                                    fontSize = 14.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.Medium,
+                                    color = SeitharolDark
+                                )
+                                Text(
+                                    text = desc,
+                                    fontSize = 11.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    color = SeitharolTextSecondary
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Equalizer with 0 dB Reset Button
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                color = SeitharolWhite
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Equalizer",
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp,
+                            color = SeitharolDark
+                        )
+                        // Reset EQ button: Resets all bands to 0 dB flat response and persists immediately
+                        Surface(
+                            modifier = Modifier
+                                .height(30.dp)
+                                .clip(RoundedCornerShape(15.dp))
+                                .clickable {
+                                    selectedPreset = "Flat"
+                                    band60 = 0f; band230 = 0f; band910 = 0f
+                                    band3_6k = 0f; band14k = 0f
+                                    appPreferences.resetEqualizer()
+                                    viewModel.setEqualizerPreset(EqualizerPreset("Flat", listOf(0f, 0f, 0f, 0f, 0f)))
+                                }
+                                .testTag("eq_reset_button"),
+                            shape = RoundedCornerShape(15.dp),
+                            color = SeitharolCardElevated
+                        ) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.padding(horizontal = 14.dp)
+                            ) {
+                                Text(
+                                    text = "Reset",
+                                    color = SeitharolDark,
+                                    fontSize = 12.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(14.dp))
 
@@ -263,15 +343,15 @@ fun SoundSettingsScreen(
                                     .clickable {
                                         selectedPreset = name
                                         band60 = levels[0]
-                                        band150 = levels[1]
-                                        band400 = levels[2]
-                                        band1k = levels[3]
-                                        band2_4k = levels[4]
-                                        band15k = levels[5]
+                                        band230 = levels[1]
+                                        band910 = levels[2]
+                                        band3_6k = levels[3]
+                                        band14k = levels[4]
+                                        levels.forEachIndexed { i, db -> appPreferences.setEqBand(i, db) }
                                         viewModel.setEqualizerPreset(EqualizerPreset(name, levels))
                                     },
                                 shape = RoundedCornerShape(17.dp),
-                                color = if (isSelected) KangleiDark else Color(0xFFF2F2F2)
+                                color = if (isSelected) SeitharolPillBg else SeitharolCardElevated
                             ) {
                                 Box(
                                     contentAlignment = Alignment.Center,
@@ -279,7 +359,7 @@ fun SoundSettingsScreen(
                                 ) {
                                     Text(
                                         text = name,
-                                        color = if (isSelected) Color.White else KangleiDark,
+                                        color = if (isSelected) SeitharolPillText else SeitharolDark,
                                         fontSize = 13.sp,
                                         fontFamily = OutfitFontFamily,
                                         fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal
@@ -289,31 +369,47 @@ fun SoundSettingsScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(18.dp))
 
-                    // Sliders header (+12 dB / -12 dB indicators)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("+12 dB", fontSize = 11.sp, color = KangleiTextSecondary, fontFamily = OutfitFontFamily)
-                        Text("-12 dB", fontSize = 11.sp, color = KangleiTextSecondary, fontFamily = OutfitFontFamily)
+                        Text("+12 dB", fontSize = 11.sp, color = SeitharolTextSecondary, fontFamily = OutfitFontFamily)
+                        Text("-12 dB", fontSize = 11.sp, color = SeitharolTextSecondary, fontFamily = OutfitFontFamily)
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // 6 Sliders
                     val bands = listOf(
-                        Pair("60Hz", band60 to { v: Float -> band60 = v }),
-                        Pair("150Hz", band150 to { v: Float -> band150 = v }),
-                        Pair("400Hz", band400 to { v: Float -> band400 = v }),
-                        Pair("1kHz", band1k to { v: Float -> band1k = v }),
-                        Pair("2.4kHz", band2_4k to { v: Float -> band2_4k = v }),
-                        Pair("15kHz", band15k to { v: Float -> band15k = v })
+                        Triple("60Hz", band60) { v: Float ->
+                            band60 = v
+                            appPreferences.setEqBand(0, v)
+                            viewModel.setEqualizerPreset(EqualizerPreset("Custom", listOf(band60, band230, band910, band3_6k, band14k)))
+                        },
+                        Triple("230Hz", band230) { v: Float ->
+                            band230 = v
+                            appPreferences.setEqBand(1, v)
+                            viewModel.setEqualizerPreset(EqualizerPreset("Custom", listOf(band60, band230, band910, band3_6k, band14k)))
+                        },
+                        Triple("910Hz", band910) { v: Float ->
+                            band910 = v
+                            appPreferences.setEqBand(2, v)
+                            viewModel.setEqualizerPreset(EqualizerPreset("Custom", listOf(band60, band230, band910, band3_6k, band14k)))
+                        },
+                        Triple("3.6kHz", band3_6k) { v: Float ->
+                            band3_6k = v
+                            appPreferences.setEqBand(3, v)
+                            viewModel.setEqualizerPreset(EqualizerPreset("Custom", listOf(band60, band230, band910, band3_6k, band14k)))
+                        },
+                        Triple("14kHz", band14k) { v: Float ->
+                            band14k = v
+                            appPreferences.setEqBand(4, v)
+                            viewModel.setEqualizerPreset(EqualizerPreset("Custom", listOf(band60, band230, band910, band3_6k, band14k)))
+                        }
                     )
 
-                    bands.forEach { (freq, statePair) ->
-                        val (valDb, setVal) = statePair
+                    bands.forEach { (freq, valDb, setVal) ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -324,63 +420,125 @@ fun SoundSettingsScreen(
                                 text = freq,
                                 fontSize = 12.sp,
                                 fontFamily = OutfitFontFamily,
-                                color = KangleiDark,
-                                modifier = Modifier.width(52.dp)
+                                color = SeitharolDark,
+                                modifier = Modifier.width(56.dp)
                             )
                             Slider(
                                 value = valDb,
                                 onValueChange = setVal,
                                 valueRange = -12f..12f,
-                                modifier = Modifier.weight(1f),
-                                colors = SliderDefaults.colors(
-                                    thumbColor = KangleiDark,
-                                    activeTrackColor = KangleiDark,
-                                    inactiveTrackColor = Color(0xFFE0E0E0)
-                                )
+                                modifier = Modifier.weight(1f)
                             )
                             Text(
                                 text = "${if (valDb > 0) "+" else ""}${valDb.toInt()}dB",
                                 fontSize = 11.sp,
                                 fontFamily = OutfitFontFamily,
-                                color = KangleiTextSecondary,
-                                modifier = Modifier.width(42.dp),
+                                color = SeitharolTextSecondary,
+                                modifier = Modifier.width(44.dp),
                                 textAlign = TextAlign.End
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    // Save Button
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .clip(RoundedCornerShape(24.dp))
-                            .clickable {
-                                viewModel.setEqualizerPreset(
-                                    EqualizerPreset(
-                                        "Custom",
-                                        listOf(band60, band150, band400, band1k, band2_4k, band15k)
-                                    )
-                                )
-                                onBack()
-                            },
-                        shape = RoundedCornerShape(24.dp),
-                        color = KangleiDark
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "Save",
-                                color = Color.White,
-                                fontSize = 15.sp,
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.Medium
                             )
                         }
                     }
                 }
             }
         }
+
+        // 5. Sleep Timer & Playback
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                color = SeitharolWhite
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Text(
+                        text = "Sleep Timer",
+                        fontFamily = SyneFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp,
+                        color = SeitharolDark
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    val sleepOptions = listOf(0, 15, 30, 45, 60)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        sleepOptions.forEach { mins ->
+                            FilterChip(
+                                selected = userSettings.sleepTimerMinutes == mins,
+                                onClick = {
+                                    appPreferences.saveSleepTimer(mins)
+                                    viewModel.setSleepTimer(mins)
+                                },
+                                label = { Text(if (mins == 0) "Off" else "${mins}m") }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    HorizontalDivider(color = SeitharolDivider, thickness = 0.8.dp)
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "Gapless Playback",
+                                fontSize = 14.sp,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.Medium,
+                                color = SeitharolDark
+                            )
+                            Text(
+                                text = "Seamless transitions without silence between songs",
+                                fontSize = 11.sp,
+                                fontFamily = OutfitFontFamily,
+                                color = SeitharolTextSecondary
+                            )
+                        }
+                        Switch(
+                            checked = userSettings.gaplessPlayback,
+                            onCheckedChange = { appPreferences.setGaplessPlayback(it) }
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "Normalize Volume",
+                                fontSize = 14.sp,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.Medium,
+                                color = SeitharolDark
+                            )
+                            Text(
+                                text = "Equalize loudness across different tracks and albums",
+                                fontSize = 11.sp,
+                                fontFamily = OutfitFontFamily,
+                                color = SeitharolTextSecondary
+                            )
+                        }
+                        Switch(
+                            checked = userSettings.audioNormalization,
+                            onCheckedChange = { appPreferences.setAudioNormalization(it) }
+                        )
+                    }
+                }
+            }
+        }
     }
 }
+

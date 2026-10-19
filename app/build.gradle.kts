@@ -10,13 +10,21 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.cascade.mzxv"
+    applicationId = "in.floristechnis.seitharol"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 2
+    versionName = "2.0"
+    setProperty("archivesBaseName", "in.floristechnis.seitharol")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+  }
+
+  applicationVariants.all {
+    outputs.all {
+      (this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl)?.outputFileName =
+        "in.floristechnis.seitharol-v${versionName}.apk"
+    }
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,

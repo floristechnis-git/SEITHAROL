@@ -34,15 +34,15 @@ fun NotificationsModal(
     val modalSheetState = rememberModalBottomSheetState()
 
     val notifications = listOf(
-        NotificationItem("Ronnie has released a new song", "2 days ago", Icons.Outlined.MusicNote),
-        NotificationItem("Explore the new Pena Sessions board", "7 days ago", Icons.Outlined.QueueMusic),
-        NotificationItem("New Music Friday: Tapta & Folk Fusion", "9 days ago", Icons.Outlined.NewReleases)
+        NotificationItem("New releases from followed artists", "1 day ago", Icons.Outlined.MusicNote),
+        NotificationItem("Your Weekly Mix has been updated", "3 days ago", Icons.Outlined.QueueMusic),
+        NotificationItem("Discover fresh trending tracks in your region", "5 days ago", Icons.Outlined.NewReleases)
     )
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = modalSheetState,
-        containerColor = KangleiBg,
+        containerColor = SeitharolBg,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         dragHandle = {
             Box(
@@ -51,7 +51,7 @@ fun NotificationsModal(
                     .width(40.dp)
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(KangleiHandleBar)
+                    .background(SeitharolHandleBar)
             )
         }
     ) {
@@ -66,7 +66,7 @@ fun NotificationsModal(
                 fontFamily = SyneFontFamily,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 20.sp,
-                color = KangleiDark,
+                color = SeitharolDark,
                 modifier = Modifier.padding(bottom = 16.dp)
             )
 
@@ -76,7 +76,7 @@ fun NotificationsModal(
                         .fillMaxWidth()
                         .padding(vertical = 4.dp),
                     shape = RoundedCornerShape(16.dp),
-                    color = KangleiWhite
+                    color = SeitharolWhite
                 ) {
                     Row(
                         modifier = Modifier.padding(14.dp),
@@ -85,13 +85,13 @@ fun NotificationsModal(
                         Surface(
                             modifier = Modifier.size(40.dp),
                             shape = CircleShape,
-                            color = KangleiCardElevated
+                            color = SeitharolCardElevated
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
                                     imageVector = item.icon,
                                     contentDescription = null,
-                                    tint = KangleiDark,
+                                    tint = SeitharolDark,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -105,14 +105,14 @@ fun NotificationsModal(
                                 fontSize = 14.sp,
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = FontWeight.Medium,
-                                color = KangleiDark
+                                color = SeitharolDark
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = item.timeAgo,
                                 fontSize = 11.sp,
                                 fontFamily = OutfitFontFamily,
-                                color = KangleiTextSecondary
+                                color = SeitharolTextSecondary
                             )
                         }
                     }

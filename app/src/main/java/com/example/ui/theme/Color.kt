@@ -4,124 +4,124 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.graphics.Color
 
-// Seitharol Pure White & Always-Dark Tokens
-val KangleiBg: Color
+// Seitharol Pure White & Adaptive Theme Tokens
+val SeitharolBg: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFF0F0F0F)
+    get() = if (LocalIsDarkTheme.current) Color(0xFF0F0F0F) else Color(0xFFF8F9FA)
 
-val KangleiWhite: Color
+val SeitharolWhite: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFF1B1C1C)
+    get() = if (LocalIsDarkTheme.current) Color(0xFF1B1C1C) else Color(0xFFFFFFFF)
 
-// Primary foreground / text / icon color (Pure White)
-val KangleiDark: Color
+// Primary foreground / text / icon color
+val SeitharolDark: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFFFFFFFF)
+    get() = if (LocalIsDarkTheme.current) Color(0xFFFFFFFF) else Color(0xFF121212)
 
-val KangleiDarkCard: Color
+val SeitharolDarkCard: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFF1B1C1C)
+    get() = if (LocalIsDarkTheme.current) Color(0xFF1B1C1C) else Color(0xFFFFFFFF)
 
-val KangleiDarkSurface: Color
+val SeitharolDarkSurface: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFF262727)
+    get() = if (LocalIsDarkTheme.current) Color(0xFF262727) else Color(0xFFF0F2F5)
 
 // Dedicated Navigation Bar Tokens
-val KangleiNavBg: Color
+val SeitharolNavBg: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFF1B1C1C)
+    get() = if (LocalIsDarkTheme.current) Color(0xFF1B1C1C) else Color(0xFFFFFFFF)
 
-val KangleiNavActive: Color
+val SeitharolNavActive: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFF38383A)
+    get() = if (LocalIsDarkTheme.current) Color(0xFF38383A) else Color(0xFFE2E4E8)
 
-val KangleiMiniPlayerBg: Color
+val SeitharolMiniPlayerBg: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFF1B1C1C)
+    get() = if (LocalIsDarkTheme.current) Color(0xFF1B1C1C) else Color(0xFFFFFFFF)
 
-val KangleiPillBg: Color
+val SeitharolPillBg: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFFFFFFFF)
+    get() = if (LocalIsDarkTheme.current) Color(0xFFFFFFFF) else Color(0xFF121212)
 
-val KangleiPillText: Color
+val SeitharolPillText: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFF000000)
+    get() = if (LocalIsDarkTheme.current) Color(0xFF000000) else Color(0xFFFFFFFF)
 
-val KangleiCardElevated: Color
+val SeitharolCardElevated: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFF262727)
+    get() = if (LocalIsDarkTheme.current) Color(0xFF262727) else Color(0xFFECEEF0)
 
-val KangleiDarkButton: Color
+val SeitharolDarkButton: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFF2E2E30)
+    get() = if (LocalIsDarkTheme.current) Color(0xFF2E2E30) else Color(0xFFE2E4E8)
 
-val KangleiTextPrimary: Color
+val SeitharolTextPrimary: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFFFFFFFF)
+    get() = if (LocalIsDarkTheme.current) Color(0xFFFFFFFF) else Color(0xFF121212)
 
-val KangleiTextSecondary: Color
+val SeitharolTextSecondary: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFFA0A0A0)
+    get() = if (LocalIsDarkTheme.current) Color(0xFFA0A0A0) else Color(0xFF5F6368)
 
-val KangleiTextTertiary: Color
+val SeitharolTextTertiary: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFF757575)
+    get() = if (LocalIsDarkTheme.current) Color(0xFF757575) else Color(0xFF888888)
 
-val KangleiTextMuted: Color
+val SeitharolTextMuted: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFF555555)
+    get() = if (LocalIsDarkTheme.current) Color(0xFF555555) else Color(0xFFAAAAAA)
 
-val KangleiTextLight: Color = Color(0xFFFFFFFF)
-val KangleiTextLightMuted: Color = Color(0xFFD0D0D0)
+val SeitharolTextLight: Color = Color(0xFFFFFFFF)
+val SeitharolTextLightMuted: Color = Color(0xFFD0D0D0)
 
-val KangleiBorder: Color
+val SeitharolBorder: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFF2C2C2E)
+    get() = if (LocalIsDarkTheme.current) Color(0xFF2C2C2E) else Color(0xFFE0E0E0)
 
-val KangleiDivider: Color
+val SeitharolDivider: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFF262727)
+    get() = if (LocalIsDarkTheme.current) Color(0xFF262727) else Color(0xFFE8E8E8)
 
-val KangleiGlassDark: Color
+val SeitharolGlassDark: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0x33FFFFFF)
+    get() = if (LocalIsDarkTheme.current) Color(0x33FFFFFF) else Color(0x33000000)
 
-val KangleiGlassDarkActive: Color
+val SeitharolGlassDarkActive: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0x4DFFFFFF)
+    get() = if (LocalIsDarkTheme.current) Color(0x4DFFFFFF) else Color(0x4D000000)
 
-val KangleiModalScrim: Color = Color(0x8C000000)
+val SeitharolModalScrim: Color = Color(0x8C000000)
 
-val KangleiHandleBar: Color
+val SeitharolHandleBar: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFF555555)
+    get() = if (LocalIsDarkTheme.current) Color(0xFF555555) else Color(0xFFCCCCCC)
 
-// Pure White Accent highlight
-val KangleiAccent: Color
+// Accent highlight
+val SeitharolAccent: Color
     @Composable
     @ReadOnlyComposable
-    get() = Color(0xFFFFFFFF)
+    get() = if (LocalIsDarkTheme.current) Color(0xFFFFFFFF) else Color(0xFF121212)
 
-val KangleiRedHeart: Color = Color(0xFFFF3B56)
-val KangleiGreen: Color = Color(0xFF00E676)
+val SeitharolRedHeart: Color = Color(0xFFFF3B56)
+val SeitharolGreen: Color = Color(0xFF00E676)

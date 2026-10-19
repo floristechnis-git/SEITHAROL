@@ -39,7 +39,7 @@ fun DownloadsScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .background(KangleiBg),
+            .background(SeitharolBg),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 140.dp)
     ) {
         item {
@@ -48,12 +48,12 @@ fun DownloadsScreen(
                 fontFamily = SyneFontFamily,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 24.sp,
-                color = KangleiDark
+                color = SeitharolDark
             )
             Text(
                 text = "Persistent on-device Opus audio storage",
                 fontFamily = OutfitFontFamily,
-                color = KangleiTextSecondary,
+                color = SeitharolTextSecondary,
                 fontSize = 12.sp
             )
             Spacer(modifier = Modifier.height(16.dp))
@@ -65,7 +65,7 @@ fun DownloadsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(20.dp)),
-                color = KangleiWhite
+                color = SeitharolWhite
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(
@@ -76,7 +76,7 @@ fun DownloadsScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "Airplane Mode Offline",
-                                color = KangleiDark,
+                                color = SeitharolDark,
                                 fontSize = 15.sp,
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = FontWeight.Medium
@@ -86,7 +86,7 @@ fun DownloadsScreen(
                                     "Playing from local storage only."
                                 else
                                     "Connected. Streaming and downloading enabled.",
-                                color = KangleiTextSecondary,
+                                color = SeitharolTextSecondary,
                                 fontSize = 12.sp,
                                 fontFamily = OutfitFontFamily
                             )
@@ -97,14 +97,14 @@ fun DownloadsScreen(
                             onCheckedChange = { viewModel.setOfflineMode(it) },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color.White,
-                                checkedTrackColor = KangleiDark
+                                checkedTrackColor = SeitharolDark
                             ),
                             modifier = Modifier.testTag("downloads_offline_switch")
                         )
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
-                    HorizontalDivider(color = KangleiDivider)
+                    HorizontalDivider(color = SeitharolDivider)
                     Spacer(modifier = Modifier.height(12.dp))
 
                     Row(
@@ -112,16 +112,16 @@ fun DownloadsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column {
-                            Text("Total Stored", color = KangleiTextSecondary, fontSize = 11.sp, fontFamily = OutfitFontFamily)
-                            Text("$totalMb MB", color = KangleiDark, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = OutfitFontFamily)
+                            Text("Total Stored", color = SeitharolTextSecondary, fontSize = 11.sp, fontFamily = OutfitFontFamily)
+                            Text("$totalMb MB", color = SeitharolDark, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = OutfitFontFamily)
                         }
                         Column {
-                            Text("Downloaded Tracks", color = KangleiTextSecondary, fontSize = 11.sp, fontFamily = OutfitFontFamily)
-                            Text("${downloads.count { it.state == DownloadState.COMPLETED }}", color = KangleiDark, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = OutfitFontFamily)
+                            Text("Downloaded Tracks", color = SeitharolTextSecondary, fontSize = 11.sp, fontFamily = OutfitFontFamily)
+                            Text("${downloads.count { it.state == DownloadState.COMPLETED }}", color = SeitharolDark, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = OutfitFontFamily)
                         }
                         Column {
-                            Text("Format", color = KangleiTextSecondary, fontSize = 11.sp, fontFamily = OutfitFontFamily)
-                            Text("Opus 160k", color = KangleiDark, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = OutfitFontFamily)
+                            Text("Format", color = SeitharolTextSecondary, fontSize = 11.sp, fontFamily = OutfitFontFamily)
+                            Text("Opus 160k", color = SeitharolDark, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = OutfitFontFamily)
                         }
                     }
                 }
@@ -135,7 +135,7 @@ fun DownloadsScreen(
                 fontFamily = SyneFontFamily,
                 fontWeight = FontWeight.Medium,
                 fontSize = 16.sp,
-                color = KangleiDark
+                color = SeitharolDark
             )
             Spacer(modifier = Modifier.height(8.dp))
         }
@@ -158,7 +158,7 @@ fun DownloadsScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = "No downloaded tracks yet",
-                            color = KangleiTextSecondary,
+                            color = SeitharolTextSecondary,
                             fontFamily = OutfitFontFamily,
                             fontSize = 14.sp
                         )
@@ -195,7 +195,7 @@ fun DownloadItemRow(
             .padding(vertical = 4.dp)
             .clip(RoundedCornerShape(16.dp))
             .clickable(enabled = item.state == DownloadState.COMPLETED, onClick = onClick),
-        color = KangleiWhite
+        color = SeitharolWhite
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
@@ -222,14 +222,14 @@ fun DownloadItemRow(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = item.title,
-                        color = KangleiDark,
+                        color = SeitharolDark,
                         fontSize = 14.sp,
                         fontFamily = OutfitFontFamily,
                         fontWeight = FontWeight.Medium
                     )
                     Text(
                         text = "${item.artist} • ${item.tier.label}",
-                        color = KangleiTextSecondary,
+                        color = SeitharolTextSecondary,
                         fontSize = 12.sp,
                         fontFamily = OutfitFontFamily
                     )
@@ -273,7 +273,7 @@ fun DownloadItemRow(
                     DownloadState.DOWNLOADING, DownloadState.FINALIZING -> {
                         Text(
                             text = "${(item.progress * 100).toInt()}%",
-                            color = KangleiDark,
+                            color = SeitharolDark,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = OutfitFontFamily,
@@ -306,7 +306,7 @@ fun DownloadItemRow(
                     Icon(
                         imageVector = Icons.Default.DeleteOutline,
                         contentDescription = "Delete download",
-                        tint = KangleiTextSecondary,
+                        tint = SeitharolTextSecondary,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -320,7 +320,7 @@ fun DownloadItemRow(
                         .fillMaxWidth()
                         .height(4.dp)
                         .clip(RoundedCornerShape(2.dp)),
-                    color = KangleiDark,
+                    color = SeitharolDark,
                     trackColor = Color(0xFFE0E0E0)
                 )
             } else if (item.state == DownloadState.ERROR) {

@@ -26,7 +26,9 @@ data class NormalizedTrack(
     val durationMs: Long,
     val artUrl: String,
     val isrc: String? = null,
-    val isPlayableNatively: Boolean = true
+    val isPlayableNatively: Boolean = true,
+    val isArtTrack: Boolean = false,
+    val viewsCount: Long = 0L
 ) {
     val primaryArtist: String
         get() = artists.firstOrNull { it.isNotBlank() }?.trim() ?: "Unknown Artist"

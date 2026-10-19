@@ -41,7 +41,7 @@ fun AddToPlaylistModal(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = modalSheetState,
-        containerColor = KangleiBg,
+        containerColor = SeitharolBg,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         dragHandle = {
             Box(
@@ -50,7 +50,7 @@ fun AddToPlaylistModal(
                     .width(40.dp)
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(KangleiHandleBar)
+                    .background(SeitharolHandleBar)
             )
         }
     ) {
@@ -65,14 +65,14 @@ fun AddToPlaylistModal(
                 fontFamily = SyneFontFamily,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 20.sp,
-                color = KangleiDark
+                color = SeitharolDark
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = track.title,
                 fontFamily = OutfitFontFamily,
                 fontSize = 13.sp,
-                color = KangleiTextSecondary
+                color = SeitharolTextSecondary
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -88,18 +88,18 @@ fun AddToPlaylistModal(
                         onCreateNewPlaylist()
                     },
                 shape = RoundedCornerShape(24.dp),
-                color = KangleiPillBg
+                color = SeitharolPillBg
             ) {
                 Row(
                     modifier = Modifier.fillMaxSize(),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(imageVector = Icons.Default.Add, contentDescription = null, tint = KangleiPillText)
+                    Icon(imageVector = Icons.Default.Add, contentDescription = null, tint = SeitharolPillText)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "Create new playlist",
-                        color = KangleiPillText,
+                        color = SeitharolPillText,
                         fontSize = 14.sp,
                         fontFamily = OutfitFontFamily,
                         fontWeight = FontWeight.Medium
@@ -124,7 +124,7 @@ fun AddToPlaylistModal(
                                 onSelectPlaylist(pl.id)
                             },
                         shape = RoundedCornerShape(16.dp),
-                        color = KangleiWhite
+                        color = SeitharolWhite
                     ) {
                         Row(
                             modifier = Modifier.padding(12.dp),
@@ -144,7 +144,7 @@ fun AddToPlaylistModal(
                                         modifier = Modifier.fillMaxSize()
                                     )
                                 } else {
-                                    Icon(Icons.Default.QueueMusic, contentDescription = null, tint = KangleiDark)
+                                    Icon(Icons.Default.QueueMusic, contentDescription = null, tint = SeitharolDark)
                                 }
                             }
 
@@ -156,13 +156,13 @@ fun AddToPlaylistModal(
                                     fontSize = 14.sp,
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Medium,
-                                    color = KangleiDark
+                                    color = SeitharolDark
                                 )
                                 Text(
                                     text = "${pl.trackCount} songs",
                                     fontSize = 11.sp,
                                     fontFamily = OutfitFontFamily,
-                                    color = KangleiTextSecondary
+                                    color = SeitharolTextSecondary
                                 )
                             }
 
@@ -170,7 +170,7 @@ fun AddToPlaylistModal(
                                 Surface(
                                     modifier = Modifier.size(28.dp),
                                     shape = CircleShape,
-                                    color = KangleiDark
+                                    color = SeitharolDark
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         Icon(
@@ -210,14 +210,14 @@ fun CreatePlaylistDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(24.dp),
-        containerColor = KangleiWhite,
+        containerColor = SeitharolWhite,
         title = {
             Text(
                 text = "Create new playlist",
                 fontFamily = SyneFontFamily,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 18.sp,
-                color = KangleiDark
+                color = SeitharolDark
             )
         },
         text = {
@@ -226,7 +226,7 @@ fun CreatePlaylistDialog(
                     text = "Give your playlist a name",
                     fontFamily = OutfitFontFamily,
                     fontSize = 13.sp,
-                    color = KangleiTextSecondary
+                    color = SeitharolTextSecondary
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedTextField(
@@ -235,10 +235,10 @@ fun CreatePlaylistDialog(
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = KangleiDark,
+                        focusedBorderColor = SeitharolDark,
                         unfocusedBorderColor = Color(0xFFD0D0D0),
-                        focusedTextColor = KangleiDark,
-                        unfocusedTextColor = KangleiDark
+                        focusedTextColor = SeitharolDark,
+                        unfocusedTextColor = SeitharolDark
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -255,18 +255,18 @@ fun CreatePlaylistDialog(
                     }
                 },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = KangleiPillBg,
-                    contentColor = KangleiPillText
+                    containerColor = SeitharolPillBg,
+                    contentColor = SeitharolPillText
                 ),
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.testTag("create_playlist_confirm_btn")
             ) {
-                Text("Create", color = KangleiPillText, fontFamily = OutfitFontFamily)
+                Text("Create", color = SeitharolPillText, fontFamily = OutfitFontFamily)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = KangleiTextSecondary, fontFamily = OutfitFontFamily)
+                Text("Cancel", color = SeitharolTextSecondary, fontFamily = OutfitFontFamily)
             }
         }
     )

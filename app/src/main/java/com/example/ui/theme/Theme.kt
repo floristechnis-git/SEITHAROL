@@ -1,7 +1,9 @@
 package com.example.ui.theme
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
@@ -32,15 +34,31 @@ private val SeitharolDarkColorScheme = darkColorScheme(
     outline = Color(0xFF333333)
 )
 
+private val SeitharolLightColorScheme = lightColorScheme(
+    primary = Color(0xFF121212),
+    onPrimary = PureWhite,
+    primaryContainer = Color(0xFFECEEF0),
+    onPrimaryContainer = Color(0xFF121212),
+    secondary = Color(0xFF121212),
+    onSecondary = PureWhite,
+    tertiary = Color(0xFF333333),
+    background = Color(0xFFF8F9FA),
+    onBackground = Color(0xFF121212),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF1C1C1E),
+    surfaceVariant = Color(0xFFECEEF0),
+    onSurfaceVariant = Color(0xFF5F6368),
+    outline = Color(0xFFE0E0E0)
+)
+
 @Composable
 fun CascadeTheme(
-    darkTheme: Boolean = true,
+    darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
-    // Always enforce Pure White & Deep Dark Theme
-    CompositionLocalProvider(LocalIsDarkTheme provides true) {
+    CompositionLocalProvider(LocalIsDarkTheme provides darkTheme) {
         MaterialTheme(
-            colorScheme = SeitharolDarkColorScheme,
+            colorScheme = if (darkTheme) SeitharolDarkColorScheme else SeitharolLightColorScheme,
             typography = Typography,
             content = content
         )

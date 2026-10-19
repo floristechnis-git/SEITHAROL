@@ -26,14 +26,6 @@ fun OnboardingScreen(
     var name by remember { mutableStateOf("") }
     var age by remember { mutableStateOf("") }
 
-    val funnyQuotes = remember {
-        listOf(
-            "\"Without music, life would be a blank error log.\"",
-            "\"My neighbors listen to great music—whether they like it or not.\"",
-            "\"Good music doesn't judge your coding at 3 AM, it just drops the beat.\""
-        )
-    }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -62,28 +54,7 @@ fun OnboardingScreen(
             textAlign = TextAlign.Center
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // Funny Impressive Quotes Card
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
-                .background(Color(0xFF1B1C1C), RoundedCornerShape(12.dp))
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            funnyQuotes.forEach { quote ->
-                Text(
-                    text = quote,
-                    color = Color.White.copy(alpha = 0.85f),
-                    fontSize = 13.sp,
-                    fontStyle = FontStyle.Italic
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(28.dp))
 
         OutlinedTextField(
             value = name,

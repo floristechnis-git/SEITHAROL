@@ -43,7 +43,7 @@ class MediaPlaybackService : Service() {
 
     companion object {
         private const val TAG = "MediaPlaybackService"
-        const val CHANNEL_ID = "kanglei_playback_channel"
+        const val CHANNEL_ID = "seitharol_playback_channel"
         const val NOTIFICATION_ID = 1001
 
         const val ACTION_PLAY_PAUSE = "com.example.ACTION_PLAY_PAUSE"
@@ -82,7 +82,7 @@ class MediaPlaybackService : Service() {
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
         wakeLock = try {
-            powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "KangleiTune::PlaybackWakeLock")?.apply {
+            powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Seitharol::PlaybackWakeLock")?.apply {
                 setReferenceCounted(false)
             }
         } catch (t: Throwable) {

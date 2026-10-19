@@ -25,6 +25,9 @@ import com.example.data.model.Track
 import com.example.ui.components.*
 import com.example.ui.screens.*
 import com.example.ui.theme.*
+import com.seitharol.ui.components.HomeNavSvgIcon
+import com.seitharol.ui.settings.InfoDetailScreen
+import com.seitharol.ui.settings.InfoPageType
 import kotlinx.coroutines.flow.collectLatest
 
 enum class AppDestination(val label: String, val icon: ImageVector) {
@@ -38,7 +41,12 @@ sealed interface SubScreen {
     data object None : SubScreen
     data class Artist(val artistName: String) : SubScreen
     data class Playlist(val playlistId: String) : SubScreen
+    data object History : SubScreen
+    data object Downloads : SubScreen
+    data object LikedSongs : SubScreen
+    data class InfoDetail(val pageType: InfoPageType) : SubScreen
     data object SoundSettings : SubScreen
+    data object Discover : SubScreen
 }
 
 @Composable
@@ -46,6 +54,17 @@ fun CascadeApp(viewModel: CascadeViewModel) {
     val playerState by viewModel.playerState.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
     val context = LocalContext.current
+
+    val downloadService = remember { com.seitharol.data.download.DownloadPreferencesAndService(context) }
+    val seitharolPlayerManager = remember(viewModel.playerManager.playerInstance) {
+        viewModel.playerManager.playerInstance?.let { exo ->
+            val innerTube = com.seitharol.data.resolver.DefaultInnerTubeProvider(viewModel.resolverEngine.youtubeInnerTubeProvider)
+            val jioSaavn = com.seitharol.data.resolver.DefaultJioSaavnProvider(viewModel.resolverEngine.jioSaavnProvider)
+            val matcher = com.seitharol.data.resolver.TrackMatcher(innerTube, jioSaavn)
+            val engine = com.seitharol.data.resolver.ResolverEngine(context, matcher, innerTube, jioSaavn)
+            com.seitharol.player.AudioPlayerManager(exo, engine)
+        }
+    }
 
     var currentDestination by remember { mutableStateOf(AppDestination.HOME) }
     var currentSubScreen by remember { mutableStateOf<SubScreen>(SubScreen.None) }
@@ -56,6 +75,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
     var showNotifications by remember { mutableStateOf(false) }
     var shareTargetArtist by remember { mutableStateOf<String?>(null) }
     var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
+    var pendingTrackForNewPlaylist by remember { mutableStateOf<Track?>(null) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -66,10 +86,18 @@ fun CascadeApp(viewModel: CascadeViewModel) {
         }
     }
 
+    // Collect artist navigation events from PlayerScreen artist name clicks
+    LaunchedEffect(Unit) {
+        viewModel.artistNavigationEvent.collectLatest { artistName ->
+            isPlayerExpanded = false
+            currentSubScreen = SubScreen.Artist(artistName)
+        }
+    }
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(KangleiBg)
+            .background(SeitharolBg)
     ) {
         val isTablet = maxWidth >= 600.dp
 
@@ -78,7 +106,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
             Row(modifier = Modifier.fillMaxSize()) {
                 // Navigation Rail
                 NavigationRail(
-                    containerColor = KangleiNavBg,
+                    containerColor = SeitharolNavBg,
                     contentColor = Color.White,
                     header = {
                         Box(
@@ -107,10 +135,16 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                 currentSubScreen = SubScreen.None
                                 currentDestination = dest
                             },
-                            icon = { Icon(dest.icon, contentDescription = dest.label) },
+                            icon = {
+                                if (dest == AppDestination.HOME) {
+                                    HomeNavSvgIcon(tint = Color.White, modifier = Modifier.size(20.dp))
+                                } else {
+                                    Icon(dest.icon, contentDescription = dest.label)
+                                }
+                            },
                             colors = NavigationRailItemDefaults.colors(
                                 selectedIconColor = Color.White,
-                                indicatorColor = KangleiNavActive,
+                                indicatorColor = SeitharolNavActive,
                                 unselectedIconColor = Color(0xFFAAAAAA)
                             )
                         )
@@ -124,7 +158,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                         icon = { Icon(Icons.Default.Tune, contentDescription = "Sound Settings") },
                         colors = NavigationRailItemDefaults.colors(
                             selectedIconColor = Color.White,
-                            indicatorColor = KangleiNavActive,
+                            indicatorColor = SeitharolNavActive,
                             unselectedIconColor = Color(0xFFAAAAAA)
                         )
                     )
@@ -148,11 +182,63 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             onBack = { currentSubScreen = SubScreen.None },
                             onAddToPlaylist = { trackToAddToPlaylist = it }
                         )
+                        is SubScreen.History -> HistoryScreen(
+                            viewModel = viewModel,
+                            playerState = playerState,
+                            onBack = { currentSubScreen = SubScreen.None }
+                        )
+                        is SubScreen.Downloads -> DownloadsScreen(
+                            viewModel = viewModel,
+                            playerState = playerState,
+                            onBack = { currentSubScreen = SubScreen.None }
+                        )
+                        is SubScreen.LikedSongs -> LikedSongsScreen(
+                            viewModel = viewModel,
+                            playerState = playerState,
+                            onBack = { currentSubScreen = SubScreen.None }
+                        )
+                        is SubScreen.InfoDetail -> InfoDetailScreen(
+                            pageType = sub.pageType,
+                            onBack = { currentSubScreen = SubScreen.None }
+                        )
                         is SubScreen.SoundSettings -> SoundSettingsScreen(
                             viewModel = viewModel,
                             playerState = playerState,
                             onBack = { currentSubScreen = SubScreen.None }
                         )
+                        is SubScreen.Discover -> {
+                            val feedTracks by viewModel.discoverTracks.collectAsState()
+                            if (seitharolPlayerManager != null) {
+                                com.seitharol.ui.discover.DiscoverScreen(
+                                    feedTracks = feedTracks,
+                                    audioPlayerManager = seitharolPlayerManager,
+                                    downloadService = downloadService,
+                                    onSearchPreviewTracks = { query -> viewModel.searchDiscoverPreviews(query) },
+                                    onToggleLike = { track ->
+                                        viewModel.toggleLike(
+                                            Track(
+                                                id = track.sourceId,
+                                                title = track.title,
+                                                artist = track.artists.firstOrNull() ?: "",
+                                                album = track.album ?: "",
+                                                durationMs = track.durationMs,
+                                                artUrl = track.artUrl,
+                                                isLiked = track.isLiked
+                                            )
+                                        )
+                                    },
+                                    onVisitArtist = { name, _ ->
+                                        currentSubScreen = SubScreen.Artist(name)
+                                    },
+                                    onOpenFullSongMaximized = { track ->
+                                        viewModel.playNormalizedTrackFull(track)
+                                        isPlayerExpanded = true
+                                    },
+                                    onTrackDownloadedLocally = { _ -> },
+                                    onNavigateBack = { currentSubScreen = SubScreen.None }
+                                )
+                            }
+                        }
                         is SubScreen.None -> when (currentDestination) {
                             AppDestination.HOME -> HomeScreen(
                                 viewModel = viewModel,
@@ -160,31 +246,39 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                 onNavigateToSearch = { currentDestination = AppDestination.SEARCH },
                                 onNavigateToProfile = { currentDestination = AppDestination.PROFILE },
                                 onNavigateToArtist = { currentSubScreen = SubScreen.Artist(it) },
-                                onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) },
+                                onNavigateToPlaylist = {
+                                    if (it == "liked_songs") currentSubScreen = SubScreen.LikedSongs
+                                    else currentSubScreen = SubScreen.Playlist(it)
+                                },
                                 onOpenNotifications = { showNotifications = true }
                             )
                             AppDestination.SEARCH -> SearchScreen(
                                 viewModel = viewModel,
                                 playerState = playerState,
-                                onNavigateToHome = {
-                                    currentSubScreen = SubScreen.None
-                                    currentDestination = AppDestination.HOME
-                                },
                                 onNavigateToArtist = { currentSubScreen = SubScreen.Artist(it) },
-                                onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) }
+                                onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) },
+                                onOpenDiscover = { currentSubScreen = SubScreen.Discover },
+                                onPlayTrackAndMaximize = { track ->
+                                    viewModel.playTrack(track)
+                                    isPlayerExpanded = true
+                                }
                             )
                             AppDestination.LIBRARY -> LibraryScreen(
                                 viewModel = viewModel,
                                 playerState = playerState,
                                 onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) },
                                 onNavigateToArtist = { currentSubScreen = SubScreen.Artist(it) },
+                                onNavigateToHistory = { currentSubScreen = SubScreen.History },
+                                onNavigateToDownloads = { currentSubScreen = SubScreen.Downloads },
+                                onNavigateToLikedSongs = { currentSubScreen = SubScreen.LikedSongs },
                                 onCreatePlaylist = { showCreatePlaylistDialog = true }
                             )
                             AppDestination.PROFILE -> ProfileScreen(
                                 viewModel = viewModel,
                                 onNavigateToSoundSettings = { currentSubScreen = SubScreen.SoundSettings },
                                 onOpenNotifications = { showNotifications = true },
-                                onOpenSleepTimer = { showSleepTimer = true }
+                                onOpenSleepTimer = { showSleepTimer = true },
+                                onOpenInfoPage = { currentSubScreen = SubScreen.InfoDetail(it) }
                             )
                         }
                     }
@@ -202,7 +296,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                     modifier = Modifier
                         .widthIn(min = 340.dp, max = 400.dp)
                         .fillMaxHeight(),
-                    color = KangleiBg,
+                    color = SeitharolBg,
                     tonalElevation = 2.dp
                 ) {
                     if (playerState.currentTrack != null) {
@@ -228,7 +322,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                         ) {
                             Text(
                                 text = "Select a song to start playback",
-                                color = KangleiTextSecondary,
+                                color = SeitharolTextSecondary,
                                 fontFamily = OutfitFontFamily
                             )
                         }
@@ -261,6 +355,37 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             onAddToPlaylist = { trackToAddToPlaylist = it }
                         )
                     }
+                    is SubScreen.History -> {
+                        BackHandler { currentSubScreen = SubScreen.None }
+                        HistoryScreen(
+                            viewModel = viewModel,
+                            playerState = playerState,
+                            onBack = { currentSubScreen = SubScreen.None }
+                        )
+                    }
+                    is SubScreen.Downloads -> {
+                        BackHandler { currentSubScreen = SubScreen.None }
+                        DownloadsScreen(
+                            viewModel = viewModel,
+                            playerState = playerState,
+                            onBack = { currentSubScreen = SubScreen.None }
+                        )
+                    }
+                    is SubScreen.LikedSongs -> {
+                        BackHandler { currentSubScreen = SubScreen.None }
+                        LikedSongsScreen(
+                            viewModel = viewModel,
+                            playerState = playerState,
+                            onBack = { currentSubScreen = SubScreen.None }
+                        )
+                    }
+                    is SubScreen.InfoDetail -> {
+                        BackHandler { currentSubScreen = SubScreen.None }
+                        InfoDetailScreen(
+                            pageType = sub.pageType,
+                            onBack = { currentSubScreen = SubScreen.None }
+                        )
+                    }
                     is SubScreen.SoundSettings -> {
                         BackHandler { currentSubScreen = SubScreen.None }
                         SoundSettingsScreen(
@@ -268,6 +393,40 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             playerState = playerState,
                             onBack = { currentSubScreen = SubScreen.None }
                         )
+                    }
+                    is SubScreen.Discover -> {
+                        BackHandler { currentSubScreen = SubScreen.None }
+                        val feedTracks by viewModel.discoverTracks.collectAsState()
+                        if (seitharolPlayerManager != null) {
+                            com.seitharol.ui.discover.DiscoverScreen(
+                                feedTracks = feedTracks,
+                                audioPlayerManager = seitharolPlayerManager,
+                                downloadService = downloadService,
+                                onSearchPreviewTracks = { query -> viewModel.searchDiscoverPreviews(query) },
+                                onToggleLike = { track ->
+                                    viewModel.toggleLike(
+                                        Track(
+                                            id = track.sourceId,
+                                            title = track.title,
+                                            artist = track.artists.firstOrNull() ?: "",
+                                            album = track.album ?: "",
+                                            durationMs = track.durationMs,
+                                            artUrl = track.artUrl,
+                                            isLiked = track.isLiked
+                                        )
+                                    )
+                                },
+                                onVisitArtist = { name, _ ->
+                                    currentSubScreen = SubScreen.Artist(name)
+                                },
+                                onOpenFullSongMaximized = { track ->
+                                    viewModel.playNormalizedTrackFull(track)
+                                    isPlayerExpanded = true
+                                },
+                                onTrackDownloadedLocally = { _ -> },
+                                onNavigateBack = { currentSubScreen = SubScreen.None }
+                            )
+                        }
                     }
                     is SubScreen.None -> {
                         when (currentDestination) {
@@ -277,7 +436,10 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                 onNavigateToSearch = { currentDestination = AppDestination.SEARCH },
                                 onNavigateToProfile = { currentDestination = AppDestination.PROFILE },
                                 onNavigateToArtist = { currentSubScreen = SubScreen.Artist(it) },
-                                onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) },
+                                onNavigateToPlaylist = {
+                                    if (it == "liked_songs") currentSubScreen = SubScreen.LikedSongs
+                                    else currentSubScreen = SubScreen.Playlist(it)
+                                },
                                 onOpenNotifications = { showNotifications = true }
                             )
                             AppDestination.SEARCH -> {
@@ -291,12 +453,13 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                 SearchScreen(
                                     viewModel = viewModel,
                                     playerState = playerState,
-                                    onNavigateToHome = {
-                                        currentSubScreen = SubScreen.None
-                                        currentDestination = AppDestination.HOME
-                                    },
                                     onNavigateToArtist = { currentSubScreen = SubScreen.Artist(it) },
-                                    onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) }
+                                    onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) },
+                                    onOpenDiscover = { currentSubScreen = SubScreen.Discover },
+                                    onPlayTrackAndMaximize = { track ->
+                                        viewModel.playTrack(track)
+                                        isPlayerExpanded = true
+                                    }
                                 )
                             }
                             AppDestination.LIBRARY -> {
@@ -306,6 +469,9 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                     playerState = playerState,
                                     onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) },
                                     onNavigateToArtist = { currentSubScreen = SubScreen.Artist(it) },
+                                    onNavigateToHistory = { currentSubScreen = SubScreen.History },
+                                    onNavigateToDownloads = { currentSubScreen = SubScreen.Downloads },
+                                    onNavigateToLikedSongs = { currentSubScreen = SubScreen.LikedSongs },
                                     onCreatePlaylist = { showCreatePlaylistDialog = true }
                                 )
                             }
@@ -315,7 +481,8 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                     viewModel = viewModel,
                                     onNavigateToSoundSettings = { currentSubScreen = SubScreen.SoundSettings },
                                     onOpenNotifications = { showNotifications = true },
-                                    onOpenSleepTimer = { showSleepTimer = true }
+                                    onOpenSleepTimer = { showSleepTimer = true },
+                                    onOpenInfoPage = { currentSubScreen = SubScreen.InfoDetail(it) }
                                 )
                             }
                         }
@@ -351,7 +518,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                 .height(60.dp)
                                 .testTag("mobile_floating_nav"),
                             shape = RoundedCornerShape(30.dp),
-                            color = KangleiNavBg,
+                            color = SeitharolNavBg,
                             shadowElevation = 10.dp
                         ) {
                             Row(
@@ -364,19 +531,23 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                     Surface(
                                         modifier = Modifier.size(44.dp),
                                         shape = CircleShape,
-                                        color = if (isSelected) KangleiNavActive else Color.Transparent,
+                                        color = if (isSelected) SeitharolNavActive else Color.Transparent,
                                         onClick = {
                                             currentSubScreen = SubScreen.None
                                             currentDestination = dest
                                         }
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = dest.icon,
-                                                contentDescription = dest.label,
-                                                tint = Color.White,
-                                                modifier = Modifier.size(20.dp)
-                                            )
+                                            if (dest == AppDestination.HOME) {
+                                                HomeNavSvgIcon(tint = Color.White, modifier = Modifier.size(20.dp))
+                                            } else {
+                                                Icon(
+                                                    imageVector = dest.icon,
+                                                    contentDescription = dest.label,
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -449,8 +620,10 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                 playlists = playlists,
                 onSelectPlaylist = { plId ->
                     viewModel.addTrackToPlaylist(plId, track.id)
+                    trackToAddToPlaylist = null
                 },
                 onCreateNewPlaylist = {
+                    pendingTrackForNewPlaylist = track
                     trackToAddToPlaylist = null
                     showCreatePlaylistDialog = true
                 },
@@ -461,9 +634,14 @@ fun CascadeApp(viewModel: CascadeViewModel) {
         if (showCreatePlaylistDialog) {
             CreatePlaylistDialog(
                 onConfirm = { name ->
-                    viewModel.createPlaylist(name, "User created playlist")
+                    viewModel.createPlaylist(name, "User created playlist", pendingTrackForNewPlaylist)
+                    pendingTrackForNewPlaylist = null
+                    showCreatePlaylistDialog = false
                 },
-                onDismiss = { showCreatePlaylistDialog = false }
+                onDismiss = {
+                    showCreatePlaylistDialog = false
+                    pendingTrackForNewPlaylist = null
+                }
             )
         }
     }

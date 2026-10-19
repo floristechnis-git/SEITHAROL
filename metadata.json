@@ -1,5 +1,5 @@
 {
-  "name": "Kanglei Tune",
+  "name": "SEITHAROL",
   "description": "Offline-first YouTube Music client with on-device resolution, local database caching, seamless offline playback, adaptive mobile/tablet layout, and multi-tier audio controls.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

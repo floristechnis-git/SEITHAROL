@@ -45,7 +45,7 @@ fun ShareArtistModal(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = modalSheetState,
-        containerColor = KangleiBg,
+        containerColor = SeitharolBg,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         dragHandle = {
             Box(
@@ -54,7 +54,7 @@ fun ShareArtistModal(
                     .width(40.dp)
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(KangleiHandleBar)
+                    .background(SeitharolHandleBar)
             )
         }
     ) {
@@ -70,7 +70,7 @@ fun ShareArtistModal(
                 fontFamily = SyneFontFamily,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 18.sp,
-                color = KangleiDark
+                color = SeitharolDark
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -101,7 +101,7 @@ fun ShareArtistModal(
                         }
                     }
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text("Telegram", fontSize = 12.sp, fontFamily = OutfitFontFamily, color = KangleiDark)
+                    Text("Telegram", fontSize = 12.sp, fontFamily = OutfitFontFamily, color = SeitharolDark)
                 }
 
                 // WhatsApp
@@ -124,7 +124,7 @@ fun ShareArtistModal(
                         }
                     }
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text("WhatsApp", fontSize = 12.sp, fontFamily = OutfitFontFamily, color = KangleiDark)
+                    Text("WhatsApp", fontSize = 12.sp, fontFamily = OutfitFontFamily, color = SeitharolDark)
                 }
 
                 // Copy Link
@@ -135,7 +135,7 @@ fun ShareArtistModal(
                     Surface(
                         modifier = Modifier.size(54.dp),
                         shape = CircleShape,
-                        color = KangleiDark
+                        color = SeitharolDark
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
@@ -147,7 +147,7 @@ fun ShareArtistModal(
                         }
                     }
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text("Link", fontSize = 12.sp, fontFamily = OutfitFontFamily, color = KangleiDark)
+                    Text("Link", fontSize = 12.sp, fontFamily = OutfitFontFamily, color = SeitharolDark)
                 }
 
                 // More
@@ -164,13 +164,13 @@ fun ShareArtistModal(
                             Icon(
                                 imageVector = Icons.Default.MoreHoriz,
                                 contentDescription = "More",
-                                tint = KangleiDark,
+                                tint = SeitharolDark,
                                 modifier = Modifier.size(24.dp)
                             )
                         }
                     }
                     Spacer(modifier = Modifier.height(6.dp))
-                    Text("More", fontSize = 12.sp, fontFamily = OutfitFontFamily, color = KangleiDark)
+                    Text("More", fontSize = 12.sp, fontFamily = OutfitFontFamily, color = SeitharolDark)
                 }
             }
 

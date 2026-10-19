@@ -48,7 +48,11 @@ class MainActivity : ComponentActivity() {
             val userSettings by appPreferences.settings.collectAsState()
             val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
             val userDarkSetting by viewModel.isDarkMode.collectAsState()
-            val effectiveDark = userDarkSetting ?: systemDark
+            val effectiveDark = when (userSettings.themeMode) {
+                "LIGHT" -> false
+                "DARK" -> true
+                else -> userDarkSetting ?: systemDark
+            }
             var isSplashFinished by remember { mutableStateOf(false) }
 
             CascadeTheme(darkTheme = effectiveDark) {

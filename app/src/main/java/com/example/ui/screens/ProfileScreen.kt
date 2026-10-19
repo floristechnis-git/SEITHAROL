@@ -37,6 +37,7 @@ fun ProfileScreen(
     onNavigateToSoundSettings: () -> Unit,
     onOpenNotifications: () -> Unit,
     onOpenSleepTimer: () -> Unit,
+    onOpenInfoPage: (com.seitharol.ui.settings.InfoPageType) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -60,18 +61,18 @@ fun ProfileScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .background(KangleiBg)
+                .background(SeitharolBg)
                 .testTag("profile_screen"),
             contentPadding = PaddingValues(bottom = 140.dp)
         ) {
-            // Top 300dp Dark Header: Uses KangleiNavBg (#0D0D0D in light, #1C1C1E in dark)
+            // Top 300dp Dark Header: Uses SeitharolNavBg (#0D0D0D in light, #1C1C1E in dark)
             item {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(300.dp)
                         .clip(RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp))
-                        .background(KangleiNavBg)
+                        .background(SeitharolNavBg)
                 ) {
                     // Top Notification button on right
                     Box(
@@ -85,7 +86,7 @@ fun ProfileScreen(
                                 .align(Alignment.TopEnd)
                                 .size(44.dp),
                             shape = CircleShape,
-                            color = KangleiDarkButton,
+                            color = SeitharolDarkButton,
                             onClick = onOpenNotifications
                         ) {
                             Box(contentAlignment = Alignment.Center) {
@@ -187,7 +188,7 @@ fun ProfileScreen(
                                 .clickable { showEditProfileDialog = true }
                                 .testTag("profile_account_card"),
                             shape = RoundedCornerShape(20.dp),
-                            color = KangleiWhite
+                            color = SeitharolWhite
                         ) {
                             Column(
                                 modifier = Modifier
@@ -198,7 +199,7 @@ fun ProfileScreen(
                                 Icon(
                                     imageVector = Icons.Outlined.Person,
                                     contentDescription = null,
-                                    tint = KangleiDark,
+                                    tint = SeitharolDark,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Text(
@@ -206,7 +207,7 @@ fun ProfileScreen(
                                     fontSize = 14.sp,
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Medium,
-                                    color = KangleiDark
+                                    color = SeitharolDark
                                 )
                             }
                         }
@@ -220,7 +221,7 @@ fun ProfileScreen(
                                 .clickable { showSubInfo = true }
                                 .testTag("profile_sub_card"),
                             shape = RoundedCornerShape(20.dp),
-                            color = KangleiWhite
+                            color = SeitharolWhite
                         ) {
                             Column(
                                 modifier = Modifier
@@ -231,7 +232,7 @@ fun ProfileScreen(
                                 Icon(
                                     imageVector = Icons.Outlined.CardMembership,
                                     contentDescription = null,
-                                    tint = KangleiDark,
+                                    tint = SeitharolDark,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Text(
@@ -239,7 +240,7 @@ fun ProfileScreen(
                                     fontSize = 14.sp,
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Medium,
-                                    color = KangleiDark
+                                    color = SeitharolDark
                                 )
                             }
                         }
@@ -259,7 +260,7 @@ fun ProfileScreen(
                                 .clickable(onClick = onOpenSleepTimer)
                                 .testTag("profile_payment_card"),
                             shape = RoundedCornerShape(20.dp),
-                            color = KangleiWhite
+                            color = SeitharolWhite
                         ) {
                             Column(
                                 modifier = Modifier
@@ -270,7 +271,7 @@ fun ProfileScreen(
                                 Icon(
                                     imageVector = Icons.Outlined.Timer,
                                     contentDescription = null,
-                                    tint = KangleiDark,
+                                    tint = SeitharolDark,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Text(
@@ -278,7 +279,7 @@ fun ProfileScreen(
                                     fontSize = 14.sp,
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Medium,
-                                    color = KangleiDark
+                                    color = SeitharolDark
                                 )
                             }
                         }
@@ -292,7 +293,7 @@ fun ProfileScreen(
                                 .clickable(onClick = onNavigateToSoundSettings)
                                 .testTag("profile_settings_card"),
                             shape = RoundedCornerShape(20.dp),
-                            color = KangleiWhite
+                            color = SeitharolWhite
                         ) {
                             Column(
                                 modifier = Modifier
@@ -303,7 +304,7 @@ fun ProfileScreen(
                                 Icon(
                                     imageVector = Icons.Outlined.Settings,
                                     contentDescription = null,
-                                    tint = KangleiDark,
+                                    tint = SeitharolDark,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Text(
@@ -311,7 +312,7 @@ fun ProfileScreen(
                                     fontSize = 14.sp,
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Medium,
-                                    color = KangleiDark
+                                    color = SeitharolDark
                                 )
                             }
                         }
@@ -327,7 +328,7 @@ fun ProfileScreen(
                             .fillMaxWidth()
                             .padding(horizontal = 20.dp, vertical = 4.dp),
                         shape = RoundedCornerShape(20.dp),
-                        color = KangleiWhite
+                        color = SeitharolWhite
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
@@ -335,14 +336,14 @@ fun ProfileScreen(
                                 fontFamily = SyneFontFamily,
                                 fontWeight = FontWeight.Medium,
                                 fontSize = 15.sp,
-                                color = KangleiDark
+                                color = SeitharolDark
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             val mb = (totalDownloadedBytes / (1024 * 1024.0))
                             Text(
                                 text = "${downloadedTracks.size} verified offline tracks (${String.format("%.1f", mb)} MB) in local Room SQLite database.",
                                 fontSize = 12.sp,
-                                color = KangleiTextSecondary,
+                                color = SeitharolTextSecondary,
                                 fontFamily = OutfitFontFamily
                             )
                         }
@@ -350,51 +351,63 @@ fun ProfileScreen(
                 }
             }
 
-            // Dark Mode Quick Toggle Card
+            // Appearance Section (Use Device Theme as default, Dark Mode, Light Mode)
             item {
-                val isDark = LocalIsDarkTheme.current
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp, vertical = 6.dp)
-                        .testTag("profile_dark_mode_card"),
+                        .testTag("profile_appearance_card"),
                     shape = RoundedCornerShape(20.dp),
-                    color = KangleiWhite
+                    color = SeitharolWhite
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Dark Mode",
-                                fontSize = 15.sp,
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.Medium,
-                                color = KangleiDark
-                            )
-                            Text(
-                                text = if (isDark) "Deep OLED Dark Theme enabled" else "Minimal Stone Light Theme enabled",
-                                fontSize = 12.sp,
-                                fontFamily = OutfitFontFamily,
-                                color = KangleiTextSecondary
-                            )
-                        }
-
-                        Switch(
-                            checked = isDark,
-                            onCheckedChange = { viewModel.setDarkMode(it) },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color.White,
-                                checkedTrackColor = KangleiGreen,
-                                uncheckedThumbColor = Color.White,
-                                uncheckedTrackColor = Color(0xFFCCCCCC)
-                            ),
-                            modifier = Modifier.testTag("profile_dark_mode_switch")
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Appearance",
+                            fontSize = 15.sp,
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            color = SeitharolDark
                         )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        val modes = listOf(
+                            Triple("SYSTEM", "Use Device Theme (System Default)", "Follows your device system dark/light appearance"),
+                            Triple("DARK", "Dark Mode", "Deep OLED Dark Theme"),
+                            Triple("LIGHT", "Light Mode", "Clean Stone Light Theme")
+                        )
+
+                        modes.forEach { (modeKey, title, subtitle) ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { appPreferences.setThemeMode(modeKey) }
+                                    .padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = userSettings.themeMode == modeKey,
+                                    onClick = { appPreferences.setThemeMode(modeKey) }
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = title,
+                                        fontSize = 14.sp,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.Medium,
+                                        color = SeitharolDark
+                                    )
+                                    Text(
+                                        text = subtitle,
+                                        fontSize = 11.sp,
+                                        fontFamily = OutfitFontFamily,
+                                        color = SeitharolTextSecondary
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -406,7 +419,7 @@ fun ProfileScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp, vertical = 6.dp),
                     shape = RoundedCornerShape(20.dp),
-                    color = KangleiWhite
+                    color = SeitharolWhite
                 ) {
                     Row(
                         modifier = Modifier
@@ -421,13 +434,13 @@ fun ProfileScreen(
                                 fontSize = 15.sp,
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = FontWeight.Medium,
-                                color = KangleiDark
+                                color = SeitharolDark
                             )
                             Text(
                                 text = "Forces pure on-device cached playback",
                                 fontSize = 12.sp,
                                 fontFamily = OutfitFontFamily,
-                                color = KangleiTextSecondary
+                                color = SeitharolTextSecondary
                             )
                         }
 
@@ -436,9 +449,63 @@ fun ProfileScreen(
                             onCheckedChange = { viewModel.setOfflineMode(it) },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color.White,
-                                checkedTrackColor = KangleiDark
+                                checkedTrackColor = SeitharolDark
                             )
                         )
+                    }
+                }
+            }
+
+            // "About Us" Clean Borderless & Background-Free Section
+            item {
+                Spacer(modifier = Modifier.height(14.dp))
+                Text(
+                    text = "About Us",
+                    fontFamily = SyneFontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 17.sp,
+                    color = SeitharolDark,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
+                )
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = SeitharolDarkCard,
+                    tonalElevation = 2.dp
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                    ) {
+                        com.seitharol.ui.settings.InfoPageType.entries.forEachIndexed { index, page ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { onOpenInfoPage(page) }
+                                    .padding(vertical = 14.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = page.title,
+                                    fontFamily = OutfitFontFamily,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = SeitharolDark
+                                )
+                                Text("›", style = MaterialTheme.typography.titleLarge, color = SeitharolTextSecondary)
+                            }
+                            if (index < com.seitharol.ui.settings.InfoPageType.entries.lastIndex) {
+                                HorizontalDivider(
+                                    thickness = 1.dp,
+                                    color = SeitharolDivider
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -458,7 +525,7 @@ fun ProfileScreen(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Logout,
                         contentDescription = "Clear Cache & Reset",
-                        tint = KangleiDark,
+                        tint = SeitharolDark,
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
@@ -467,7 +534,7 @@ fun ProfileScreen(
                         fontFamily = OutfitFontFamily,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
-                        color = KangleiDark
+                        color = SeitharolDark
                     )
                 }
             }
@@ -477,7 +544,7 @@ fun ProfileScreen(
         if (showSubInfo) {
             ModalBottomSheet(
                 onDismissRequest = { showSubInfo = false },
-                containerColor = KangleiWhite,
+                containerColor = SeitharolWhite,
                 shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
             ) {
                 Column(
@@ -490,17 +557,17 @@ fun ProfileScreen(
                         fontFamily = SyneFontFamily,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = KangleiDark
+                        color = SeitharolDark
                     )
                     Text(
                         text = "100% On-Device Standalone Client ($currentPackVersion)",
                         fontFamily = OutfitFontFamily,
                         fontSize = 12.sp,
-                        color = KangleiTextSecondary
+                        color = SeitharolTextSecondary
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
-                    HorizontalDivider(color = KangleiBorder)
+                    HorizontalDivider(color = SeitharolBorder)
                     Spacer(modifier = Modifier.height(12.dp))
 
                     val features = listOf(
@@ -521,7 +588,7 @@ fun ProfileScreen(
                             Icon(
                                 imageVector = Icons.Default.CheckCircle,
                                 contentDescription = null,
-                                tint = KangleiGreen,
+                                tint = SeitharolGreen,
                                 modifier = Modifier
                                     .size(20.dp)
                                     .padding(top = 2.dp)
@@ -533,13 +600,13 @@ fun ProfileScreen(
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 14.sp,
-                                    color = KangleiDark
+                                    color = SeitharolDark
                                 )
                                 Text(
                                     text = desc,
                                     fontFamily = OutfitFontFamily,
                                     fontSize = 12.sp,
-                                    color = KangleiTextSecondary
+                                    color = SeitharolTextSecondary
                                 )
                             }
                         }
@@ -551,12 +618,12 @@ fun ProfileScreen(
                         onClick = { showSubInfo = false },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = KangleiPillBg,
-                            contentColor = KangleiPillText
+                            containerColor = SeitharolPillBg,
+                            contentColor = SeitharolPillText
                         ),
                         shape = RoundedCornerShape(20.dp)
                     ) {
-                        Text("Close", color = KangleiPillText, fontFamily = OutfitFontFamily)
+                        Text("Close", color = SeitharolPillText, fontFamily = OutfitFontFamily)
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -568,7 +635,7 @@ fun ProfileScreen(
         if (showClearCacheDialog) {
             AlertDialog(
                 onDismissRequest = { showClearCacheDialog = false },
-                containerColor = KangleiWhite,
+                containerColor = SeitharolWhite,
                 shape = RoundedCornerShape(24.dp),
                 title = {
                     Text(
@@ -576,7 +643,7 @@ fun ProfileScreen(
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 18.sp,
-                        color = KangleiDark
+                        color = SeitharolDark
                     )
                 },
                 text = {
@@ -584,7 +651,7 @@ fun ProfileScreen(
                         text = "This will flush in-memory resolved audio streams, clear temporary search history, and reset playback checkpoints. Your downloaded offline songs will be preserved.",
                         fontFamily = OutfitFontFamily,
                         fontSize = 13.sp,
-                        color = KangleiTextSecondary
+                        color = SeitharolTextSecondary
                     )
                 },
                 confirmButton = {
@@ -597,7 +664,7 @@ fun ProfileScreen(
                             }
                         },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = KangleiRedHeart,
+                            containerColor = SeitharolRedHeart,
                             contentColor = Color.White
                         ),
                         shape = RoundedCornerShape(20.dp)
@@ -607,7 +674,7 @@ fun ProfileScreen(
                 },
                 dismissButton = {
                     TextButton(onClick = { showClearCacheDialog = false }) {
-                        Text("Cancel", color = KangleiTextSecondary, fontFamily = OutfitFontFamily)
+                        Text("Cancel", color = SeitharolTextSecondary, fontFamily = OutfitFontFamily)
                     }
                 }
             )

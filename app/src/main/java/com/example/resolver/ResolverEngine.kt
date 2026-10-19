@@ -115,11 +115,24 @@ class ResolverEngine {
 
         // 1. Verified Local File Priority
         if (track.isDownloaded && !track.localPath.isNullOrBlank()) {
-            val localFile = File(track.localPath)
-            if (localFile.exists() && localFile.length() > 10_240L) {
+            if (track.localPath.startsWith("content://")) {
                 return ResolvedStream(
                     videoId = rawId.ifBlank { "local_track" },
-                    streamUrl = if (track.localPath.startsWith("http")) track.localPath else "file://${track.localPath}",
+                    streamUrl = track.localPath,
+                    itag = track.itag,
+                    codec = track.codec,
+                    bitrate = "320 kbps",
+                    expiresAtMs = now + 86400000L,
+                    isLocal = true,
+                    resolvedBy = "Public Device Music (MediaStore)",
+                    latencyMs = 1
+                )
+            }
+            val localFile = File(track.localPath.removePrefix("file://"))
+            if (localFile.exists() && localFile.length() > 0L) {
+                return ResolvedStream(
+                    videoId = rawId.ifBlank { "local_track" },
+                    streamUrl = if (track.localPath.startsWith("http")) track.localPath else "file://${localFile.absolutePath}",
                     itag = track.itag,
                     codec = track.codec,
                     bitrate = "160 kbps",
@@ -132,8 +145,9 @@ class ResolverEngine {
         }
 
         if (_isOfflineMode.value) {
-            val localFile = if (!track.localPath.isNullOrBlank()) File(track.localPath) else null
-            if (localFile == null || !localFile.exists() || localFile.length() <= 10_240L) {
+            val isContent = track.localPath?.startsWith("content://") == true
+            val isLocalExisting = !track.localPath.isNullOrBlank() && (isContent || File(track.localPath.removePrefix("file://")).exists())
+            if (!isLocalExisting) {
                 throw IllegalStateException("Offline Mode active. Stream not cached locally.")
             }
         }

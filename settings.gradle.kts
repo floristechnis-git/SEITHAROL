@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Kanglei Tune"
+rootProject.name = "SEITHAROL"
 
 include(":app")

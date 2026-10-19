@@ -29,13 +29,13 @@ fun MoodMapCanvas(
 ) {
     var selectedPoint by remember { mutableStateOf<Offset?>(null) }
     var selectedQuadrantLabel by remember { mutableStateOf("Tap any region to start Mood Radio") }
-    val darkColor = KangleiDark
+    val darkColor = SeitharolDark
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
-            .background(KangleiWhite)
+            .background(SeitharolWhite)
             .padding(16.dp)
             .testTag("mood_map_container")
     ) {
@@ -48,14 +48,14 @@ fun MoodMapCanvas(
                 Text(
                     text = "2D Local Mood Engine",
                     fontFamily = SyneFontFamily,
-                    color = KangleiDark,
+                    color = SeitharolDark,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium
                 )
                 Text(
                     text = selectedQuadrantLabel,
                     fontFamily = OutfitFontFamily,
-                    color = KangleiTextSecondary,
+                    color = SeitharolTextSecondary,
                     fontSize = 12.sp
                 )
             }
@@ -68,7 +68,7 @@ fun MoodMapCanvas(
                 .fillMaxWidth()
                 .height(180.dp)
                 .clip(RoundedCornerShape(14.dp))
-                .background(KangleiCardElevated)
+                .background(SeitharolCardElevated)
         ) {
             Canvas(
                 modifier = Modifier
@@ -143,7 +143,7 @@ fun MoodMapCanvas(
             // Quadrant labels overlay
             Text(
                 text = "High Energy",
-                color = KangleiTextSecondary,
+                color = SeitharolTextSecondary,
                 fontSize = 10.sp,
                 fontFamily = OutfitFontFamily,
                 modifier = Modifier
@@ -152,7 +152,7 @@ fun MoodMapCanvas(
             )
             Text(
                 text = "Low Energy",
-                color = KangleiTextSecondary,
+                color = SeitharolTextSecondary,
                 fontSize = 10.sp,
                 fontFamily = OutfitFontFamily,
                 modifier = Modifier
@@ -161,7 +161,7 @@ fun MoodMapCanvas(
             )
             Text(
                 text = "Calm",
-                color = KangleiTextSecondary,
+                color = SeitharolTextSecondary,
                 fontSize = 10.sp,
                 fontFamily = OutfitFontFamily,
                 modifier = Modifier
@@ -170,7 +170,7 @@ fun MoodMapCanvas(
             )
             Text(
                 text = "Upbeat",
-                color = KangleiTextSecondary,
+                color = SeitharolTextSecondary,
                 fontSize = 10.sp,
                 fontFamily = OutfitFontFamily,
                 modifier = Modifier

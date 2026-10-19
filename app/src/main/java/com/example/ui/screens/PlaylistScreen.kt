@@ -51,12 +51,8 @@ fun PlaylistScreen(
     val playlists by viewModel.playlists.collectAsState()
     val allTracks by viewModel.allTracks.collectAsState()
 
-    val currentPlaylist = remember(playlistId, playlists) {
-        playlists.firstOrNull { it.id == playlistId } ?: Playlist(
-            id = playlistId,
-            title = if (playlistId.contains("rock", ignoreCase = true)) "Imphal Rock" else "Pena Sessions",
-            description = "The best curated tracks every week"
-        )
+    val savedPlaylist = remember(playlistId, playlists) {
+        playlists.firstOrNull { it.id == playlistId }
     }
 
     var remotePlaylistTracks by remember { mutableStateOf<List<Track>>(emptyList()) }
@@ -70,7 +66,42 @@ fun PlaylistScreen(
         }
     }
 
-    val playlistTracks = remotePlaylistTracks
+    val displayTitle = remember(savedPlaylist, remotePlaylistTracks, playlistId) {
+        savedPlaylist?.title
+            ?: remotePlaylistTracks.firstOrNull()?.album?.takeIf { it.isNotBlank() && it != "Single" }
+            ?: remotePlaylistTracks.firstOrNull()?.let { "${it.artist} Collection" }
+            ?: when {
+                playlistId.startsWith("RD") -> "YouTube Mix"
+                playlistId.startsWith("MPREb_") || playlistId.startsWith("OLAK5uy_") -> "Album"
+                else -> "Playlist"
+            }
+    }
+
+    val displayDescription = remember(savedPlaylist, remotePlaylistTracks, isLoadingPlaylist) {
+        savedPlaylist?.description?.takeIf { it.isNotBlank() }
+            ?: if (isLoadingPlaylist) "Loading tracks..."
+            else if (remotePlaylistTracks.isNotEmpty()) "${remotePlaylistTracks.size} tracks • Official Release"
+            else "Curated Collection"
+    }
+
+    val currentPlaylist = remember(savedPlaylist, playlistId, displayTitle, displayDescription, remotePlaylistTracks) {
+        savedPlaylist ?: Playlist(
+            id = playlistId,
+            title = displayTitle,
+            description = displayDescription,
+            coverUrl = remotePlaylistTracks.firstOrNull()?.artUrl,
+            trackCount = remotePlaylistTracks.size
+        )
+    }
+
+    var searchQuery by remember { mutableStateOf("") }
+    val filteredTracks = remember(remotePlaylistTracks, searchQuery) {
+        if (searchQuery.isBlank()) remotePlaylistTracks
+        else remotePlaylistTracks.filter {
+            it.title.contains(searchQuery, ignoreCase = true) ||
+                it.artist.contains(searchQuery, ignoreCase = true)
+        }
+    }
 
     var showMoreSheet by remember { mutableStateOf(false) }
     var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
@@ -79,7 +110,7 @@ fun PlaylistScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .background(KangleiBg)
+            .background(SeitharolBg)
             .testTag("playlist_screen"),
         contentPadding = PaddingValues(bottom = 140.dp)
     ) {
@@ -108,7 +139,7 @@ fun PlaylistScreen(
                     Surface(
                         modifier = Modifier.size(44.dp),
                         shape = CircleShape,
-                        color = KangleiGlassDark,
+                        color = SeitharolGlassDark,
                         onClick = onBack
                     ) {
                         Box(contentAlignment = Alignment.Center) {
@@ -125,7 +156,7 @@ fun PlaylistScreen(
                     Surface(
                         modifier = Modifier.size(44.dp),
                         shape = CircleShape,
-                        color = KangleiGlassDark,
+                        color = SeitharolGlassDark,
                         onClick = { showMoreSheet = true }
                     ) {
                         Box(contentAlignment = Alignment.Center) {
@@ -174,13 +205,13 @@ fun PlaylistScreen(
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier.clickable {
-                                playlistTracks.forEach { viewModel.startDownload(it, DownloadTier.HIGH) }
+                                filteredTracks.forEach { viewModel.startDownload(it, DownloadTier.HIGH) }
                             }
                         ) {
                             Surface(
                                 modifier = Modifier.size(48.dp),
                                 shape = CircleShape,
-                                color = KangleiGlassDarkActive
+                                color = SeitharolGlassDarkActive
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
@@ -204,7 +235,7 @@ fun PlaylistScreen(
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier.clickable {
-                                if (playlistTracks.isNotEmpty()) viewModel.playQueue(playlistTracks, 0)
+                                if (filteredTracks.isNotEmpty()) viewModel.playQueue(filteredTracks, 0)
                             }
                         ) {
                             Surface(
@@ -240,13 +271,13 @@ fun PlaylistScreen(
                             Surface(
                                 modifier = Modifier.size(48.dp),
                                 shape = CircleShape,
-                                color = KangleiGlassDarkActive
+                                color = SeitharolGlassDarkActive
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
                                         imageVector = if (currentPlaylist.isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
                                         contentDescription = "Like",
-                                        tint = if (currentPlaylist.isLiked) KangleiRedHeart else Color.White,
+                                        tint = if (currentPlaylist.isLiked) SeitharolRedHeart else Color.White,
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
@@ -264,21 +295,41 @@ fun PlaylistScreen(
             }
         }
 
+        // Dedicated Search Bar for this Playlist
+        item {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("Search in ${currentPlaylist.title}...") },
+                singleLine = true,
+                shape = RoundedCornerShape(24.dp),
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear search")
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+        }
+
         // Section Title
         item {
-            Spacer(modifier = Modifier.height(18.dp))
             Text(
-                text = "Tracks (${playlistTracks.size})",
+                text = "Tracks (${filteredTracks.size})",
                 fontFamily = SyneFontFamily,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 18.sp,
-                color = KangleiDark,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                color = SeitharolDark,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
             )
         }
 
         // Playlist tracks
-        if (playlistTracks.isEmpty()) {
+        if (filteredTracks.isEmpty()) {
             item {
                 Box(
                     modifier = Modifier
@@ -288,13 +339,13 @@ fun PlaylistScreen(
                 ) {
                     if (isLoadingPlaylist) {
                         CircularProgressIndicator(
-                            color = KangleiDark,
+                            color = SeitharolDark,
                             modifier = Modifier.size(36.dp)
                         )
                     } else {
                         Text(
-                            text = "This playlist is empty.\nAdd tracks from Search, Home, or Player to build your playlist.",
-                            color = KangleiTextSecondary,
+                            text = if (searchQuery.isNotEmpty()) "No tracks matched '$searchQuery'" else "This playlist is empty.\nAdd tracks from Search, Home, or Player to build your playlist.",
+                            color = SeitharolTextSecondary,
                             fontFamily = OutfitFontFamily,
                             fontSize = 14.sp,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -303,20 +354,22 @@ fun PlaylistScreen(
                 }
             }
         } else {
-            itemsIndexed(playlistTracks) { index, track ->
-                TrackCard(
-                    track = track,
-                    isPlaying = playerState.currentTrack?.id == track.id,
-                    rankNumber = index + 1,
-                    onTrackClick = { viewModel.playTrack(track) },
-                    onLikeClick = { viewModel.toggleLike(track) },
-                    onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
-                    onPlayNextClick = { viewModel.playNext(track) },
-                    onAddToQueueClick = { viewModel.addToQueue(track) },
-                    onAddToPlaylistClick = { trackToAddToPlaylist = track },
-                    onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
-                )
+            itemsIndexed(filteredTracks, key = { _, track -> "pl_tr_${track.id}" }) { index, track ->
+                ClampedSwipeToDeleteRow(onDelete = { viewModel.removeTrackFromPlaylist(currentPlaylist.id, track.id) }) {
+                    TrackCard(
+                        track = track,
+                        isPlaying = playerState.currentTrack?.id == track.id,
+                        rankNumber = index + 1,
+                        onTrackClick = { viewModel.playTrack(track) },
+                        onLikeClick = { viewModel.toggleLike(track) },
+                        onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
+                        onPlayNextClick = { viewModel.playNext(track) },
+                        onAddToQueueClick = { viewModel.addToQueue(track) },
+                        onAddToPlaylistClick = { trackToAddToPlaylist = track },
+                        onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
+                    )
+                }
             }
         }
     }
@@ -325,7 +378,7 @@ fun PlaylistScreen(
     if (showMoreSheet) {
         ModalBottomSheet(
             onDismissRequest = { showMoreSheet = false },
-            containerColor = KangleiWhite,
+            containerColor = SeitharolWhite,
             shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
         ) {
             Column(
@@ -338,16 +391,16 @@ fun PlaylistScreen(
                     fontFamily = SyneFontFamily,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = KangleiDark
+                    color = SeitharolDark
                 )
                 Text(
                     text = "${playlistTracks.size} tracks",
                     fontFamily = OutfitFontFamily,
                     fontSize = 12.sp,
-                    color = KangleiTextSecondary
+                    color = SeitharolTextSecondary
                 )
                 Spacer(modifier = Modifier.height(16.dp))
-                HorizontalDivider(color = KangleiBorder)
+                HorizontalDivider(color = SeitharolBorder)
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Play Next
@@ -362,9 +415,9 @@ fun PlaylistScreen(
                         .padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.PlaylistPlay, contentDescription = null, tint = KangleiDark)
+                    Icon(Icons.Default.PlaylistPlay, contentDescription = null, tint = SeitharolDark)
                     Spacer(modifier = Modifier.width(16.dp))
-                    Text("Play Next", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = KangleiDark)
+                    Text("Play Next", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
                 }
 
                 // Add all to Queue
@@ -379,9 +432,9 @@ fun PlaylistScreen(
                         .padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.QueueMusic, contentDescription = null, tint = KangleiDark)
+                    Icon(Icons.Default.QueueMusic, contentDescription = null, tint = SeitharolDark)
                     Spacer(modifier = Modifier.width(16.dp))
-                    Text("Add all to Queue", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = KangleiDark)
+                    Text("Add all to Queue", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
                 }
 
                 // Download Playlist
@@ -396,9 +449,9 @@ fun PlaylistScreen(
                         .padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Download, contentDescription = null, tint = KangleiDark)
+                    Icon(Icons.Default.Download, contentDescription = null, tint = SeitharolDark)
                     Spacer(modifier = Modifier.width(16.dp))
-                    Text("Download Playlist", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = KangleiDark)
+                    Text("Download Playlist", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
                 }
 
                 // Share
@@ -418,9 +471,9 @@ fun PlaylistScreen(
                         .padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Share, contentDescription = null, tint = KangleiDark)
+                    Icon(Icons.Default.Share, contentDescription = null, tint = SeitharolDark)
                     Spacer(modifier = Modifier.width(16.dp))
-                    Text("Share Playlist", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = KangleiDark)
+                    Text("Share Playlist", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
                 }
             }
         }
@@ -447,7 +500,8 @@ fun PlaylistScreen(
     if (showCreatePlaylistDialog) {
         CreatePlaylistModal(
             onConfirm = { name ->
-                viewModel.createPlaylist(name, "User created playlist")
+                viewModel.createPlaylist(name, "User created playlist", trackToAddToPlaylist)
+                trackToAddToPlaylist = null
                 showCreatePlaylistDialog = false
             },
             onDismiss = {

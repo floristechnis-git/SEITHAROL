@@ -159,7 +159,22 @@ class MusicRepository(
             playlistDao.insertPlaylistItems(
                 listOf(PlaylistItemEntity(playlistId = playlistId, position = position, trackId = trackId))
             )
+            val track = trackDao.getTrackById(trackId)
+            if (track != null && track.artUrl.isNotBlank()) {
+                val pl = playlistDao.getPlaylistById(playlistId)
+                if (pl != null && pl.coverUrl.isNullOrBlank()) {
+                    playlistDao.insertPlaylist(pl.copy(coverUrl = track.artUrl))
+                }
+            }
         }
+
+    suspend fun deletePlaylist(playlistId: String) = withContext(Dispatchers.IO) {
+        playlistDao.deletePlaylist(playlistId)
+    }
+
+    suspend fun removeTrackFromPlaylist(playlistId: String, trackId: String) = withContext(Dispatchers.IO) {
+        playlistDao.removeTrackFromPlaylist(playlistId, trackId)
+    }
 
     suspend fun getSponsorSegments(videoId: String): List<SponsorSegment> = withContext(Dispatchers.IO) {
         sponsorDao.getSegmentsForVideo(videoId).map {

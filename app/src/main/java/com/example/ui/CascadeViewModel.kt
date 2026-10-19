@@ -26,9 +26,7 @@ import kotlinx.coroutines.launch
 enum class ProviderFilter(val label: String) {
     ALL("All"),
     YOUTUBE("YouTube"),
-    SPOTIFY("Spotify"),
     JIOSAAVN("JioSaavn"),
-    GAANA("Gaana"),
     LOCAL("Downloaded")
 }
 
@@ -87,6 +85,16 @@ class CascadeViewModel(
 
     val skipNotice: SharedFlow<String> = playerManager.skipEvent
 
+    // Artist navigation event — emitted when user clicks an artist name in PlayerScreen
+    private val _artistNavigationEvent = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val artistNavigationEvent: SharedFlow<String> = _artistNavigationEvent.asSharedFlow()
+
+    fun navigateToArtist(artistName: String) {
+        viewModelScope.launch {
+            _artistNavigationEvent.emit(artistName)
+        }
+    }
+
     // Live Home Screen & Personalization State
     val trendingHits = MutableStateFlow<List<Track>>(emptyList())
     val freshReleases = MutableStateFlow<List<Track>>(emptyList())
@@ -104,6 +112,12 @@ class CascadeViewModel(
     val userPlaylists: StateFlow<Map<String, List<Track>>> = _userPlaylists.asStateFlow()
 
     private var moodFetchJob: Job? = null
+
+    // Discover Shorts Feed & Seeder State
+    val spotifyProviderInstance = com.seitharol.data.provider.DefaultSpotifyMetadataProvider()
+    val discoverFeedSeeder = com.seitharol.domain.discover.DiscoverFeedSeeder(spotifyProviderInstance)
+    private val _discoverTracks = MutableStateFlow<List<com.seitharol.domain.model.NormalizedTrack>>(emptyList())
+    val discoverTracks: StateFlow<List<com.seitharol.domain.model.NormalizedTrack>> = _discoverTracks.asStateFlow()
 
     // Search state
     val searchQuery = MutableStateFlow("")
@@ -138,14 +152,6 @@ class CascadeViewModel(
                         val saavn = resolverEngine.jioSaavnProvider.searchTracks(clean, limit = 25).map { it.toDomainTrack() }
                         onlineSearchResults.value = saavn
                     }
-                    ProviderFilter.SPOTIFY -> {
-                        val spot = resolverEngine.spotifyProvider.searchTracks(clean, limit = 25).map { it.toDomainTrack() }
-                        onlineSearchResults.value = spot
-                    }
-                    ProviderFilter.GAANA -> {
-                        val gaana = resolverEngine.jioSaavnProvider.searchTracks("$clean Hindi", limit = 25).map { it.toDomainTrack() }
-                        onlineSearchResults.value = gaana
-                    }
                     ProviderFilter.LOCAL -> {
                         onlineSearchResults.value = emptyList()
                     }
@@ -161,6 +167,7 @@ class CascadeViewModel(
     init {
         // 1. Initial load of real YouTube Music for Home Screen & Personalization
         loadHomeScreenMusic()
+        loadDiscoverFeed()
 
         // 2. Trigger live search with debounce when online
         viewModelScope.launch {
@@ -213,6 +220,54 @@ class CascadeViewModel(
                 isLoadingHome.value = false
             }
         }
+    }
+
+    fun loadDiscoverFeed() {
+        viewModelScope.launch {
+            try {
+                val hist = activeHistory.value.map { it.toNormalizedTrack() }
+                val liked = likedTracks.value.map { it.toNormalizedTrack() }
+                val feed = discoverFeedSeeder.generatePersonalizedFeed(hist, liked)
+                _discoverTracks.value = feed
+            } catch (e: Exception) {
+                Log.w("CascadeViewModel", "Failed to load discover feed: ${e.message}")
+            }
+        }
+    }
+
+    suspend fun searchDiscoverPreviews(query: String): List<com.seitharol.domain.model.NormalizedTrack> {
+        return runCatching {
+            spotifyProviderInstance.searchTracksWithPreviews(query, limit = 20)
+        }.getOrDefault(emptyList())
+    }
+
+    fun playNormalizedTrackFull(track: com.seitharol.domain.model.NormalizedTrack) {
+        val domainTrack = Track(
+            id = track.sourceId,
+            title = track.title,
+            artist = track.artists.firstOrNull() ?: "Unknown",
+            album = track.album ?: "",
+            durationMs = track.durationMs,
+            artUrl = track.artUrl,
+            isLiked = track.isLiked,
+            localPath = track.localPath
+        )
+        playTrack(domainTrack)
+    }
+
+    private fun Track.toNormalizedTrack(): com.seitharol.domain.model.NormalizedTrack {
+        return com.seitharol.domain.model.NormalizedTrack(
+            source = com.seitharol.domain.model.TrackSource.YOUTUBE,
+            sourceId = this.id,
+            title = this.title,
+            artists = listOf(this.artist),
+            album = this.album,
+            durationMs = this.durationMs,
+            artUrl = this.artUrl,
+            isPlayableNatively = true,
+            localPath = this.localPath,
+            isLiked = this.isLiked
+        )
     }
 
     /**
@@ -518,10 +573,31 @@ class CascadeViewModel(
         }
     }
 
-    fun createPlaylist(title: String, desc: String) {
+    fun createPlaylist(title: String, desc: String, initialTrack: Track? = null) {
         viewModelScope.launch {
-            val id = musicRepository.createPlaylist(title, desc)
-            _userPlaylists.value = _userPlaylists.value + (id to emptyList())
+            val id = musicRepository.createPlaylist(title, desc, initialTrack?.artUrl)
+            if (initialTrack != null) {
+                musicRepository.insertTracks(listOf(initialTrack))
+                musicRepository.addTrackToPlaylist(id, initialTrack.id)
+                _userPlaylists.value = _userPlaylists.value + (id to listOf(initialTrack))
+            } else {
+                _userPlaylists.value = _userPlaylists.value + (id to emptyList())
+            }
+        }
+    }
+
+    fun deletePlaylist(playlistId: String) {
+        viewModelScope.launch {
+            musicRepository.deletePlaylist(playlistId)
+            _userPlaylists.value = _userPlaylists.value - playlistId
+        }
+    }
+
+    fun removeTrackFromPlaylist(playlistId: String, trackId: String) {
+        viewModelScope.launch {
+            musicRepository.removeTrackFromPlaylist(playlistId, trackId)
+            val currentList = _userPlaylists.value[playlistId].orEmpty()
+            _userPlaylists.value = _userPlaylists.value + (playlistId to currentList.filterNot { it.id == trackId })
         }
     }
 
@@ -622,11 +698,18 @@ class CascadeViewModel(
 
     private val recommendationRepository = object : com.example.player.RecommendationRepository {
         override suspend fun getRelatedTracks(seedTrack: Track): List<Track> {
-            val query = "${seedTrack.title} ${seedTrack.artist}".trim()
             return try {
-                resolverEngine.youtubeInnerTubeProvider
-                    .searchTracks(query, limit = 10)
+                val automixTracks = resolverEngine.youtubeInnerTubeProvider
+                    .getRadioTracks(seedTrack.id)
                     .map { it.toDomainTrack() }
+                if (automixTracks.isNotEmpty()) {
+                    automixTracks
+                } else {
+                    val query = "${seedTrack.title} ${seedTrack.artist}".trim()
+                    resolverEngine.youtubeInnerTubeProvider
+                        .searchTracks(query, limit = 10)
+                        .map { it.toDomainTrack() }
+                }
             } catch (e: Exception) {
                 emptyList()
             }

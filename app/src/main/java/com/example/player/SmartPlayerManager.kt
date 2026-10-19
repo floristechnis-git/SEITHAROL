@@ -36,6 +36,8 @@ class SmartPlayerManager(
     private var progressJob: Job? = null
     private var sleepTimerJob: Job? = null
     private var prefetchedTrackId: String? = null
+    private var trackRetryCount = 0
+    private var lastFailedTrackId: String? = null
 
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
@@ -87,8 +89,26 @@ class SmartPlayerManager(
                 val artist = currentTrack?.artist?.ifBlank { "Unknown" } ?: "Unknown"
 
                 scope.launch {
-                    _errorEvents.emit("Stream interrupted for '$title' by '$artist'. Retrying...")
                     if (currentTrack != null) {
+                        if (lastFailedTrackId != currentTrack.id) {
+                            lastFailedTrackId = currentTrack.id
+                            trackRetryCount = 0
+                        }
+
+                        if (trackRetryCount >= 3) {
+                            _errorEvents.emit("Playback failed for '$title' after 3 retry attempts. Skipping to next.")
+                            trackRetryCount = 0
+                            lastFailedTrackId = null
+                            if (exoPlayer.hasNextMediaItem()) {
+                                exoPlayer.seekToNextMediaItem()
+                                exoPlayer.prepare()
+                                exoPlayer.play()
+                            }
+                            return@launch
+                        }
+
+                        trackRetryCount++
+                        _errorEvents.emit("Stream interrupted for '$title' by '$artist' (attempt $trackRetryCount/3). Retrying fallback...")
                         retryCurrentTrackResolution(currentTrack)
                     } else if (exoPlayer.hasNextMediaItem()) {
                         exoPlayer.seekToNextMediaItem()

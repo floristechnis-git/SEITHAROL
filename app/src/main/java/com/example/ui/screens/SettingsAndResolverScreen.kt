@@ -37,7 +37,7 @@ fun SettingsAndResolverScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .background(KangleiBg),
+            .background(SeitharolBg),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 140.dp)
     ) {
         item {
@@ -46,12 +46,12 @@ fun SettingsAndResolverScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onBack, modifier = Modifier.testTag("settings_back_btn")) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = KangleiDark)
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = SeitharolDark)
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Column {
-                    Text("Resolver & Audio Engine", fontFamily = SyneFontFamily, color = KangleiDark, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                    Text("Direct on-device resolution pipeline", fontFamily = OutfitFontFamily, color = KangleiTextSecondary, fontSize = 12.sp)
+                    Text("Resolver & Audio Engine", fontFamily = SyneFontFamily, color = SeitharolDark, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Direct on-device resolution pipeline", fontFamily = OutfitFontFamily, color = SeitharolTextSecondary, fontSize = 12.sp)
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
@@ -63,13 +63,13 @@ fun SettingsAndResolverScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(20.dp)),
-                color = KangleiWhite
+                color = SeitharolWhite
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         text = "Audio Pipeline Invariants",
                         fontFamily = SyneFontFamily,
-                        color = KangleiDark,
+                        color = SeitharolDark,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium
                     )
@@ -77,13 +77,13 @@ fun SettingsAndResolverScreen(
                     Text(
                         text = "• Zone 1: On-Device (Direct InnerTube + QuickJS)\n• Zone 2: Self-hosted Node\n• Zone 3: Community Resolver Federation",
                         fontFamily = OutfitFontFamily,
-                        color = KangleiTextSecondary,
+                        color = SeitharolTextSecondary,
                         fontSize = 12.sp,
                         lineHeight = 18.sp
                     )
 
                     Spacer(modifier = Modifier.height(12.dp))
-                    HorizontalDivider(color = KangleiDivider)
+                    HorizontalDivider(color = SeitharolDivider)
                     Spacer(modifier = Modifier.height(12.dp))
 
                     Row(
@@ -91,16 +91,16 @@ fun SettingsAndResolverScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column {
-                            Text("Engine Pack", fontFamily = OutfitFontFamily, color = KangleiTextSecondary, fontSize = 11.sp)
-                            Text(packVersion, fontFamily = OutfitFontFamily, color = KangleiDark, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("Engine Pack", fontFamily = OutfitFontFamily, color = SeitharolTextSecondary, fontSize = 11.sp)
+                            Text(packVersion, fontFamily = OutfitFontFamily, color = SeitharolDark, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
                         Column {
-                            Text("Status", fontFamily = OutfitFontFamily, color = KangleiTextSecondary, fontSize = 11.sp)
-                            Text(circuitBreakerState.name, fontFamily = OutfitFontFamily, color = KangleiGreen, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("Status", fontFamily = OutfitFontFamily, color = SeitharolTextSecondary, fontSize = 11.sp)
+                            Text(circuitBreakerState.name, fontFamily = OutfitFontFamily, color = SeitharolGreen, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
                         Column {
-                            Text("Signatures", fontFamily = OutfitFontFamily, color = KangleiTextSecondary, fontSize = 11.sp)
-                            Text("Verified", fontFamily = OutfitFontFamily, color = KangleiDark, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("Signatures", fontFamily = OutfitFontFamily, color = SeitharolTextSecondary, fontSize = 11.sp)
+                            Text("Verified", fontFamily = OutfitFontFamily, color = SeitharolDark, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -112,7 +112,7 @@ fun SettingsAndResolverScreen(
             Text(
                 text = "Configured Resolver Nodes",
                 fontFamily = SyneFontFamily,
-                color = KangleiDark,
+                color = SeitharolDark,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium
             )
@@ -139,7 +139,7 @@ fun ResolverNodeCard(
             .padding(vertical = 4.dp)
             .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onSelect),
-        color = if (node.isSelected) KangleiWhite else KangleiWhite.copy(alpha = 0.7f),
+        color = if (node.isSelected) SeitharolWhite else SeitharolWhite.copy(alpha = 0.7f),
         shape = RoundedCornerShape(16.dp)
     ) {
         Row(
@@ -149,7 +149,7 @@ fun ResolverNodeCard(
             RadioButton(
                 selected = node.isSelected,
                 onClick = onSelect,
-                colors = RadioButtonDefaults.colors(selectedColor = KangleiDark)
+                colors = RadioButtonDefaults.colors(selectedColor = SeitharolDark)
             )
 
             Spacer(modifier = Modifier.width(10.dp))
@@ -159,7 +159,7 @@ fun ResolverNodeCard(
                     Text(
                         text = node.name,
                         fontFamily = OutfitFontFamily,
-                        color = KangleiDark,
+                        color = SeitharolDark,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium
                     )
@@ -167,7 +167,7 @@ fun ResolverNodeCard(
                     Surface(
                         shape = RoundedCornerShape(4.dp),
                         color = when (node.trustZone) {
-                            TrustZone.ZONE_1_DEVICE -> KangleiGreen.copy(alpha = 0.2f)
+                            TrustZone.ZONE_1_DEVICE -> SeitharolGreen.copy(alpha = 0.2f)
                             TrustZone.ZONE_2_OWN_RESOLVER -> Color(0xFFFFA000).copy(alpha = 0.2f)
                             TrustZone.ZONE_3_COMMUNITY_RESOLVER -> Color(0xFFFF5252).copy(alpha = 0.2f)
                         }
@@ -179,7 +179,7 @@ fun ResolverNodeCard(
                                 TrustZone.ZONE_3_COMMUNITY_RESOLVER -> "ZONE 3"
                             },
                             color = when (node.trustZone) {
-                                TrustZone.ZONE_1_DEVICE -> KangleiDark
+                                TrustZone.ZONE_1_DEVICE -> SeitharolDark
                                 TrustZone.ZONE_2_OWN_RESOLVER -> Color(0xFFE65100)
                                 TrustZone.ZONE_3_COMMUNITY_RESOLVER -> Color(0xFFC62828)
                             },
@@ -194,7 +194,7 @@ fun ResolverNodeCard(
                 Text(
                     text = "${node.url} • ${node.pingMs}ms latency • ${(node.successRate * 100).toInt()}% success",
                     fontFamily = OutfitFontFamily,
-                    color = KangleiTextSecondary,
+                    color = SeitharolTextSecondary,
                     fontSize = 11.sp
                 )
             }

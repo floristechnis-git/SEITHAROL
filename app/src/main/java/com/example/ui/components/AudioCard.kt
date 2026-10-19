@@ -28,7 +28,7 @@ import com.example.data.model.Track
 import com.example.ui.theme.*
 
 /**
- * Standard Track Row from Kanglei Tune design:
+ * Standard Track Row from SEITHAROL design:
  * Clean 56dp height row with rank/thumbnail, track title, artist / play count, and options.
  */
 @Composable
@@ -56,7 +56,7 @@ fun TrackCard(
             .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onTrackClick)
             .testTag("track_card_${track.id}"),
-        color = if (isPlaying) KangleiWhite else Color.Transparent,
+        color = if (isPlaying) SeitharolWhite else Color.Transparent,
         shape = RoundedCornerShape(16.dp)
     ) {
         Row(
@@ -69,7 +69,7 @@ fun TrackCard(
             if (rankNumber != null) {
                 Text(
                     text = rankNumber.toString(),
-                    color = KangleiTextSecondary,
+                    color = SeitharolTextSecondary,
                     fontSize = 13.sp,
                     fontFamily = OutfitFontFamily,
                     fontWeight = FontWeight.Medium,
@@ -116,7 +116,7 @@ fun TrackCard(
             ) {
                 Text(
                     text = track.title,
-                    color = KangleiTextPrimary,
+                    color = SeitharolTextPrimary,
                     fontSize = 15.sp,
                     fontFamily = OutfitFontFamily,
                     fontWeight = FontWeight.Medium,
@@ -126,7 +126,7 @@ fun TrackCard(
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = subtitleText ?: "${track.artist} • ${track.durationFormatted}",
-                    color = KangleiTextSecondary,
+                    color = SeitharolTextSecondary,
                     fontSize = 12.sp,
                     fontFamily = OutfitFontFamily,
                     maxLines = 1,
@@ -144,7 +144,7 @@ fun TrackCard(
                 Icon(
                     imageVector = if (track.isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
                     contentDescription = if (track.isLiked) "Unlike" else "Like",
-                    tint = if (track.isLiked) KangleiRedHeart else KangleiTextSecondary,
+                    tint = if (track.isLiked) SeitharolRedHeart else SeitharolTextSecondary,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -160,7 +160,7 @@ fun TrackCard(
                     Icon(
                         imageVector = Icons.Default.MoreHoriz,
                         contentDescription = "More actions",
-                        tint = KangleiTextSecondary,
+                        tint = SeitharolTextSecondary,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -168,13 +168,13 @@ fun TrackCard(
                 DropdownMenu(
                     expanded = showMenu,
                     onDismissRequest = { showMenu = false },
-                    modifier = Modifier.background(KangleiCardElevated)
+                    modifier = Modifier.background(SeitharolCardElevated)
                 ) {
                     if (onPlayNextClick != null) {
                         DropdownMenuItem(
-                            text = { Text("Play Next", color = KangleiTextPrimary) },
+                            text = { Text("Play Next", color = SeitharolTextPrimary) },
                             leadingIcon = {
-                                Icon(Icons.Default.PlaylistPlay, contentDescription = null, tint = KangleiDark)
+                                Icon(Icons.Default.PlaylistPlay, contentDescription = null, tint = SeitharolDark)
                             },
                             onClick = {
                                 showMenu = false
@@ -184,9 +184,9 @@ fun TrackCard(
                     }
                     if (onAddToQueueClick != null) {
                         DropdownMenuItem(
-                            text = { Text("Add to Queue", color = KangleiTextPrimary) },
+                            text = { Text("Add to Queue", color = SeitharolTextPrimary) },
                             leadingIcon = {
-                                Icon(Icons.Default.QueueMusic, contentDescription = null, tint = KangleiDark)
+                                Icon(Icons.Default.QueueMusic, contentDescription = null, tint = SeitharolDark)
                             },
                             onClick = {
                                 showMenu = false
@@ -196,9 +196,9 @@ fun TrackCard(
                     }
                     if (onAddToPlaylistClick != null) {
                         DropdownMenuItem(
-                            text = { Text("Add to Playlist", color = KangleiTextPrimary) },
+                            text = { Text("Add to Playlist", color = SeitharolTextPrimary) },
                             leadingIcon = {
-                                Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = KangleiDark)
+                                Icon(Icons.Default.PlaylistAdd, contentDescription = null, tint = SeitharolDark)
                             },
                             onClick = {
                                 showMenu = false
@@ -208,9 +208,9 @@ fun TrackCard(
                     }
                     if (onGoToArtistClick != null && track.artist.isNotBlank()) {
                         DropdownMenuItem(
-                            text = { Text("Go to Artist", color = KangleiTextPrimary) },
+                            text = { Text("Go to Artist", color = SeitharolTextPrimary) },
                             leadingIcon = {
-                                Icon(Icons.Default.Person, contentDescription = null, tint = KangleiDark)
+                                Icon(Icons.Default.Person, contentDescription = null, tint = SeitharolDark)
                             },
                             onClick = {
                                 showMenu = false
@@ -220,9 +220,9 @@ fun TrackCard(
                     }
                     if (track.isDownloaded) {
                         DropdownMenuItem(
-                            text = { Text("Remove Offline Copy", color = KangleiRedHeart) },
+                            text = { Text("Remove Offline Copy", color = SeitharolRedHeart) },
                             leadingIcon = {
-                                Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = KangleiRedHeart)
+                                Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = SeitharolRedHeart)
                             },
                             onClick = {
                                 showMenu = false
@@ -231,9 +231,9 @@ fun TrackCard(
                         )
                     } else {
                         DropdownMenuItem(
-                            text = { Text("Download High (Opus 160k)", color = KangleiTextPrimary) },
+                            text = { Text("Download High (Opus 160k)", color = SeitharolTextPrimary) },
                             leadingIcon = {
-                                Icon(Icons.Default.Download, contentDescription = null, tint = KangleiDark)
+                                Icon(Icons.Default.Download, contentDescription = null, tint = SeitharolDark)
                             },
                             onClick = {
                                 showMenu = false
@@ -241,9 +241,9 @@ fun TrackCard(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Download Data Saver (64k)", color = KangleiTextPrimary) },
+                            text = { Text("Download Data Saver (64k)", color = SeitharolTextPrimary) },
                             leadingIcon = {
-                                Icon(Icons.Default.CloudDownload, contentDescription = null, tint = KangleiTextSecondary)
+                                Icon(Icons.Default.CloudDownload, contentDescription = null, tint = SeitharolTextSecondary)
                             },
                             onClick = {
                                 showMenu = false
@@ -274,7 +274,7 @@ fun HitCard(
             .clip(RoundedCornerShape(20.dp))
             .clickable(onClick = onClick)
             .testTag("hit_card_${track.id}"),
-        color = KangleiWhite,
+        color = SeitharolWhite,
         shape = RoundedCornerShape(20.dp)
     ) {
         Column(modifier = Modifier.padding(8.dp)) {
@@ -314,7 +314,7 @@ fun HitCard(
 
             Text(
                 text = track.title,
-                color = KangleiTextPrimary,
+                color = SeitharolTextPrimary,
                 fontSize = 14.sp,
                 fontFamily = OutfitFontFamily,
                 fontWeight = FontWeight.Medium,
@@ -325,7 +325,7 @@ fun HitCard(
 
             Text(
                 text = track.artist,
-                color = KangleiTextSecondary,
+                color = SeitharolTextSecondary,
                 fontSize = 12.sp,
                 fontFamily = OutfitFontFamily,
                 maxLines = 1,
@@ -368,7 +368,7 @@ fun FreshNewMusicCard(
             style = MaterialTheme.typography.bodyMedium,
             fontFamily = SyneFontFamily,
             fontWeight = FontWeight.Medium,
-            color = KangleiDark,
+            color = SeitharolDark,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
@@ -376,7 +376,7 @@ fun FreshNewMusicCard(
             text = track.artist,
             style = MaterialTheme.typography.bodySmall,
             fontFamily = OutfitFontFamily,
-            color = KangleiTextSecondary,
+            color = SeitharolTextSecondary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
@@ -427,7 +427,7 @@ fun FreshMusicCard(
         ) {
             Text(
                 text = title,
-                color = KangleiTextLight,
+                color = SeitharolTextLight,
                 fontSize = 18.sp,
                 fontFamily = SyneFontFamily,
                 fontWeight = FontWeight.Medium
@@ -435,7 +435,7 @@ fun FreshMusicCard(
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = subtitle,
-                color = KangleiTextLightMuted,
+                color = SeitharolTextLightMuted,
                 fontSize = 12.sp,
                 fontFamily = OutfitFontFamily
             )
@@ -455,7 +455,7 @@ fun FreshMusicCard(
                 Icon(
                     imageVector = Icons.Default.PlayArrow,
                     contentDescription = "Play $title",
-                    tint = KangleiDark,
+                    tint = SeitharolDark,
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -499,7 +499,7 @@ fun SuggestedArtistItem(
 
         Text(
             text = name,
-            color = KangleiTextSecondary,
+            color = SeitharolTextSecondary,
             fontSize = 12.sp,
             fontFamily = OutfitFontFamily,
             textAlign = TextAlign.Center,

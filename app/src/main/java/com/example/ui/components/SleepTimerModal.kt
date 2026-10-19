@@ -31,7 +31,7 @@ fun SleepTimerModal(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = modalSheetState,
-        containerColor = KangleiBg,
+        containerColor = SeitharolBg,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         dragHandle = {
             Box(
@@ -40,7 +40,7 @@ fun SleepTimerModal(
                     .width(40.dp)
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(KangleiHandleBar)
+                    .background(SeitharolHandleBar)
             )
         }
     ) {
@@ -56,7 +56,7 @@ fun SleepTimerModal(
                 fontFamily = SyneFontFamily,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 18.sp,
-                color = KangleiDark
+                color = SeitharolDark
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -75,12 +75,12 @@ fun SleepTimerModal(
                             .clip(RoundedCornerShape(19.dp))
                             .clickable { selectedMinutes = mins },
                         shape = RoundedCornerShape(19.dp),
-                        color = if (isSelected) KangleiWhite else Color.Transparent
+                        color = if (isSelected) SeitharolWhite else Color.Transparent
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Text(
                                 text = if (isSelected) "$mins minutes" else "$mins",
-                                color = if (isSelected) KangleiDark else Color(0xFF8A8A8A),
+                                color = if (isSelected) SeitharolDark else Color(0xFF8A8A8A),
                                 fontSize = if (isSelected) 18.sp else 15.sp,
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
@@ -104,7 +104,7 @@ fun SleepTimerModal(
                     }
                     .testTag("sleep_timer_start_btn"),
                 shape = RoundedCornerShape(24.dp),
-                color = KangleiDark
+                color = SeitharolDark
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Text(

@@ -454,7 +454,7 @@ object NetworkClients {
                 val url = "https://lrclib.net/api/get?artist_name=$encArtist&track_name=$encTitle&duration=$durationSec"
                 val request = Request.Builder()
                     .url(url)
-                    .header("User-Agent", "Cascade-Client/1.0 (Android)")
+                    .header("User-Agent", "Seitharol-Client/2.0 (Android)")
                     .build()
 
                 okHttpClient.newCall(request).execute().use { response ->
@@ -487,7 +487,7 @@ object NetworkClients {
             val url = "https://lrclib.net/api/search?q=$query"
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "Cascade-Client/1.0 (Android)")
+                .header("User-Agent", "Seitharol-Client/2.0 (Android)")
                 .build()
 
             okHttpClient.newCall(request).execute().use { response ->
@@ -523,10 +523,14 @@ object NetworkClients {
                     3 -> msStr.toLongOrNull() ?: 0L
                     else -> 0L
                 }
-                val totalMs = (min * 60 * 1000L) + (sec * 1000L) + ms
-                val text = match.groupValues[4].trim()
-                if (text.isNotBlank()) {
-                    lines.add(LyricsLine(timestampMs = totalMs, text = text))
+                val sanitized = match.groupValues[4].replace("{", "").replace("}", "").trim()
+                if (sanitized.isNotBlank()) {
+                    val parts = sanitized.split("^")
+                    val primary = parts[0].trim()
+                    val translation = parts.getOrNull(1)?.trim()?.takeIf { it.isNotEmpty() && !it.equals(primary, ignoreCase = true) }
+                    if (primary.isNotBlank()) {
+                        lines.add(LyricsLine(timestampMs = totalMs, text = primary, translation = translation))
+                    }
                 }
             }
         }

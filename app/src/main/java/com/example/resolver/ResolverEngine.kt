@@ -283,6 +283,7 @@ class ResolverEngine {
                     artists = listOf(effectiveArtist.ifBlank { "Various Artists" }),
                     album = track.album,
                     durationMs = track.durationMs,
+                    artUrl = track.artUrl,
                     isPlayableNatively = true
                 )
                 val ranked = trackMatcher.rankCandidates(targetTrack, ytResults)
@@ -310,6 +311,7 @@ class ResolverEngine {
                     artists = listOf(effectiveArtist.ifBlank { "Various Artists" }),
                     album = track.album,
                     durationMs = track.durationMs,
+                    artUrl = track.artUrl,
                     isPlayableNatively = true
                 )
                 val rankedSaavn = trackMatcher.rankCandidates(targetTrack, results)

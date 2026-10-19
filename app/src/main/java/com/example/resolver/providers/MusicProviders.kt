@@ -24,7 +24,7 @@ data class NormalizedTrack(
     val artists: List<String>,
     val album: String,
     val durationMs: Long,
-    val artUrl: String,
+    val artUrl: String = "",
     val isrc: String? = null,
     val isPlayableNatively: Boolean = true,
     val isArtTrack: Boolean = false,

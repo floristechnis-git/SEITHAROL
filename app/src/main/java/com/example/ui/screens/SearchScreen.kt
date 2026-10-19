@@ -33,11 +33,13 @@ import coil.compose.AsyncImage
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.ui.platform.LocalFocusManager
+import com.example.data.model.DownloadTier
 import com.example.data.model.Track
 import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
 import com.example.ui.components.AddToPlaylistModal
 import com.example.ui.components.CreatePlaylistModal
+import com.example.ui.components.TrackCard
 import com.example.R
 import androidx.compose.ui.res.painterResource
 import com.example.ui.theme.*
@@ -661,7 +663,7 @@ fun SearchScreen(
                             onPlayTrackAndMaximize(track)
                         },
                         onLikeClick = { viewModel.toggleLike(track) },
-                        onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
+                        onDownloadClick = { tier: DownloadTier -> viewModel.startDownload(track, tier) },
                         onPlayNextClick = { viewModel.playNext(track) },
                         onAddToQueueClick = { viewModel.addToQueue(track) },
                         onAddToPlaylistClick = { trackToAddToPlaylist = track },

@@ -145,7 +145,7 @@ fun SearchScreen(
             .testTag("search_screen"),
         contentPadding = PaddingValues(bottom = 140.dp)
     ) {
-        // Full-Width Search Bar (no Cancel button; Back arrow when empty, Clear ✕ when text present)
+        // Full-Width Search Bar (no Cancel button; Back arrow when empty, Clear when text present)
         item {
             Surface(
                 modifier = Modifier
@@ -272,9 +272,18 @@ fun SearchScreen(
                                 }
                                 com.example.ui.ProviderFilter.JIOSAAVN -> {
                                     androidx.compose.foundation.Image(
-                                        painter = painterResource(id = R.drawable.ic_jiosaavn),
+                                        painter = painterResource(id = R.drawable.ic_jiosaavn_icon),
                                         contentDescription = "JioSaavn",
-                                        modifier = Modifier.height(18.dp)
+                                        modifier = Modifier
+                                            .size(18.dp)
+                                            .padding(end = 6.dp)
+                                    )
+                                    Text(
+                                        text = provider.label,
+                                        color = if (isSelected) SeitharolWhite else SeitharolDark,
+                                        fontSize = 13.sp,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
                                     )
                                 }
                                 com.example.ui.ProviderFilter.LOCAL -> {

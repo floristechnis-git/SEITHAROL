@@ -25,6 +25,8 @@ import coil.compose.AsyncImage
 import com.seitharol.data.resolver.CandidateStream
 import com.seitharol.ui.components.PlaylistThumbnailWithBadge
 import com.seitharol.ui.home.PlaylistSummary
+import com.seitharol.ui.search.BackArrowSvgIcon
+import com.seitharol.ui.search.CloseCrossSvgIcon
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -329,7 +331,10 @@ fun LibrarySubPageScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
-                Text("←", style = MaterialTheme.typography.titleLarge)
+                BackArrowSvgIcon(
+                    tint = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.size(22.dp)
+                )
             }
             Text(
                 text = pageTitle,
@@ -347,7 +352,10 @@ fun LibrarySubPageScreen(
             trailingIcon = {
                 if (searchQuery.isNotEmpty()) {
                     IconButton(onClick = { searchQuery = "" }) {
-                        Text("✕")
+                        CloseCrossSvgIcon(
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                 }
             },

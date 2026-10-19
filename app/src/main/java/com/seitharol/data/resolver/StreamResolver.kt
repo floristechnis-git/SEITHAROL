@@ -1,0 +1,283 @@
+// java/com/seitharol/data/resolver/StreamResolver.kt
+package com.seitharol.data.resolver
+
+import android.util.Base64
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
+import javax.crypto.Cipher
+import javax.crypto.spec.SecretKeySpec
+import kotlin.math.abs
+
+enum class AudioQuality(val label: String, val saavnSuffix: String) {
+    LOW("96 kbps (Data Saver)", "_96.mp4"),
+    HIGH("160 kbps (Standard)", "_160.mp4"),
+    EXTREME("320 kbps / Lossless", "_320.mp4")
+}
+
+data class TrackMetadata(
+    val id: String,
+    val title: String,
+    val artist: String,
+    val album: String = "",
+    val durationSeconds: Int = 0,
+    val thumbnailUrl: String = "",
+    val encryptedMediaUrl: String? = null,
+    val directStreamUrl: String? = null,
+    val source: String = "JIOSAAVN"
+)
+
+object StreamResolver {
+
+    private val BANNED_REMIX_KEYWORDS = listOf(
+        "remix", "slowed", "reverb", "lofi", "lo-fi", "cover", "karaoke",
+        "instrumental", "mashup", "nightcore", "8d", "bass boosted",
+        "ringtone", "whatsapp status", "reaction", "live performance", "dj "
+    )
+
+    /**
+     * Resolves the exact canonical audio stream for [track].
+     * Never returns a remix/cover unless explicitly requested in [track.title].
+     */
+    suspend fun resolveExactStreamUrl(
+        track: TrackMetadata,
+        quality: AudioQuality = AudioQuality.HIGH
+    ): String? = withContext(Dispatchers.IO) {
+        // 1. If a verified direct stream URL is already attached, use it
+        if (!track.directStreamUrl.isNullOrBlank() && track.directStreamUrl.startsWith("http")) {
+            return@withContext track.directStreamUrl
+        }
+
+        // 2. If encryptedMediaUrl from JioSaavn is present, decrypt it directly
+        if (!track.encryptedMediaUrl.isNullOrBlank()) {
+            decryptJioSaavnUrl(track.encryptedMediaUrl, quality)?.let { return@withContext it }
+        }
+
+        // 3. Query JioSaavn canonical catalog by exact Title + Primary Artist
+        resolveFromJioSaavnExact(track, quality)?.let { return@withContext it }
+
+        // 4. Fallback to strict duration + title + artist validated Piped/YouTube stream
+        resolveFromPipedStrict(track)
+    }
+
+    /**
+     * Decrypts JioSaavn's DES-ECB encrypted_media_url using key "38346591".
+     */
+    fun decryptJioSaavnUrl(encryptedBase64: String, quality: AudioQuality): String? {
+        return try {
+            val keySpec = SecretKeySpec("38346591".toByteArray(Charsets.UTF_8), "DES")
+            val cipher = Cipher.getInstance("DES/ECB/PKCS5Padding")
+            cipher.init(Cipher.DECRYPT_MODE, keySpec)
+            val decodedBytes = Base64.decode(encryptedBase64.trim(), Base64.DEFAULT)
+            val decrypted = String(cipher.doFinal(decodedBytes), Charsets.UTF_8).trim()
+            decrypted.replace("_96.mp4", quality.saavnSuffix)
+                .replace("_160.mp4", quality.saavnSuffix)
+                .replace("_320.mp4", quality.saavnSuffix)
+                .replace("http://", "https://")
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun resolveFromJioSaavnExact(track: TrackMetadata, quality: AudioQuality): String? {
+        return try {
+            val cleanTitle = cleanTitleForMatch(track.title)
+            val primaryArtist = track.artist.split(",", "&", "feat.", "ft.").first().trim()
+            val query = URLEncoder.encode("$cleanTitle $primaryArtist", "UTF-8")
+            val apiUrl = "https://www.jiosaavn.com/api.php?__call=autocomplete.get&_format=json&_marker=0&cc=in&includeMetaTags=1&query=$query"
+
+            val searchJson = httpGet(apiUrl) ?: return null
+            val root = JSONObject(searchJson)
+            val songsArray = root.optJSONObject("songs")?.optJSONArray("data") ?: return null
+
+            var bestSongId: String? = null
+            var bestScore = Int.MIN_VALUE
+
+            for (i in 0 until songsArray.length()) {
+                val item = songsArray.getJSONObject(i)
+                val candidateId = item.optString("id")
+                val candidateTitle = decodeHtml(item.optString("title"))
+                val candidateSub = decodeHtml(
+                    item.optString("more_info") + " " + item.optString("description")
+                )
+
+                if (containsUnwantedVariant(originalTitle = track.title, candidateTitle = candidateTitle)) {
+                    continue
+                }
+
+                val score = computeMatchScore(
+                    targetTitle = track.title,
+                    targetArtist = primaryArtist,
+                    targetDuration = track.durationSeconds,
+                    candidateTitle = candidateTitle,
+                    candidateArtist = candidateSub,
+                    candidateDuration = 0
+                )
+                if (score > bestScore) {
+                    bestScore = score
+                    bestSongId = candidateId
+                }
+            }
+
+            if (bestSongId != null && bestScore >= 40) {
+                val detailUrl = "https://www.jiosaavn.com/api.php?__call=song.getDetails&cc=in&_marker=0%3F_marker%3D0&_format=json&pids=$bestSongId"
+                val detailJson = httpGet(detailUrl) ?: return null
+                val detailObj = JSONObject(detailJson).optJSONObject(bestSongId) ?: return null
+                val encryptedUrl = detailObj.optString("encrypted_media_url")
+                if (encryptedUrl.isNotBlank()) {
+                    return decryptJioSaavnUrl(encryptedUrl, quality)
+                }
+            }
+            null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun resolveFromPipedStrict(track: TrackMetadata): String? {
+        val instances = listOf(
+            "https://pipedapi.kavin.rocks",
+            "https://pipedapi.tokhmi.xyz",
+            "https://pipedapi.moomoo.me"
+        )
+        val primaryArtist = track.artist.split(",", "&", "feat.").first().trim()
+        val encodedQuery = URLEncoder.encode("${track.title} $primaryArtist official audio", "UTF-8")
+
+        for (base in instances) {
+            try {
+                val jsonStr = httpGet("$base/search?q=$encodedQuery&filter=music_songs") ?: continue
+                val items = JSONObject(jsonStr).optJSONArray("items") ?: continue
+
+                var bestVideoId: String? = null
+                var bestScore = Int.MIN_VALUE
+
+                for (i in 0 until items.length()) {
+                    val item = items.getJSONObject(i)
+                    val title = item.optString("title")
+                    val uploader = item.optString("uploaderName")
+                    val duration = item.optInt("duration", 0)
+                    val urlPath = item.optString("url") // "/watch?v=XXXX"
+
+                    if (containsUnwantedVariant(track.title, title)) continue
+                    if (duration in 1..45 || duration > 720) continue
+                    if (track.durationSeconds > 0 && duration > 0 && abs(duration - track.durationSeconds) > 18) {
+                        continue
+                    }
+
+                    val score = computeMatchScore(
+                        targetTitle = track.title,
+                        targetArtist = primaryArtist,
+                        targetDuration = track.durationSeconds,
+                        candidateTitle = title,
+                        candidateArtist = uploader,
+                        candidateDuration = duration
+                    )
+
+                    if (score > bestScore) {
+                        bestScore = score
+                        bestVideoId = urlPath.substringAfter("v=", "")
+                    }
+                }
+
+                if (!bestVideoId.isNullOrBlank() && bestScore >= 45) {
+                    val streamJson = httpGet("$base/streams/$bestVideoId") ?: continue
+                    val audioStreams = JSONObject(streamJson).optJSONArray("audioStreams") ?: continue
+                    var bestAudioUrl: String? = null
+                    var highestBitrate = -1
+                    for (j in 0 until audioStreams.length()) {
+                        val stream = audioStreams.getJSONObject(j)
+                        val bitrate = stream.optInt("bitrate", 0)
+                        val url = stream.optString("url")
+                        if (url.isNotBlank() && bitrate > highestBitrate) {
+                            highestBitrate = bitrate
+                            bestAudioUrl = url
+                        }
+                    }
+                    if (!bestAudioUrl.isNullOrBlank()) return bestAudioUrl
+                }
+            } catch (_: Exception) {
+            }
+        }
+        return null
+    }
+
+    fun containsUnwantedVariant(originalTitle: String, candidateTitle: String): Boolean {
+        val origLower = originalTitle.lowercase()
+        val candLower = candidateTitle.lowercase()
+        return BANNED_REMIX_KEYWORDS.any { keyword ->
+            candLower.contains(keyword) && !origLower.contains(keyword)
+        }
+    }
+
+    private fun computeMatchScore(
+        targetTitle: String,
+        targetArtist: String,
+        targetDuration: Int,
+        candidateTitle: String,
+        candidateArtist: String,
+        candidateDuration: Int
+    ): Int {
+        var score = 0
+        val cleanTargetTitle = cleanTitleForMatch(targetTitle).lowercase()
+        val cleanCandTitle = cleanTitleForMatch(candidateTitle).lowercase()
+        val targetArtistLower = targetArtist.lowercase()
+        val candArtistLower = candidateArtist.lowercase()
+
+        if (cleanCandTitle == cleanTargetTitle) {
+            score += 60
+        } else if (cleanCandTitle.contains(cleanTargetTitle) || cleanTargetTitle.contains(cleanCandTitle)) {
+            score += 40
+        } else {
+            val targetTokens = cleanTargetTitle.split(" ").filter { it.length > 2 }
+            val matchedTokens = targetTokens.count { cleanCandTitle.contains(it) }
+            if (targetTokens.isNotEmpty()) {
+                score += (matchedTokens * 35) / targetTokens.size
+            }
+        }
+
+        if (candArtistLower.contains(targetArtistLower) || cleanCandTitle.contains(targetArtistLower)) {
+            score += 35
+        }
+        if (candArtistLower.contains("- topic") || candArtistLower.contains("vevo")) {
+            score += 15
+        }
+
+        if (targetDuration > 0 && candidateDuration > 0) {
+            val diff = abs(targetDuration - candidateDuration)
+            score += when {
+                diff <= 3 -> 30
+                diff <= 8 -> 20
+                diff <= 15 -> 10
+                else -> -40
+            }
+        }
+        return score
+    }
+
+    private fun cleanTitleForMatch(raw: String): String {
+        return raw.replace(Regex("\\(.*?\\)|\\[.*?]"), "")
+            .replace(Regex("(?i)official\\s*(music\\s*)?(video|audio|lyric\\s*video)"), "")
+            .trim()
+    }
+
+    private fun decodeHtml(input: String): String {
+        return input.replace("&quot;", "\"")
+            .replace("&amp;", "&")
+            .replace("&#039;", "'")
+    }
+
+    private fun httpGet(urlStr: String): String? {
+        val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 6000
+            readTimeout = 6000
+            setRequestProperty("User-Agent", "Mozilla/5.0 (Android 14; Mobile)")
+        }
+        return if (conn.responseCode in 200..299) {
+            conn.inputStream.bufferedReader().use { it.readText() }
+        } else null
+    }
+}

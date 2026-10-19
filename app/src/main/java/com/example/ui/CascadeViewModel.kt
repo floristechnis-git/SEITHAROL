@@ -283,40 +283,50 @@ class CascadeViewModel(
             isLoadingHome.value = true
             try {
                 val (trendingQuery, freshQuery, mixQuery) = when (mood) {
-                    "For You" -> Triple(
-                        "recommended trending songs",
-                        "new music for you",
-                        "My Supermix YouTube Music"
-                    )
                     "Energize" -> Triple(
                         "upbeat energetic hits",
                         "new dance pop workout songs",
                         "Energize Mix"
                     )
-                    "Relax" -> Triple(
+                    "Trending" -> Triple(
+                        "top trending global hits",
+                        "fresh viral trending songs",
+                        "Trending Songs Mix"
+                    )
+                    "Manipuri Song" -> Triple(
+                        "Manipuri hits modern songs",
+                        "Manipuri folk acoustic songs",
+                        "Manipuri Songs Mix"
+                    )
+                    "Sad" -> Triple(
+                        "sad emotional slow songs",
+                        "heartbroken acoustic sad hits",
+                        "Sad Mix"
+                    )
+                    "Chill", "Relax" -> Triple(
                         "chill relaxing acoustic lofi songs",
                         "new chill acoustic songs",
                         "Chill Mix"
+                    )
+                    "Romantic", "Romance" -> Triple(
+                        "romantic acoustic love songs",
+                        "new romantic love songs",
+                        "Romance Mix"
                     )
                     "Workout" -> Triple(
                         "workout gym phonk hype music",
                         "new workout EDM hip hop",
                         "Workout Mix"
                     )
-                    "Focus" -> Triple(
+                    "Focus", "Lo-Fi" -> Triple(
                         "deep focus instrumental study music",
-                        "ambient piano electronic focus",
-                        "Focus Mix"
+                        "chill lofi hip hop beats",
+                        "Focus Lo-Fi Mix"
                     )
-                    "Mixes" -> Triple(
-                        "top radio hits",
-                        "popular mashups mixes",
-                        "YouTube Music Mixes"
-                    )
-                    "New Releases" -> Triple(
-                        "latest hit singles",
-                        "brand new music releases",
-                        "New Release Mix"
+                    "For You" -> Triple(
+                        "recommended trending songs",
+                        "new music for you",
+                        "My Supermix YouTube Music"
                     )
                     else -> Triple(
                         "trending songs Manipuri Bollywood global hits",

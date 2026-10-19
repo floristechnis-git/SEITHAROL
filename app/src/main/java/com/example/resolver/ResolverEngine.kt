@@ -264,12 +264,17 @@ class ResolverEngine {
         }
 
         // Build search query from hydrated metadata
-        val searchQuery = when {
+        val baseQuery = when {
             effectiveTitle.isNotBlank() && effectiveArtist.isNotBlank() &&
                 !effectiveArtist.equals("Unknown Artist", ignoreCase = true) -> "$effectiveTitle $effectiveArtist"
             effectiveTitle.isNotBlank() -> effectiveTitle
             effectiveArtist.isNotBlank() -> effectiveArtist
             else -> ""
+        }
+        val searchQuery = if (baseQuery.isNotBlank() && !baseQuery.contains("official", ignoreCase = true)) {
+            "$baseQuery official audio"
+        } else {
+            baseQuery
         }
 
         // 8. Fallback 1: On-Device YouTube Music search + stream extraction (ranked by TrackMatcher)

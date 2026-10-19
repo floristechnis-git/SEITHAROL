@@ -21,9 +21,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
+import androidx.compose.ui.res.painterResource
+import com.example.R
 import com.seitharol.domain.model.NormalizedTrack
 import com.seitharol.player.AudioPlayerManager
+import com.seitharol.ui.search.CloseCrossSvgIcon
+import com.seitharol.ui.search.DownloadSvgIcon
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -82,7 +85,11 @@ fun InDiscoverSearchSurface(
                         onClose()
                     }
                 ) {
-                    Text("Close ✕", color = Color.White)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Close", color = Color.White)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        CloseCrossSvgIcon(tint = Color.White, modifier = Modifier.size(12.dp))
+                    }
                 }
             }
 
@@ -114,7 +121,7 @@ fun InDiscoverSearchSurface(
                 trailingIcon = {
                     if (query.isNotEmpty()) {
                         IconButton(onClick = { query = ""; results = emptyList() }) {
-                            Text("✕", color = Color.White)
+                            CloseCrossSvgIcon(tint = Color.White, modifier = Modifier.size(16.dp))
                         }
                     }
                 },
@@ -152,7 +159,7 @@ fun InDiscoverSearchSurface(
                                         shape = RoundedCornerShape(6.dp)
                                     ) {
                                         Text(
-                                            text = if (isThisPlaying) "▶ Playing 30s Preview" else "⏸ 30s Preview Paused",
+                                            text = if (isThisPlaying) "Playing 30s Preview" else "30s Preview Paused",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = Color(0xFF1DB954),
                                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -180,7 +187,14 @@ fun InDiscoverSearchSurface(
                                         else audioPlayerManager.playPreview(focused)
                                     }
                                 ) {
-                                    Text(if (isThisPlaying) "⏸" else "▶", color = Color.White)
+                                    Icon(
+                                        painter = painterResource(
+                                            id = if (isThisPlaying) R.drawable.ic_pause else R.drawable.ic_play
+                                        ),
+                                        contentDescription = if (isThisPlaying) "Pause" else "Play",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(24.dp)
+                                    )
                                 }
                             }
 
@@ -196,7 +210,13 @@ fun InDiscoverSearchSurface(
                                     modifier = Modifier.weight(1f),
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
-                                    Text("⬇ Download (MP3/FLAC)", fontWeight = FontWeight.Bold)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        DownloadSvgIcon(tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(16.dp))
+                                        Text("Download (MP3/FLAC)", fontWeight = FontWeight.Bold)
+                                    }
                                 }
 
                                 // Optional Secondary Action: Route through TrackMatcher for full playback
@@ -268,7 +288,7 @@ fun InDiscoverSearchSurface(
                         FilledTonalIconButton(
                             onClick = { onOpenDownloadPicker(item) }
                         ) {
-                            Text("⬇")
+                            DownloadSvgIcon(tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(18.dp))
                         }
                     }
                 }

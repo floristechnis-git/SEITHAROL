@@ -31,6 +31,8 @@ import com.seitharol.data.download.DownloadProvider
 import com.seitharol.data.download.DownloadTaskState
 import com.seitharol.domain.model.NormalizedTrack
 import com.seitharol.player.AudioPlayerManager
+import com.seitharol.ui.home.SearchMagnifierSvgIcon
+import com.seitharol.ui.search.BackArrowSvgIcon
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -131,7 +133,7 @@ fun DiscoverScreen(
                     .clip(CircleShape)
                     .background(Color.Black.copy(alpha = 0.45f))
             ) {
-                Text("←", color = Color.White, style = MaterialTheme.typography.titleLarge)
+                BackArrowSvgIcon(tint = Color.White, modifier = Modifier.size(22.dp))
             }
 
             Text(
@@ -147,7 +149,7 @@ fun DiscoverScreen(
                     .clip(CircleShape)
                     .background(Color.Black.copy(alpha = 0.45f))
             ) {
-                Text("🔍", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                SearchMagnifierSvgIcon(tint = Color.White, modifier = Modifier.size(20.dp))
             }
         }
 
@@ -291,7 +293,18 @@ private fun DiscoverShortPage(
                     shape = RoundedCornerShape(50),
                     colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
                 ) {
-                    Text("▶ Open Full-Length Song", fontWeight = FontWeight.Bold)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_play),
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = Color.Black
+                        )
+                        Text("Open Full-Length Song", fontWeight = FontWeight.Bold)
+                    }
                 }
 
                 // Live Download Progress Banner if downloading this track
@@ -318,50 +331,65 @@ private fun DiscoverShortPage(
 
             Spacer(modifier = Modifier.width(12.dp))
 
-            // Right Vertical Rail: Actions 2..5 (Like, Download, Artist, Share)
+            // Right Vertical Rail: Actions 2..5 (Like, Download, Artist, Share) - Pure Canvas SVGs (No Emojis)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
                 // Action 5: Like
-                DiscoverActionButton(
-                    iconText = if (track.isLiked) "♥" else "♡",
+                DiscoverSvgActionButton(
                     label = "Like",
-                    tint = if (track.isLiked) Color(0xFFFF4E45) else Color.White,
                     onClick = onLikeClick
-                )
+                ) {
+                    com.seitharol.ui.search.HeartSvgIcon(
+                        filled = track.isLiked,
+                        tint = if (track.isLiked) Color(0xFFFF4E45) else Color.White,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
 
                 // Action 2: Download (Provider + Format Picker)
-                DiscoverActionButton(
-                    iconText = "⬇",
+                DiscoverSvgActionButton(
                     label = "Download",
                     onClick = onDownloadClick
-                )
+                ) {
+                    com.seitharol.ui.search.DownloadSvgIcon(
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
 
                 // Action 3: Visit Artist Page
-                DiscoverActionButton(
-                    iconText = "👤",
+                DiscoverSvgActionButton(
                     label = "Artist",
                     onClick = onVisitArtistClick
-                )
+                ) {
+                    ArtistUserSvgIcon(
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
 
                 // Action 4: Share
-                DiscoverActionButton(
-                    iconText = "↗",
+                DiscoverSvgActionButton(
                     label = "Share",
                     onClick = onShareClick
-                )
+                ) {
+                    ShareArrowSvgIcon(
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun DiscoverActionButton(
-    iconText: String,
+private fun DiscoverSvgActionButton(
     label: String,
-    tint: Color = Color.White,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    icon: @Composable () -> Unit
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -374,10 +402,62 @@ private fun DiscoverActionButton(
                 .background(Color.White.copy(alpha = 0.16f)),
             contentAlignment = Alignment.Center
         ) {
-            Text(text = iconText, color = tint, style = MaterialTheme.typography.titleLarge)
+            icon()
         }
         Spacer(modifier = Modifier.height(4.dp))
         Text(text = label, color = Color.White, style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+@Composable
+fun ArtistUserSvgIcon(
+    tint: Color,
+    modifier: Modifier = Modifier.size(20.dp)
+) {
+    Canvas(modifier = modifier) {
+        val sx = size.width / 24f
+        val sy = size.height / 24f
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(
+            width = 2f * sx,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+            join = androidx.compose.ui.graphics.StrokeJoin.Round
+        )
+        drawCircle(
+            color = tint,
+            radius = 4f * sx,
+            center = androidx.compose.ui.geometry.Offset(12f * sx, 8f * sy),
+            style = stroke
+        )
+        val body = Path().apply {
+            moveTo(4f * sx, 20f * sy)
+            cubicTo(4f * sx, 16f * sy, 8f * sx, 14f * sy, 12f * sx, 14f * sy)
+            cubicTo(16f * sx, 14f * sy, 20f * sx, 16f * sy, 20f * sy, 20f * sy)
+        }
+        drawPath(body, color = tint, style = stroke)
+    }
+}
+
+@Composable
+fun ShareArrowSvgIcon(
+    tint: Color,
+    modifier: Modifier = Modifier.size(20.dp)
+) {
+    Canvas(modifier = modifier) {
+        val sx = size.width / 24f
+        val sy = size.height / 24f
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(
+            width = 2f * sx,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+            join = androidx.compose.ui.graphics.StrokeJoin.Round
+        )
+        val path = Path().apply {
+            moveTo(18f * sx, 6f * sy)
+            lineTo(6f * sx, 18f * sy)
+            moveTo(8f * sx, 6f * sy)
+            lineTo(18f * sx, 6f * sy)
+            lineTo(18f * sx, 16f * sy)
+        }
+        drawPath(path, color = tint, style = stroke)
     }
 }
 

@@ -253,33 +253,15 @@ fun HomeScreen(
 
     val moodChips = remember {
         listOf(
-            "All",
-            "For You",
             "Energize",
-            "Relax",
+            "Trending",
+            "Manipuri Song",
+            "Sad",
+            "Chill",
+            "Romantic",
             "Workout",
-            "Focus"
+            "Lo-Fi"
         )
-    }
-
-    // First-Launch Empty State: When listening history is empty, show only clean centered message
-    if (activeHistory.isEmpty()) {
-        Box(
-            modifier = modifier
-                .fillMaxSize()
-                .background(Color(0xFF0F0F0F))
-                .statusBarsPadding(),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "Ready to play your first song",
-                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-                color = Color(0xFF9EA1A1),
-                fontFamily = OutfitFontFamily,
-                textAlign = TextAlign.Center
-            )
-        }
-        return
     }
 
     PullToRefreshBox(

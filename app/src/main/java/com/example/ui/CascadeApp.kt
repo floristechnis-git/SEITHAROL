@@ -519,7 +519,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                 .height(60.dp)
                                 .testTag("mobile_floating_nav"),
                             shape = RoundedCornerShape(30.dp),
-                            color = SeitharolNavBg,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
                             shadowElevation = 10.dp
                         ) {
                             Row(
@@ -529,10 +529,15 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             ) {
                                 AppDestination.values().forEach { dest ->
                                     val isSelected = currentDestination == dest
+                                    val iconTint = if (isSelected) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
                                     Surface(
                                         modifier = Modifier.size(44.dp),
                                         shape = CircleShape,
-                                        color = if (isSelected) SeitharolNavActive else Color.Transparent,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent,
                                         onClick = {
                                             currentSubScreen = SubScreen.None
                                             currentDestination = dest
@@ -540,12 +545,12 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
                                             if (dest == AppDestination.HOME) {
-                                                HomeNavSvgIcon(tint = Color.White, modifier = Modifier.size(20.dp))
+                                                HomeNavSvgIcon(tint = iconTint, modifier = Modifier.size(20.dp))
                                             } else {
                                                 Icon(
                                                     imageVector = dest.icon,
                                                     contentDescription = dest.label,
-                                                    tint = Color.White,
+                                                    tint = iconTint,
                                                     modifier = Modifier.size(20.dp)
                                                 )
                                             }

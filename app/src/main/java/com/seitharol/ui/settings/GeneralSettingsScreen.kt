@@ -15,6 +15,8 @@ import androidx.compose.ui.unit.dp
 import com.seitharol.data.preferences.AppSettingsManager
 import com.seitharol.data.preferences.ThemeMode
 import com.seitharol.data.resolver.AudioQuality
+import com.seitharol.ui.search.BackArrowSvgIcon
+import com.seitharol.ui.search.ChevronRightSvgIcon
 
 enum class InfoPageType(val title: String) {
     ABOUT_APP("About the App"),
@@ -212,7 +214,10 @@ fun GeneralSettingsScreen(
                             text = page.title,
                             style = MaterialTheme.typography.bodyLarge
                         )
-                        Text("›", style = MaterialTheme.typography.titleLarge)
+                        ChevronRightSvgIcon(
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                     if (index < InfoPageType.entries.lastIndex) {
                         HorizontalDivider(
@@ -273,7 +278,10 @@ fun InfoDetailScreen(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) {
-                Text("←", style = MaterialTheme.typography.titleLarge)
+                BackArrowSvgIcon(
+                    tint = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.size(24.dp)
+                )
             }
             Text(
                 text = pageType.title,

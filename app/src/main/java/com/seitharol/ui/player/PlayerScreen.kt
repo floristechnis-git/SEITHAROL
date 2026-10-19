@@ -21,10 +21,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.exoplayer.ExoPlayer
+import com.example.R
 import com.seitharol.data.resolver.CandidateStream
 import com.seitharol.domain.lyrics.SyncedLyricLine
 import com.seitharol.ui.components.FullscreenExpandSvgIcon
@@ -194,7 +196,12 @@ fun PlayerScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = { exoPlayer.seekToPrevious() }) {
-                    Text("⏮", fontSize = 22.sp)
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_skip_previous),
+                        contentDescription = "Previous",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(28.dp)
+                    )
                 }
                 FilledIconButton(
                     onClick = {
@@ -203,10 +210,22 @@ fun PlayerScreen(
                     },
                     modifier = Modifier.size(64.dp)
                 ) {
-                    Text(if (isPlaying) "⏸" else "▶", fontSize = 26.sp)
+                    Icon(
+                        painter = painterResource(
+                            id = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
+                        ),
+                        contentDescription = if (isPlaying) "Pause" else "Play",
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(32.dp)
+                    )
                 }
                 IconButton(onClick = { exoPlayer.seekToNext() }) {
-                    Text("⏭", fontSize = 22.sp)
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_skip_next),
+                        contentDescription = "Next",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(28.dp)
+                    )
                 }
                 // Playback Queue Button: reveals Up Next bar even for single tracks
                 TextButton(
@@ -303,7 +322,7 @@ fun PlayerScreen(
                             )
                         }
                         Text(
-                            text = "Swipe ↓ to hide",
+                            text = "Swipe down to hide",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

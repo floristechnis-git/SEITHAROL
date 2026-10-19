@@ -398,31 +398,36 @@ fun ClampedSwipeToDeleteRow(
     val maxRevealPx = with(density) { -88.dp.toPx() }
     val offsetX = remember { Animatable(0f) }
 
-    Box(modifier = Modifier.fillMaxWidth()) {
-        // Background Delete Action Button
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .background(Color(0xFFFF5252).copy(alpha = 0.9f))
-                .padding(end = 16.dp),
-            contentAlignment = Alignment.CenterEnd
-        ) {
-            TextButton(
-                onClick = {
-                    scope.launch {
-                        offsetX.snapTo(0f)
-                        onDelete()
-                    }
-                }
+        // Background Delete Action Button - only visible when actively dragged
+        val isSwiping = offsetX.value < -4f
+        if (isSwiping) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0xFFFF5252).copy(alpha = 0.9f))
+                    .padding(end = 16.dp),
+                contentAlignment = Alignment.CenterEnd
             ) {
-                Text("Delete", color = Color.White, fontWeight = FontWeight.Bold)
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            offsetX.snapTo(0f)
+                            onDelete()
+                        }
+                    }
+                ) {
+                    Text("Delete", color = Color.White, fontWeight = FontWeight.Bold)
+                }
             }
         }
 
-        // Foreground Content clamped strictly to [maxRevealPx, 0f]
-        Box(
+        // Foreground Content clamped strictly to [maxRevealPx, 0f] with opaque background
+        Surface(
             modifier = Modifier
                 .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures(
                         onDragEnd = {
@@ -437,7 +442,9 @@ fun ClampedSwipeToDeleteRow(
                             scope.launch { offsetX.snapTo(clamped) }
                         }
                     )
-                }
+                },
+            shape = RoundedCornerShape(14.dp),
+            color = SeitharolWhite
         ) {
             content()
         }

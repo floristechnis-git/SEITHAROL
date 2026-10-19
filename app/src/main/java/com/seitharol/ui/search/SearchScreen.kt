@@ -53,7 +53,7 @@ fun SearchScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Full-Width Search Bar (No Cancel button; Back Arrow when empty, Clear ✕ when text present)
+        // Full-Width Search Bar (No Cancel button; Back Arrow when empty, Clear when text present)
         OutlinedTextField(
             value = query,
             onValueChange = {
@@ -76,7 +76,17 @@ fun SearchScreen(
                         }
                     }
                 ) {
-                    Text(if (query.isEmpty()) "←" else "✕")
+                    if (query.isEmpty()) {
+                        BackArrowSvgIcon(
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    } else {
+                        CloseCrossSvgIcon(
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -137,3 +147,33 @@ fun SearchScreen(
         }
     }
 }
+
+@Composable
+fun CloseCrossSvgIcon(
+    tint: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier.size(18.dp)
+) {
+    androidx.compose.foundation.Canvas(modifier = modifier) {
+        val sx = size.width / 24f
+        val sy = size.height / 24f
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(
+            width = 2.2f * sx,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round
+        )
+        drawLine(
+            color = tint,
+            start = androidx.compose.ui.geometry.Offset(5f * sx, 5f * sy),
+            end = androidx.compose.ui.geometry.Offset(19f * sx, 19f * sy),
+            strokeWidth = stroke.width,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round
+        )
+        drawLine(
+            color = tint,
+            start = androidx.compose.ui.geometry.Offset(19f * sx, 5f * sy),
+            end = androidx.compose.ui.geometry.Offset(5f * sx, 19f * sy),
+            strokeWidth = stroke.width,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round
+        )
+    }
+}
+

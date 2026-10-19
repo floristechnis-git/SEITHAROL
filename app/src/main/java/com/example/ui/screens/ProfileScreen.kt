@@ -497,7 +497,10 @@ fun ProfileScreen(
                                     fontWeight = FontWeight.Medium,
                                     color = SeitharolDark
                                 )
-                                Text("›", style = MaterialTheme.typography.titleLarge, color = SeitharolTextSecondary)
+                                com.seitharol.ui.search.ChevronRightSvgIcon(
+                                    tint = SeitharolTextSecondary,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                             if (index < com.seitharol.ui.settings.InfoPageType.entries.lastIndex) {
                                 HorizontalDivider(

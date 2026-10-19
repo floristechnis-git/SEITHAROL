@@ -169,6 +169,9 @@ class CascadeViewModel(
         // 1. Initial load of real YouTube Music for Home Screen & Personalization
         loadHomeScreenMusic()
         loadDiscoverFeed()
+        viewModelScope.launch {
+            downloadRepository.rescanLocalDownloads()
+        }
 
         // 2. Trigger live search with debounce when online
         viewModelScope.launch {
@@ -232,6 +235,22 @@ class CascadeViewModel(
                 _discoverTracks.value = feed
             } catch (e: Exception) {
                 Log.w("CascadeViewModel", "Failed to load discover feed: ${e.message}")
+            }
+        }
+    }
+
+    val isRefreshingLibrary = MutableStateFlow(false)
+
+    fun refreshLibrary() {
+        viewModelScope.launch {
+            isRefreshingLibrary.value = true
+            try {
+                downloadRepository.rescanLocalDownloads()
+                loadHomeScreenMusic()
+            } catch (e: Exception) {
+                Log.w("CascadeViewModel", "Library refresh failed: ${e.message}")
+            } finally {
+                isRefreshingLibrary.value = false
             }
         }
     }
@@ -380,6 +399,23 @@ class CascadeViewModel(
     }
 
     private suspend fun updatePersonalizedTracks(mood: String) {
+        // Adopt YouTube-style personalization: prioritize user listening history & interests
+        val topArtist = activeHistory.value
+            .map { it.artist }
+            .filter { it.isNotBlank() && it != "Unknown Artist" && it != "Unknown" }
+            .groupBy { it }
+            .maxByOrNull { it.value.size }?.key
+
+        if (!topArtist.isNullOrBlank()) {
+            val personalizedQuery = "$topArtist official mix"
+            val historyMix = runCatching { NetworkClients.searchInnerTube(personalizedQuery) }.getOrDefault(emptyList())
+            if (historyMix.isNotEmpty()) {
+                personalizedTracks.value = historyMix
+                historyMix.take(8).forEach { musicRepository.insertTrack(it) }
+                return
+            }
+        }
+
         val cat = when (mood) {
             "Energize" -> "energize"
             "Relax" -> "relax"

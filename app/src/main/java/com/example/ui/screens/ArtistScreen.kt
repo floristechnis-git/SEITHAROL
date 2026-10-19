@@ -109,13 +109,35 @@ fun ArtistScreen(
             ?.key ?: ""
     }
 
-    LazyColumn(
+    val scope = rememberCoroutineScope()
+
+    PullToRefreshBox(
+        isRefreshing = isLoadingArtist,
+        onRefresh = {
+            scope.launch {
+                isLoadingArtist = true
+                try {
+                    val json = com.example.data.remote.InnerTubeResolver.fetchRealArtistCatalog(artistName)
+                    val parsedTracks = com.example.data.remote.InnerTubeResolver.parseTracksFromResponse(json)
+                    val parsedAlbums = com.example.data.remote.InnerTubeResolver.fetchRealArtistAlbums(artistName)
+                    if (parsedTracks.isNotEmpty()) remoteArtistTracks = parsedTracks
+                    if (parsedAlbums.isNotEmpty()) remoteArtistAlbums = parsedAlbums
+                } catch (e: Exception) {
+                    // fallback
+                } finally {
+                    isLoadingArtist = false
+                }
+            }
+        },
         modifier = modifier
             .fillMaxSize()
             .background(SeitharolBg)
-            .testTag("artist_screen"),
-        contentPadding = PaddingValues(bottom = 140.dp)
+            .testTag("artist_screen")
     ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 140.dp)
+        ) {
         // Hero Header (340dp height with dark gradient)
         item {
             Box(
@@ -390,6 +412,7 @@ fun ArtistScreen(
             )
         }
     }
+}
 
     // More Options Bottom Sheet
     if (showMoreSheet) {

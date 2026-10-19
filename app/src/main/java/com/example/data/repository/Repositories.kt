@@ -388,7 +388,8 @@ class DownloadRepository(
         val tempFile = File(downloadDir, "${track.id}_${tier.name.lowercase()}.tmp")
 
         try {
-            // 1. Initial State in DB
+            // 1. Initial State in DB & Cache Track in Room
+            trackDao.insertTrack(track.copy(isDownloaded = false, localPath = destFile.absolutePath).toEntity())
             downloadDao.insertDownload(
                 DownloadEntity(
                     trackId = track.id,
@@ -473,6 +474,8 @@ class DownloadRepository(
                             totalBytes = finalFile.length()
                         )
                     )
+                    val completedTrack = track.copy(isDownloaded = true, localPath = finalFile.absolutePath)
+                    trackDao.insertTrack(completedTrack.toEntity())
                     trackDao.setDownloaded(track.id, true, finalFile.absolutePath)
                     updateDownloadNotification(track.title, 100, isCompleted = true)
                 } else {
@@ -538,5 +541,60 @@ class DownloadRepository(
         }
         downloadDao.deleteDownload(trackId)
         trackDao.setDownloaded(trackId, false, null)
+    }
+
+    /**
+     * Rescans the local downloads directory to detect, reconcile, and register
+     * all existing and old downloaded tracks into Room database.
+     */
+    suspend fun rescanLocalDownloads() = withContext(Dispatchers.IO) {
+        try {
+            val downloadDir = File(context.filesDir, "downloads")
+            if (!downloadDir.exists()) return@withContext
+            val files = downloadDir.listFiles() ?: return@withContext
+
+            for (file in files) {
+                if (file.isFile && file.length() > 10_240L && !file.name.endsWith(".tmp")) {
+                    val baseName = file.nameWithoutExtension
+                    val trackId = baseName.substringBeforeLast("_", baseName)
+                    val tierName = baseName.substringAfterLast("_", "standard")
+
+                    val existingTrack = trackDao.getTrackById(trackId)
+                    if (existingTrack == null) {
+                        val cleanTitle = trackId.replace("_", " ").replaceFirstChar { it.uppercase() }
+                        val newEntity = TrackEntity(
+                            id = trackId,
+                            title = cleanTitle,
+                            artist = "Downloaded Music",
+                            album = "Offline Storage",
+                            durationMs = 0,
+                            artUrl = "",
+                            isDownloaded = true,
+                            localPath = file.absolutePath
+                        )
+                        trackDao.insertTrack(newEntity)
+                    } else if (!existingTrack.isDownloaded || existingTrack.localPath.isNullOrBlank()) {
+                        trackDao.setDownloaded(trackId, true, file.absolutePath)
+                    }
+
+                    val existingDl = downloadDao.getDownload(trackId)
+                    if (existingDl == null || existingDl.state != "COMPLETED") {
+                        downloadDao.insertDownload(
+                            DownloadEntity(
+                                trackId = trackId,
+                                tier = tierName.replaceFirstChar { it.uppercase() },
+                                state = "COMPLETED",
+                                localPath = file.absolutePath,
+                                progress = 1.0f,
+                                bytesDownloaded = file.length(),
+                                totalBytes = file.length()
+                            )
+                        )
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("DownloadRepository", "rescanLocalDownloads error: ${e.message}")
+        }
     }
 }

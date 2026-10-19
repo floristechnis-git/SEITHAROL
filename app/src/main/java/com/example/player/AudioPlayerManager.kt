@@ -207,6 +207,8 @@ class AudioPlayerManager(
                                         _skipEvent.emit("No internet connection. Please check your network.")
                                         trackRetryCount = 0
                                         lastFailedTrackId = null
+                                        _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+                                        MediaPlaybackService.stopService(context)
                                         return@launch
                                     }
 
@@ -218,6 +220,9 @@ class AudioPlayerManager(
                                         lastFailedTrackId = null
                                         if (_state.value.currentIndex < _state.value.queue.lastIndex) {
                                             next()
+                                        } else {
+                                            _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+                                            MediaPlaybackService.stopService(context)
                                         }
                                         return@launch
                                     }
@@ -239,11 +244,17 @@ class AudioPlayerManager(
                                             lastFailedTrackId = null
                                             if (_state.value.currentIndex < _state.value.queue.lastIndex) {
                                                 next()
+                                            } else {
+                                                _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+                                                MediaPlaybackService.stopService(context)
                                             }
                                         }
                                     }
                                 } else if (_state.value.currentIndex < _state.value.queue.lastIndex) {
                                     next()
+                                } else {
+                                    _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+                                    MediaPlaybackService.stopService(context)
                                 }
                             }
                         }

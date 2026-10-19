@@ -28,6 +28,7 @@ import com.example.data.model.DownloadState
 import com.example.ui.CascadeViewModel
 import com.example.ui.theme.*
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DownloadsScreen(
     viewModel: CascadeViewModel,
@@ -36,15 +37,21 @@ fun DownloadsScreen(
     val downloads by viewModel.activeDownloads.collectAsState()
     val totalBytes by viewModel.totalDownloadedBytes.collectAsState()
     val isOfflineMode by viewModel.isOfflineMode.collectAsState()
+    val isRefreshingLibrary by viewModel.isRefreshingLibrary.collectAsState()
 
     val totalMb = totalBytes / (1024 * 1024)
 
-    LazyColumn(
+    PullToRefreshBox(
+        isRefreshing = isRefreshingLibrary,
+        onRefresh = { viewModel.refreshLibrary() },
         modifier = modifier
             .fillMaxSize()
-            .background(SeitharolBg),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 140.dp)
+            .background(SeitharolBg)
     ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 140.dp)
+        ) {
         item {
             Text(
                 text = "Downloads & Offline",

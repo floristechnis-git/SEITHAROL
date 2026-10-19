@@ -261,12 +261,18 @@ class MediaPlaybackService : Service() {
             }
 
             val notification = builder.build()
-            ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-            )
+            if (isPlaying) {
+                ServiceCompat.startForeground(
+                    this,
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                )
+            } else {
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
+                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                manager?.notify(NOTIFICATION_ID, notification)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "updateNotification failed: ${e.message}", e)
         }

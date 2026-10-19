@@ -32,6 +32,10 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    companion object {
+        var hasShownSplashThisProcess = false
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
@@ -53,11 +57,16 @@ class MainActivity : ComponentActivity() {
                 "DARK" -> true
                 else -> userDarkSetting ?: systemDark
             }
-            var isSplashFinished by remember { mutableStateOf(false) }
+            var isSplashFinished by remember { mutableStateOf(hasShownSplashThisProcess) }
 
             CascadeTheme(darkTheme = effectiveDark) {
                 if (!isSplashFinished) {
-                    SplashScreen(onSplashFinished = { isSplashFinished = true })
+                    SplashScreen(
+                        onSplashFinished = {
+                            isSplashFinished = true
+                            hasShownSplashThisProcess = true
+                        }
+                    )
                 } else if (!userSettings.onboarded) {
                     OnboardingScreen(
                         onContinue = { name, age ->

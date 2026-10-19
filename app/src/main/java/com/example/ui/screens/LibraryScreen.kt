@@ -64,6 +64,7 @@ fun LibraryScreen(
     val likedTracks by viewModel.likedTracks.collectAsState()
     val downloadedTracks by viewModel.downloadedTracks.collectAsState()
     val activeHistory by viewModel.activeHistory.collectAsState()
+    val isRefreshingLibrary by viewModel.isRefreshingLibrary.collectAsState()
 
     val navTabs = remember { listOf("All", "Playlists", "Downloads", "Liked") }
     var selectedNavTab by remember { mutableStateOf("All") }
@@ -82,14 +83,18 @@ fun LibraryScreen(
         }
     }
 
-    LazyColumn(
+    PullToRefreshBox(
+        isRefreshing = isRefreshingLibrary,
+        onRefresh = { viewModel.refreshLibrary() },
         modifier = modifier
             .fillMaxSize()
             .background(SeitharolBg)
             .statusBarsPadding()
-            .testTag("library_screen"),
-        contentPadding = PaddingValues(bottom = 140.dp)
+            .testTag("library_screen")
     ) {
+        LazyColumn(
+            contentPadding = PaddingValues(bottom = 140.dp)
+        ) {
         // 1. Heading & New Playlist Button
         item {
             Row(

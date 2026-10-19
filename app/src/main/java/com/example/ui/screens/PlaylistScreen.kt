@@ -107,13 +107,24 @@ fun PlaylistScreen(
     var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
 
-    LazyColumn(
+    PullToRefreshBox(
+        isRefreshing = isLoadingPlaylist,
+        onRefresh = {
+            isLoadingPlaylist = true
+            viewModel.loadPlaylistTracks(playlistId) { tracks ->
+                remotePlaylistTracks = tracks
+                isLoadingPlaylist = false
+            }
+        },
         modifier = modifier
             .fillMaxSize()
             .background(SeitharolBg)
-            .testTag("playlist_screen"),
-        contentPadding = PaddingValues(bottom = 140.dp)
+            .testTag("playlist_screen")
     ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 140.dp)
+        ) {
         // Hero Header (340dp height with dark gradient)
         item {
             Box(

@@ -140,6 +140,9 @@ fun HomeScreen(
     val activeHistory by viewModel.activeHistory.collectAsState()
     val likedTracks by viewModel.likedTracks.collectAsState()
     val isDarkTheme = LocalIsDarkTheme.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val appPreferences = remember { com.example.data.AppPreferences(context) }
+    val userSettings by appPreferences.settings.collectAsState()
 
     // Deduplicate pools to ensure no duplicate songs appear
     val deduplicatedAllTracks = remember(allTracks) {
@@ -240,15 +243,16 @@ fun HomeScreen(
     var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
 
-    // Time-of-day greeting
-    val greeting = remember {
+    // Time-of-day greeting with user's name
+    val greeting = remember(userSettings.userName) {
         val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-        when (hour) {
+        val baseGreeting = when (hour) {
             in 5..11  -> "Good Morning"
             in 12..16 -> "Good Afternoon"
             in 17..20 -> "Good Evening"
             else      -> "Good Night"
         }
+        if (userSettings.userName.isNotBlank()) "$baseGreeting, ${userSettings.userName}" else baseGreeting
     }
 
     val moodChips = remember {

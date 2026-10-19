@@ -195,7 +195,6 @@ class AudioPlayerManager(
                             val current = _state.value.currentTrack
                             coroutineScope.launch {
                                 val title = current?.title?.ifBlank { "Track" } ?: "Track"
-                                val artist = current?.artist?.ifBlank { "Unknown" } ?: "Unknown"
 
                                 if (current != null) {
                                     if (lastFailedTrackId != current.id) {
@@ -203,9 +202,18 @@ class AudioPlayerManager(
                                         trackRetryCount = 0
                                     }
 
+                                    // Fail fast with clear notice if device is offline
+                                    if (!com.example.util.ErrorFormatter.isOnline(context)) {
+                                        _skipEvent.emit("No internet connection. Please check your network.")
+                                        trackRetryCount = 0
+                                        lastFailedTrackId = null
+                                        return@launch
+                                    }
+
                                     if (trackRetryCount >= 3) {
                                         Log.w(TAG, "Max retries (3) reached for '$title'. Skipping to next track.")
-                                        _skipEvent.emit("Playback failed for '$title' after 3 retry attempts. Skipping to next.")
+                                        val friendlyMsg = com.example.util.ErrorFormatter.toUserFriendlyMessage(error, context, title)
+                                        _skipEvent.emit(friendlyMsg)
                                         trackRetryCount = 0
                                         lastFailedTrackId = null
                                         if (_state.value.currentIndex < _state.value.queue.lastIndex) {
@@ -215,7 +223,7 @@ class AudioPlayerManager(
                                     }
 
                                     trackRetryCount++
-                                    _skipEvent.emit("Stream interrupted for '$title' by '$artist' (attempt $trackRetryCount/3), retrying fallback...")
+                                    // Silent background reconnect delay without spamming dev logs in UI
                                     delay(800)
                                     try {
                                         resolverEngine.clearCache()
@@ -225,7 +233,8 @@ class AudioPlayerManager(
                                     } catch (e: Exception) {
                                         Log.e(TAG, "Retry attempt $trackRetryCount failed: ${e.message}", e)
                                         if (trackRetryCount >= 3) {
-                                            _skipEvent.emit("Playback failed for '$title'. Skipping to next.")
+                                            val friendlyMsg = com.example.util.ErrorFormatter.toUserFriendlyMessage(e, context, title)
+                                            _skipEvent.emit(friendlyMsg)
                                             trackRetryCount = 0
                                             lastFailedTrackId = null
                                             if (_state.value.currentIndex < _state.value.queue.lastIndex) {
@@ -553,7 +562,11 @@ class AudioPlayerManager(
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading track: ${e.message}", e)
                 _state.value = _state.value.copy(isBuffering = false, isPlaying = false)
-                _skipEvent.emit("Playback note: ${e.localizedMessage ?: "Playing next track"}")
+                val friendlyMessage = com.example.util.ErrorFormatter.toUserFriendlyMessage(e, context, safeTrack.title)
+                _skipEvent.emit(friendlyMessage)
+                if (_state.value.currentIndex < _state.value.queue.lastIndex) {
+                    next()
+                }
             }
         }
     }

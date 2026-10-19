@@ -28,7 +28,7 @@ data class PlayerUiState(
 )
 
 class SmartPlayerManager(
-    context: Context,
+    private val context: Context,
     private val resolverEngine: ResolverEngine,
     private val autoSuggestManager: AutoSuggestQueueManager
 ) {
@@ -160,7 +160,8 @@ class SmartPlayerManager(
                     exoPlayer.play()
                 }
             }.onFailure { e ->
-                _errorEvents.emit(e.message ?: "Unable to resolve stream")
+                val friendlyMsg = com.example.util.ErrorFormatter.toUserFriendlyMessage(e, context, track.title)
+                _errorEvents.emit(friendlyMsg)
                 if (playImmediately && exoPlayer.hasNextMediaItem()) {
                     exoPlayer.seekToNextMediaItem()
                 }

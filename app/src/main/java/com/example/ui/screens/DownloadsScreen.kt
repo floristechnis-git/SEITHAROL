@@ -325,8 +325,14 @@ fun DownloadItemRow(
                 )
             } else if (item.state == DownloadState.ERROR) {
                 Spacer(modifier = Modifier.height(4.dp))
+                val context = androidx.compose.ui.platform.LocalContext.current
+                val errText = if (!com.example.util.ErrorFormatter.isOnline(context)) {
+                    "No internet connection • Tap retry when online"
+                } else {
+                    "Download error • Tap retry or remove"
+                }
                 Text(
-                    text = "Download error • Tap retry or remove",
+                    text = errText,
                     color = Color(0xFFFF5252),
                     fontSize = 11.sp,
                     fontFamily = OutfitFontFamily

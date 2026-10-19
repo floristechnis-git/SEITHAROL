@@ -176,9 +176,11 @@ class DownloadPreferencesAndService(private val context: Context) {
             _downloadState.value = DownloadTaskState.Completed(track.sourceId, savedUri)
             savedUri
         }.onFailure { err ->
+            android.util.Log.e("DownloadService", "Download failed for ${track.sourceId}: ${err.message}", err)
+            val friendlyMsg = com.example.util.ErrorFormatter.toUserFriendlyMessage(err, context, track.title)
             _downloadState.value = DownloadTaskState.Failed(
                 trackId = track.sourceId,
-                message = err.message ?: "Download failed"
+                message = friendlyMsg
             )
         }
     }

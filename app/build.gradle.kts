@@ -15,16 +15,9 @@ android {
     targetSdk = 36
     versionCode = 2
     versionName = "2.0"
-    setProperty("archivesBaseName", "in.floristechnis.seitharol")
+    base.archivesName.set("in.floristechnis.seitharol-v$versionName")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-  }
-
-  applicationVariants.all {
-    outputs.all {
-      (this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl)?.outputFileName =
-        "in.floristechnis.seitharol-v${versionName}.apk"
-    }
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,

@@ -82,7 +82,8 @@ fun CascadeApp(viewModel: CascadeViewModel) {
 
     LaunchedEffect(Unit) {
         viewModel.skipNotice.collectLatest { msg ->
-            snackbarHostState.showSnackbar(message = msg, duration = SnackbarDuration.Short)
+            val professionalMsg = com.example.util.ErrorFormatter.sanitizeNotice(msg, context)
+            snackbarHostState.showSnackbar(message = professionalMsg, duration = SnackbarDuration.Short)
         }
     }
 

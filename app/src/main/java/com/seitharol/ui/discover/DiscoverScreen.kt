@@ -303,6 +303,13 @@ private fun DiscoverShortPage(
                         style = MaterialTheme.typography.labelSmall,
                         color = Color.White
                     )
+                } else if (downloadState is DownloadTaskState.Failed && downloadState.trackId == track.sourceId) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = downloadState.message,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFFFF5252)
+                    )
                 }
             }
 

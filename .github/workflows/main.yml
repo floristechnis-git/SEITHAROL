@@ -12,10 +12,10 @@ jobs:
 
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v5
+      uses: actions/checkout@v4
 
     - name: Set up JDK 17
-      uses: actions/setup-java@v5
+      uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
         java-version: '17'
@@ -29,7 +29,7 @@ jobs:
           keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
         fi
         if [ ! -f app/google-services.json ]; then
-          echo '{"project_info":{"project_number":"0","project_id":"seitharol","storage_bucket":""},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0","android_client_info":{"package_name":"com.aistudio.cascade.mzxv"}}}]}' > app/google-services.json
+          echo '{"project_info":{"project_number":"0","project_id":"seitharol","storage_bucket":""},"client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0","android_client_info":{"package_name":"in.floristechnis.seitharol"}}}]}' > app/google-services.json
         fi
 
     - name: Grant execute permission for gradlew
@@ -38,8 +38,18 @@ jobs:
     - name: Build Debug APK with Gradle
       run: ./gradlew assembleDebug
 
+    - name: Prepare APK for Upload
+      run: |
+        APK_PATH=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+        echo "Built APK: $APK_PATH"
+        if [ "$APK_PATH" != "app/build/outputs/apk/debug/in.floristechnis.seitharol-v2.0.apk" ]; then
+          cp "$APK_PATH" app/build/outputs/apk/debug/in.floristechnis.seitharol-v2.0.apk
+        fi
+        ls -la app/build/outputs/apk/debug/
+
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: app-debug
-        path: app/build/outputs/apk/debug/app-debug.apk
+        name: in.floristechnis.seitharol-v2.0.apk
+        path: app/build/outputs/apk/debug/in.floristechnis.seitharol-v2.0.apk
+        if-no-files-found: error

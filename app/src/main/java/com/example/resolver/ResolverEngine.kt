@@ -389,11 +389,21 @@ class ResolverEngine {
             }
         }
 
+        if (resolvedStream == null) {
+            val failureSummary = failures.joinToString(" | ")
+            Log.w(TAG, "Resolution failed for '$effectiveTitle' ($rawId): [$failureSummary]")
+            val isNetworkIssue = failures.any { f ->
+                f.contains("UnknownHost", ignoreCase = true) ||
+                f.contains("No address associated", ignoreCase = true) ||
+                f.contains("unreachable", ignoreCase = true) ||
+                f.contains("failed to connect", ignoreCase = true)
+            }
+            if (isNetworkIssue) {
+                throw java.net.UnknownHostException("No internet connection")
+            }
+            throw IllegalStateException("Unable to resolve audio stream for '$effectiveTitle'")
+        }
         val finalStream = resolvedStream
-            ?: throw IllegalStateException(
-                "Could not resolve stream for id='$rawId' title='$effectiveTitle' artist='$effectiveArtist' " +
-                    "[${failures.joinToString(" | ")}]"
-            )
 
         _circuitBreakerState.value = CircuitBreakerState.CLOSED
         if (rawId.isNotBlank()) {

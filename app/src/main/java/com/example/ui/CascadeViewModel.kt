@@ -192,7 +192,31 @@ class CascadeViewModel(
         }
     }
 
+    private val playedTrackKeys = mutableSetOf<String>()
+    private fun Track.sessionKey(): String = "${id}_${title.trim().lowercase()}|${artist.trim().lowercase()}"
+
+    private val recommendationRepository = object : com.example.player.RecommendationRepository {
+        override suspend fun getRelatedTracks(seedTrack: Track): List<Track> {
+            return try {
+                val automix = InnerTubeStreamExtractor.fetchAutomixQueue(seedTrack.id, limit = 12)
+                    .map { it.toTrack() }
+                if (automix.isNotEmpty()) automix
+                else InnerTubeStreamExtractor.searchOfficialYtmSongs("${seedTrack.title} ${seedTrack.artist}", limit = 10)
+                    .map { it.toTrack() }
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
+
+        override suspend fun getRelatedPlaylists(seedTrack: Track): List<com.example.player.SuggestedPlaylist> = emptyList()
+    }
+
+    val autoSuggestManager = com.example.player.AutoSuggestQueueManager(recommendationRepository)
+    val isAutoSuggestEnabled: StateFlow<Boolean> = autoSuggestManager.isAutoSuggestEnabled
+    val suggestedPlaylists: StateFlow<List<com.example.player.SuggestedPlaylist>> = autoSuggestManager.suggestedPlaylists
+
     init {
+        playerManager.isAutoplayEnabled = autoSuggestManager.isAutoSuggestEnabled.value
         loadHomeScreenMusic()
         loadDiscoverFeed()
         viewModelScope.launch { downloadRepository.rescanLocalDownloads() }
@@ -630,29 +654,6 @@ class CascadeViewModel(
     fun clearAllHistory() {
         viewModelScope.launch { musicRepository.clearAllHistory() }
     }
-
-    private val playedTrackKeys = mutableSetOf<String>()
-    private fun Track.sessionKey(): String = "${id}_${title.trim().lowercase()}|${artist.trim().lowercase()}"
-
-    private val recommendationRepository = object : com.example.player.RecommendationRepository {
-        override suspend fun getRelatedTracks(seedTrack: Track): List<Track> {
-            return try {
-                val automix = InnerTubeStreamExtractor.fetchAutomixQueue(seedTrack.id, limit = 12)
-                    .map { it.toTrack() }
-                if (automix.isNotEmpty()) automix
-                else InnerTubeStreamExtractor.searchOfficialYtmSongs("${seedTrack.title} ${seedTrack.artist}", limit = 10)
-                    .map { it.toTrack() }
-            } catch (e: Exception) {
-                emptyList()
-            }
-        }
-
-        override suspend fun getRelatedPlaylists(seedTrack: Track): List<com.example.player.SuggestedPlaylist> = emptyList()
-    }
-
-    val autoSuggestManager = com.example.player.AutoSuggestQueueManager(recommendationRepository)
-    val isAutoSuggestEnabled: StateFlow<Boolean> = autoSuggestManager.isAutoSuggestEnabled
-    val suggestedPlaylists: StateFlow<List<com.example.player.SuggestedPlaylist>> = autoSuggestManager.suggestedPlaylists
 
     fun toggleAutoSuggest() {
         autoSuggestManager.toggleAutoSuggest()

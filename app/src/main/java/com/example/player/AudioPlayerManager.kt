@@ -20,6 +20,8 @@ import com.example.data.model.Track
 import com.example.data.repository.MusicRepository
 import com.example.resolver.ResolvedStream
 import com.example.resolver.ResolverEngine
+import com.seitharol.data.resolver.TrackMetadata
+import com.seitharol.player.QueueRecommendationEngine
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -91,6 +93,9 @@ class AudioPlayerManager(
 
     val playerInstance: ExoPlayer?
         get() = exoPlayer
+
+    var isAutoplayEnabled: Boolean = true
+    private var isFetchingAutoplay = false
 
     private val _activePreviewTrackId = MutableStateFlow<String?>(null)
     val activePreviewTrackId: StateFlow<String?> = _activePreviewTrackId.asStateFlow()
@@ -173,6 +178,16 @@ class AudioPlayerManager(
                                 }
                                 Player.STATE_IDLE -> {
                                     _state.value = _state.value.copy(isBuffering = false)
+                                }
+                            }
+                        }
+
+                        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                            super.onMediaItemTransition(mediaItem, reason)
+                            if (isAutoplayEnabled) {
+                                val isNearEnd = _state.value.currentIndex >= _state.value.queue.size - 1
+                                if (isNearEnd && _state.value.queue.isNotEmpty()) {
+                                    prefetchAutoplayRecommendation()
                                 }
                             }
                         }
@@ -792,7 +807,11 @@ class AudioPlayerManager(
                 RepeatMode.OFF -> {
                     val isLast = _state.value.currentIndex >= _state.value.queue.lastIndex
                     if (isLast) {
-                        _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
+                        if (isAutoplayEnabled) {
+                            triggerAutoplayNext()
+                        } else {
+                            _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
+                        }
                     } else {
                         next()
                     }
@@ -800,6 +819,122 @@ class AudioPlayerManager(
             }
         }.onFailure { e ->
             Log.e(TAG, "Error in onTrackCompleted", e)
+        }
+    }
+
+    private fun prefetchAutoplayRecommendation() {
+        if (isFetchingAutoplay) return
+        val current = _state.value.currentTrack ?: return
+        isFetchingAutoplay = true
+        coroutineScope.launch(Dispatchers.IO) {
+            try {
+                val queueMeta = _state.value.queue.map {
+                    TrackMetadata(
+                        id = it.id,
+                        title = it.title,
+                        artist = it.artist,
+                        durationSeconds = (it.durationMs / 1000).toInt(),
+                        artworkUrl = it.artUrl
+                    )
+                }
+                val seedMeta = TrackMetadata(
+                    id = current.id,
+                    title = current.title,
+                    artist = current.artist,
+                    durationSeconds = (current.durationMs / 1000).toInt(),
+                    artworkUrl = current.artUrl
+                )
+                val recommendations = QueueRecommendationEngine.fetchRelevantRecommendations(
+                    currentTrack = seedMeta,
+                    queueTracks = queueMeta,
+                    limit = 6
+                )
+                val nextRec = recommendations.firstOrNull { rec ->
+                    _state.value.queue.none { it.id == rec.id }
+                }
+                if (nextRec != null) {
+                    val newTrack = Track(
+                        id = nextRec.id,
+                        title = nextRec.title,
+                        artist = nextRec.artist,
+                        album = "",
+                        durationMs = nextRec.durationSeconds * 1000L,
+                        artUrl = nextRec.artworkUrl
+                    )
+                    musicRepository.insertTrack(newTrack)
+                    withContext(Dispatchers.Main) {
+                        addToQueue(newTrack)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Prefetch autoplay failed: ${e.message}")
+            } finally {
+                isFetchingAutoplay = false
+            }
+        }
+    }
+
+    fun triggerAutoplayNext() {
+        if (isFetchingAutoplay) return
+        val current = _state.value.currentTrack ?: _state.value.queue.lastOrNull()
+        if (current == null) {
+            _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
+            return
+        }
+        isFetchingAutoplay = true
+        coroutineScope.launch(Dispatchers.IO) {
+            try {
+                val queueMeta = _state.value.queue.map {
+                    TrackMetadata(
+                        id = it.id,
+                        title = it.title,
+                        artist = it.artist,
+                        durationSeconds = (it.durationMs / 1000).toInt(),
+                        artworkUrl = it.artUrl
+                    )
+                }
+                val seedMeta = TrackMetadata(
+                    id = current.id,
+                    title = current.title,
+                    artist = current.artist,
+                    durationSeconds = (current.durationMs / 1000).toInt(),
+                    artworkUrl = current.artUrl
+                )
+                val recommendations = QueueRecommendationEngine.fetchRelevantRecommendations(
+                    currentTrack = seedMeta,
+                    queueTracks = queueMeta,
+                    limit = 6
+                )
+                val nextRec = recommendations.firstOrNull { rec ->
+                    _state.value.queue.none { it.id == rec.id }
+                }
+                if (nextRec != null) {
+                    val newTrack = Track(
+                        id = nextRec.id,
+                        title = nextRec.title,
+                        artist = nextRec.artist,
+                        album = "",
+                        durationMs = nextRec.durationSeconds * 1000L,
+                        artUrl = nextRec.artworkUrl
+                    )
+                    musicRepository.insertTrack(newTrack)
+                    withContext(Dispatchers.Main) {
+                        addToQueue(newTrack)
+                        next()
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Autoplay recommendation fetch failed: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
+                }
+            } finally {
+                isFetchingAutoplay = false
+            }
         }
     }
 

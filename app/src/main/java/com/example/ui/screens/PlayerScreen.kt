@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -53,6 +54,7 @@ import com.example.player.RepeatMode
 import com.example.ui.CascadeViewModel
 import com.example.ui.components.PlaybackQueueModal
 import com.example.ui.theme.*
+import com.seitharol.data.preferences.AppSettingsManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -107,11 +109,13 @@ fun PlayerScreen(
     modifier: Modifier = Modifier
 ) {
     val track = playerState.currentTrack ?: return
+    val context = LocalContext.current
     var isUserDraggingSlider by remember { mutableStateOf(false) }
     var userSeekingPosition by remember { mutableStateOf<Float?>(null) }
     var showLyrics by remember { mutableStateOf(false) }
     var showExpandedLyrics by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
+    var showAudioAdjustSheet by remember { mutableStateOf(false) }
 
     // Conditional "Up Next" bottom bar:
     // If played as a single track, hide until user clicks Queue button at least once.
@@ -544,7 +548,7 @@ fun PlayerScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onOpenEqualizer) {
+            IconButton(onClick = { showAudioAdjustSheet = true }) {
                 Icon(Icons.Default.Tune, contentDescription = "Equalizer", tint = Color(0xFFE3E4E2))
             }
             IconButton(onClick = onOpenSleepTimer) {
@@ -895,6 +899,14 @@ fun PlayerScreen(
             viewModel = viewModel,
             playerState = playerState,
             onDismiss = { showQueue = false }
+        )
+    }
+
+    if (showAudioAdjustSheet) {
+        val settingsManager = remember(context) { AppSettingsManager.getInstance(context) }
+        PlayerAudioAdjustmentSheet(
+            settingsManager = settingsManager,
+            onDismiss = { showAudioAdjustSheet = false }
         )
     }
 
@@ -1298,3 +1310,104 @@ private fun formatMs(ms: Long): String {
     val sec = totalSec % 60
     return "%d:%02d".format(min, sec)
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PlayerAudioAdjustmentSheet(
+    settingsManager: AppSettingsManager,
+    onDismiss: () -> Unit
+) {
+    val state by settingsManager.state.collectAsState()
+    val eqFrequencies = listOf("60Hz", "230Hz", "910Hz", "3.6kHz", "14kHz")
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+                .navigationBarsPadding()
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Audio Adjustments",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                TextButton(onClick = { settingsManager.resetEqualizer() }) {
+                    Text("Reset Flat", color = MaterialTheme.colorScheme.primary)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Equalizer Master Switch
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("5-Band Studio Equalizer", fontWeight = FontWeight.SemiBold)
+                Switch(
+                    checked = state.eqEnabled,
+                    onCheckedChange = { settingsManager.setEqEnabled(it) }
+                )
+            }
+
+            eqFrequencies.forEachIndexed { idx, freq ->
+                val gain = state.eqBandsDb.getOrElse(idx) { 0f }
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(freq, style = MaterialTheme.typography.labelMedium)
+                        Text("${"%.1f".format(gain)} dB", style = MaterialTheme.typography.labelMedium)
+                    }
+                    Slider(
+                        value = gain,
+                        onValueChange = { settingsManager.setEqBand(idx, it) },
+                        valueRange = -12f..12f,
+                        enabled = state.eqEnabled
+                    )
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            // Normalize Volume & Gapless Toggles
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Normalize Volume", fontWeight = FontWeight.Medium)
+                Switch(
+                    checked = state.audioNormalization,
+                    onCheckedChange = { settingsManager.setAudioNormalization(it) }
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Gapless Playback", fontWeight = FontWeight.Medium)
+                Switch(
+                    checked = state.gaplessPlayback,
+                    onCheckedChange = { settingsManager.setGaplessPlayback(it) }
+                )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+

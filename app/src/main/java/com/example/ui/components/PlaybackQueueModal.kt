@@ -499,8 +499,8 @@ fun PlaybackQueueModal(
                         }
                     }
 
-                    // Dynamic "Auto-suggested" list section when Autoplay is enabled
-                    if (isAutoSuggest && suggestedTracks.isNotEmpty()) {
+                    // Dynamic "Auto-suggested" list section (Always visible)
+                    if (suggestedTracks.isNotEmpty()) {
                         item {
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(

@@ -34,7 +34,8 @@ private enum class SettingsDialogType {
 @Composable
 fun GeneralSettingsScreen(
     settingsManager: AppSettingsManager,
-    onOpenInfoPage: (InfoPageType) -> Unit
+    onOpenInfoPage: (InfoPageType) -> Unit,
+    onNavigateBack: (() -> Unit)? = null
 ) {
     val state by settingsManager.state.collectAsState()
     var activeDialog by remember { mutableStateOf(SettingsDialogType.NONE) }
@@ -49,11 +50,25 @@ fun GeneralSettingsScreen(
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         item {
-            Text(
-                text = "Settings",
-                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.ExtraBold),
-                color = MaterialTheme.colorScheme.onBackground
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (onNavigateBack != null) {
+                    IconButton(onClick = onNavigateBack) {
+                        BackArrowSvgIcon(
+                            tint = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                Text(
+                    text = "Settings",
+                    style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.ExtraBold),
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            }
         }
 
         // 1. APPEARANCE

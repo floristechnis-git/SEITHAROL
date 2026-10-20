@@ -140,7 +140,7 @@ fun SearchScreen(
         state = listState,
         modifier = modifier
             .fillMaxSize()
-            .background(SeitharolBg)
+            .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
             .testTag("search_screen"),
         contentPadding = PaddingValues(bottom = 140.dp)
@@ -153,7 +153,7 @@ fun SearchScreen(
                     .padding(horizontal = 16.dp, vertical = 10.dp)
                     .height(48.dp),
                 shape = RoundedCornerShape(24.dp),
-                color = SeitharolWhite
+                color = MaterialTheme.colorScheme.surfaceVariant
             ) {
                 Row(
                     modifier = Modifier
@@ -176,7 +176,7 @@ fun SearchScreen(
                         Icon(
                             imageVector = if (query.isEmpty()) Icons.AutoMirrored.Filled.ArrowBack else Icons.Default.Close,
                             contentDescription = if (query.isEmpty()) "Back" else "Clear search",
-                            tint = SeitharolDark,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -200,20 +200,21 @@ fun SearchScreen(
                             }
                         ),
                         textStyle = TextStyle(
-                            color = SeitharolDark,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 15.sp,
                             fontFamily = OutfitFontFamily,
                             fontWeight = FontWeight.Normal
                         ),
-                        cursorBrush = SolidColor(SeitharolDark),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         decorationBox = { innerTextField ->
                             if (query.isEmpty()) {
                                 Text(
                                     text = "Search songs, official artists, albums...",
-                                    color = SeitharolTextSecondary,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                                     fontSize = 15.sp,
                                     fontFamily = OutfitFontFamily,
                                     maxLines = 1,
+                                    softWrap = false,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
@@ -224,7 +225,7 @@ fun SearchScreen(
                         CircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
                             strokeWidth = 2.dp,
-                            color = SeitharolDark
+                            color = MaterialTheme.colorScheme.primary
                         )
                     }
                 }
@@ -240,89 +241,64 @@ fun SearchScreen(
             ) {
                 items(com.example.ui.ProviderFilter.values()) { provider ->
                     val isSelected = currentProvider == provider
-                    Surface(
-                        modifier = Modifier
-                            .height(34.dp)
-                            .clip(RoundedCornerShape(17.dp))
-                            .clickable { viewModel.selectProviderFilter(provider) },
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { viewModel.selectProviderFilter(provider) },
+                        modifier = Modifier.height(34.dp),
                         shape = RoundedCornerShape(17.dp),
-                        color = if (isSelected) SeitharolDark else SeitharolWhite
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center,
-                            modifier = Modifier.padding(horizontal = 14.dp)
-                        ) {
+                        border = null,
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primary,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
+                        leadingIcon = {
                             when (provider) {
                                 com.example.ui.ProviderFilter.YOUTUBE -> {
                                     androidx.compose.foundation.Image(
                                         painter = painterResource(id = R.drawable.ic_youtube),
                                         contentDescription = "YouTube",
-                                        modifier = Modifier
-                                            .size(18.dp)
-                                            .padding(end = 6.dp)
-                                    )
-                                    Text(
-                                        text = provider.label,
-                                        color = if (isSelected) SeitharolWhite else SeitharolDark,
-                                        fontSize = 13.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                        modifier = Modifier.size(16.dp)
                                     )
                                 }
                                 com.example.ui.ProviderFilter.JIOSAAVN -> {
                                     androidx.compose.foundation.Image(
                                         painter = painterResource(id = R.drawable.ic_jiosaavn_icon),
                                         contentDescription = "JioSaavn",
-                                        modifier = Modifier
-                                            .size(18.dp)
-                                            .padding(end = 6.dp)
-                                    )
-                                    Text(
-                                        text = provider.label,
-                                        color = if (isSelected) SeitharolWhite else SeitharolDark,
-                                        fontSize = 13.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                        modifier = Modifier.size(16.dp)
                                     )
                                 }
                                 com.example.ui.ProviderFilter.LOCAL -> {
                                     Icon(
                                         imageVector = Icons.Default.CloudDownload,
                                         contentDescription = "Downloaded",
-                                        tint = if (isSelected) SeitharolWhite else SeitharolDark,
-                                        modifier = Modifier
-                                            .size(16.dp)
-                                            .padding(end = 4.dp)
-                                    )
-                                    Text(
-                                        text = provider.label,
-                                        color = if (isSelected) SeitharolWhite else SeitharolDark,
-                                        fontSize = 13.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                        tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
                                     )
                                 }
                                 com.example.ui.ProviderFilter.ALL -> {
                                     Icon(
                                         imageVector = Icons.Default.Public,
                                         contentDescription = "All Sources",
-                                        tint = if (isSelected) SeitharolWhite else SeitharolDark,
-                                        modifier = Modifier
-                                            .size(16.dp)
-                                            .padding(end = 4.dp)
-                                    )
-                                    Text(
-                                        text = provider.label,
-                                        color = if (isSelected) SeitharolWhite else SeitharolDark,
-                                        fontSize = 13.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                        tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
                                     )
                                 }
                             }
+                        },
+                        label = {
+                            Text(
+                                text = provider.label,
+                                fontSize = 13.sp,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                softWrap = false
+                            )
                         }
-                    }
+                    )
                 }
             }
         }

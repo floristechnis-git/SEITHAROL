@@ -91,10 +91,109 @@ object InnerTubeStreamExtractor {
         )
     )
 
+    val VALID_VIDEO_ID_REGEX = Regex("^[a-zA-Z0-9_-]{11}$")
+
+    fun isValidYoutubeVideoId(id: String?): Boolean =
+        !id.isNullOrBlank() && VALID_VIDEO_ID_REGEX.matches(id.trim())
+
+    suspend fun resolveExactYoutubeStreamById(
+        videoId: String,
+        preferredQuality: AudioQuality = AudioQuality.HIGH
+    ): Result<String> = withContext(Dispatchers.IO) {
+        require(isValidYoutubeVideoId(videoId)) { "Invalid YouTube videoId: $videoId" }
+        val cpn = (1..16).map { "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"[(0..63).random()] }.joinToString("")
+
+        // OuterTune / InnerTune verified client priority order
+        val clients = listOf(
+            InnerTubeClientConfig(
+                clientName = "ANDROID_VR",
+                clientVersion = "1.60.19",
+                userAgent = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+                clientId = "28",
+                androidSdkVersion = 32
+            ),
+            InnerTubeClientConfig(
+                clientName = "IOS",
+                clientVersion = "19.45.4",
+                userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
+                clientId = "5"
+            ),
+            InnerTubeClientConfig(
+                clientName = "ANDROID_TESTSUITE",
+                clientVersion = "1.9",
+                userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 13; en_US) gzip",
+                clientId = "30",
+                androidSdkVersion = 33
+            )
+        )
+
+        for (client in clients) {
+            val streamUrl = runCatching {
+                val endpoint = URL("https://youtubei.googleapis.com/youtubei/v1/player?prettyPrint=false")
+                val conn = (endpoint.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 8000
+                    readTimeout = 8000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("User-Agent", client.userAgent)
+                    setRequestProperty("X-YouTube-Client-Name", client.clientId)
+                    setRequestProperty("X-YouTube-Client-Version", client.clientVersion)
+                }
+                val payload = JSONObject().apply {
+                    put("videoId", videoId)
+                    put("cpn", cpn)
+                    put("contentCheckOk", true)
+                    put("racyCheckOk", true)
+                    put("context", JSONObject().apply {
+                        put("client", JSONObject().apply {
+                            put("clientName", client.clientName)
+                            put("clientVersion", client.clientVersion)
+                            put("hl", "en")
+                            put("gl", "IN")
+                            client.androidSdkVersion?.let { put("androidSdkVersion", it) }
+                        })
+                    })
+                }
+                conn.outputStream.use { it.write(payload.toString().toByteArray()) }
+                if (conn.responseCode != 200) return@runCatching null
+                val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                if (json.optJSONObject("playabilityStatus")?.optString("status") != "OK") return@runCatching null
+
+                val returnedVideoId = json.optJSONObject("videoDetails")?.optString("videoId")
+                if (returnedVideoId != null && returnedVideoId != videoId) return@runCatching null
+
+                val adaptiveFormats = json.optJSONObject("streamingData")?.optJSONArray("adaptiveFormats")
+                    ?: return@runCatching null
+                val audioStreams = mutableListOf<Pair<Int, String>>()
+                for (i in 0 until adaptiveFormats.length()) {
+                    val fmt = adaptiveFormats.getJSONObject(i)
+                    val mime = fmt.optString("mimeType", "")
+                    val url = fmt.optString("url", "")
+                    if (mime.startsWith("audio/") && url.isNotBlank()) {
+                        val kbps = fmt.optInt("bitrate", 128000) / 1000
+                        val opusBoost = if (mime.contains("opus") || mime.contains("mp4a")) 25 else 0
+                        audioStreams.add((kbps + opusBoost) to url)
+                    }
+                }
+                audioStreams.maxByOrNull { it.first }?.second
+            }.getOrNull()
+
+            if (!streamUrl.isNullOrBlank()) {
+                return@withContext Result.success(streamUrl)
+            }
+        }
+        Result.failure(IllegalStateException("Failed to extract direct stream for videoId=$videoId"))
+    }
+
     suspend fun resolveWorkingStreamUrl(
         videoId: String,
         preferredQuality: AudioQuality = AudioQuality.NORMAL
     ): Result<String> = withContext(Dispatchers.IO) {
+        if (isValidYoutubeVideoId(videoId)) {
+            val directResult = resolveExactYoutubeStreamById(videoId, preferredQuality)
+            if (directResult.isSuccess) return@withContext directResult
+        }
         var lastError: Throwable? = null
         for (client in FALLBACK_CLIENTS) {
             try {

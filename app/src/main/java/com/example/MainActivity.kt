@@ -91,10 +91,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        super.onDestroy()
-        // When user closes/swipes the app away (not a configuration change like screen rotation),
-        // stop playback and remove all lingering notifications immediately.
-        if (isFinishing && !isChangingConfigurations) {
+        if (!isChangingConfigurations) {
             runCatching {
                 viewModel.stopPlayback()
                 (application as? CascadeApplication)?.audioPlayerManager?.release()
@@ -102,5 +99,6 @@ class MainActivity : ComponentActivity() {
                 nm?.cancelAll()
             }
         }
+        super.onDestroy()
     }
 }

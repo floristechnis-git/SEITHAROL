@@ -225,7 +225,8 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                         )
                         is SubScreen.SoundSettings -> com.seitharol.ui.settings.GeneralSettingsScreen(
                             settingsManager = com.seitharol.data.preferences.AppSettingsManager.getInstance(context),
-                            onOpenInfoPage = { currentSubScreen = SubScreen.InfoDetail(it) }
+                            onOpenInfoPage = { currentSubScreen = SubScreen.InfoDetail(it) },
+                            onNavigateBack = { currentSubScreen = SubScreen.None }
                         )
                         is SubScreen.Discover -> {
                             val feedTracks by viewModel.discoverTracks.collectAsState()
@@ -413,7 +414,8 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                         BackHandler { currentSubScreen = SubScreen.None }
                         com.seitharol.ui.settings.GeneralSettingsScreen(
                             settingsManager = com.seitharol.data.preferences.AppSettingsManager.getInstance(context),
-                            onOpenInfoPage = { currentSubScreen = SubScreen.InfoDetail(it) }
+                            onOpenInfoPage = { currentSubScreen = SubScreen.InfoDetail(it) },
+                            onNavigateBack = { currentSubScreen = SubScreen.None }
                         )
                     }
                     is SubScreen.Discover -> {

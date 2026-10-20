@@ -277,8 +277,8 @@ class ResolverEngine {
             baseQuery
         }
 
-        // 8. Fallback 1: On-Device YouTube Music search + stream extraction (ranked by TrackMatcher)
-        if (resolvedStream == null && !isSaavn && searchQuery.isNotBlank()) {
+        // 8. Fallback 1: On-Device YouTube Music search + stream extraction (ranked by TrackMatcher) - ONLY for non-YouTube tracks
+        if (resolvedStream == null && !isYouTubeId && !isSaavn && searchQuery.isNotBlank()) {
             try {
                 val ytResults = youtubeInnerTubeProvider.searchTracks(searchQuery, limit = 10)
                 val targetTrack = NormalizedTrack(
@@ -305,8 +305,8 @@ class ResolverEngine {
             }
         }
 
-        // 9. Fallback 2: On-Device JioSaavn search + 160kbps AAC DES decryption
-        if (resolvedStream == null && searchQuery.isNotBlank()) {
+        // 9. Fallback 2: On-Device JioSaavn search + 160kbps AAC DES decryption - ONLY for non-YouTube tracks
+        if (resolvedStream == null && !isYouTubeId && searchQuery.isNotBlank()) {
             try {
                 val results = jioSaavnProvider.searchTracks(searchQuery, limit = 5)
                 val targetTrack = NormalizedTrack(

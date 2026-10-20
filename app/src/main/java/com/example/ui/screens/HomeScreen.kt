@@ -153,22 +153,27 @@ fun HomeScreen(
         trendingHits.distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
     }
 
-    val heroTrack = remember(personalizedTracks, deduplicatedTrendingHits, deduplicatedAllTracks) {
-        personalizedTracks.firstOrNull() ?: deduplicatedTrendingHits.firstOrNull() ?: deduplicatedAllTracks.firstOrNull()
+    val currentlyPlayingSongId = playerState.currentTrack?.id
+    val heroTrack = remember(personalizedTracks, deduplicatedTrendingHits, deduplicatedAllTracks, currentlyPlayingSongId) {
+        val pool = (personalizedTracks + deduplicatedTrendingHits + deduplicatedAllTracks).distinctBy { it.id }
+        pool.firstOrNull { it.id != currentlyPlayingSongId } ?: pool.firstOrNull()
+    }
+    val excludedHeroIds = remember(heroTrack?.id, currentlyPlayingSongId) {
+        setOfNotNull(heroTrack?.id, currentlyPlayingSongId)
     }
 
-    // Prepare Trending Items (Deduplicated)
-    val trendingItems = remember(deduplicatedTrendingHits, deduplicatedAllTracks) {
+    // Prepare Trending Items (Deduplicated, excluding Hero & Currently Playing)
+    val trendingItems = remember(deduplicatedTrendingHits, deduplicatedAllTracks, excludedHeroIds) {
         val pool = if (deduplicatedTrendingHits.isNotEmpty()) deduplicatedTrendingHits else deduplicatedAllTracks
-        pool.take(24).map { it.toHomeMediaItem() }
+        pool.filterNot { it.id in excludedHeroIds }.take(24).map { it.toHomeMediaItem() }
     }
 
-    // Prepare Fresh New Music Items (Deduplicated)
-    val freshItems = remember(freshReleases, deduplicatedTrendingHits, deduplicatedAllTracks) {
+    // Prepare Fresh New Music Items (Deduplicated, excluding Hero & Currently Playing)
+    val freshItems = remember(freshReleases, deduplicatedTrendingHits, deduplicatedAllTracks, excludedHeroIds) {
         val pool = if (freshReleases.isNotEmpty()) freshReleases.distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
         else if (deduplicatedTrendingHits.isNotEmpty()) deduplicatedTrendingHits.take(12)
         else deduplicatedAllTracks.take(12)
-        pool.take(12).map { it.toHomeMediaItem() }
+        pool.filterNot { it.id in excludedHeroIds }.take(12).map { it.toHomeMediaItem() }
     }
 
     // Prepare YouTube Mixes Shelf (real RDAMVM mixes, no fake "+ Mix" tags)
@@ -223,12 +228,12 @@ fun HomeScreen(
     }
 
     // Prepare Spotify-Style 2-Column "Speed Dial / Quick Picks" Bento Items (2x3 grid = 6 items)
-    val quickDialItems = remember(youtubeMixes, activeHistory, trendingItems) {
+    val quickDialItems = remember(youtubeMixes, activeHistory, trendingItems, excludedHeroIds) {
         val items = mutableListOf<HomeMediaItem>()
-        items.addAll(youtubeMixes.take(2))
-        activeHistory.take(4).forEach { items.add(it.toHomeMediaItem()) }
+        items.addAll(youtubeMixes.filterNot { it.id in excludedHeroIds }.take(2))
+        activeHistory.distinctBy { it.id }.filterNot { it.id in excludedHeroIds }.take(4).forEach { items.add(it.toHomeMediaItem()) }
         if (items.size < 6) {
-            trendingItems.take(6 - items.size).forEach { items.add(it) }
+            trendingItems.filterNot { it.id in excludedHeroIds }.take(6 - items.size).forEach { items.add(it) }
         }
         items.take(6)
     }
@@ -1271,9 +1276,9 @@ fun ReadyToPlayHeroCard(
 ) {
     val badgeLabel = remember(selectedMood) {
         if (selectedMood.equals("All", true)) {
-            "READY TO PLAY • PERSONALIZED FOR YOU"
+            "READY TO PLAY • FOR YOU"
         } else {
-            "READY TO PLAY • ${selectedMood.uppercase()} PICK"
+            "READY TO PLAY • ${selectedMood.uppercase()}"
         }
     }
 
@@ -1281,7 +1286,8 @@ fun ReadyToPlayHeroCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .height(190.dp)
+            .wrapContentHeight()
+            .heightIn(min = 184.dp)
             .clip(RoundedCornerShape(22.dp))
             .border(
                 width = 1.dp,
@@ -1315,7 +1321,7 @@ fun ReadyToPlayHeroCard(
 
         Row(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -1333,6 +1339,9 @@ fun ReadyToPlayHeroCard(
                         fontSize = 10.sp,
                         fontWeight = FontWeight.ExtraBold,
                         letterSpacing = 0.8.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
@@ -1363,18 +1372,18 @@ fun ReadyToPlayHeroCard(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Button(
                         onClick = onPlayNow,
                         shape = RoundedCornerShape(50),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primary,
                             contentColor = Color.White
                         ),
-                        modifier = Modifier.height(36.dp)
+                        modifier = Modifier.height(34.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.PlayArrow,
@@ -1382,7 +1391,7 @@ fun ReadyToPlayHeroCard(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Play Now", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text("Play", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                     }
 
                     OutlinedButton(
@@ -1391,9 +1400,9 @@ fun ReadyToPlayHeroCard(
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
                         border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.35f)),
-                        modifier = Modifier.height(36.dp)
+                        modifier = Modifier.height(34.dp)
                     ) {
-                        Text("Radio Mix", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Radio", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                     }
                 }
             }

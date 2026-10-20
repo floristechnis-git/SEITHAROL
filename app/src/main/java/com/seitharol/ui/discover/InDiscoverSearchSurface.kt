@@ -100,11 +100,15 @@ fun InDiscoverSearchSurface(
                 placeholder = {
                     Text(
                         text = "Search song, artist, or paste Spotify link...",
-                        color = Color.White.copy(alpha = 0.5f),
-                        fontSize = 14.sp
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        fontSize = 14.sp,
+                        color = Color.White.copy(alpha = 0.5f)
                     )
                 },
                 singleLine = true,
+                maxLines = 1,
                 shape = RoundedCornerShape(50),
                 leadingIcon = {
                     IconButton(

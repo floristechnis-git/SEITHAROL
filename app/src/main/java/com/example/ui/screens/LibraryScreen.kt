@@ -198,35 +198,83 @@ fun LibraryScreen(
             }
         }
 
-        // 3. Category Nav Row (16.dp horizontal padding, matching Home Screen) + Filter SVG Popup
+        // 3. Category Nav Row (Strict 36.dp height, 20.dp divider, compact 32.dp filter pill)
         item {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .height(36.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
+                LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.weight(1f)
                 ) {
-                    navTabs.forEach { tab ->
+                    items(navTabs) { tab ->
+                        val isSelected = selectedNavTab == tab
                         FilterChip(
-                            selected = selectedNavTab == tab,
+                            selected = isSelected,
                             onClick = { selectedNavTab = tab },
-                            label = { Text(tab) }
+                            modifier = Modifier.height(32.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            ),
+                            border = null,
+                            label = {
+                                Text(
+                                    text = tab,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         )
                     }
                 }
 
+                // Compact Vertical Bar (Strictly 20.dp tall so it NEVER stretches)
+                HorizontalDivider(
+                    modifier = Modifier
+                        .padding(horizontal = 8.dp)
+                        .height(20.dp)
+                        .width(1.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                )
+
+                // Compact Filter Button (Strictly 32.dp tall to match chips)
                 Box {
-                    IconButton(onClick = { showFilterMenu = true }) {
-                        Icon(
-                            imageVector = Icons.Default.FilterList,
-                            contentDescription = "Filter",
-                            tint = SeitharolDark
-                        )
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier
+                            .height(32.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable { showFilterMenu = true }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            com.seitharol.ui.library.FilterSlidersSvgIcon(
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = activeFilter.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     }
                     DropdownMenu(
                         expanded = showFilterMenu,
@@ -234,16 +282,7 @@ fun LibraryScreen(
                     ) {
                         LibraryFilterOption.entries.forEach { option ->
                             DropdownMenuItem(
-                                text = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Checkbox(
-                                            checked = activeFilter == option,
-                                            onCheckedChange = null
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(option.label)
-                                    }
-                                },
+                                text = { Text(option.label) },
                                 onClick = {
                                     activeFilter = option
                                     showFilterMenu = false

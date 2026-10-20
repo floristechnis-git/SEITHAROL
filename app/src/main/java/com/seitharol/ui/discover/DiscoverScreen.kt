@@ -81,6 +81,8 @@ fun DiscoverScreen(
         onDispose { audioPlayerManager.pausePreview() }
     }
 
+    val isPreviewPlaying by audioPlayerManager.isPreviewPlaying.collectAsState()
+
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         if (feedTracks.isEmpty()) {
             CircularProgressIndicator(
@@ -99,6 +101,14 @@ fun DiscoverScreen(
                 DiscoverShortPage(
                     track = track,
                     downloadState = downloadTaskState,
+                    isPreviewPlaying = isPreviewPlaying,
+                    onTogglePlayPause = {
+                        if (isPreviewPlaying) {
+                            audioPlayerManager.pausePreview()
+                        } else {
+                            audioPlayerManager.resumeOrPlayPreview(track)
+                        }
+                    },
                     onLikeClick = { onToggleLike(track) },
                     onDownloadClick = { trackForDownloadSheet = track },
                     onVisitArtistClick = {
@@ -238,6 +248,8 @@ fun DiscoverScreen(
 private fun DiscoverShortPage(
     track: NormalizedTrack,
     downloadState: DownloadTaskState,
+    isPreviewPlaying: Boolean,
+    onTogglePlayPause: () -> Unit,
     onLikeClick: () -> Unit,
     onDownloadClick: () -> Unit,
     onVisitArtistClick: () -> Unit,
@@ -248,7 +260,14 @@ private fun DiscoverShortPage(
     val primaryArtist = track.artists.firstOrNull().orEmpty().ifBlank { "Unknown Artist" }
     val avatarModel = track.artistAvatarUrl.ifBlank { track.artUrl }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clickable(
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null
+            ) { onTogglePlayPause() }
+    ) {
         // Blurred ambient background
         AsyncImage(
             model = track.artUrl,
@@ -314,6 +333,29 @@ private fun DiscoverShortPage(
                         fontWeight = FontWeight.ExtraBold
                     )
                 }
+            }
+        }
+
+        // Show Play indicator overlay in center when paused:
+        androidx.compose.animation.AnimatedVisibility(
+            visible = !isPreviewPlaying,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .offset(y = (-48).dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(68.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.65f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_play),
+                    contentDescription = "Play Preview",
+                    tint = Color.White,
+                    modifier = Modifier.size(34.dp)
+                )
             }
         }
 

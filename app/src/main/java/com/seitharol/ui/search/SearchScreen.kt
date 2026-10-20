@@ -66,8 +66,16 @@ fun SearchScreen(
                 query = it
                 onQueryChange(it)
             },
-            placeholder = { Text("Search songs, official artists, albums...") },
+            placeholder = {
+                Text(
+                    text = "Search songs, official artists, albums...",
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
+            },
             singleLine = true,
+            maxLines = 1,
             shape = RoundedCornerShape(28.dp),
             leadingIcon = {
                 IconButton(

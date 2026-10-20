@@ -12,6 +12,10 @@ import org.json.JSONObject
 import org.jsoup.Jsoup
 import java.net.URLEncoder
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
+
 interface SpotifyMetadataProvider {
     suspend fun searchTracksWithPreviews(query: String, limit: Int = 10): List<NormalizedTrack>
     suspend fun resolveSpotifyEmbedTrack(spotifyTrackId: String): NormalizedTrack?
@@ -30,131 +34,126 @@ class DefaultSpotifyMetadataProvider : SpotifyMetadataProvider {
                 resolveSpotifyEmbedTrack(trackId)?.let { return@withContext listOf(it) }
             }
 
-            val results = mutableListOf<NormalizedTrack>()
+            coroutineScope {
+                val deezerDeferred = async {
+                    withTimeoutOrNull(4000L) {
+                        val deezerResults = mutableListOf<NormalizedTrack>()
+                        runCatching {
+                            val encoded = URLEncoder.encode(clean, "UTF-8")
+                            val deezerUrl = "https://api.deezer.com/search?q=$encoded&limit=${limit * 2}"
+                            val request = Request.Builder()
+                                .url(deezerUrl)
+                                .header("User-Agent", "Mozilla/5.0 (Android 14; Mobile)")
+                                .build()
 
-            // 1. Primary 30s Preview Provider: Deezer API (Provides 30s MP3 preview + real Artist Profile Picture!)
-            try {
-                val encoded = URLEncoder.encode(clean, "UTF-8")
-                val deezerUrl = "https://api.deezer.com/search?q=$encoded&limit=${limit * 2}"
-                val request = Request.Builder()
-                    .url(deezerUrl)
-                    .header("User-Agent", "Mozilla/5.0 (Android 14; Mobile)")
-                    .build()
+                            NetworkClients.okHttpClient.newCall(request).execute().use { response ->
+                                if (response.isSuccessful) {
+                                    val body = response.body?.string().orEmpty()
+                                    val dataArr = JSONObject(body).optJSONArray("data")
+                                    if (dataArr != null) {
+                                        for (i in 0 until dataArr.length()) {
+                                            if (deezerResults.size >= limit) break
+                                            val item = dataArr.optJSONObject(i) ?: continue
+                                            val preview = item.optString("preview")
+                                            if (preview.isBlank() || !preview.startsWith("http")) continue
 
-                NetworkClients.okHttpClient.newCall(request).execute().use { response ->
-                    if (response.isSuccessful) {
-                        val body = response.body?.string().orEmpty()
-                        val dataArr = JSONObject(body).optJSONArray("data")
-                        if (dataArr != null) {
-                            for (i in 0 until dataArr.length()) {
-                                val item = dataArr.optJSONObject(i) ?: continue
-                                val preview = item.optString("preview")
-                                if (preview.isBlank() || !preview.startsWith("http")) continue
+                                            val id = item.optLong("id").toString()
+                                            val title = item.optString("title").takeIf { it.isNotBlank() } ?: continue
+                                            val durationSec = item.optLong("duration", 210L)
+                                            val artistObj = item.optJSONObject("artist")
+                                            val artistName = artistObj?.optString("name").orEmpty().ifBlank { "Unknown Artist" }
+                                            val artistAvatar = artistObj?.optString("picture_medium")
+                                                ?.ifBlank { artistObj.optString("picture_big") }
+                                                .orEmpty()
+                                            val albumObj = item.optJSONObject("album")
+                                            val albumTitle = albumObj?.optString("title") ?: "Single"
+                                            val artUrl = albumObj?.optString("cover_xl")
+                                                ?.ifBlank { albumObj.optString("cover_big") }
+                                                .orEmpty()
 
-                                val id = item.optLong("id").toString()
-                                val title = item.optString("title").takeIf { it.isNotBlank() } ?: continue
-                                val durationSec = item.optLong("duration", 210L)
-                                val artistObj = item.optJSONObject("artist")
-                                val artistName = artistObj?.optString("name").orEmpty().ifBlank { "Unknown Artist" }
-                                val artistAvatar = artistObj?.optString("picture_medium")
-                                    ?.ifBlank { artistObj.optString("picture_big") }
-                                    .orEmpty()
-                                val albumObj = item.optJSONObject("album")
-                                val albumTitle = albumObj?.optString("title") ?: "Single"
-                                val artUrl = albumObj?.optString("cover_xl")
-                                    ?.ifBlank { albumObj.optString("cover_big") }
-                                    .orEmpty()
-
-                                results.add(
-                                    NormalizedTrack.fromSpotifyPreview(
-                                        spotifyId = "dz_$id",
-                                        title = title,
-                                        artists = listOf(artistName),
-                                        artistId = null,
-                                        artistAvatarUrl = artistAvatar.ifBlank { artUrl },
-                                        album = albumTitle,
-                                        durationMs = durationSec * 1000L,
-                                        artUrl = artUrl,
-                                        previewUrl = preview
-                                    )
-                                )
-                                if (results.size >= limit) break
-                            }
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Deezer preview fetch fallback: ${e.message}")
-            }
-
-            // 2. Secondary Fallback: Apple iTunes 30s M4A Previews
-            if (results.size < limit) {
-                try {
-                    val encoded = URLEncoder.encode(clean, "UTF-8")
-                    val itunesUrl = "https://itunes.apple.com/search?term=$encoded&media=music&entity=song&country=IN&limit=${limit * 2}"
-                    val request = Request.Builder()
-                        .url(itunesUrl)
-                        .header("User-Agent", "Mozilla/5.0")
-                        .build()
-
-                    NetworkClients.okHttpClient.newCall(request).execute().use { response ->
-                        if (response.isSuccessful) {
-                            val body = response.body?.string().orEmpty()
-                            val arr = JSONObject(body).optJSONArray("results")
-                            if (arr != null) {
-                                for (i in 0 until arr.length()) {
-                                    if (results.size >= limit) break
-                                    val item = arr.optJSONObject(i) ?: continue
-                                    val previewUrl = item.optString("previewUrl")
-                                    if (previewUrl.isBlank() || !previewUrl.startsWith("http")) continue
-
-                                    val trackId = item.optLong("trackId").toString()
-                                    val title = item.optString("trackName").takeIf { it.isNotBlank() } ?: continue
-                                    val artist = item.optString("artistName").ifBlank { "Unknown Artist" }
-                                    val album = item.optString("collectionName").ifBlank { "Single" }
-                                    val durationMs = item.optLong("trackTimeMillis", 210_000L)
-                                    val artUrl = item.optString("artworkUrl100").replace("100x100bb", "600x600bb")
-
-                                    val duplicate = results.any {
-                                        it.title.equals(title, ignoreCase = true) &&
-                                            it.artists.firstOrNull().equals(artist, ignoreCase = true)
-                                    }
-                                    if (!duplicate) {
-                                        results.add(
-                                            NormalizedTrack.fromSpotifyPreview(
-                                                spotifyId = "it_$trackId",
-                                                title = title,
-                                                artists = listOf(artist),
-                                                artistAvatarUrl = artUrl,
-                                                album = album,
-                                                durationMs = durationMs,
-                                                artUrl = artUrl,
-                                                previewUrl = previewUrl
+                                            deezerResults.add(
+                                                NormalizedTrack.fromSpotifyPreview(
+                                                    spotifyId = "dz_$id",
+                                                    title = title,
+                                                    artists = listOf(artistName),
+                                                    artistId = null,
+                                                    artistAvatarUrl = artistAvatar.ifBlank { artUrl },
+                                                    album = albumTitle,
+                                                    durationMs = durationSec * 1000L,
+                                                    artUrl = artUrl,
+                                                    previewUrl = preview
+                                                )
                                             )
-                                        )
+                                        }
                                     }
                                 }
                             }
+                        }.onFailure { e ->
+                            Log.w(TAG, "Deezer preview fetch fallback: ${e.message}")
                         }
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "iTunes preview fetch failed: ${e.message}")
+                        deezerResults
+                    } ?: emptyList()
                 }
-            }
 
-            // 3. Regional / Personalized YouTube Music 30s Chorus Clipping Fallback
-            // Ensures Manipuri songs & niche personalized tracks ALWAYS load with a real 30s preview!
-            if (results.size < limit) {
-                runCatching {
-                    val ytmTracks = InnerTubeStreamExtractor.searchOfficialYtmSongs(clean, limit = limit)
-                    for (yt in ytmTracks) {
-                        if (results.size >= limit) break
-                        val duplicate = results.any {
-                            it.title.equals(yt.title, ignoreCase = true) &&
-                                it.artists.firstOrNull().equals(yt.artist, ignoreCase = true)
+                val itunesDeferred = async {
+                    withTimeoutOrNull(4000L) {
+                        val itunesResults = mutableListOf<NormalizedTrack>()
+                        runCatching {
+                            val encoded = URLEncoder.encode(clean, "UTF-8")
+                            val itunesUrl = "https://itunes.apple.com/search?term=$encoded&media=music&entity=song&country=IN&limit=${limit * 2}"
+                            val request = Request.Builder()
+                                .url(itunesUrl)
+                                .header("User-Agent", "Mozilla/5.0")
+                                .build()
+
+                            NetworkClients.okHttpClient.newCall(request).execute().use { response ->
+                                if (response.isSuccessful) {
+                                    val body = response.body?.string().orEmpty()
+                                    val arr = JSONObject(body).optJSONArray("results")
+                                    if (arr != null) {
+                                        for (i in 0 until arr.length()) {
+                                            if (itunesResults.size >= limit) break
+                                            val item = arr.optJSONObject(i) ?: continue
+                                            val previewUrl = item.optString("previewUrl")
+                                            if (previewUrl.isBlank() || !previewUrl.startsWith("http")) continue
+
+                                            val trackId = item.optLong("trackId").toString()
+                                            val title = item.optString("trackName").takeIf { it.isNotBlank() } ?: continue
+                                            val artist = item.optString("artistName").ifBlank { "Unknown Artist" }
+                                            val album = item.optString("collectionName").ifBlank { "Single" }
+                                            val durationMs = item.optLong("trackTimeMillis", 210_000L)
+                                            val artUrl = item.optString("artworkUrl100").replace("100x100bb", "600x600bb")
+
+                                            itunesResults.add(
+                                                NormalizedTrack.fromSpotifyPreview(
+                                                    spotifyId = "it_$trackId",
+                                                    title = title,
+                                                    artists = listOf(artist),
+                                                    artistAvatarUrl = artUrl,
+                                                    album = album,
+                                                    durationMs = durationMs,
+                                                    artUrl = artUrl,
+                                                    previewUrl = previewUrl
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }.onFailure { e ->
+                            Log.w(TAG, "iTunes preview fetch failed: ${e.message}")
                         }
-                        if (!duplicate) {
-                            results.add(
+                        itunesResults
+                    } ?: emptyList()
+                }
+
+                val ytmDeferred = async {
+                    val ytmResults = mutableListOf<NormalizedTrack>()
+                    runCatching {
+                        val ytmTracks = InnerTubeStreamExtractor.searchOfficialYtmSongs(clean, limit = limit)
+                        for (yt in ytmTracks) {
+                            if (ytmResults.size >= limit) break
+                            ytmResults.add(
                                 NormalizedTrack(
                                     source = TrackSource.YOUTUBE,
                                     sourceId = yt.videoId,
@@ -171,10 +170,30 @@ class DefaultSpotifyMetadataProvider : SpotifyMetadataProvider {
                             )
                         }
                     }
+                    ytmResults
                 }
-            }
 
-            results.take(limit)
+                val deezerList = deezerDeferred.await()
+                val itunesList = itunesDeferred.await()
+                val ytmList = ytmDeferred.await()
+
+                val merged = mutableListOf<NormalizedTrack>()
+                fun addIfNotDuplicate(track: NormalizedTrack) {
+                    val duplicate = merged.any {
+                        it.title.equals(track.title, ignoreCase = true) &&
+                            it.artists.firstOrNull().equals(track.artists.firstOrNull(), ignoreCase = true)
+                    }
+                    if (!duplicate && merged.size < limit) {
+                        merged.add(track)
+                    }
+                }
+
+                deezerList.forEach { addIfNotDuplicate(it) }
+                itunesList.forEach { addIfNotDuplicate(it) }
+                ytmList.forEach { addIfNotDuplicate(it) }
+
+                merged
+            }
         }
 
     override suspend fun resolveSpotifyEmbedTrack(spotifyTrackId: String): NormalizedTrack? =

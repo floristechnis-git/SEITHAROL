@@ -215,6 +215,12 @@ class CascadeViewModel(
                     }
                 }
         }
+
+        viewModelScope.launch {
+            autoSuggestManager.isAutoSuggestEnabled.collect { enabled ->
+                playerManager.isAutoplayEnabled = enabled
+            }
+        }
     }
 
     /**
@@ -437,7 +443,19 @@ class CascadeViewModel(
             playPlaylistOrMix(track.id)
             return
         }
-        viewModelScope.launch { musicRepository.insertTrack(track) }
+        viewModelScope.launch {
+            musicRepository.insertTrack(track)
+            musicRepository.recordPlayHistory(track)
+            if (track.id.length == 11) {
+                runCatching {
+                    val automix = InnerTubeStreamExtractor.fetchAutomixQueue(track.id, limit = 15)
+                    if (automix.isNotEmpty()) {
+                        val mixTracks = listOf(track) + automix.filter { it.videoId != track.id }.map { it.toTrack() }
+                        personalizedTracks.value = mixTracks
+                    }
+                }
+            }
+        }
         playerManager.playTrack(track)
     }
 

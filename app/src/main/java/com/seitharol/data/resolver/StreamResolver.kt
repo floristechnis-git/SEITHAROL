@@ -53,15 +53,20 @@ object StreamResolver {
             return@withContext track.directStreamUrl
         }
 
-        // 2. If encryptedMediaUrl from JioSaavn is present, decrypt it directly
+        // 2. Direct videoId Passthrough: If track has a valid YouTube videoId, resolve directly (NO re-search)
+        if (InnerTubeStreamExtractor.isValidYoutubeVideoId(track.id)) {
+            val directResult = InnerTubeStreamExtractor.resolveExactYoutubeStreamById(track.id, quality)
+            if (directResult.isSuccess) {
+                return@withContext directResult.getOrNull()
+            }
+        }
+
+        // 3. If encryptedMediaUrl from JioSaavn is present, decrypt it directly
         if (!track.encryptedMediaUrl.isNullOrBlank()) {
             decryptJioSaavnUrl(track.encryptedMediaUrl, quality)?.let { return@withContext it }
         }
 
-        // 3. Query JioSaavn canonical catalog by exact Title + Primary Artist
-        resolveFromJioSaavnExact(track, quality)?.let { return@withContext it }
-
-        // 4. Fallback to strict duration + title + artist validated Piped/YouTube stream
+        // 4. Strict external matching via YouTube Music canonical search (for Spotify/Discover tracks only)
         resolveFromPipedStrict(track)
     }
 
@@ -165,7 +170,7 @@ object StreamResolver {
 
                     if (containsUnwantedVariant(track.title, title)) continue
                     if (duration in 1..45 || duration > 720) continue
-                    if (track.durationSeconds > 0 && duration > 0 && abs(duration - track.durationSeconds) > 18) {
+                    if (track.durationSeconds > 0 && duration > 0 && abs(duration - track.durationSeconds) > 8) {
                         continue
                     }
 
@@ -184,7 +189,7 @@ object StreamResolver {
                     }
                 }
 
-                if (!bestVideoId.isNullOrBlank() && bestScore >= 45) {
+                if (!bestVideoId.isNullOrBlank() && bestScore >= 160) {
                     val streamJson = httpGet("$base/streams/$bestVideoId") ?: continue
                     val audioStreams = JSONObject(streamJson).optJSONArray("audioStreams") ?: continue
                     var bestAudioUrl: String? = null
@@ -228,32 +233,29 @@ object StreamResolver {
         val targetArtistLower = targetArtist.lowercase()
         val candArtistLower = candidateArtist.lowercase()
 
-        if (cleanCandTitle == cleanTargetTitle) {
-            score += 60
-        } else if (cleanCandTitle.contains(cleanTargetTitle) || cleanTargetTitle.contains(cleanCandTitle)) {
-            score += 40
-        } else {
-            val targetTokens = cleanTargetTitle.split(" ").filter { it.length > 2 }
-            val matchedTokens = targetTokens.count { cleanCandTitle.contains(it) }
-            if (targetTokens.isNotEmpty()) {
-                score += (matchedTokens * 35) / targetTokens.size
-            }
+        val targetTokens = cleanTargetTitle.split(" ").filter { it.length >= 2 }
+        val matchedTokens = targetTokens.count { cleanCandTitle.contains(it) }
+        val titleMatchRatio = if (targetTokens.isNotEmpty()) matchedTokens.toFloat() / targetTokens.size else 1f
+        if (cleanCandTitle != cleanTargetTitle && !cleanCandTitle.contains(cleanTargetTitle) && titleMatchRatio < 0.75f) {
+            return -1000
         }
 
-        if (candArtistLower.contains(targetArtistLower) || cleanCandTitle.contains(targetArtistLower)) {
-            score += 35
-        }
-        if (candArtistLower.contains("- topic") || candArtistLower.contains("vevo")) {
-            score += 15
-        }
+        val artistMatches = targetArtistLower.isBlank() ||
+            candArtistLower.contains(targetArtistLower) ||
+            cleanCandTitle.contains(targetArtistLower)
+        if (!artistMatches) return -1000
+
+        score += (titleMatchRatio * 80).toInt()
+        if (cleanCandTitle == cleanTargetTitle) score += 60
+        if (candArtistLower.contains(targetArtistLower)) score += 40
+        if (candArtistLower.contains("- topic") || candArtistLower.contains("vevo")) score += 30
 
         if (targetDuration > 0 && candidateDuration > 0) {
             val diff = abs(targetDuration - candidateDuration)
             score += when {
-                diff <= 3 -> 30
+                diff <= 3 -> 40
                 diff <= 8 -> 20
-                diff <= 15 -> 10
-                else -> -40
+                else -> -100
             }
         }
         return score

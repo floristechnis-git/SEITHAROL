@@ -297,23 +297,25 @@ class MediaPlaybackService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        try {
-            playerManager?.pause()
+        runCatching {
+            playerManager?.stopPlayback()
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-            stopSelf()
-        } catch (e: Exception) {
-            Log.e(TAG, "onTaskRemoved error: ${e.message}")
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            nm?.cancelAll()
         }
+        stopSelf()
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        try {
+        runCatching {
+            playerManager?.stopPlayback()
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            nm?.cancelAll()
             if (wakeLock?.isHeld == true) {
                 wakeLock?.release()
             }
-        } catch (e: Exception) {
-            // Ignored
         }
         serviceScope.cancel()
     }

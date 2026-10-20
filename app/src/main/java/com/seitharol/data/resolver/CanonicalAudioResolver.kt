@@ -37,16 +37,41 @@ object CanonicalAudioResolver {
         candidates: List<CandidateStream>
     ): CandidateStream? {
         if (candidates.isEmpty()) return null
-        val normalizedQuery = "$queryTitle $queryArtist".lowercase()
+        val rawQueryLower = "$queryTitle $queryArtist".lowercase()
         val normTitle = normalizeText(queryTitle)
-        val normArtist = normalizeText(queryArtist)
+        val normArtist = normalizeText(queryArtist.split(",", "&", "feat.", "ft.").first())
 
         return candidates
-            .map { candidate ->
-                candidate to scoreCandidate(candidate, normTitle, normArtist, normalizedQuery, targetDurationSeconds)
+            .mapNotNull { candidate ->
+                val candTitle = normalizeText(candidate.title)
+                val candArtist = normalizeText(candidate.artist)
+                val candChannel = normalizeText(candidate.channelName.removeSuffix("- Topic"))
+
+                // HARD GATE 1: Reject if title does not share core words with queryTitle
+                val titleTokens = normTitle.split(" ").filter { it.length >= 2 }
+                val matchedTitleTokens = titleTokens.count { candTitle.contains(it) }
+                val titleMatchRatio = if (titleTokens.isNotEmpty()) matchedTitleTokens.toFloat() / titleTokens.size else 1f
+                if (candTitle != normTitle && !candTitle.contains(normTitle) && titleMatchRatio < 0.65f) {
+                    return@mapNotNull null
+                }
+
+                // HARD GATE 2: Reject unrequested remixes/covers/slowed/live
+                if (containsBannedModifier(rawQueryLower, "${candidate.title} ${candidate.channelName}")) {
+                    return@mapNotNull null
+                }
+
+                // HARD GATE 3: Artist must match or be contained in candidate artist/channel/title
+                val artistMatches = normArtist.isBlank() ||
+                    candArtist.contains(normArtist) ||
+                    normArtist.contains(candArtist) ||
+                    candChannel.contains(normArtist) ||
+                    candTitle.contains(normArtist)
+                if (!artistMatches) return@mapNotNull null
+
+                val score = scoreCandidate(candidate, normTitle, normArtist, rawQueryLower, targetDurationSeconds)
+                if (score >= 120) candidate to score else null
             }
-            .filter { (_, score) -> score > -40 }
-            .maxByOrNull { (_, score) -> score }
+            .maxByOrNull { it.second }
             ?.first
     }
 

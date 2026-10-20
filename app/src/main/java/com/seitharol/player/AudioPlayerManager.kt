@@ -83,6 +83,16 @@ class AudioPlayerManager(
         }
     }
 
+    fun resumeOrPlayPreview(track: NormalizedTrack) {
+        if (_activePreviewTrackId.value == track.sourceId && exoPlayer.mediaItemCount > 0) {
+            exoPlayer.playWhenReady = true
+            exoPlayer.play()
+            _isPreviewPlaying.value = true
+        } else {
+            playPreview(track)
+        }
+    }
+
     fun pausePreview() {
         previewResolveJob?.cancel()
         if (_activePreviewTrackId.value != null) {

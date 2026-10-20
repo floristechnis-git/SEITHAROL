@@ -31,7 +31,8 @@ private val SeitharolDarkColorScheme = darkColorScheme(
     onSurface = PureWhite,
     surfaceVariant = DarkSurfaceVariant,
     onSurfaceVariant = MutedText,
-    outline = Color(0xFF333333)
+    outline = Color(0xFF333333),
+    outlineVariant = Color(0xFF262727)
 )
 
 private val SeitharolLightColorScheme = lightColorScheme(
@@ -48,7 +49,8 @@ private val SeitharolLightColorScheme = lightColorScheme(
     onSurface = Color(0xFF1C1C1E),
     surfaceVariant = Color(0xFFECEEF0),
     onSurfaceVariant = Color(0xFF5F6368),
-    outline = Color(0xFFE0E0E0)
+    outline = Color(0xFFE0E0E0),
+    outlineVariant = Color(0xFFE8E8E8)
 )
 
 @Composable

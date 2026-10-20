@@ -1,6 +1,7 @@
 package com.seitharol.ui.library
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -16,19 +17,26 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.seitharol.data.preferences.AppSettingsManager
 import com.seitharol.data.resolver.CandidateStream
 import com.seitharol.ui.components.PlaylistThumbnailWithBadge
 import com.seitharol.ui.home.PlaylistSummary
 import com.seitharol.ui.search.BackArrowSvgIcon
 import com.seitharol.ui.search.CloseCrossSvgIcon
+import com.seitharol.util.ThumbnailTargetSize
+import com.seitharol.util.ThumbnailUrlOptimizer
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -36,7 +44,25 @@ enum class LibraryFilterOption(val label: String) {
     RECENT("Recent"),
     ARCHIVED("Archived"),
     MOST_PLAYED("Most Played"),
-    ALPHABETICAL("A–Z")
+    ALPHABETICAL("A - Z")
+}
+
+@Composable
+fun FilterSlidersSvgIcon(
+    tint: Color = MaterialTheme.colorScheme.onSurface,
+    modifier: Modifier = Modifier.size(20.dp)
+) {
+    Canvas(modifier = modifier) {
+        val sx = size.width / 24f
+        val sy = size.height / 24f
+        val strokeW = 2f * sx
+        drawLine(tint, Offset(4f * sx, 6f * sy), Offset(20f * sx, 6f * sy), strokeWidth = strokeW, cap = StrokeCap.Round)
+        drawCircle(tint, radius = 2.4f * sx, center = Offset(9f * sx, 6f * sy))
+        drawLine(tint, Offset(4f * sx, 12f * sy), Offset(20f * sx, 12f * sy), strokeWidth = strokeW, cap = StrokeCap.Round)
+        drawCircle(tint, radius = 2.4f * sx, center = Offset(15f * sx, 12f * sy))
+        drawLine(tint, Offset(4f * sx, 18f * sy), Offset(20f * sx, 18f * sy), strokeWidth = strokeW, cap = StrokeCap.Round)
+        drawCircle(tint, radius = 2.4f * sx, center = Offset(10f * sx, 18f * sy))
+    }
 }
 
 @Composable
@@ -48,6 +74,8 @@ fun LibraryScreen(
     onDeletePlaylist: (String) -> Unit,
     onPlayTrack: (CandidateStream) -> Unit
 ) {
+    val context = LocalContext.current
+    val settings by remember { AppSettingsManager.getInstance(context) }.state.collectAsState()
     val navTabs = remember { listOf("All", "Playlists", "Downloads", "Liked") }
     var selectedNavTab by remember { mutableStateOf("All") }
     var showFilterMenu by remember { mutableStateOf(false) }
@@ -62,15 +90,18 @@ fun LibraryScreen(
         }
         when (activeFilter) {
             LibraryFilterOption.ALPHABETICAL -> tabFiltered.sortedBy { it.title.lowercase() }
+            LibraryFilterOption.MOST_PLAYED -> tabFiltered.sortedByDescending { it.trackCount }
             else -> tabFiltered
         }
     }
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 96.dp)
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+        contentPadding = PaddingValues(bottom = 110.dp)
     ) {
-        // 1. History > on TOP of Library nav pills + Horizontal Scrollable Thumbnails
+        // 1. History Shelf on TOP of Library nav pills
         if (historyTracks.isNotEmpty()) {
             item {
                 Row(
@@ -83,7 +114,8 @@ fun LibraryScreen(
                 ) {
                     Text(
                         text = "History >",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onBackground
                     )
                     Text(
                         text = "See all",
@@ -95,26 +127,36 @@ fun LibraryScreen(
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.padding(bottom = 14.dp)
+                    modifier = Modifier.padding(bottom = 12.dp)
                 ) {
                     items(historyTracks.take(12), key = { "hist_top_${it.videoId}" }) { track ->
+                        val optimizedThumb = remember(track.thumbnailUrl, settings.thumbnailQuality) {
+                            ThumbnailUrlOptimizer.optimize(
+                                track.thumbnailUrl,
+                                settings.thumbnailQuality,
+                                ThumbnailTargetSize.CARD_MEDIUM,
+                                context
+                            )
+                        }
                         Column(
                             modifier = Modifier
                                 .width(104.dp)
                                 .clickable { onPlayTrack(track) }
                         ) {
                             AsyncImage(
-                                model = track.thumbnailUrl,
+                                model = optimizedThumb,
                                 contentDescription = track.title,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
                                     .size(104.dp)
                                     .clip(RoundedCornerShape(10.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
                             )
-                            Spacer(modifier = Modifier.height(4.dp))
+                            Spacer(modifier = Modifier.height(6.dp))
                             Text(
                                 text = track.title,
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                color = MaterialTheme.colorScheme.onBackground,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -124,32 +166,36 @@ fun LibraryScreen(
             }
         }
 
-        // 2. Category Nav Div (Same 16.dp left & right padding as Home Screen) + Filter SVG Action Popup
+        // 2. Scrollable Category Pills + Real SVG Filter Button (Never wraps or overflows)
         item {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
+                LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    navTabs.forEach { tab ->
+                    items(navTabs) { tab ->
                         FilterChip(
                             selected = selectedNavTab == tab,
                             onClick = { selectedNavTab = tab },
-                            label = { Text(tab) }
+                            label = {
+                                Text(
+                                    text = tab,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
                         )
                     }
                 }
 
                 Box {
                     IconButton(onClick = { showFilterMenu = true }) {
-                        // Filter SVG Icon
-                        Text("⇅", style = MaterialTheme.typography.titleMedium)
+                        FilterSlidersSvgIcon(tint = MaterialTheme.colorScheme.onSurface)
                     }
                     DropdownMenu(
                         expanded = showFilterMenu,
@@ -159,9 +205,9 @@ fun LibraryScreen(
                             DropdownMenuItem(
                                 text = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Checkbox(
-                                            checked = activeFilter == option,
-                                            onCheckedChange = null
+                                        RadioButton(
+                                            selected = activeFilter == option,
+                                            onClick = null
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(option.label)
@@ -178,11 +224,19 @@ fun LibraryScreen(
             }
         }
 
-        // 3. Library List Items (Thumbnail on left with Donut/Video + Badge, Title on right, Three-dot menu, Clamped Swipe-to-Delete)
+        // 3. Library List Items (System items like Liked/Downloads cannot be swipe-deleted)
         items(filteredEntries, key = { "lib_item_${it.id}" }) { item ->
-            ClampedSwipeToDeleteRow(
-                onDelete = { onDeletePlaylist(item.id) }
-            ) {
+            val isSystemPlaylist = item.id == "liked" || item.id == "downloads"
+            val optimizedPlaylistThumb = remember(item.firstVideoThumbnailUrl, settings.thumbnailQuality) {
+                ThumbnailUrlOptimizer.optimize(
+                    item.firstVideoThumbnailUrl,
+                    settings.thumbnailQuality,
+                    ThumbnailTargetSize.LIST_THUMB,
+                    context
+                )
+            }
+
+            val rowContent: @Composable () -> Unit = {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -192,16 +246,20 @@ fun LibraryScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     var showItemMenu by remember { mutableStateOf(false) }
+
                     PlaylistThumbnailWithBadge(
-                        firstTrackThumbnailUrl = item.firstVideoThumbnailUrl,
+                        firstTrackThumbnailUrl = optimizedPlaylistThumb,
                         size = 64.dp,
                         cornerRadius = 10.dp
                     )
+
                     Spacer(modifier = Modifier.width(14.dp))
+
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = item.title,
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onBackground,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -211,6 +269,7 @@ fun LibraryScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+
                     Box {
                         IconButton(onClick = { showItemMenu = true }) {
                             Icon(
@@ -230,7 +289,7 @@ fun LibraryScreen(
                                     onOpenSubPage(item)
                                 }
                             )
-                            if (item.id != "liked" && item.id != "downloads") {
+                            if (!isSystemPlaylist) {
                                 DropdownMenuItem(
                                     text = { Text("Delete Playlist", color = MaterialTheme.colorScheme.error) },
                                     onClick = {
@@ -243,14 +302,19 @@ fun LibraryScreen(
                     }
                 }
             }
+
+            if (isSystemPlaylist) {
+                rowContent()
+            } else {
+                ClampedSwipeToDeleteRow(
+                    onDelete = { onDeletePlaylist(item.id) },
+                    content = rowContent
+                )
+            }
         }
     }
 }
 
-/**
- * Clamped Swipe-Left Row: never slides past -88.dp so the user can always slide it back
- * to 0.dp or tap the Delete button to remove the item cleanly.
- */
 @Composable
 fun ClampedSwipeToDeleteRow(
     onDelete: () -> Unit,
@@ -262,27 +326,32 @@ fun ClampedSwipeToDeleteRow(
     val offsetX = remember { Animatable(0f) }
 
     Box(modifier = Modifier.fillMaxWidth()) {
-        // Background Delete Action Button
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .background(MaterialTheme.colorScheme.errorContainer)
-                .padding(end = 16.dp),
-            contentAlignment = Alignment.CenterEnd
-        ) {
-            TextButton(
-                onClick = {
-                    scope.launch {
-                        offsetX.snapTo(0f)
-                        onDelete()
-                    }
-                }
+        // Only paint red delete background when actively swiped left (prevents red bleed-through)
+        if (offsetX.value < -2f) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(MaterialTheme.colorScheme.errorContainer)
+                    .padding(end = 16.dp),
+                contentAlignment = Alignment.CenterEnd
             ) {
-                Text("Delete", color = MaterialTheme.colorScheme.onErrorContainer, fontWeight = FontWeight.Bold)
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            offsetX.snapTo(0f)
+                            onDelete()
+                        }
+                    }
+                ) {
+                    Text(
+                        text = "Delete",
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
 
-        // Foreground Content clamped strictly to [maxRevealPx, 0f]
         Box(
             modifier = Modifier
                 .offset { IntOffset(offsetX.value.roundToInt(), 0) }
@@ -307,10 +376,6 @@ fun ClampedSwipeToDeleteRow(
     }
 }
 
-/**
- * Dedicated Sub-Page for Playlist, History, Downloads, and Liked Songs:
- * Has a Top-Left Back Arrow and its own Search Bar + Clamped Swipe-to-Delete.
- */
 @Composable
 fun LibrarySubPageScreen(
     pageTitle: String,
@@ -319,6 +384,8 @@ fun LibrarySubPageScreen(
     onPlayTrackFromGroup: (CandidateStream) -> Unit,
     onRemoveTrack: (String) -> Unit
 ) {
+    val context = LocalContext.current
+    val settings by remember { AppSettingsManager.getInstance(context) }.state.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
     val filteredTracks = remember(tracks, searchQuery) {
         if (searchQuery.isBlank()) tracks
@@ -328,8 +395,11 @@ fun LibrarySubPageScreen(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        // Top Bar with Back Arrow on Top-Left
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -344,11 +414,11 @@ fun LibrarySubPageScreen(
             }
             Text(
                 text = pageTitle,
-                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onBackground
             )
         }
 
-        // Dedicated Search Bar for this page
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
@@ -372,13 +442,21 @@ fun LibrarySubPageScreen(
 
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             items(filteredTracks, key = { "sub_${it.videoId}" }) { track ->
+                val optimizedThumb = remember(track.thumbnailUrl, settings.thumbnailQuality) {
+                    ThumbnailUrlOptimizer.optimize(
+                        track.thumbnailUrl,
+                        settings.thumbnailQuality,
+                        ThumbnailTargetSize.LIST_THUMB,
+                        context
+                    )
+                }
                 ClampedSwipeToDeleteRow(onDelete = { onRemoveTrack(track.videoId) }) {
                     ListItem(
                         headlineContent = { Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         supportingContent = { Text(track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         leadingContent = {
                             AsyncImage(
-                                model = track.thumbnailUrl,
+                                model = optimizedThumb,
                                 contentDescription = track.title,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier

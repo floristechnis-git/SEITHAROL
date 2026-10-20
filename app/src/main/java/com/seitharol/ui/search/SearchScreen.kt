@@ -12,14 +12,19 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.seitharol.data.preferences.AppSettingsManager
 import com.seitharol.data.resolver.CandidateStream
 import com.seitharol.data.resolver.CanonicalAudioResolver
+import com.seitharol.util.ThumbnailTargetSize
+import com.seitharol.util.ThumbnailUrlOptimizer
 
 @Composable
 fun SearchScreen(
@@ -27,15 +32,17 @@ fun SearchScreen(
     historyTracks: List<CandidateStream>,
     onQueryChange: (String) -> Unit,
     onNavigateBack: () -> Unit,
+    onOpenDiscover: (() -> Unit)? = null,
     onPlaySongAndMaximizePlayer: (CandidateStream) -> Unit,
     onOpenArtistProfile: (String, String?) -> Unit
 ) {
+    val context = LocalContext.current
+    val settings by remember { AppSettingsManager.getInstance(context) }.state.collectAsState()
     var query by remember { mutableStateOf("") }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val listState = rememberLazyListState()
 
-    // Auto-dismiss keyboard & unfocus search bar when user scrolls results
     LaunchedEffect(listState.isScrollInProgress) {
         if (listState.isScrollInProgress) {
             focusManager.clearFocus()
@@ -43,17 +50,16 @@ fun SearchScreen(
         }
     }
 
-    // Verified Artists Only from history (filters out remix/unverified uploaders)
     val verifiedSuggestedArtists = remember(historyTracks) {
         CanonicalAudioResolver.filterVerifiedArtistsOnly(historyTracks)
     }
 
-    val rankedResults = remember(searchResults) {
-        CanonicalAudioResolver.sortByPopularity(searchResults)
+    // CRITICAL FIX: Rank by query relevance (exact match, prefix, artist, official ATV) instead of raw viewCount
+    val rankedResults = remember(query, searchResults) {
+        CanonicalAudioResolver.rankSearchResultsByRelevance(query, searchResults)
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Full-Width Search Bar (No Cancel button; Back Arrow when empty, Clear when text present)
         OutlinedTextField(
             value = query,
             onValueChange = {
@@ -101,6 +107,10 @@ fun SearchScreen(
                 .padding(horizontal = 16.dp, vertical = 10.dp)
         )
 
+        if (onOpenDiscover != null && query.isBlank()) {
+            DiscoverEntryCard(onOpenDiscover = onOpenDiscover)
+        }
+
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
             if (query.isBlank() && verifiedSuggestedArtists.isNotEmpty()) {
                 item {
@@ -124,20 +134,28 @@ fun SearchScreen(
             }
 
             items(rankedResults, key = { "sr_${it.videoId}" }) { track ->
+                val optimizedThumb = remember(track.thumbnailUrl, settings.thumbnailQuality) {
+                    ThumbnailUrlOptimizer.optimize(
+                        track.thumbnailUrl,
+                        settings.thumbnailQuality,
+                        ThumbnailTargetSize.LIST_THUMB,
+                        context
+                    )
+                }
                 ListItem(
                     headlineContent = { Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     supportingContent = { Text(track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     leadingContent = {
                         AsyncImage(
-                            model = track.thumbnailUrl,
+                            model = optimizedThumb,
                             contentDescription = track.title,
+                            contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .size(48.dp)
                                 .clip(RoundedCornerShape(8.dp))
                         )
                     },
                     modifier = Modifier.clickable {
-                        // Unfocus search bar, hide keyboard, and maximize PlayerScreen
                         focusManager.clearFocus()
                         keyboardController?.hide()
                         onPlaySongAndMaximizePlayer(track)
@@ -176,4 +194,3 @@ fun CloseCrossSvgIcon(
         )
     }
 }
-

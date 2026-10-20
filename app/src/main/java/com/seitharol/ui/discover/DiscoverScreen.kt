@@ -1,8 +1,11 @@
 package com.seitharol.ui.discover
 
 import android.content.Intent
-import androidx.compose.foundation.background
+import android.net.Uri
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.VerticalPager
@@ -18,14 +21,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import androidx.compose.foundation.Image
-import androidx.compose.ui.res.painterResource
 import com.example.R
 import com.seitharol.data.download.DownloadFormat
 import com.seitharol.data.download.DownloadPreferencesAndService
@@ -36,7 +43,6 @@ import com.seitharol.player.AudioPlayerManager
 import com.seitharol.ui.history.HeartSvgIcon
 import com.seitharol.ui.home.SearchMagnifierSvgIcon
 import com.seitharol.ui.search.BackArrowSvgIcon
-
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -60,7 +66,6 @@ fun DiscoverScreen(
     var trackForDownloadSheet by remember { mutableStateOf<NormalizedTrack?>(null) }
     val downloadTaskState by downloadService.downloadState.collectAsState()
 
-    // ExoPlayer Lifecycle: Play 30s preview for active page; pause when In-Discover Search opens or screen disposes
     LaunchedEffect(pagerState.settledPage, feedTracks, isInDiscoverSearchOpen) {
         if (isInDiscoverSearchOpen) {
             audioPlayerManager.pausePreview()
@@ -73,14 +78,15 @@ fun DiscoverScreen(
     }
 
     DisposableEffect(Unit) {
-        onDispose {
-            audioPlayerManager.pausePreview()
-        }
+        onDispose { audioPlayerManager.pausePreview() }
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         if (feedTracks.isEmpty()) {
-            CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            CircularProgressIndicator(
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.align(Alignment.Center)
+            )
         } else {
             VerticalPager(
                 state = pagerState,
@@ -88,6 +94,8 @@ fun DiscoverScreen(
                 beyondViewportPageCount = 1
             ) { pageIndex ->
                 val track = feedTracks[pageIndex]
+                val primaryArtist = track.artists.firstOrNull().orEmpty().ifBlank { "Unknown Artist" }
+
                 DiscoverShortPage(
                     track = track,
                     downloadState = downloadTaskState,
@@ -95,14 +103,25 @@ fun DiscoverScreen(
                     onDownloadClick = { trackForDownloadSheet = track },
                     onVisitArtistClick = {
                         audioPlayerManager.pausePreview()
-                        onVisitArtist(track.artists.firstOrNull().orEmpty(), track.primaryArtistBrowseId)
+                        onVisitArtist(primaryArtist, track.primaryArtistBrowseId)
+                    },
+                    onSearchOnYouTubeClick = {
+                        // Searches or opens the track directly on YouTube / YouTube Music
+                        val query = Uri.encode("${track.title} $primaryArtist official")
+                        runCatching {
+                            val ytIntent = Intent(
+                                Intent.ACTION_VIEW,
+                                Uri.parse("https://www.youtube.com/results?search_query=$query")
+                            )
+                            context.startActivity(ytIntent)
+                        }
                     },
                     onShareClick = {
                         val shareIntent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
                             putExtra(
                                 Intent.EXTRA_TEXT,
-                                "Check out \"${track.title}\" by ${track.artists.joinToString(", ")} on SEITHAROL: https://open.spotify.com/track/${track.sourceId}"
+                                "Listen to \"${track.title}\" by ${track.artists.joinToString(", ")} on SEITHAROL!"
                             )
                         }
                         context.startActivity(Intent.createChooser(shareIntent, "Share Track"))
@@ -119,7 +138,7 @@ fun DiscoverScreen(
             }
         }
 
-        // Top Bar: Back Button (Left) + Title + In-Discover Search Icon (Top-Right)
+        // Floating Top Bar with Search Pill Trigger
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -134,30 +153,43 @@ fun DiscoverScreen(
                     onNavigateBack()
                 },
                 modifier = Modifier
+                    .size(42.dp)
                     .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.45f))
+                    .background(Color.Black.copy(alpha = 0.5f))
             ) {
                 BackArrowSvgIcon(tint = Color.White, modifier = Modifier.size(22.dp))
             }
 
-            Text(
-                text = "Discover & Download",
-                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                color = Color.White
-            )
-
-            // Top-Right Search Icon -> Opens distinct In-Discover Search UI
-            IconButton(
-                onClick = { isInDiscoverSearchOpen = true },
+            // Sleek Glassmorphic Search Pill on Top Bar
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = Color.White.copy(alpha = 0.14f),
                 modifier = Modifier
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.45f))
+                    .weight(1f)
+                    .padding(horizontal = 12.dp)
+                    .height(42.dp)
+                    .clip(RoundedCornerShape(50))
+                    .clickable { isInDiscoverSearchOpen = true }
             ) {
-                SearchMagnifierSvgIcon(tint = Color.White, modifier = Modifier.size(20.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SearchMagnifierSvgIcon(tint = Color.White.copy(alpha = 0.85f), modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "Search 30s previews & download...",
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
 
-        // In-Discover Search Surface Overlay (Visually & Behaviorally Distinct from SearchScreen)
         if (isInDiscoverSearchOpen) {
             InDiscoverSearchSurface(
                 audioPlayerManager = audioPlayerManager,
@@ -172,11 +204,15 @@ fun DiscoverScreen(
                         )
                     }
                 },
+                onVisitArtist = { name, browseId ->
+                    isInDiscoverSearchOpen = false
+                    audioPlayerManager.pausePreview()
+                    onVisitArtist(name, browseId)
+                },
                 onClose = { isInDiscoverSearchOpen = false }
             )
         }
 
-        // Provider + Format Picker Bottom Sheet (Most-frequently-used provider on top)
         trackForDownloadSheet?.let { targetTrack ->
             DownloadProviderFormatBottomSheet(
                 track = targetTrack,
@@ -205,118 +241,199 @@ private fun DiscoverShortPage(
     onLikeClick: () -> Unit,
     onDownloadClick: () -> Unit,
     onVisitArtistClick: () -> Unit,
+    onSearchOnYouTubeClick: () -> Unit,
     onShareClick: () -> Unit,
     onOpenFullSongClick: () -> Unit
 ) {
+    val primaryArtist = track.artists.firstOrNull().orEmpty().ifBlank { "Unknown Artist" }
+    val avatarModel = track.artistAvatarUrl.ifBlank { track.artUrl }
+
     Box(modifier = Modifier.fillMaxSize()) {
-        // Blurred ambient background art
+        // Blurred ambient background
         AsyncImage(
             model = track.artUrl,
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxSize()
-                .blur(28.dp)
+                .blur(30.dp)
         )
 
-        // Dark gradient scrim for legibility
+        // Cinematic dark gradient scrim
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color.Black.copy(alpha = 0.45f),
-                            Color.Black.copy(alpha = 0.25f),
-                            Color.Black.copy(alpha = 0.88f)
+                            Color.Black.copy(alpha = 0.50f),
+                            Color.Black.copy(alpha = 0.22f),
+                            Color.Black.copy(alpha = 0.92f)
                         )
                     )
                 )
         )
 
-        // Centered Hero Album Artwork
-        AsyncImage(
-            model = track.artUrl,
-            contentDescription = track.title,
-            contentScale = ContentScale.Crop,
+        // Center Vinyl / Hero Artwork Card
+        Box(
             modifier = Modifier
                 .align(Alignment.Center)
-                .offset(y = (-40).dp)
-                .size(290.dp)
-                .clip(RoundedCornerShape(24.dp))
-        )
+                .offset(y = (-48).dp)
+        ) {
+            AsyncImage(
+                model = track.artUrl,
+                contentDescription = track.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(284.dp)
+                    .clip(RoundedCornerShape(26.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(26.dp))
+            )
+            Surface(
+                color = Color.Black.copy(alpha = 0.72f),
+                shape = RoundedCornerShape(50),
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF1DB954))
+                    )
+                    Text(
+                        text = "30s PERSONALIZED PREVIEW",
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            }
+        }
 
-        // Bottom Metadata + 5 Actions Rail
+        // Bottom Metadata + Action Rail
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(start = 20.dp, end = 16.dp, bottom = 36.dp),
+                .navigationBarsPadding()
+                .padding(start = 18.dp, end = 14.dp, bottom = 28.dp),
             verticalAlignment = Alignment.Bottom
         ) {
-            // Left Column: 30s Preview Pill, Track Title, Artist, and "Open Full-Length Song" CTA
+            // BOTTOM-LEFT: Artist Profile Picture + Song Name + Download + Search on YouTube + Full Song
             Column(modifier = Modifier.weight(1f)) {
-                Surface(
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
-                    shape = RoundedCornerShape(50)
+                // Artist Profile Pic + Song Name & Artist Name Row at Bottom-Left
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { onVisitArtistClick() }
+                        .padding(vertical = 4.dp)
                 ) {
-                    Text(
-                        text = "30s Preview",
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                        color = Color.White,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                    )
+                    Box(modifier = Modifier.size(54.dp)) {
+                        AsyncImage(
+                            model = avatarModel,
+                            contentDescription = primaryArtist,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(52.dp)
+                                .clip(CircleShape)
+                                .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = track.title,
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold),
+                            color = Color.White,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "${track.artists.joinToString(", ")} • Visit Artist >",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = Color.White.copy(alpha = 0.82f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                Text(
-                    text = track.title,
-                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
-                    color = Color.White,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Text(
-                    text = track.artists.joinToString(", "),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White.copy(alpha = 0.85f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.clickable { onVisitArtistClick() }
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Action 1: Open Full-Length Song (Routes through TrackMatcher -> ResolverEngine)
-                Button(
-                    onClick = onOpenFullSongClick,
-                    shape = RoundedCornerShape(50),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
+                // Quick Action Pills Row: Full Song + Download + Search on YouTube
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    // 1. Play Full Song
+                    Button(
+                        onClick = onOpenFullSongClick,
+                        shape = RoundedCornerShape(50),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.White,
+                            contentColor = Color.Black
+                        ),
+                        modifier = Modifier.height(38.dp)
                     ) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_play),
                             contentDescription = null,
-                            modifier = Modifier.size(16.dp),
+                            modifier = Modifier.size(15.dp),
                             tint = Color.Black
                         )
-                        Text("Open Full-Length Song", fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Play Full", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    // 2. Direct Download Pill Button
+                    Button(
+                        onClick = onDownloadClick,
+                        shape = RoundedCornerShape(50),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier.height(38.dp)
+                    ) {
+                        com.seitharol.ui.search.DownloadSvgIcon(tint = Color.White, modifier = Modifier.size(15.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Download", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    // 3. Search on YouTube Pill Button
+                    OutlinedButton(
+                        onClick = onSearchOnYouTubeClick,
+                        shape = RoundedCornerShape(50),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.35f)),
+                        modifier = Modifier.height(38.dp)
+                    ) {
+                        YouTubePlayBadgeSvgIcon(tint = Color(0xFFFF0000), modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text("YouTube", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
 
-                // Live Download Progress Banner if downloading this track
+                // Live Download Progress Banner
                 if (downloadState is DownloadTaskState.Downloading && downloadState.trackId == track.sourceId) {
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
                     LinearProgressIndicator(
                         progress = { downloadState.progressPercent / 100f },
-                        modifier = Modifier.fillMaxWidth(0.8f)
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.fillMaxWidth(0.9f)
                     )
                     Text(
                         text = "Downloading via ${downloadState.provider.displayName} (${downloadState.progressPercent}%)",
@@ -333,59 +450,56 @@ private fun DiscoverShortPage(
                 }
             }
 
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(10.dp))
 
-            // Right Vertical Rail: Actions 2..5 (Like, Download, Artist, Share) - Pure Canvas SVGs (No Emojis)
+            // Right Vertical Rail: Like, Download, YouTube, Share
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(18.dp)
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Action 5: Like
-                DiscoverSvgActionButton(
-                    label = "Like",
-                    onClick = onLikeClick
-                ) {
+                DiscoverSvgActionButton(label = "Like", onClick = onLikeClick) {
                     HeartSvgIcon(
                         filled = track.isLiked,
                         tint = if (track.isLiked) Color(0xFFFF4E45) else Color.White,
                         modifier = Modifier.size(22.dp)
                     )
                 }
-
-                // Action 2: Download (Provider + Format Picker)
-                DiscoverSvgActionButton(
-                    label = "Download",
-                    onClick = onDownloadClick
-                ) {
-                    com.seitharol.ui.search.DownloadSvgIcon(
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
-                    )
+                DiscoverSvgActionButton(label = "Save", onClick = onDownloadClick) {
+                    com.seitharol.ui.search.DownloadSvgIcon(tint = Color.White, modifier = Modifier.size(20.dp))
                 }
-
-                // Action 3: Visit Artist Page
-                DiscoverSvgActionButton(
-                    label = "Artist",
-                    onClick = onVisitArtistClick
-                ) {
-                    ArtistUserSvgIcon(
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
-                    )
+                DiscoverSvgActionButton(label = "YouTube", onClick = onSearchOnYouTubeClick) {
+                    YouTubePlayBadgeSvgIcon(tint = Color.White, modifier = Modifier.size(20.dp))
                 }
-
-                // Action 4: Share
-                DiscoverSvgActionButton(
-                    label = "Share",
-                    onClick = onShareClick
-                ) {
-                    ShareArrowSvgIcon(
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
-                    )
+                DiscoverSvgActionButton(label = "Share", onClick = onShareClick) {
+                    ShareArrowSvgIcon(tint = Color.White, modifier = Modifier.size(20.dp))
                 }
             }
         }
+    }
+}
+
+@Composable
+fun YouTubePlayBadgeSvgIcon(
+    tint: Color,
+    modifier: Modifier = Modifier.size(20.dp)
+) {
+    Canvas(modifier = modifier) {
+        val sx = size.width / 24f
+        val sy = size.height / 24f
+        drawRoundRect(
+            color = tint,
+            topLeft = androidx.compose.ui.geometry.Offset(2f * sx, 5f * sy),
+            size = androidx.compose.ui.geometry.Size(20f * sx, 14f * sy),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(4f * sx, 4f * sy),
+            style = Stroke(width = 2f * sx)
+        )
+        val triangle = Path().apply {
+            moveTo(10f * sx, 9f * sy)
+            lineTo(15.5f * sx, 12f * sy)
+            lineTo(10f * sx, 15f * sy)
+            close()
+        }
+        drawPath(triangle, color = tint, style = Fill)
     }
 }
 
@@ -401,7 +515,7 @@ private fun DiscoverSvgActionButton(
     ) {
         Box(
             modifier = Modifier
-                .size(48.dp)
+                .size(46.dp)
                 .clip(CircleShape)
                 .background(Color.White.copy(alpha = 0.16f)),
             contentAlignment = Alignment.Center
@@ -421,11 +535,7 @@ fun ArtistUserSvgIcon(
     Canvas(modifier = modifier) {
         val sx = size.width / 24f
         val sy = size.height / 24f
-        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(
-            width = 2f * sx,
-            cap = androidx.compose.ui.graphics.StrokeCap.Round,
-            join = androidx.compose.ui.graphics.StrokeJoin.Round
-        )
+        val stroke = Stroke(width = 2f * sx, cap = StrokeCap.Round, join = StrokeJoin.Round)
         drawCircle(
             color = tint,
             radius = 4f * sx,
@@ -435,7 +545,7 @@ fun ArtistUserSvgIcon(
         val body = Path().apply {
             moveTo(4f * sx, 20f * sy)
             cubicTo(4f * sx, 16f * sy, 8f * sx, 14f * sy, 12f * sx, 14f * sy)
-            cubicTo(16f * sx, 14f * sy, 20f * sx, 16f * sy, 20f * sy, 20f * sy)
+            cubicTo(16f * sx, 14f * sy, 20f * sx, 16f * sy, 20f * sx, 20f * sy)
         }
         drawPath(body, color = tint, style = stroke)
     }
@@ -449,11 +559,7 @@ fun ShareArrowSvgIcon(
     Canvas(modifier = modifier) {
         val sx = size.width / 24f
         val sy = size.height / 24f
-        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(
-            width = 2f * sx,
-            cap = androidx.compose.ui.graphics.StrokeCap.Round,
-            join = androidx.compose.ui.graphics.StrokeJoin.Round
-        )
+        val stroke = Stroke(width = 2f * sx, cap = StrokeCap.Round, join = StrokeJoin.Round)
         val path = Path().apply {
             moveTo(18f * sx, 6f * sy)
             lineTo(6f * sx, 18f * sy)
@@ -492,14 +598,12 @@ fun DownloadProviderFormatBottomSheet(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-
             Spacer(modifier = Modifier.height(16.dp))
             Text(
                 text = "Select Format",
                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold)
             )
             Spacer(modifier = Modifier.height(8.dp))
-
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 DownloadFormat.entries.forEach { format ->
                     val formatIconRes = when (format) {
@@ -520,14 +624,12 @@ fun DownloadProviderFormatBottomSheet(
                     )
                 }
             }
-
             Spacer(modifier = Modifier.height(16.dp))
             Text(
                 text = "Select Provider (Most Used First)",
                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold)
             )
             Spacer(modifier = Modifier.height(8.dp))
-
             sortedProviders.forEachIndexed { index, provider ->
                 val usageCount = downloadService.getUsageCount(provider)
                 val providerIconRes = when (provider) {
@@ -536,7 +638,6 @@ fun DownloadProviderFormatBottomSheet(
                     DownloadProvider.QOBUZ -> R.drawable.ic_qobuz
                     DownloadProvider.JIOSAAVN -> R.drawable.ic_jiosaavn_icon
                 }
-
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -590,7 +691,6 @@ fun DownloadProviderFormatBottomSheet(
                     }
                 }
             }
-
             Spacer(modifier = Modifier.height(16.dp))
             Button(
                 onClick = { onStartDownload(selectedProvider, selectedFormat) },

@@ -1,11 +1,9 @@
 package com.praxper.seitharol.data
 
+import com.seitharol.data.resolver.InnerTubeStreamExtractor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.Jsoup
@@ -39,7 +37,7 @@ class MusicResolverRepository(private val client: OkHttpClient = OkHttpClient())
     )
 
     /**
-     * Searches official YouTube Music Songs (params = EgWKAQIIAWoKEAkQBRAKEAMQBA==)
+     * Searches official YouTube Music Songs
      * and filters out remixes/fake versions unless explicitly requested.
      */
     suspend fun searchOfficialSongs(
@@ -47,36 +45,18 @@ class MusicResolverRepository(private val client: OkHttpClient = OkHttpClient())
         expectedArtist: String? = null,
         expectedDurationMs: Long? = null
     ): List<SongItem> = withContext(Dispatchers.IO) {
-        val payload = JSONObject().apply {
-            put("context", JSONObject().apply {
-                put("client", JSONObject().apply {
-                    put("clientName", "WEB_REMIX")
-                    put("clientVersion", "1.20240918.01.00")
-                    put("hl", "en")
-                    put("gl", "IN")
-                })
-            })
-            put("query", query)
-            // Official YouTube Music "Songs" filter param (excludes random videos/remixes)
-            put("params", "EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D")
-        }
+        val candidates = runCatching {
+            InnerTubeStreamExtractor.searchOfficialYtmSongs(query, limit = 25)
+        }.getOrDefault(emptyList())
 
-        val request = Request.Builder()
-            .url("https://music.youtube.com/youtubei/v1/search?prettyPrint=false")
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-            .header("Origin", "https://music.youtube.com")
-            .post(payload.toString().toRequestBody("application/json".toMediaType()))
-            .build()
-
-        val rawSongs = mutableListOf<SongItem>()
-        try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext emptyList()
-                val bodyStr = response.body?.string() ?: return@withContext emptyList()
-                rawSongs.addAll(parseYtmSearchResponse(bodyStr))
-            }
-        } catch (e: Exception) {
-            return@withContext emptyList()
+        val rawSongs = candidates.map { c ->
+            SongItem(
+                id = c.videoId,
+                title = c.title,
+                artist = c.artist,
+                durationMs = c.durationSeconds * 1000L,
+                thumbnailUrl = c.thumbnailUrl
+            )
         }
 
         val queryLower = query.lowercase()
@@ -149,28 +129,5 @@ class MusicResolverRepository(private val client: OkHttpClient = OkHttpClient())
         } catch (e: Exception) {
             emptyList()
         }
-    }
-
-    private fun parseYtmSearchResponse(jsonStr: String): List<SongItem> {
-        val list = mutableListOf<SongItem>()
-        // Extracts videoId, title, artist, duration, and high-res thumbnail from musicResponsiveListItemRenderer
-        val regex = Regex(""""videoId":"([a-zA-Z0-9_-]{11})"""")
-        val seenIds = mutableSetOf<String>()
-        regex.findAll(jsonStr).forEach { matchResult ->
-            val videoId = matchResult.groupValues[1]
-            if (seenIds.add(videoId)) {
-                // Fallback thumbnail to official YTM HQ artwork
-                list.add(
-                    SongItem(
-                        id = videoId,
-                        title = "Track $videoId", // Replace with your existing JSON tree walker for runs[0].text
-                        artist = "Official Audio",
-                        durationMs = 210_000L,
-                        thumbnailUrl = "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
-                    )
-                )
-            }
-        }
-        return list
     }
 }

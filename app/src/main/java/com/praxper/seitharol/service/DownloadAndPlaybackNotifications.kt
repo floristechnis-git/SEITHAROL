@@ -7,12 +7,12 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 
 class DownloadNotificationHelper(private val context: Context) {
-
     private val notificationManager =
         context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
     companion object {
         const val DOWNLOAD_CHANNEL_ID = "seitharol_download_channel"
+        const val PLAYBACK_NOTIFICATION_ID = 4001
     }
 
     init {
@@ -36,24 +36,37 @@ class DownloadNotificationHelper(private val context: Context) {
             .setOnlyAlertOnce(true)
             .setProgress(100, clamped, false)
             .build()
-
         notificationManager.notify(notificationId, notification)
     }
 
     fun showCompleted(notificationId: Int, songTitle: String) {
-        // 1. Cancel the stuck ongoing progress notification first
         notificationManager.cancel(notificationId)
-
-        // 2. Post a dismissible completion notification with progress removed
         val completedNotification = NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentTitle("Download Complete")
             .setContentText(songTitle)
             .setOngoing(false)
             .setAutoCancel(true)
-            .setProgress(0, 0, false) // CRITICAL: clears the 80% progress bar
+            .setProgress(0, 0, false)
             .build()
-
         notificationManager.notify(notificationId + 10_000, completedNotification)
+    }
+
+    fun showFailed(notificationId: Int, songTitle: String) {
+        // CRITICAL: Always cancel ongoing progress notification on error so it never gets stuck
+        notificationManager.cancel(notificationId)
+        val failedNotification = NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentTitle("Download Failed")
+            .setContentText(songTitle)
+            .setOngoing(false)
+            .setAutoCancel(true)
+            .setProgress(0, 0, false)
+            .build()
+        notificationManager.notify(notificationId + 20_000, failedNotification)
+    }
+
+    fun clearAllNotifications() {
+        notificationManager.cancelAll()
     }
 }

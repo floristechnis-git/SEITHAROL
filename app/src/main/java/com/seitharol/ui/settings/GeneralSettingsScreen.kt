@@ -1,5 +1,6 @@
 package com.seitharol.ui.settings
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -14,15 +15,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.seitharol.data.preferences.AppSettingsManager
 import com.seitharol.data.preferences.ThemeMode
+import com.seitharol.data.preferences.ThumbnailQuality
 import com.seitharol.data.resolver.AudioQuality
 import com.seitharol.ui.search.BackArrowSvgIcon
 import com.seitharol.ui.search.ChevronRightSvgIcon
 
 enum class InfoPageType(val title: String) {
-    ABOUT_APP("About the App"),
+    ABOUT_APP("About Seitharol"),
     HELP("Help & Support"),
     PRIVACY_POLICY("Privacy Policy"),
     TERMS_CONDITIONS("Terms & Conditions")
+}
+
+private enum class SettingsDialogType {
+    NONE, THEME, STREAM_QUALITY, DOWNLOAD_QUALITY, THUMBNAIL_QUALITY, SLEEP_TIMER
 }
 
 @Composable
@@ -31,233 +37,353 @@ fun GeneralSettingsScreen(
     onOpenInfoPage: (InfoPageType) -> Unit
 ) {
     val state by settingsManager.state.collectAsState()
+    var activeDialog by remember { mutableStateOf(SettingsDialogType.NONE) }
+    var isEqualizerExpanded by remember { mutableStateOf(false) }
     val eqFrequencies = listOf("60Hz", "230Hz", "910Hz", "3.6kHz", "14kHz")
-    val sleepOptions = listOf(0, 15, 30, 45, 60)
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
-        // 1. Appearance (Use Device Theme as default)
-        item {
-            SettingsCard(title = "Appearance") {
-                ThemeMode.entries.forEach { mode ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { settingsManager.setThemeMode(mode) }
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = state.themeMode == mode,
-                            onClick = { settingsManager.setThemeMode(mode) }
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(mode.label, style = MaterialTheme.typography.bodyLarge)
-                    }
-                }
-            }
-        }
-
-        // 2. Streaming Sound Quality (Persisted)
-        item {
-            SettingsCard(title = "Sound Quality (Streaming)") {
-                AudioQuality.entries.forEach { quality ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { settingsManager.setStreamingQuality(quality) }
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = state.streamingQuality == quality,
-                            onClick = { settingsManager.setStreamingQuality(quality) }
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(quality.label, style = MaterialTheme.typography.bodyLarge)
-                    }
-                }
-            }
-        }
-
-        // 3. Default Download Quality (Persisted)
-        item {
-            SettingsCard(title = "Download Quality") {
-                AudioQuality.entries.forEach { quality ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { settingsManager.setDownloadQuality(quality) }
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = state.downloadQuality == quality,
-                            onClick = { settingsManager.setDownloadQuality(quality) }
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(quality.label, style = MaterialTheme.typography.bodyLarge)
-                    }
-                }
-            }
-        }
-
-        // 4. Equalizer with Reset Button
-        item {
-            SettingsCard(title = "Equalizer") {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Switch(
-                            checked = state.eqEnabled,
-                            onCheckedChange = { settingsManager.setEqEnabled(it) }
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(if (state.eqEnabled) "Enabled" else "Disabled")
-                    }
-                    OutlinedButton(onClick = { settingsManager.resetEqualizer() }) {
-                        Text("Reset")
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-                eqFrequencies.forEachIndexed { idx, freq ->
-                    val gain = state.eqBandsDb.getOrElse(idx) { 0f }
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(freq, style = MaterialTheme.typography.labelMedium)
-                            Text("${"%.1f".format(gain)} dB", style = MaterialTheme.typography.labelMedium)
-                        }
-                        Slider(
-                            value = gain,
-                            onValueChange = { settingsManager.setEqBand(idx, it) },
-                            valueRange = -12f..12f,
-                            enabled = state.eqEnabled
-                        )
-                    }
-                }
-            }
-        }
-
-        // 5. Sleep Timer & Playback Features
-        item {
-            SettingsCard(title = "Sleep Timer & Playback") {
-                Text("Sleep Timer", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    sleepOptions.forEach { mins ->
-                        FilterChip(
-                            selected = state.sleepTimerMinutes == mins,
-                            onClick = { settingsManager.setSleepTimer(mins) },
-                            label = { Text(if (mins == 0) "Off" else "${mins}m") }
-                        )
-                    }
-                }
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Gapless Playback")
-                    Switch(
-                        checked = state.gaplessPlayback,
-                        onCheckedChange = { settingsManager.setGaplessPlayback(it) }
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Normalize Volume")
-                    Switch(
-                        checked = state.audioNormalization,
-                        onCheckedChange = { settingsManager.setAudioNormalization(it) }
-                    )
-                }
-            }
-        }
-
-        // 6. "About Us" Clean Borderless & Background-Free Section
         item {
             Text(
-                text = "About Us",
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                modifier = Modifier.padding(bottom = 8.dp)
+                text = "Settings",
+                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.ExtraBold),
+                color = MaterialTheme.colorScheme.onBackground
             )
-            Column(modifier = Modifier.fillMaxWidth()) {
-                InfoPageType.entries.forEachIndexed { index, page ->
-                    Row(
+        }
+
+        // 1. APPEARANCE
+        item {
+            SettingsGroupCard(title = "Appearance") {
+                SettingsValueRow(
+                    title = "Theme",
+                    subtitle = state.themeMode.label,
+                    onClick = { activeDialog = SettingsDialogType.THEME }
+                )
+            }
+        }
+
+        // 2. DATA SAVER & QUALITY
+        item {
+            SettingsGroupCard(title = "Audio & Artwork Quality") {
+                SettingsValueRow(
+                    title = "Streaming Audio Quality",
+                    subtitle = state.streamingQuality.label,
+                    onClick = { activeDialog = SettingsDialogType.STREAM_QUALITY }
+                )
+                SettingsDivider()
+                SettingsValueRow(
+                    title = "Download Quality",
+                    subtitle = state.downloadQuality.label,
+                    onClick = { activeDialog = SettingsDialogType.DOWNLOAD_QUALITY }
+                )
+                SettingsDivider()
+                SettingsValueRow(
+                    title = "Thumbnail & Artwork Quality",
+                    subtitle = state.thumbnailQuality.label,
+                    onClick = { activeDialog = SettingsDialogType.THUMBNAIL_QUALITY }
+                )
+            }
+        }
+
+        // 3. PLAYBACK & EQUALIZER
+        item {
+            SettingsGroupCard(title = "Playback & Sound Effects") {
+                SettingsToggleRow(
+                    title = "Gapless Playback",
+                    subtitle = "Seamless transitions between queued songs",
+                    checked = state.gaplessPlayback,
+                    onCheckedChange = { settingsManager.setGaplessPlayback(it) }
+                )
+                SettingsDivider()
+                SettingsToggleRow(
+                    title = "Normalize Volume",
+                    subtitle = "Maintain consistent loudness across tracks",
+                    checked = state.audioNormalization,
+                    onCheckedChange = { settingsManager.setAudioNormalization(it) }
+                )
+                SettingsDivider()
+                SettingsValueRow(
+                    title = "Sleep Timer",
+                    subtitle = if (state.sleepTimerMinutes == 0) "Off" else "${state.sleepTimerMinutes} minutes",
+                    onClick = { activeDialog = SettingsDialogType.SLEEP_TIMER }
+                )
+                SettingsDivider()
+                SettingsValueRow(
+                    title = "5-Band Studio Equalizer",
+                    subtitle = if (state.eqEnabled) "Active" else "Off — Tap to configure",
+                    onClick = { isEqualizerExpanded = !isEqualizerExpanded }
+                )
+
+                AnimatedVisibility(visible = isEqualizerExpanded) {
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { onOpenInfoPage(page) }
-                            .padding(horizontal = 4.dp, vertical = 14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(top = 12.dp)
                     ) {
-                        Text(
-                            text = page.title,
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                        ChevronRightSvgIcon(
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    if (index < InfoPageType.entries.lastIndex) {
-                        HorizontalDivider(
-                            thickness = 0.6.dp,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Switch(
+                                    checked = state.eqEnabled,
+                                    onCheckedChange = { settingsManager.setEqEnabled(it) }
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (state.eqEnabled) "Equalizer On" else "Equalizer Off",
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            OutlinedButton(onClick = { settingsManager.resetEqualizer() }) {
+                                Text("Reset Flat")
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        eqFrequencies.forEachIndexed { idx, freq ->
+                            val gain = state.eqBandsDb.getOrElse(idx) { 0f }
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(freq, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
+                                    Text("${"%.1f".format(gain)} dB", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Slider(
+                                    value = gain,
+                                    onValueChange = { settingsManager.setEqBand(idx, it) },
+                                    valueRange = -12f..12f,
+                                    enabled = state.eqEnabled
+                                )
+                            }
+                        }
                     }
                 }
+            }
+        }
+
+        // 4. ABOUT & LEGAL
+        item {
+            SettingsGroupCard(title = "About & Legal") {
+                InfoPageType.entries.forEachIndexed { index, page ->
+                    SettingsValueRow(
+                        title = page.title,
+                        subtitle = null,
+                        onClick = { onOpenInfoPage(page) }
+                    )
+                    if (index < InfoPageType.entries.lastIndex) {
+                        SettingsDivider()
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(84.dp))
+        }
+    }
+
+    // Selection Dialogs
+    when (activeDialog) {
+        SettingsDialogType.THEME -> SingleChoiceSettingsDialog(
+            title = "Choose Theme",
+            options = ThemeMode.entries.map { it.label },
+            selectedIndex = ThemeMode.entries.indexOf(state.themeMode),
+            onSelect = { idx ->
+                settingsManager.setThemeMode(ThemeMode.entries[idx])
+                activeDialog = SettingsDialogType.NONE
+            },
+            onDismiss = { activeDialog = SettingsDialogType.NONE }
+        )
+        SettingsDialogType.STREAM_QUALITY -> SingleChoiceSettingsDialog(
+            title = "Streaming Audio Quality",
+            options = AudioQuality.entries.map { it.label },
+            selectedIndex = AudioQuality.entries.indexOf(state.streamingQuality),
+            onSelect = { idx ->
+                settingsManager.setStreamingQuality(AudioQuality.entries[idx])
+                activeDialog = SettingsDialogType.NONE
+            },
+            onDismiss = { activeDialog = SettingsDialogType.NONE }
+        )
+        SettingsDialogType.DOWNLOAD_QUALITY -> SingleChoiceSettingsDialog(
+            title = "Download Audio Quality",
+            options = AudioQuality.entries.map { it.label },
+            selectedIndex = AudioQuality.entries.indexOf(state.downloadQuality),
+            onSelect = { idx ->
+                settingsManager.setDownloadQuality(AudioQuality.entries[idx])
+                activeDialog = SettingsDialogType.NONE
+            },
+            onDismiss = { activeDialog = SettingsDialogType.NONE }
+        )
+        SettingsDialogType.THUMBNAIL_QUALITY -> SingleChoiceSettingsDialog(
+            title = "Thumbnail & Artwork Quality",
+            options = ThumbnailQuality.entries.map { "${it.label}\n${it.description}" },
+            selectedIndex = ThumbnailQuality.entries.indexOf(state.thumbnailQuality),
+            onSelect = { idx ->
+                settingsManager.setThumbnailQuality(ThumbnailQuality.entries[idx])
+                activeDialog = SettingsDialogType.NONE
+            },
+            onDismiss = { activeDialog = SettingsDialogType.NONE }
+        )
+        SettingsDialogType.SLEEP_TIMER -> {
+            val sleepMins = listOf(0, 15, 30, 45, 60)
+            SingleChoiceSettingsDialog(
+                title = "Sleep Timer",
+                options = sleepMins.map { if (it == 0) "Off" else "$it minutes" },
+                selectedIndex = sleepMins.indexOf(state.sleepTimerMinutes).coerceAtLeast(0),
+                onSelect = { idx ->
+                    settingsManager.setSleepTimer(sleepMins[idx])
+                    activeDialog = SettingsDialogType.NONE
+                },
+                onDismiss = { activeDialog = SettingsDialogType.NONE }
+            )
+        }
+        SettingsDialogType.NONE -> Unit
+    }
+}
+
+@Composable
+private fun SettingsGroupCard(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = title.uppercase(),
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+        )
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+                content()
             }
         }
     }
 }
 
 @Composable
-private fun SettingsCard(
+private fun SettingsValueRow(
     title: String,
-    content: @Composable ColumnScope.() -> Unit
+    subtitle: String?,
+    onClick: () -> Unit
 ) {
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 2.dp,
-        modifier = Modifier.fillMaxWidth()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                color = MaterialTheme.colorScheme.primary
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurface
             )
-            Spacer(modifier = Modifier.height(8.dp))
-            content()
+            if (!subtitle.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
+        ChevronRightSvgIcon(
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp)
+        )
     }
 }
 
-/**
- * Dedicated screen for About the App, Help, Privacy Policy, and Terms & Conditions
- * with a Top-Left Back Arrow.
- */
+@Composable
+private fun SettingsToggleRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@Composable
+private fun SettingsDivider() {
+    HorizontalDivider(
+        thickness = 0.6.dp,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+    )
+}
+
+@Composable
+private fun SingleChoiceSettingsDialog(
+    title: String,
+    options: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                options.forEachIndexed { idx, label ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onSelect(idx) }
+                            .padding(vertical = 10.dp, horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = idx == selectedIndex,
+                            onClick = { onSelect(idx) }
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(label, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        }
+    )
+}
+
 @Composable
 fun InfoDetailScreen(
     pageType: InfoPageType,
@@ -265,9 +391,9 @@ fun InfoDetailScreen(
 ) {
     val bodyContent = when (pageType) {
         InfoPageType.ABOUT_APP -> "Seitharol is an advanced audio streaming and playback application engineered to deliver studio-grade canonical releases, synchronized lyric integration, and personalized discovery feeds with uncompromising acoustic fidelity."
-        InfoPageType.HELP -> "For technical assistance or playback optimization, please verify your network connectivity. Audio stream bitrates can be customized in Sound Settings, and equalizer calibrations may be restored to baseline reference response via the dedicated Reset function."
-        InfoPageType.PRIVACY_POLICY -> "Your privacy is strictly preserved. All playback logs, customized playlists, and local application preferences are retained exclusively within on-device storage. No personal listening telemetry is collected or distributed to third parties."
-        InfoPageType.TERMS_CONDITIONS -> "By accessing this service, you acknowledge that all streamed and cached media materials are intended solely for personal, non-commercial listening in accordance with applicable intellectual property frameworks and terms of service."
+        InfoPageType.HELP -> "For technical assistance or playback optimization, verify your network connectivity. Audio stream bitrates and thumbnail data usage can be customized in Settings."
+        InfoPageType.PRIVACY_POLICY -> "Your privacy is strictly preserved. All playback logs, customized playlists, and local application preferences are retained exclusively within on-device storage."
+        InfoPageType.TERMS_CONDITIONS -> "By accessing this service, you acknowledge that all streamed and cached media materials are intended solely for personal, non-commercial listening."
     }
 
     Column(
@@ -285,7 +411,8 @@ fun InfoDetailScreen(
             }
             Text(
                 text = pageType.title,
-                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onBackground
             )
         }
         Spacer(modifier = Modifier.height(16.dp))

@@ -7,6 +7,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import com.seitharol.data.resolver.AudioQuality
+import com.seitharol.data.resolver.InnerTubeStreamExtractor
+import com.seitharol.data.resolver.StreamResolver
+import com.seitharol.data.resolver.TrackMetadata
 import com.seitharol.domain.model.NormalizedTrack
 import com.seitharol.domain.model.TrackSource
 import kotlinx.coroutines.Dispatchers
@@ -19,18 +23,17 @@ import java.io.FileOutputStream
 import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLEncoder
 
 enum class DownloadProvider(val id: String, val displayName: String, val subtitle: String) {
-    AMAZON("amazon", "Amazon Music", "Hi-Res / CD Lossless & 320kbps"),
-    TIDAL("tidal", "Tidal", "Master / FLAC & High Quality"),
-    QOBUZ("qobuz", "Qobuz", "24-Bit Studio Masters & MP3"),
-    JIOSAAVN("jiosaavn", "JioSaavn", "320kbps AAC/MP3")
+    JIOSAAVN("jiosaavn", "JioSaavn Direct", "320kbps Studio AAC / MP4"),
+    AMAZON("amazon", "YouTube ATV Direct", "Canonical Official Art Track Stream"),
+    TIDAL("tidal", "Tidal Hi-Fi Relay", "High Bitrate Master Stream"),
+    QOBUZ("qobuz", "Qobuz Studio Relay", "High Bitrate Studio Stream")
 }
 
 enum class DownloadFormat(val ext: String, val mimeType: String, val label: String) {
-    MP3("mp3", "audio/mpeg", "MP3 (320 kbps)"),
-    FLAC("flac", "audio/flac", "FLAC (Lossless)")
+    MP3("m4a", "audio/mp4", "High Quality (320 kbps)"),
+    FLAC("flac", "audio/flac", "Lossless / Master")
 }
 
 sealed class DownloadTaskState {
@@ -41,7 +44,6 @@ sealed class DownloadTaskState {
 }
 
 class DownloadPreferencesAndService(private val context: Context) {
-
     private val prefs = context.applicationContext.getSharedPreferences("discover_download_prefs", Context.MODE_PRIVATE)
 
     private val _downloadState = MutableStateFlow<DownloadTaskState>(DownloadTaskState.Idle)
@@ -75,45 +77,38 @@ class DownloadPreferencesAndService(private val context: Context) {
         prefs.getLong("provider_last_${provider.id}", 0L)
 
     /**
-     * Downloads the full MP3/FLAC track from the external backend and saves it directly
-     * into the device's public Music storage (`Music/Seitharol/`) via MediaStore so it
-     * behaves and plays like a standard local music file on the phone (NOT an app cache).
+     * Resolves the canonical full-length audio stream directly on-device (no localhost 10.0.2.2 server needed)
+     * and writes it to public Music storage (`Music/Seitharol/`).
      */
     suspend fun downloadTrackToPublicMusicStorage(
         track: NormalizedTrack,
         provider: DownloadProvider,
         format: DownloadFormat,
-        backendBaseUrl: String = "http://10.0.2.2:8000",
         onTrackSavedAsLocalMusic: (NormalizedTrack) -> Unit
     ): Result<Uri> = withContext(Dispatchers.IO) {
         recordProviderAndFormatSelection(provider, format)
-        _downloadState.value = DownloadTaskState.Downloading(track.sourceId, 0, provider)
+        _downloadState.value = DownloadTaskState.Downloading(track.sourceId, 2, provider)
 
         runCatching {
             val primaryArtist = track.artists.firstOrNull().orEmpty().ifBlank { "Unknown Artist" }
-            val safeFileName = sanitizeFileName("$primaryArtist - ${track.title}.${format.ext}")
+            val streamUrl = resolveDirectDownloadUrl(track, primaryArtist, provider)
+                ?: throw IllegalStateException("Could not resolve downloadable stream for ${track.title}")
 
-            val encodedId = URLEncoder.encode(track.sourceId, "UTF-8")
-            val encodedTitle = URLEncoder.encode(track.title, "UTF-8")
-            val encodedArtist = URLEncoder.encode(primaryArtist, "UTF-8")
-            val requestUrl = "$backendBaseUrl/api/v1/download?spotify_id=$encodedId" +
-                "&title=$encodedTitle&artist=$encodedArtist" +
-                "&provider=${provider.id}&format=${format.ext}"
-
-            val conn = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
+            val conn = (URL(streamUrl).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 connectTimeout = 15_000
                 readTimeout = 60_000
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
             }
 
             if (conn.responseCode !in 200..299) {
-                throw IllegalStateException("Download server returned HTTP ${conn.responseCode}")
+                throw IllegalStateException("Audio server returned HTTP ${conn.responseCode}")
             }
 
             val totalBytes = conn.contentLengthLong.coerceAtLeast(1L)
+            val safeFileName = sanitizeFileName("$primaryArtist - ${track.title}.${format.ext}")
 
             val savedUri: Uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                // Android 10+ (API 29+): Insert directly into public MediaStore.Audio.Media (Music/Seitharol)
                 val resolver = context.contentResolver
                 val contentValues = ContentValues().apply {
                     put(MediaStore.Audio.Media.DISPLAY_NAME, safeFileName)
@@ -135,7 +130,6 @@ class DownloadPreferencesAndService(private val context: Context) {
                         streamWithProgress(conn, output, totalBytes, track.sourceId, provider)
                     } ?: throw IllegalStateException("Failed to open output stream for $itemUri")
 
-                    // Publish file so it is immediately visible and playable as local device music
                     val publishValues = ContentValues().apply {
                         put(MediaStore.Audio.Media.IS_PENDING, 0)
                     }
@@ -146,7 +140,6 @@ class DownloadPreferencesAndService(private val context: Context) {
                     throw e
                 }
             } else {
-                // Android 9 and below: Write directly to public /Music/Seitharol directory & scan
                 val publicMusicDir = File(
                     Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
                     "Seitharol"
@@ -166,23 +159,63 @@ class DownloadPreferencesAndService(private val context: Context) {
                 Uri.fromFile(destFile)
             }
 
-            // Emit updated NormalizedTrack marked as native local device audio
             val localMusicTrack = track.copy(
                 source = TrackSource.LOCAL_FILE,
                 isPlayableNatively = true,
-                localPath = savedUri.toString() // content://media/external/audio/media/... or file:///storage/...
+                localPath = savedUri.toString()
             )
             onTrackSavedAsLocalMusic(localMusicTrack)
             _downloadState.value = DownloadTaskState.Completed(track.sourceId, savedUri)
             savedUri
         }.onFailure { err ->
-            android.util.Log.e("DownloadService", "Download failed for ${track.sourceId}: ${err.message}", err)
             val friendlyMsg = com.example.util.ErrorFormatter.toUserFriendlyMessage(err, context, track.title)
             _downloadState.value = DownloadTaskState.Failed(
                 trackId = track.sourceId,
                 message = friendlyMsg
             )
         }
+    }
+
+    private suspend fun resolveDirectDownloadUrl(
+        track: NormalizedTrack,
+        primaryArtist: String,
+        provider: DownloadProvider
+    ): String? {
+        val metadata = TrackMetadata(
+            id = track.sourceId,
+            title = track.title,
+            artist = primaryArtist,
+            album = track.album.orEmpty(),
+            durationSeconds = (track.durationMs / 1000L).toInt(),
+            thumbnailUrl = track.artUrl
+        )
+
+        // 1. If track is already a YouTube videoId (11 chars) or user picked YouTube ATV Direct
+        if (track.source == TrackSource.YOUTUBE && track.sourceId.length == 11) {
+            InnerTubeStreamExtractor.resolveWorkingStreamUrl(track.sourceId, AudioQuality.HIGH)
+                .getOrNull()?.let { return it }
+        }
+
+        // 2. Try JioSaavn 320kbps direct stream first if JIOSAAVN selected
+        if (provider == DownloadProvider.JIOSAAVN) {
+            StreamResolver.resolveExactStreamUrl(metadata, AudioQuality.HIGH)?.let { return it }
+        }
+
+        // 3. Search canonical YouTube Music ATV song and extract high-bitrate stream
+        val ytCandidates = InnerTubeStreamExtractor.searchOfficialYtmSongs("${track.title} $primaryArtist", limit = 6)
+        val bestYt = com.seitharol.data.resolver.CanonicalAudioResolver.selectBestCanonicalMatch(
+            queryTitle = track.title,
+            queryArtist = primaryArtist,
+            targetDurationSeconds = metadata.durationSeconds,
+            candidates = ytCandidates
+        )
+        if (bestYt != null) {
+            InnerTubeStreamExtractor.resolveWorkingStreamUrl(bestYt.videoId, AudioQuality.HIGH)
+                .getOrNull()?.let { return it }
+        }
+
+        // 4. Final fallback to StreamResolver (JioSaavn 320kbps + Piped strict)
+        return StreamResolver.resolveExactStreamUrl(metadata, AudioQuality.HIGH)
     }
 
     private fun streamWithProgress(
@@ -194,12 +227,16 @@ class DownloadPreferencesAndService(private val context: Context) {
     ) {
         var downloadedBytes = 0L
         conn.inputStream.use { input ->
-            val buffer = ByteArray(8 * 1024)
+            val buffer = ByteArray(16 * 1024)
             var bytesRead: Int
             while (input.read(buffer).also { bytesRead = it } != -1) {
                 output.write(buffer, 0, bytesRead)
                 downloadedBytes += bytesRead
-                val progress = ((downloadedBytes * 100L) / totalBytes).toInt().coerceIn(1, 99)
+                val progress = if (totalBytes > 1000L) {
+                    ((downloadedBytes * 100L) / totalBytes).toInt().coerceIn(1, 99)
+                } else {
+                    50
+                }
                 _downloadState.value = DownloadTaskState.Downloading(trackId, progress, provider)
             }
             output.flush()

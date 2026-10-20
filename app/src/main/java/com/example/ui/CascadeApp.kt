@@ -65,7 +65,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
             val jioSaavn = com.seitharol.data.resolver.DefaultJioSaavnProvider(viewModel.resolverEngine.jioSaavnProvider)
             val matcher = com.seitharol.data.resolver.TrackMatcher(innerTube, jioSaavn)
             val engine = com.seitharol.data.resolver.ResolverEngine(context, matcher, innerTube, jioSaavn)
-            com.seitharol.player.AudioPlayerManager(exo, engine)
+            com.seitharol.player.AudioPlayerManager(exo, engine, context.applicationContext)
         }
     }
 
@@ -101,7 +101,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(SeitharolBg)
+            .background(MaterialTheme.colorScheme.background)
     ) {
         val isTablet = maxWidth >= 600.dp
 
@@ -110,21 +110,21 @@ fun CascadeApp(viewModel: CascadeViewModel) {
             Row(modifier = Modifier.fillMaxSize()) {
                 // Navigation Rail
                 NavigationRail(
-                    containerColor = SeitharolNavBg,
-                    contentColor = Color.White,
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
                     header = {
                         Box(
                             modifier = Modifier
                                 .padding(top = 16.dp, bottom = 12.dp)
                                 .size(36.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFF333333)),
+                                .background(MaterialTheme.colorScheme.primaryContainer),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.GraphicEq,
                                 contentDescription = "Logo",
-                                tint = Color.White,
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -133,37 +133,55 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                 ) {
                     Spacer(modifier = Modifier.height(16.dp))
                     AppDestination.values().forEach { dest ->
+                        val isSelected = currentDestination == dest && currentSubScreen is SubScreen.None
+                        val iconTint = if (isSelected) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
                         NavigationRailItem(
-                            selected = currentDestination == dest && currentSubScreen is SubScreen.None,
+                            selected = isSelected,
                             onClick = {
                                 currentSubScreen = SubScreen.None
                                 currentDestination = dest
                             },
                             icon = {
                                 if (dest == AppDestination.HOME) {
-                                    HomeNavSvgIcon(tint = Color.White, modifier = Modifier.size(20.dp))
+                                    HomeNavSvgIcon(tint = iconTint, modifier = Modifier.size(20.dp))
                                 } else {
-                                    Icon(dest.icon, contentDescription = dest.label)
+                                    Icon(
+                                        dest.icon,
+                                        contentDescription = dest.label,
+                                        tint = iconTint
+                                    )
                                 }
                             },
                             colors = NavigationRailItemDefaults.colors(
-                                selectedIconColor = Color.White,
-                                indicatorColor = SeitharolNavActive,
-                                unselectedIconColor = Color(0xFFAAAAAA)
+                                selectedIconColor = MaterialTheme.colorScheme.primary,
+                                indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         )
                     }
 
                     Spacer(modifier = Modifier.weight(1f))
 
+                    val isSettingsSelected = currentSubScreen is SubScreen.SoundSettings
+                    val settingsIconTint = if (isSettingsSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                     NavigationRailItem(
-                        selected = currentSubScreen is SubScreen.SoundSettings,
+                        selected = isSettingsSelected,
                         onClick = { currentSubScreen = SubScreen.SoundSettings },
-                        icon = { Icon(Icons.Default.Tune, contentDescription = "Sound Settings") },
+                        icon = {
+                            Icon(
+                                Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                tint = settingsIconTint
+                            )
+                        },
                         colors = NavigationRailItemDefaults.colors(
-                            selectedIconColor = Color.White,
-                            indicatorColor = SeitharolNavActive,
-                            unselectedIconColor = Color(0xFFAAAAAA)
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     )
                 }
@@ -205,10 +223,9 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             pageType = sub.pageType,
                             onBack = { currentSubScreen = SubScreen.None }
                         )
-                        is SubScreen.SoundSettings -> SoundSettingsScreen(
-                            viewModel = viewModel,
-                            playerState = playerState,
-                            onBack = { currentSubScreen = SubScreen.None }
+                        is SubScreen.SoundSettings -> com.seitharol.ui.settings.GeneralSettingsScreen(
+                            settingsManager = com.seitharol.data.preferences.AppSettingsManager.getInstance(context),
+                            onOpenInfoPage = { currentSubScreen = SubScreen.InfoDetail(it) }
                         )
                         is SubScreen.Discover -> {
                             val feedTracks by viewModel.discoverTracks.collectAsState()
@@ -234,11 +251,13 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                     onVisitArtist = { name, _ ->
                                         currentSubScreen = SubScreen.Artist(name)
                                     },
-                                    onOpenFullSongMaximized = { track ->
-                                        viewModel.playNormalizedTrackFull(track)
+                                    onOpenFullSongMaximized = { resolvedTrack ->
+                                        viewModel.playNormalizedTrackFull(resolvedTrack)
                                         isPlayerExpanded = true
                                     },
-                                    onTrackDownloadedLocally = { _ -> },
+                                    onTrackDownloadedLocally = { localNormalizedTrack ->
+                                        viewModel.registerLocallyDownloadedTrack(localNormalizedTrack)
+                                    },
                                     onNavigateBack = { currentSubScreen = SubScreen.None }
                                 )
                             }
@@ -392,10 +411,9 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                     }
                     is SubScreen.SoundSettings -> {
                         BackHandler { currentSubScreen = SubScreen.None }
-                        SoundSettingsScreen(
-                            viewModel = viewModel,
-                            playerState = playerState,
-                            onBack = { currentSubScreen = SubScreen.None }
+                        com.seitharol.ui.settings.GeneralSettingsScreen(
+                            settingsManager = com.seitharol.data.preferences.AppSettingsManager.getInstance(context),
+                            onOpenInfoPage = { currentSubScreen = SubScreen.InfoDetail(it) }
                         )
                     }
                     is SubScreen.Discover -> {
@@ -423,11 +441,13 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                 onVisitArtist = { name, _ ->
                                     currentSubScreen = SubScreen.Artist(name)
                                 },
-                                onOpenFullSongMaximized = { track ->
-                                    viewModel.playNormalizedTrackFull(track)
+                                onOpenFullSongMaximized = { resolvedTrack ->
+                                    viewModel.playNormalizedTrackFull(resolvedTrack)
                                     isPlayerExpanded = true
                                 },
-                                onTrackDownloadedLocally = { _ -> },
+                                onTrackDownloadedLocally = { localNormalizedTrack ->
+                                    viewModel.registerLocallyDownloadedTrack(localNormalizedTrack)
+                                },
                                 onNavigateBack = { currentSubScreen = SubScreen.None }
                             )
                         }

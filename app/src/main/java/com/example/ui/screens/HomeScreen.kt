@@ -21,7 +21,8 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -149,6 +150,10 @@ fun HomeScreen(
     }
     val deduplicatedTrendingHits = remember(trendingHits) {
         trendingHits.distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
+    }
+
+    val heroTrack = remember(personalizedTracks, deduplicatedTrendingHits, deduplicatedAllTracks) {
+        personalizedTracks.firstOrNull() ?: deduplicatedTrendingHits.firstOrNull() ?: deduplicatedAllTracks.firstOrNull()
     }
 
     // Prepare Trending Items (Deduplicated)
@@ -442,6 +447,22 @@ fun HomeScreen(
                                 .clip(RoundedCornerShape(1.dp)),
                             color = Color.White,
                             trackColor = Color(0xFF282A2A)
+                        )
+                    }
+                }
+            }
+
+            // ────────────────────────────────────────────────────────────
+            // 1B. First Ready-To-Play Spotlight Hero Card
+            // ────────────────────────────────────────────────────────────
+            heroTrack?.let { hero ->
+                item(key = "spotlight_hero_${hero.id}_$selectedMood") {
+                    Box(modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)) {
+                        ReadyToPlayHeroCard(
+                            track = hero,
+                            selectedMood = selectedMood,
+                            onPlayNow = { viewModel.playTrack(hero) },
+                            onStartRadioMix = { viewModel.playPlaylistOrMix("RDAMVM${hero.id}") }
                         )
                     }
                 }
@@ -1239,3 +1260,159 @@ private fun SectionHeader(title: String, subtitle: String) {
         )
     }
 }
+
+@Composable
+fun ReadyToPlayHeroCard(
+    track: Track,
+    selectedMood: String,
+    onPlayNow: () -> Unit,
+    onStartRadioMix: () -> Unit
+) {
+    val badgeLabel = remember(selectedMood) {
+        if (selectedMood.equals("All", true)) {
+            "READY TO PLAY • PERSONALIZED FOR YOU"
+        } else {
+            "READY TO PLAY • ${selectedMood.uppercase()} PICK"
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .height(190.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .border(
+                width = 1.dp,
+                color = Color.White.copy(alpha = 0.14f),
+                shape = RoundedCornerShape(22.dp)
+            )
+            .clickable { onPlayNow() }
+    ) {
+        AsyncImage(
+            model = track.artUrl,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .blur(26.dp)
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.horizontalGradient(
+                        colors = listOf(
+                            Color(0xFF0E0F12).copy(alpha = 0.92f),
+                            Color(0xFF0E0F12).copy(alpha = 0.72f),
+                            Color(0xFF1A1B20).copy(alpha = 0.55f)
+                        )
+                    )
+                )
+        )
+
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+                    shape = RoundedCornerShape(50)
+                ) {
+                    Text(
+                        text = badgeLabel,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 0.8.sp,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = track.title,
+                    color = Color.White,
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 2,
+                    lineHeight = 23.sp,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Spacer(modifier = Modifier.height(3.dp))
+
+                Text(
+                    text = track.artist,
+                    color = Color.White.copy(alpha = 0.78f),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(
+                        onClick = onPlayNow,
+                        shape = RoundedCornerShape(50),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier.height(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Play Now", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    OutlinedButton(
+                        onClick = onStartRadioMix,
+                        shape = RoundedCornerShape(50),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.35f)),
+                        modifier = Modifier.height(36.dp)
+                    ) {
+                        Text("Radio Mix", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Box(
+                modifier = Modifier
+                    .size(122.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.Black.copy(alpha = 0.3f))
+            ) {
+                AsyncImage(
+                    model = track.artUrl,
+                    contentDescription = track.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+    }
+}
+

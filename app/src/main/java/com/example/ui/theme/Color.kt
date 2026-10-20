@@ -1,91 +1,92 @@
 package com.example.ui.theme
 
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.graphics.Color
 
-// Seitharol Pure White & Adaptive Theme Tokens
+// Semantic Theme Tokens (Theme-Adaptive & Contrast Guaranteed)
 val SeitharolBg: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFF0F0F0F) else Color(0xFFF8F9FA)
+    get() = MaterialTheme.colorScheme.background
 
 val SeitharolWhite: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFF1B1C1C) else Color(0xFFFFFFFF)
+    get() = MaterialTheme.colorScheme.surface
 
-// Primary foreground / text / icon color
+// Primary foreground / text / icon color (Always contrasts with SeitharolWhite / surface)
 val SeitharolDark: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFFFFFFFF) else Color(0xFF121212)
+    get() = MaterialTheme.colorScheme.onSurface
 
 val SeitharolDarkCard: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFF1B1C1C) else Color(0xFFFFFFFF)
+    get() = MaterialTheme.colorScheme.surface
 
 val SeitharolDarkSurface: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFF262727) else Color(0xFFF0F2F5)
+    get() = MaterialTheme.colorScheme.surfaceVariant
 
 // Dedicated Navigation Bar Tokens
 val SeitharolNavBg: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFF1B1C1C) else Color(0xFFFFFFFF)
+    get() = MaterialTheme.colorScheme.surface
 
 val SeitharolNavActive: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFF38383A) else Color(0xFFE2E4E8)
+    get() = MaterialTheme.colorScheme.primaryContainer
 
 val SeitharolMiniPlayerBg: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFF1B1C1C) else Color(0xFFFFFFFF)
+    get() = MaterialTheme.colorScheme.surfaceVariant
 
 val SeitharolPillBg: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFFFFFFFF) else Color(0xFF121212)
+    get() = MaterialTheme.colorScheme.primary
 
 val SeitharolPillText: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFF000000) else Color(0xFFFFFFFF)
+    get() = MaterialTheme.colorScheme.onPrimary
 
 val SeitharolCardElevated: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFF262727) else Color(0xFFECEEF0)
+    get() = MaterialTheme.colorScheme.surfaceVariant
 
 val SeitharolDarkButton: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFF2E2E30) else Color(0xFFE2E4E8)
+    get() = MaterialTheme.colorScheme.surfaceVariant
 
 val SeitharolTextPrimary: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFFFFFFFF) else Color(0xFF121212)
+    get() = MaterialTheme.colorScheme.onSurface
 
 val SeitharolTextSecondary: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFFA0A0A0) else Color(0xFF5F6368)
+    get() = MaterialTheme.colorScheme.onSurfaceVariant
 
 val SeitharolTextTertiary: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFF757575) else Color(0xFF888888)
+    get() = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
 
 val SeitharolTextMuted: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFF555555) else Color(0xFFAAAAAA)
+    get() = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
 
 val SeitharolTextLight: Color = Color(0xFFFFFFFF)
 val SeitharolTextLightMuted: Color = Color(0xFFD0D0D0)
@@ -93,35 +94,35 @@ val SeitharolTextLightMuted: Color = Color(0xFFD0D0D0)
 val SeitharolBorder: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFF2C2C2E) else Color(0xFFE0E0E0)
+    get() = MaterialTheme.colorScheme.outline
 
 val SeitharolDivider: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFF262727) else Color(0xFFE8E8E8)
+    get() = MaterialTheme.colorScheme.outlineVariant
 
 val SeitharolGlassDark: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0x33FFFFFF) else Color(0x33000000)
+    get() = if (LocalIsDarkTheme.current) Color(0x33FFFFFF) else Color(0x1F000000)
 
 val SeitharolGlassDarkActive: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0x4DFFFFFF) else Color(0x4D000000)
+    get() = if (LocalIsDarkTheme.current) Color(0x4DFFFFFF) else Color(0x33000000)
 
 val SeitharolModalScrim: Color = Color(0x8C000000)
 
 val SeitharolHandleBar: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFF555555) else Color(0xFFCCCCCC)
+    get() = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
 
 // Accent highlight
 val SeitharolAccent: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0xFFFFFFFF) else Color(0xFF121212)
+    get() = MaterialTheme.colorScheme.primary
 
 val SeitharolRedHeart: Color = Color(0xFFFF3B56)
 val SeitharolGreen: Color = Color(0xFF00E676)

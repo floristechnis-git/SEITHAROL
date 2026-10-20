@@ -18,6 +18,8 @@ import com.example.player.EqualizerPreset
 import com.example.player.PlayerState
 import com.example.resolver.CircuitBreakerState
 import com.example.resolver.ResolverEngine
+import com.seitharol.data.resolver.CanonicalAudioResolver
+import com.seitharol.data.resolver.InnerTubeStreamExtractor
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -34,12 +36,7 @@ enum class ProviderFilter(val label: String) {
 enum class SearchFilter(val label: String) {
     ALL("All"),
     OFFLINE_ONLY("Offline Only"),
-    LIKED("Liked"),
-    FOLK("Folk / Heritage"),
-    SYNTHWAVE("Synthwave"),
-    LOFI("Lo-Fi"),
-    ROCK("Rock"),
-    ACOUSTIC("Acoustic")
+    LIKED("Liked")
 }
 
 class CascadeViewModel(
@@ -50,26 +47,26 @@ class CascadeViewModel(
 ) : ViewModel() {
 
     val allTracks: StateFlow<List<Track>> = musicRepository.getAllTracks()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val likedTracks: StateFlow<List<Track>> = musicRepository.getLikedTracks()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    val likedTrackIds: StateFlow<Set<String>> = musicRepository.getLikedTracks()
+    val likedTrackIds: StateFlow<Set<String>> = likedTracks
         .map { tracks -> tracks.map { it.id }.toSet() }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 
     val downloadedTracks: StateFlow<List<Track>> = musicRepository.getDownloadedTracks()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val activeHistory: StateFlow<List<Track>> = musicRepository.getActiveHistory()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val archivedHistory: StateFlow<List<Track>> = musicRepository.getArchivedHistory()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val playlists: StateFlow<List<Playlist>> = musicRepository.getPlaylists()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val activeDownloads: StateFlow<List<DownloadItem>> = downloadRepository.getAllDownloads()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -78,25 +75,19 @@ class CascadeViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
 
     val playerState: StateFlow<PlayerState> = playerManager.state
-
     val resolverNodes: StateFlow<List<ResolverNode>> = resolverEngine.activeNodes
     val isOfflineMode: StateFlow<Boolean> = resolverEngine.isOfflineMode
     val circuitBreakerState: StateFlow<CircuitBreakerState> = resolverEngine.circuitBreakerState
     val currentPackVersion: StateFlow<String> = resolverEngine.currentPackVersion
-
     val skipNotice: SharedFlow<String> = playerManager.skipEvent
 
-    // Artist navigation event — emitted when user clicks an artist name in PlayerScreen
     private val _artistNavigationEvent = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val artistNavigationEvent: SharedFlow<String> = _artistNavigationEvent.asSharedFlow()
 
     fun navigateToArtist(artistName: String) {
-        viewModelScope.launch {
-            _artistNavigationEvent.emit(artistName)
-        }
+        viewModelScope.launch { _artistNavigationEvent.emit(artistName) }
     }
 
-    // Live Home Screen & Personalization State
     val trendingHits = MutableStateFlow<List<Track>>(emptyList())
     val freshReleases = MutableStateFlow<List<Track>>(emptyList())
     val personalizedTracks = MutableStateFlow<List<Track>>(emptyList())
@@ -104,23 +95,20 @@ class CascadeViewModel(
     val isLoadingHome = MutableStateFlow(false)
     val isHomeLoading: StateFlow<Boolean> = isLoadingHome.asStateFlow()
 
-    // ONLY user-liked/followed artists — NO pre-populated mock/JioSaavn/Spotify artists
     private val _followedArtists = MutableStateFlow<List<Artist>>(emptyList())
     val followedArtists: StateFlow<List<Artist>> = _followedArtists.asStateFlow()
 
-    // User's custom playlists start with 0 songs when created (no 18-song fake list)
     private val _userPlaylists = MutableStateFlow<Map<String, List<Track>>>(emptyMap())
     val userPlaylists: StateFlow<Map<String, List<Track>>> = _userPlaylists.asStateFlow()
 
     private var moodFetchJob: Job? = null
+    private var activeSearchJob: Job? = null
 
-    // Discover Shorts Feed & Seeder State
     val spotifyProviderInstance = com.seitharol.data.provider.DefaultSpotifyMetadataProvider()
     val discoverFeedSeeder = com.seitharol.domain.discover.DiscoverFeedSeeder(spotifyProviderInstance)
     private val _discoverTracks = MutableStateFlow<List<com.seitharol.domain.model.NormalizedTrack>>(emptyList())
     val discoverTracks: StateFlow<List<com.seitharol.domain.model.NormalizedTrack>> = _discoverTracks.asStateFlow()
 
-    // Search state
     val searchQuery = MutableStateFlow("")
     val searchFilter = MutableStateFlow(SearchFilter.ALL)
     val selectedProviderFilter = MutableStateFlow(ProviderFilter.ALL)
@@ -130,35 +118,74 @@ class CascadeViewModel(
 
     fun selectProviderFilter(filter: ProviderFilter) {
         selectedProviderFilter.value = filter
-        searchWithProvider(searchQuery.value, filter)
+        executeRankedSearch(searchQuery.value, filter)
     }
 
-    private fun searchWithProvider(query: String, filter: ProviderFilter) {
+    private fun executeRankedSearch(query: String, filter: ProviderFilter) {
         val clean = query.trim()
-        if (clean.length < 2 || isOfflineMode.value) return
-        viewModelScope.launch {
+        activeSearchJob?.cancel()
+        if (clean.length < 2 || isOfflineMode.value) {
+            onlineSearchResults.value = emptyList()
+            isSearchingOnline.value = false
+            return
+        }
+
+        activeSearchJob = viewModelScope.launch {
             isSearchingOnline.value = true
             try {
-                when (filter) {
+                val rawCandidates = when (filter) {
                     ProviderFilter.ALL -> {
-                        val yt = resolverEngine.youtubeInnerTubeProvider.searchTracks(clean, limit = 15).map { it.toDomainTrack() }
-                        val saavn = resolverEngine.jioSaavnProvider.searchTracks(clean, limit = 10).map { it.toDomainTrack() }
-                        onlineSearchResults.value = yt + saavn
+                        val ytDeferred = async { InnerTubeStreamExtractor.searchOfficialYtmSongs(clean, limit = 18) }
+                        val saavnDeferred = async {
+                            resolverEngine.jioSaavnProvider.searchTracks(clean, limit = 8).map {
+                                com.seitharol.data.resolver.CandidateStream(
+                                    videoId = it.sourceId,
+                                    title = it.title,
+                                    artist = it.primaryArtist,
+                                    channelName = "${it.primaryArtist} - Topic",
+                                    albumName = it.album,
+                                    durationSeconds = (it.durationMs / 1000L).toInt(),
+                                    videoType = "MUSIC_VIDEO_TYPE_ATV",
+                                    thumbnailUrl = it.artUrl,
+                                    isVerifiedArtist = true
+                                )
+                            }
+                        }
+                        ytDeferred.await() + saavnDeferred.await()
                     }
-                    ProviderFilter.YOUTUBE -> {
-                        val yt = resolverEngine.youtubeInnerTubeProvider.searchTracks(clean, limit = 25).map { it.toDomainTrack() }
-                        onlineSearchResults.value = yt
-                    }
+                    ProviderFilter.YOUTUBE -> InnerTubeStreamExtractor.searchOfficialYtmSongs(clean, limit = 25)
                     ProviderFilter.JIOSAAVN -> {
-                        val saavn = resolverEngine.jioSaavnProvider.searchTracks(clean, limit = 25).map { it.toDomainTrack() }
-                        onlineSearchResults.value = saavn
+                        resolverEngine.jioSaavnProvider.searchTracks(clean, limit = 25).map {
+                            com.seitharol.data.resolver.CandidateStream(
+                                videoId = it.sourceId,
+                                title = it.title,
+                                artist = it.primaryArtist,
+                                channelName = "${it.primaryArtist} - Topic",
+                                albumName = it.album,
+                                durationSeconds = (it.durationMs / 1000L).toInt(),
+                                videoType = "MUSIC_VIDEO_TYPE_ATV",
+                                thumbnailUrl = it.artUrl,
+                                isVerifiedArtist = true
+                            )
+                        }
                     }
-                    ProviderFilter.LOCAL -> {
-                        onlineSearchResults.value = emptyList()
-                    }
+                    ProviderFilter.LOCAL -> emptyList()
+                }
+
+                // Rank strictly by relevance to user's query
+                val ranked = CanonicalAudioResolver.rankSearchResultsByRelevance(clean, rawCandidates)
+                onlineSearchResults.value = ranked.map { c ->
+                    Track(
+                        id = c.videoId,
+                        title = c.title,
+                        artist = c.artist,
+                        album = c.albumName.orEmpty(),
+                        durationMs = c.durationSeconds * 1000L,
+                        artUrl = c.thumbnailUrl
+                    )
                 }
             } catch (e: Exception) {
-                // Keep previous results on failure
+                Log.w("CascadeViewModel", "Search failed: ${e.message}")
             } finally {
                 isSearchingOnline.value = false
             }
@@ -166,27 +193,21 @@ class CascadeViewModel(
     }
 
     init {
-        // 1. Initial load of real YouTube Music for Home Screen & Personalization
         loadHomeScreenMusic()
         loadDiscoverFeed()
-        viewModelScope.launch {
-            downloadRepository.rescanLocalDownloads()
-        }
+        viewModelScope.launch { downloadRepository.rescanLocalDownloads() }
 
-        // 2. Trigger live search with debounce when online
         viewModelScope.launch {
             searchQuery
-                .debounce(300L)
+                .debounce(280L)
+                .distinctUntilChanged()
                 .collectLatest { query ->
                     val clean = query.trim()
                     if (clean.length >= 2 && !isOfflineMode.value) {
-                        searchWithProvider(clean, selectedProviderFilter.value)
-                        try {
-                            val suggestions = NetworkClients.getSearchSuggestions(clean)
-                            searchSuggestions.value = suggestions
-                        } catch (e: Exception) {
-                            searchSuggestions.value = emptyList()
-                        }
+                        executeRankedSearch(clean, selectedProviderFilter.value)
+                        runCatching { NetworkClients.getSearchSuggestions(clean) }
+                            .onSuccess { searchSuggestions.value = it }
+                            .onFailure { searchSuggestions.value = emptyList() }
                     } else {
                         onlineSearchResults.value = emptyList()
                         searchSuggestions.value = emptyList()
@@ -196,30 +217,55 @@ class CascadeViewModel(
         }
     }
 
+    /**
+     * OuterTune-style Personalization Engine:
+     * Reads persisted listening history & liked tracks directly from Room DB (avoiding cold StateFlow empty values),
+     * then builds personalized Quick Picks (via RDAMVM Automix) and artist/mood shelves.
+     */
     fun loadHomeScreenMusic() {
         viewModelScope.launch {
             if (isOfflineMode.value) return@launch
             isLoadingHome.value = true
             try {
-                // Fetch real trending hits
-                val hits = NetworkClients.fetchCategoryTracks("trending")
-                if (hits.isNotEmpty()) {
-                    trendingHits.value = hits
-                    // Pre-cache in local DB so user can play immediately and track offline status
-                    hits.take(10).forEach { musicRepository.insertTrack(it) }
+                val realHistory = musicRepository.getActiveHistory().firstOrNull().orEmpty()
+                val realLiked = musicRepository.getLikedTracks().firstOrNull().orEmpty()
+
+                val seedIds = (realHistory.take(4).map { it.id } + realLiked.take(3).map { it.id })
+                    .filter { it.length == 11 }
+                    .distinct()
+
+                val topArtists = (realHistory + realLiked)
+                    .map { it.artist.trim() }
+                    .filter { it.isNotBlank() && !it.equals("Unknown Artist", true) && !it.equals("Unknown", true) }
+                    .groupingBy { it }
+                    .eachCount()
+                    .entries
+                    .sortedByDescending { it.value }
+                    .map { it.key }
+                    .take(4)
+
+                // 1. Personalized Quick Picks / For You feed via YouTube Music RDAMVM Automix + Top Artists
+                val personalizedCandidates = InnerTubeStreamExtractor.buildPersonalizedHomeFeed(
+                    seedVideoIds = seedIds,
+                    favoriteArtists = topArtists,
+                    moodCategory = selectedMood.value
+                )
+                if (personalizedCandidates.isNotEmpty()) {
+                    val mapped = personalizedCandidates.map { it.toTrack() }
+                    personalizedTracks.value = mapped
+                    trendingHits.value = mapped.take(12)
                 }
 
-                // Fetch fresh releases
-                val fresh = NetworkClients.fetchCategoryTracks("rock")
-                if (fresh.isNotEmpty()) {
-                    freshReleases.value = fresh
-                    fresh.take(6).forEach { musicRepository.insertTrack(it) }
+                // 2. Regional / Manipuri & Fresh Releases shelf
+                val freshCandidates = InnerTubeStreamExtractor.searchOfficialYtmSongs(
+                    query = if (topArtists.isNotEmpty()) "${topArtists.first()} new songs" else "Manipuri latest official songs",
+                    limit = 12
+                )
+                if (freshCandidates.isNotEmpty()) {
+                    freshReleases.value = freshCandidates.map { it.toTrack() }
                 }
-
-                // Fetch personalized tracks for the initial selected mood
-                updatePersonalizedTracks(selectedMood.value)
             } catch (e: Exception) {
-                // Keep local tracks as graceful offline fallback
+                Log.w("CascadeViewModel", "Home load error: ${e.message}")
             } finally {
                 isLoadingHome.value = false
             }
@@ -229,13 +275,32 @@ class CascadeViewModel(
     fun loadDiscoverFeed() {
         viewModelScope.launch {
             try {
-                val hist = activeHistory.value.map { it.toNormalizedTrack() }
-                val liked = likedTracks.value.map { it.toNormalizedTrack() }
+                val hist = musicRepository.getActiveHistory().firstOrNull().orEmpty().map { it.toNormalizedTrack() }
+                val liked = musicRepository.getLikedTracks().firstOrNull().orEmpty().map { it.toNormalizedTrack() }
                 val feed = discoverFeedSeeder.generatePersonalizedFeed(hist, liked)
                 _discoverTracks.value = feed
             } catch (e: Exception) {
                 Log.w("CascadeViewModel", "Failed to load discover feed: ${e.message}")
             }
+        }
+    }
+
+    fun registerLocallyDownloadedTrack(normalized: com.seitharol.domain.model.NormalizedTrack) {
+        viewModelScope.launch {
+            val localTrack = Track(
+                id = normalized.sourceId,
+                title = normalized.title,
+                artist = normalized.artists.firstOrNull() ?: "Unknown Artist",
+                album = normalized.album ?: "Single",
+                durationMs = normalized.durationMs,
+                artUrl = normalized.artUrl,
+                audioUrl = normalized.localPath.orEmpty(),
+                localPath = normalized.localPath,
+                isDownloaded = true,
+                isLiked = normalized.isLiked
+            )
+            musicRepository.insertTrack(localTrack)
+            downloadRepository.rescanLocalDownloads()
         }
     }
 
@@ -247,8 +312,6 @@ class CascadeViewModel(
             try {
                 downloadRepository.rescanLocalDownloads()
                 loadHomeScreenMusic()
-            } catch (e: Exception) {
-                Log.w("CascadeViewModel", "Library refresh failed: ${e.message}")
             } finally {
                 isRefreshingLibrary.value = false
             }
@@ -265,15 +328,25 @@ class CascadeViewModel(
         val domainTrack = Track(
             id = track.sourceId,
             title = track.title,
-            artist = track.artists.firstOrNull() ?: "Unknown",
+            artist = track.artists.firstOrNull() ?: "Unknown Artist",
             album = track.album ?: "",
             durationMs = track.durationMs,
             artUrl = track.artUrl,
             isLiked = track.isLiked,
-            localPath = track.localPath
+            localPath = track.localPath,
+            isDownloaded = !track.localPath.isNullOrBlank()
         )
         playTrack(domainTrack)
     }
+
+    private fun com.seitharol.data.resolver.CandidateStream.toTrack(): Track = Track(
+        id = this.videoId,
+        title = this.title,
+        artist = this.artist,
+        album = this.albumName.orEmpty(),
+        durationMs = this.durationSeconds * 1000L,
+        artUrl = this.thumbnailUrl
+    )
 
     private fun Track.toNormalizedTrack(): com.seitharol.domain.model.NormalizedTrack {
         return com.seitharol.domain.model.NormalizedTrack(
@@ -290,84 +363,30 @@ class CascadeViewModel(
         )
     }
 
-    /**
-     * Job for Home Mood Chips: "All", "For You", "Energize", "Relax", "Workout", "Focus", "Mixes", "New Releases"
-     */
     fun selectHomeMood(mood: String) {
-        if (selectedMood.value == mood && trendingHits.value.isNotEmpty()) return
-        selectedMood.value = mood
-
+        val targetMood = if (selectedMood.value == mood && mood != "All") "All" else mood
+        selectedMood.value = targetMood
         moodFetchJob?.cancel()
         moodFetchJob = viewModelScope.launch {
             isLoadingHome.value = true
             try {
-                val (trendingQuery, freshQuery, mixQuery) = when (mood) {
-                    "Energize" -> Triple(
-                        "upbeat energetic hits",
-                        "new dance pop workout songs",
-                        "Energize Mix"
-                    )
-                    "Trending" -> Triple(
-                        "top trending global hits",
-                        "fresh viral trending songs",
-                        "Trending Songs Mix"
-                    )
-                    "Manipuri Song" -> Triple(
-                        "Manipuri hits modern songs",
-                        "Manipuri folk acoustic songs",
-                        "Manipuri Songs Mix"
-                    )
-                    "Sad" -> Triple(
-                        "sad emotional slow songs",
-                        "heartbroken acoustic sad hits",
-                        "Sad Mix"
-                    )
-                    "Chill", "Relax" -> Triple(
-                        "chill relaxing acoustic lofi songs",
-                        "new chill acoustic songs",
-                        "Chill Mix"
-                    )
-                    "Romantic", "Romance" -> Triple(
-                        "romantic acoustic love songs",
-                        "new romantic love songs",
-                        "Romance Mix"
-                    )
-                    "Workout" -> Triple(
-                        "workout gym phonk hype music",
-                        "new workout EDM hip hop",
-                        "Workout Mix"
-                    )
-                    "Focus", "Lo-Fi" -> Triple(
-                        "deep focus instrumental study music",
-                        "chill lofi hip hop beats",
-                        "Focus Lo-Fi Mix"
-                    )
-                    "For You" -> Triple(
-                        "recommended trending songs",
-                        "new music for you",
-                        "My Supermix YouTube Music"
-                    )
-                    else -> Triple(
-                        "trending songs Manipuri Bollywood global hits",
-                        "fresh new music releases",
-                        "My Mix radio"
-                    )
+                val realHistory = musicRepository.getActiveHistory().firstOrNull().orEmpty()
+                val seedIds = realHistory.take(3).map { it.id }.filter { it.length == 11 }
+                val topArtists = realHistory.map { it.artist }.filter { it.isNotBlank() }.distinct().take(3)
+
+                val feed = InnerTubeStreamExtractor.buildPersonalizedHomeFeed(
+                    seedVideoIds = seedIds,
+                    favoriteArtists = topArtists,
+                    moodCategory = targetMood
+                ).map { it.toTrack() }
+
+                if (feed.isNotEmpty()) {
+                    personalizedTracks.value = feed
+                    trendingHits.value = feed.take(10)
+                    freshReleases.value = feed.drop(10).ifEmpty { feed.take(6) }
                 }
-
-                // Fetch in parallel from YouTube Music InnerTube (never JioSaavn/Spotify)
-                val trendingDeferred = async { NetworkClients.searchInnerTube(trendingQuery) }
-                val freshDeferred = async { NetworkClients.searchInnerTube(freshQuery) }
-                val mixesDeferred = async { NetworkClients.searchInnerTube(mixQuery) }
-
-                val trending = trendingDeferred.await()
-                val fresh = freshDeferred.await()
-                val mixes = mixesDeferred.await()
-
-                if (trending.isNotEmpty()) trendingHits.value = trending
-                if (fresh.isNotEmpty()) freshReleases.value = fresh
-                if (mixes.isNotEmpty()) personalizedTracks.value = mixes
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.w("CascadeViewModel", "Mood switch failed: ${e.message}")
             } finally {
                 isLoadingHome.value = false
             }
@@ -377,61 +396,9 @@ class CascadeViewModel(
     fun selectMood(mood: String) = selectHomeMood(mood)
 
     fun setQueryImmediately(newQuery: String) {
+        // Only update searchQuery StateFlow; let the single debounced collector run executeRankedSearch
+        // so competing coroutines never overwrite search results out of order.
         searchQuery.value = newQuery
-        val clean = newQuery.trim()
-        if (clean.length >= 2 && !isOfflineMode.value) {
-            viewModelScope.launch {
-                isSearchingOnline.value = true
-                try {
-                    val live = NetworkClients.searchInnerTube(clean)
-                    if (live.isNotEmpty()) {
-                        onlineSearchResults.value = live
-                    }
-                    val suggestions = NetworkClients.getSearchSuggestions(clean)
-                    searchSuggestions.value = suggestions
-                } catch (e: Exception) {
-                    // Ignore
-                } finally {
-                    isSearchingOnline.value = false
-                }
-            }
-        }
-    }
-
-    private suspend fun updatePersonalizedTracks(mood: String) {
-        // Adopt YouTube-style personalization: prioritize user listening history & interests
-        val topArtist = activeHistory.value
-            .map { it.artist }
-            .filter { it.isNotBlank() && it != "Unknown Artist" && it != "Unknown" }
-            .groupBy { it }
-            .maxByOrNull { it.value.size }?.key
-
-        if (!topArtist.isNullOrBlank()) {
-            val personalizedQuery = "$topArtist official mix"
-            val historyMix = runCatching { NetworkClients.searchInnerTube(personalizedQuery) }.getOrDefault(emptyList())
-            if (historyMix.isNotEmpty()) {
-                personalizedTracks.value = historyMix
-                historyMix.take(8).forEach { musicRepository.insertTrack(it) }
-                return
-            }
-        }
-
-        val cat = when (mood) {
-            "Energize" -> "energize"
-            "Relax" -> "relax"
-            "Workout" -> "workout"
-            "Focus" -> "focus"
-            "Party" -> "party"
-            "Romance" -> "romance"
-            "Rock" -> "rock"
-            "Folk" -> "folk"
-            else -> "trending"
-        }
-        val tracks = NetworkClients.fetchCategoryTracks(cat)
-        if (tracks.isNotEmpty()) {
-            personalizedTracks.value = tracks
-            tracks.take(8).forEach { musicRepository.insertTrack(it) }
-        }
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -439,89 +406,70 @@ class CascadeViewModel(
         combine(searchQuery, searchFilter, selectedProviderFilter) { q, filter, provider ->
             Triple(q, filter, provider)
         },
-        combine(allTracks, downloadedTracks, onlineSearchResults) { localTracks, downloaded, onlineTracks ->
-            Triple(localTracks, downloaded, onlineTracks)
+        combine(downloadedTracks, onlineSearchResults) { downloaded, onlineTracks ->
+            downloaded to onlineTracks
         }
-    ) { (query, filter, provider), (localTracks, downloaded, onlineTracks) ->
+    ) { (query, filter, provider), (downloaded, onlineTracks) ->
         val cleanQuery = query.trim()
-        val allDownloaded: List<Track> = (downloaded + localTracks.filter { it.isDownloaded })
-            .distinctBy { it.id }
 
-        val combined: List<Track> = if (provider == ProviderFilter.LOCAL) {
-            val baseList = if (allDownloaded.isNotEmpty()) allDownloaded else localTracks.filter { it.isDownloaded }
-            if (cleanQuery.isBlank()) {
-                baseList
-            } else {
-                baseList.filter {
-                    it.title.contains(cleanQuery, ignoreCase = true) ||
-                            it.artist.contains(cleanQuery, ignoreCase = true) ||
-                            it.album.contains(cleanQuery, ignoreCase = true)
-                }
+        val baseList: List<Track> = if (provider == ProviderFilter.LOCAL) {
+            if (cleanQuery.isBlank()) downloaded
+            else downloaded.filter {
+                it.title.contains(cleanQuery, ignoreCase = true) ||
+                    it.artist.contains(cleanQuery, ignoreCase = true)
             }
         } else {
-            val localFiltered = if (cleanQuery.isBlank()) {
-                localTracks
-            } else {
-                localTracks.filter {
-                    it.title.contains(cleanQuery, ignoreCase = true) ||
-                            it.artist.contains(cleanQuery, ignoreCase = true) ||
-                            it.album.contains(cleanQuery, ignoreCase = true) ||
-                            it.genre.contains(cleanQuery, ignoreCase = true)
-                }
-            }
-
-            if (cleanQuery.isNotBlank() && onlineTracks.isNotEmpty()) {
-                val onlineIds = onlineTracks.map { it.id }.toSet()
-                onlineTracks + localFiltered.filter { it.id !in onlineIds }
-            } else if (onlineTracks.isNotEmpty()) {
-                onlineTracks
-            } else {
-                localFiltered
-            }
+            // Never dump fake/demo database tracks when searchQuery is blank
+            if (cleanQuery.isBlank()) emptyList() else onlineTracks
         }
 
         when (filter) {
-            SearchFilter.ALL -> combined
-            SearchFilter.OFFLINE_ONLY -> combined.filter { it.isDownloaded }
-            SearchFilter.LIKED -> combined.filter { it.isLiked }
-            SearchFilter.FOLK -> combined.filter { it.genre.contains("Folk", ignoreCase = true) }
-            SearchFilter.SYNTHWAVE -> combined.filter { it.genre.equals("Synthwave", ignoreCase = true) }
-            SearchFilter.LOFI -> combined.filter { it.genre.equals("Lo-Fi", ignoreCase = true) }
-            SearchFilter.ROCK -> combined.filter { it.genre.contains("Rock", ignoreCase = true) }
-            SearchFilter.ACOUSTIC -> combined.filter { it.genre.equals("Acoustic", ignoreCase = true) }
-            else -> combined
+            SearchFilter.ALL -> baseList
+            SearchFilter.OFFLINE_ONLY -> baseList.filter { it.isDownloaded }
+            SearchFilter.LIKED -> baseList.filter { it.isLiked }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun playTrack(track: Track) {
-        if (track.id.startsWith("RD") || track.id.startsWith("VL") || track.id.startsWith("PL") || track.id.startsWith("MPREb_") || track.id.startsWith("OLAK5uy_")) {
+        if (track.id.startsWith("RD") || track.id.startsWith("VL") || track.id.startsWith("PL") ||
+            track.id.startsWith("MPREb_") || track.id.startsWith("OLAK5uy_")
+        ) {
             playPlaylistOrMix(track.id)
             return
         }
-        viewModelScope.launch {
-            // Invariant I3: ensure track is cached in local database
-            musicRepository.insertTrack(track)
-        }
+        viewModelScope.launch { musicRepository.insertTrack(track) }
         playerManager.playTrack(track)
     }
 
     fun playQueue(tracks: List<Track>, startIndex: Int = 0) {
-        viewModelScope.launch {
-            tracks.forEach { musicRepository.insertTrack(it) }
-        }
+        viewModelScope.launch { tracks.forEach { musicRepository.insertTrack(it) } }
         playerManager.playQueue(tracks, startIndex)
     }
 
     fun playPlaylistOrMix(playlistId: String) {
         viewModelScope.launch {
-            try {
-                val tracks = com.example.data.remote.InnerTubeResolver.fetchAndParsePlaylistOrMixTracks(playlistId)
-                if (tracks.isNotEmpty()) {
-                    playQueue(tracks, 0)
-                }
-            } catch (e: Exception) {
-                android.util.Log.w("CascadeViewModel", "Failed to play playlist/mix $playlistId: ${e.message}")
+            runCatching {
+                val details = InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(playlistId)
+                val tracks = details.tracks.map { it.toTrack() }
+                if (tracks.isNotEmpty()) playQueue(tracks, 0)
             }
+        }
+    }
+
+    fun loadPlaylistTracks(playlistId: String, onResult: (List<Track>) -> Unit) {
+        viewModelScope.launch {
+            val localTracks = _userPlaylists.value[playlistId]
+            if (!localTracks.isNullOrEmpty()) {
+                onResult(localTracks)
+                return@launch
+            }
+            val dbTracks = musicRepository.getTracksForPlaylist(playlistId).firstOrNull()
+            if (!dbTracks.isNullOrEmpty()) {
+                onResult(dbTracks)
+                return@launch
+            }
+            val remoteDetails = InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(playlistId)
+            onResult(remoteDetails.tracks.map { it.toTrack() })
         }
     }
 
@@ -533,77 +481,34 @@ class CascadeViewModel(
     fun cycleRepeatMode() = playerManager.cycleRepeatMode()
 
     fun toggleLike(track: Track) {
-        viewModelScope.launch {
-            musicRepository.toggleLike(track)
-        }
+        viewModelScope.launch { musicRepository.toggleLike(track) }
     }
 
     fun startDownload(track: Track, tier: DownloadTier = DownloadTier.STANDARD) {
-        viewModelScope.launch {
-            downloadRepository.startDownload(track, tier)
-        }
+        viewModelScope.launch { downloadRepository.startDownload(track, tier) }
     }
 
     fun retryDownload(trackId: String) {
-        viewModelScope.launch {
-            downloadRepository.retryDownload(trackId)
-        }
+        viewModelScope.launch { downloadRepository.retryDownload(trackId) }
     }
 
     fun deleteDownload(trackId: String) {
-        viewModelScope.launch {
-            downloadRepository.deleteDownload(trackId)
-        }
+        viewModelScope.launch { downloadRepository.deleteDownload(trackId) }
     }
 
     fun removeDownload(trackId: String) = deleteDownload(trackId)
+    fun setOfflineMode(enabled: Boolean) = resolverEngine.setOfflineMode(enabled)
+    fun selectResolverNode(nodeId: String) = resolverEngine.selectNode(nodeId)
 
-    fun setOfflineMode(enabled: Boolean) {
-        resolverEngine.setOfflineMode(enabled)
-    }
-
-    fun selectResolverNode(nodeId: String) {
-        resolverEngine.selectNode(nodeId)
-    }
-
-    fun playMoodRadio(energy: Float, valence: Float) {
-        viewModelScope.launch {
-            val matching = musicRepository.getTracksByMood(energy, valence, delta = 0.4f)
-            if (matching.isNotEmpty()) {
-                playQueue(matching, 0)
-            } else {
-                val all = allTracks.value
-                if (all.isNotEmpty()) {
-                    playQueue(all.shuffled(), 0)
-                }
-            }
-        }
-    }
-
-    /**
-     * Follow / Unfollow Artist (Only YT Music artists liked by the user appear in Library)
-     */
     fun toggleFollowArtist(artist: Artist) {
         val current = _followedArtists.value.toMutableList()
-        val existingIndex = current.indexOfFirst { it.id == artist.id || it.name.equals(artist.name, ignoreCase = true) }
-        if (existingIndex >= 0) {
-            current.removeAt(existingIndex)
-        } else {
-            current.add(
-                artist.copy(
-                    thumbnailUrl = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(artist.thumbnailUrl)
-                )
-            )
-        }
+        val idx = current.indexOfFirst { it.id == artist.id || it.name.equals(artist.name, ignoreCase = true) }
+        if (idx >= 0) current.removeAt(idx) else current.add(artist)
         _followedArtists.value = current
     }
 
-    /**
-     * Loads exact tracks for a Playlist or Album without any 18-song fake fallback.
-     */
     fun loadPlaylistTracks(playlistId: String, onResult: (List<Track>) -> Unit) {
         viewModelScope.launch {
-            // 1. Check if user-created local playlist first
             val localTracks = _userPlaylists.value[playlistId]
             if (localTracks != null) {
                 onResult(localTracks)
@@ -614,7 +519,6 @@ class CascadeViewModel(
                 onResult(dbTracks)
                 return@launch
             }
-            // 2. Otherwise fetch from YouTube Music InnerTube
             val remoteTracks = com.example.data.remote.InnerTubeResolver.fetchAndParsePlaylistOrMixTracks(playlistId)
             onResult(remoteTracks)
         }
@@ -664,9 +568,7 @@ class CascadeViewModel(
     }
 
     fun togglePlaylistLike(playlist: Playlist) {
-        viewModelScope.launch {
-            musicRepository.togglePlaylistLike(playlist.id, !playlist.isLiked)
-        }
+        viewModelScope.launch { musicRepository.togglePlaylistLike(playlist.id, !playlist.isLiked) }
     }
 
     fun clearStreamCacheAndReset() {
@@ -686,8 +588,7 @@ class CascadeViewModel(
 
     val isDarkMode = MutableStateFlow<Boolean?>(null)
     fun toggleDarkMode(currentIsDark: Boolean = false) {
-        val current = isDarkMode.value ?: currentIsDark
-        isDarkMode.value = !current
+        isDarkMode.value = !(isDarkMode.value ?: currentIsDark)
     }
     fun setDarkMode(enabled: Boolean) {
         isDarkMode.value = enabled
@@ -703,68 +604,49 @@ class CascadeViewModel(
 
     fun playDownloadedTrack(trackId: String) {
         viewModelScope.launch {
-            val track = musicRepository.getTrackById(trackId) ?: activeDownloads.value.firstOrNull { it.trackId == trackId }?.let { dl ->
-                Track(
-                    id = dl.trackId,
-                    title = dl.title,
-                    artist = dl.artist,
-                    album = dl.title,
-                    durationMs = 0L,
-                    artUrl = dl.artUrl,
-                    audioUrl = dl.localFilePath ?: "",
-                    localPath = dl.localFilePath,
-                    isDownloaded = true
-                )
-            }
-            if (track != null) {
-                playerManager.playTrack(track)
-            }
+            val track = musicRepository.getTrackById(trackId)
+                ?: activeDownloads.value.firstOrNull { it.trackId == trackId }?.let { dl ->
+                    Track(
+                        id = dl.trackId,
+                        title = dl.title,
+                        artist = dl.artist,
+                        album = dl.title,
+                        durationMs = 0L,
+                        artUrl = dl.artUrl,
+                        audioUrl = dl.localFilePath ?: "",
+                        localPath = dl.localFilePath,
+                        isDownloaded = true
+                    )
+                }
+            if (track != null) playerManager.playTrack(track)
         }
     }
 
     fun deleteTrackFromHistory(trackId: String) {
-        viewModelScope.launch {
-            musicRepository.deleteTrackFromHistory(trackId)
-        }
+        viewModelScope.launch { musicRepository.deleteTrackFromHistory(trackId) }
     }
 
     fun clearAllHistory() {
-        viewModelScope.launch {
-            musicRepository.clearAllHistory()
-        }
+        viewModelScope.launch { musicRepository.clearAllHistory() }
     }
 
-    // ────────────────────────────────────────────────────────────
-    // Auto-Suggest & Non-Repeating Radio
-    // ────────────────────────────────────────────────────────────
-
     private val playedTrackKeys = mutableSetOf<String>()
-
-    private fun Track.sessionKey(): String =
-        "${id}_${title.trim().lowercase()}|${artist.trim().lowercase()}"
+    private fun Track.sessionKey(): String = "${id}_${title.trim().lowercase()}|${artist.trim().lowercase()}"
 
     private val recommendationRepository = object : com.example.player.RecommendationRepository {
         override suspend fun getRelatedTracks(seedTrack: Track): List<Track> {
             return try {
-                val automixTracks = resolverEngine.youtubeInnerTubeProvider
-                    .getRadioTracks(seedTrack.id)
-                    .map { it.toDomainTrack() }
-                if (automixTracks.isNotEmpty()) {
-                    automixTracks
-                } else {
-                    val query = "${seedTrack.title} ${seedTrack.artist}".trim()
-                    resolverEngine.youtubeInnerTubeProvider
-                        .searchTracks(query, limit = 10)
-                        .map { it.toDomainTrack() }
-                }
+                val automix = InnerTubeStreamExtractor.fetchAutomixQueue(seedTrack.id, limit = 12)
+                    .map { it.toTrack() }
+                if (automix.isNotEmpty()) automix
+                else InnerTubeStreamExtractor.searchOfficialYtmSongs("${seedTrack.title} ${seedTrack.artist}", limit = 10)
+                    .map { it.toTrack() }
             } catch (e: Exception) {
                 emptyList()
             }
         }
 
-        override suspend fun getRelatedPlaylists(seedTrack: Track): List<com.example.player.SuggestedPlaylist> {
-            return emptyList()
-        }
+        override suspend fun getRelatedPlaylists(seedTrack: Track): List<com.example.player.SuggestedPlaylist> = emptyList()
     }
 
     val autoSuggestManager = com.example.player.AutoSuggestQueueManager(recommendationRepository)
@@ -773,39 +655,29 @@ class CascadeViewModel(
 
     fun toggleAutoSuggest() {
         autoSuggestManager.toggleAutoSuggest()
-        if (autoSuggestManager.isAutoSuggestEnabled.value) {
-            fetchAndAppendSuggestions()
-        }
+        if (autoSuggestManager.isAutoSuggestEnabled.value) fetchAndAppendSuggestions()
     }
 
-    /**
-     * Called after each track finishes (or when Auto-Suggest is enabled).
-     * Fetches related tracks and appends de-duplicated suggestions to the queue.
-     */
     fun fetchAndAppendSuggestions() {
         if (!isAutoSuggestEnabled.value) return
         val seed = playerState.value.currentTrack ?: return
         viewModelScope.launch {
-            try {
+            runCatching {
                 val currentQueue = playerState.value.queue
                 val freshTracks = autoSuggestManager.fetchNextSuggestions(seed, currentQueue, maxTracksToAppend = 3)
                 freshTracks.forEach { track ->
                     musicRepository.insertTrack(track)
                     playerManager.addToQueue(track)
                 }
-            } catch (e: Exception) {
-                // Non-fatal: Auto-Suggest silently fails
             }
         }
     }
 
-    /** Mark the given track as played so Auto-Suggest won't repeat it. */
     fun markTrackPlayed(track: Track) {
         playedTrackKeys.add(track.sessionKey())
         autoSuggestManager.markTrackPlayed(track)
     }
 
-    /** Clear played history (e.g. on new session or manual refresh). */
     fun clearPlayedHistory() {
         playedTrackKeys.clear()
         autoSuggestManager.resetSessionHistory()
@@ -820,11 +692,6 @@ class CascadeViewModelFactory(
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return CascadeViewModel(
-            musicRepository,
-            downloadRepository,
-            resolverEngine,
-            playerManager
-        ) as T
+        return CascadeViewModel(musicRepository, downloadRepository, resolverEngine, playerManager) as T
     }
 }

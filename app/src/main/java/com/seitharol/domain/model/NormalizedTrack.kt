@@ -2,8 +2,8 @@ package com.seitharol.domain.model
 
 enum class TrackSource {
     YOUTUBE,
-    JIOSAAVN, // Consolidated provider (Gaana removed)
-    SPOTIFY,  // Metadata + 30s preview_url only; isPlayableNatively = false
+    JIOSAAVN,
+    SPOTIFY,
     LOCAL_FILE
 }
 
@@ -13,26 +13,23 @@ data class NormalizedTrack(
     val title: String,
     val artists: List<String>,
     val primaryArtistBrowseId: String? = null,
+    val artistAvatarUrl: String = "", // Artist profile pic shown at bottom-left of Discover
     val album: String? = null,
     val durationMs: Long,
     val artUrl: String,
     val isrc: String? = null,
     val isPlayableNatively: Boolean,
-    val previewUrl: String? = null, // 30s mp3-preview from SpotifyMetadataProvider / spotifyscraper
-    val localPath: String? = null,  // Points to context.filesDir/downloads/... for in-app downloads
+    val previewUrl: String? = null,
+    val localPath: String? = null,
     val isLiked: Boolean = false
 ) {
     companion object {
-        /**
-         * Factory for Discover feed & In-Discover search items.
-         * Enforces source = SPOTIFY and isPlayableNatively = false so full playback
-         * always routes through TrackMatcher -> ResolverEngine.
-         */
         fun fromSpotifyPreview(
             spotifyId: String,
             title: String,
             artists: List<String>,
             artistId: String? = null,
+            artistAvatarUrl: String = "",
             album: String? = null,
             durationMs: Long,
             artUrl: String,
@@ -45,6 +42,7 @@ data class NormalizedTrack(
             title = title,
             artists = artists,
             primaryArtistBrowseId = artistId,
+            artistAvatarUrl = artistAvatarUrl.ifBlank { artUrl },
             album = album,
             durationMs = durationMs,
             artUrl = artUrl,

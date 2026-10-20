@@ -17,14 +17,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import com.example.data.AppPreferences
 import com.example.ui.CascadeViewModel
 import com.example.ui.theme.*
@@ -61,18 +59,18 @@ fun ProfileScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .background(SeitharolBg)
+                .background(MaterialTheme.colorScheme.background)
                 .testTag("profile_screen"),
             contentPadding = PaddingValues(bottom = 140.dp)
         ) {
-            // Top 300dp Dark Header: Uses SeitharolNavBg (#0D0D0D in light, #1C1C1E in dark)
+            // Top 300dp Adaptive Header
             item {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(300.dp)
                         .clip(RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp))
-                        .background(SeitharolNavBg)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     // Top Notification button on right
                     Box(
@@ -86,14 +84,14 @@ fun ProfileScreen(
                                 .align(Alignment.TopEnd)
                                 .size(44.dp),
                             shape = CircleShape,
-                            color = SeitharolDarkButton,
+                            color = MaterialTheme.colorScheme.surface,
                             onClick = onOpenNotifications
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
                                     imageVector = Icons.Outlined.Notifications,
                                     contentDescription = "Notifications",
-                                    tint = Color.White,
+                                    tint = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -117,7 +115,7 @@ fun ProfileScreen(
                                     .width(3.dp)
                                     .height(h.dp)
                                     .clip(RoundedCornerShape(2.dp))
-                                    .background(Color(0xFF555555))
+                                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f))
                             )
                         }
                     }
@@ -133,13 +131,13 @@ fun ProfileScreen(
                             modifier = Modifier
                                 .size(100.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFF333333)),
+                                .background(MaterialTheme.colorScheme.primaryContainer),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Person,
                                 contentDescription = "Profile Photo",
-                                tint = Color.White,
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
                                 modifier = Modifier.size(54.dp)
                             )
                         }
@@ -151,7 +149,7 @@ fun ProfileScreen(
                             fontFamily = SyneFontFamily,
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 24.sp,
-                            color = Color.White
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
                         Spacer(modifier = Modifier.height(2.dp))
@@ -160,13 +158,13 @@ fun ProfileScreen(
                             text = if (userSettings.userAge.isNotBlank()) "Age: ${userSettings.userAge} • Seitharol" else "Discover the features yourself.",
                             fontFamily = OutfitFontFamily,
                             fontSize = 12.sp,
-                            color = Color(0xFFAAAAAA)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
                         )
                     }
                 }
             }
 
-            // 2x2 Grid of White Cards (Account, Subscription, Payment, Settings)
+            // 2x2 Grid of Theme-Adaptive Cards (Account, Engine Stats, Sleep Timer, Settings)
             item {
                 Column(
                     modifier = Modifier
@@ -174,7 +172,7 @@ fun ProfileScreen(
                         .padding(horizontal = 20.dp, vertical = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Row 1: Account & Subscription
+                    // Row 1: Account & Engine Architecture
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -188,7 +186,8 @@ fun ProfileScreen(
                                 .clickable { showEditProfileDialog = true }
                                 .testTag("profile_account_card"),
                             shape = RoundedCornerShape(20.dp),
-                            color = SeitharolWhite
+                            color = MaterialTheme.colorScheme.surface,
+                            tonalElevation = 2.dp
                         ) {
                             Column(
                                 modifier = Modifier
@@ -199,7 +198,7 @@ fun ProfileScreen(
                                 Icon(
                                     imageVector = Icons.Outlined.Person,
                                     contentDescription = null,
-                                    tint = SeitharolDark,
+                                    tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Text(
@@ -207,12 +206,12 @@ fun ProfileScreen(
                                     fontSize = 14.sp,
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Medium,
-                                    color = SeitharolDark
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         }
 
-                        // Subscription Card: Opens Standalone Multi-Source Engine Status
+                        // Engine Status Card
                         Surface(
                             modifier = Modifier
                                 .weight(1f)
@@ -221,7 +220,8 @@ fun ProfileScreen(
                                 .clickable { showSubInfo = true }
                                 .testTag("profile_sub_card"),
                             shape = RoundedCornerShape(20.dp),
-                            color = SeitharolWhite
+                            color = MaterialTheme.colorScheme.surface,
+                            tonalElevation = 2.dp
                         ) {
                             Column(
                                 modifier = Modifier
@@ -230,17 +230,17 @@ fun ProfileScreen(
                                 verticalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Icon(
-                                    imageVector = Icons.Outlined.CardMembership,
+                                    imageVector = Icons.Outlined.Speed,
                                     contentDescription = null,
-                                    tint = SeitharolDark,
+                                    tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Text(
-                                    text = "Subscription",
+                                    text = "Engine Status",
                                     fontSize = 14.sp,
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Medium,
-                                    color = SeitharolDark
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         }
@@ -258,9 +258,10 @@ fun ProfileScreen(
                                 .height(96.dp)
                                 .clip(RoundedCornerShape(20.dp))
                                 .clickable(onClick = onOpenSleepTimer)
-                                .testTag("profile_payment_card"),
+                                .testTag("profile_timer_card"),
                             shape = RoundedCornerShape(20.dp),
-                            color = SeitharolWhite
+                            color = MaterialTheme.colorScheme.surface,
+                            tonalElevation = 2.dp
                         ) {
                             Column(
                                 modifier = Modifier
@@ -271,7 +272,7 @@ fun ProfileScreen(
                                 Icon(
                                     imageVector = Icons.Outlined.Timer,
                                     contentDescription = null,
-                                    tint = SeitharolDark,
+                                    tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Text(
@@ -279,12 +280,12 @@ fun ProfileScreen(
                                     fontSize = 14.sp,
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Medium,
-                                    color = SeitharolDark
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         }
 
-                        // Settings Card (opens Sound settings & Equalizer)
+                        // Settings Card (opens General Settings Screen)
                         Surface(
                             modifier = Modifier
                                 .weight(1f)
@@ -293,7 +294,8 @@ fun ProfileScreen(
                                 .clickable(onClick = onNavigateToSoundSettings)
                                 .testTag("profile_settings_card"),
                             shape = RoundedCornerShape(20.dp),
-                            color = SeitharolWhite
+                            color = MaterialTheme.colorScheme.surface,
+                            tonalElevation = 2.dp
                         ) {
                             Column(
                                 modifier = Modifier
@@ -304,7 +306,7 @@ fun ProfileScreen(
                                 Icon(
                                     imageVector = Icons.Outlined.Settings,
                                     contentDescription = null,
-                                    tint = SeitharolDark,
+                                    tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Text(
@@ -312,100 +314,8 @@ fun ProfileScreen(
                                     fontSize = 14.sp,
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Medium,
-                                    color = SeitharolDark
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Account / Cache details if toggled
-            if (showAccountInfo) {
-                item {
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 4.dp),
-                        shape = RoundedCornerShape(20.dp),
-                        color = SeitharolWhite
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(
-                                text = "Offline Storage Stats",
-                                fontFamily = SyneFontFamily,
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 15.sp,
-                                color = SeitharolDark
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            val mb = (totalDownloadedBytes / (1024 * 1024.0))
-                            Text(
-                                text = "${downloadedTracks.size} verified offline tracks (${String.format("%.1f", mb)} MB) in local Room SQLite database.",
-                                fontSize = 12.sp,
-                                color = SeitharolTextSecondary,
-                                fontFamily = OutfitFontFamily
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Appearance Section (Use Device Theme as default, Dark Mode, Light Mode)
-            item {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 6.dp)
-                        .testTag("profile_appearance_card"),
-                    shape = RoundedCornerShape(20.dp),
-                    color = SeitharolWhite
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "Appearance",
-                            fontSize = 15.sp,
-                            fontFamily = SyneFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            color = SeitharolDark
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        val modes = listOf(
-                            Triple("SYSTEM", "Use Device Theme (System Default)", "Follows your device system dark/light appearance"),
-                            Triple("DARK", "Dark Mode", "Deep OLED Dark Theme"),
-                            Triple("LIGHT", "Light Mode", "Clean Stone Light Theme")
-                        )
-
-                        modes.forEach { (modeKey, title, subtitle) ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable { appPreferences.setThemeMode(modeKey) }
-                                    .padding(vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected = userSettings.themeMode == modeKey,
-                                    onClick = { appPreferences.setThemeMode(modeKey) }
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column {
-                                    Text(
-                                        text = title,
-                                        fontSize = 14.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = FontWeight.Medium,
-                                        color = SeitharolDark
-                                    )
-                                    Text(
-                                        text = subtitle,
-                                        fontSize = 11.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        color = SeitharolTextSecondary
-                                    )
-                                }
                             }
                         }
                     }
@@ -419,7 +329,8 @@ fun ProfileScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp, vertical = 6.dp),
                     shape = RoundedCornerShape(20.dp),
-                    color = SeitharolWhite
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 2.dp
                 ) {
                     Row(
                         modifier = Modifier
@@ -434,45 +345,41 @@ fun ProfileScreen(
                                 fontSize = 15.sp,
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = FontWeight.Medium,
-                                color = SeitharolDark
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
                                 text = "Forces pure on-device cached playback",
                                 fontSize = 12.sp,
                                 fontFamily = OutfitFontFamily,
-                                color = SeitharolTextSecondary
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
 
                         Switch(
                             checked = isOfflineMode,
-                            onCheckedChange = { viewModel.setOfflineMode(it) },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color.White,
-                                checkedTrackColor = SeitharolDark
-                            )
+                            onCheckedChange = { viewModel.setOfflineMode(it) }
                         )
                     }
                 }
             }
 
-            // "About Us" Clean Borderless & Background-Free Section
+            // "About Us" Clean Section
             item {
                 Spacer(modifier = Modifier.height(14.dp))
                 Text(
-                    text = "About Us",
+                    text = "About & Support",
                     fontFamily = SyneFontFamily,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 17.sp,
-                    color = SeitharolDark,
+                    color = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
                 )
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp, vertical = 4.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    color = SeitharolDarkCard,
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
                     tonalElevation = 2.dp
                 ) {
                     Column(
@@ -495,17 +402,17 @@ fun ProfileScreen(
                                     fontFamily = OutfitFontFamily,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Medium,
-                                    color = SeitharolDark
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                                 com.seitharol.ui.search.ChevronRightSvgIcon(
-                                    tint = SeitharolTextSecondary,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
                             if (index < com.seitharol.ui.settings.InfoPageType.entries.lastIndex) {
                                 HorizontalDivider(
-                                    thickness = 1.dp,
-                                    color = SeitharolDivider
+                                    thickness = 0.6.dp,
+                                    color = MaterialTheme.colorScheme.outlineVariant
                                 )
                             }
                         }
@@ -528,7 +435,7 @@ fun ProfileScreen(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Logout,
                         contentDescription = "Clear Cache & Reset",
-                        tint = SeitharolDark,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
@@ -537,7 +444,7 @@ fun ProfileScreen(
                         fontFamily = OutfitFontFamily,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
-                        color = SeitharolDark
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -547,7 +454,7 @@ fun ProfileScreen(
         if (showSubInfo) {
             ModalBottomSheet(
                 onDismissRequest = { showSubInfo = false },
-                containerColor = SeitharolWhite,
+                containerColor = MaterialTheme.colorScheme.surface,
                 shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
             ) {
                 Column(
@@ -560,25 +467,25 @@ fun ProfileScreen(
                         fontFamily = SyneFontFamily,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = SeitharolDark
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
                         text = "100% On-Device Standalone Client ($currentPackVersion)",
                         fontFamily = OutfitFontFamily,
                         fontSize = 12.sp,
-                        color = SeitharolTextSecondary
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
-                    HorizontalDivider(color = SeitharolBorder)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     Spacer(modifier = Modifier.height(12.dp))
 
                     val features = listOf(
-                        Pair("YouTube InnerTube On-Device", "Direct on-device search & stream deciphering (ANDROID_VR / IOS). Zero python server required."),
+                        Pair("YouTube InnerTube On-Device", "Direct on-device search & unciphered stream extraction (ANDROID_VR / IOS). Zero python server required."),
                         Pair("JioSaavn Native DES Decryptor", "On-device DES/ECB/PKCS5Padding hardware decryption with 320kbps upgrade."),
-                        Pair("Spotify Metadata Importer", "Cross-source TrackMatcher matching ISRC, title, and duration proximity."),
+                        Pair("Spotify Metadata Importer", "Cross-source TrackMatcher matching 30s previews and canonical audio releases."),
                         Pair("ExoPlayer Custom OkHttp Headers", "Full HTTP User-Agent and Range support eliminating 403 Forbidden errors."),
-                        Pair("High-Fi Offline Storage", "Real HTTP byte streaming with verified binary audio containers (>10KB).")
+                        Pair("High-Fi Offline Storage", "Real direct MediaStore byte streaming with verified binary audio containers (>10KB).")
                     )
 
                     features.forEach { (title, desc) ->
@@ -591,7 +498,7 @@ fun ProfileScreen(
                             Icon(
                                 imageVector = Icons.Default.CheckCircle,
                                 contentDescription = null,
-                                tint = SeitharolGreen,
+                                tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier
                                     .size(20.dp)
                                     .padding(top = 2.dp)
@@ -603,13 +510,13 @@ fun ProfileScreen(
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 14.sp,
-                                    color = SeitharolDark
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(
                                     text = desc,
                                     fontFamily = OutfitFontFamily,
                                     fontSize = 12.sp,
-                                    color = SeitharolTextSecondary
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -621,12 +528,12 @@ fun ProfileScreen(
                         onClick = { showSubInfo = false },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = SeitharolPillBg,
-                            contentColor = SeitharolPillText
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
                         ),
                         shape = RoundedCornerShape(20.dp)
                     ) {
-                        Text("Close", color = SeitharolPillText, fontFamily = OutfitFontFamily)
+                        Text("Close", fontFamily = OutfitFontFamily)
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -638,7 +545,7 @@ fun ProfileScreen(
         if (showClearCacheDialog) {
             AlertDialog(
                 onDismissRequest = { showClearCacheDialog = false },
-                containerColor = SeitharolWhite,
+                containerColor = MaterialTheme.colorScheme.surface,
                 shape = RoundedCornerShape(24.dp),
                 title = {
                     Text(
@@ -646,7 +553,7 @@ fun ProfileScreen(
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 18.sp,
-                        color = SeitharolDark
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 },
                 text = {
@@ -654,7 +561,7 @@ fun ProfileScreen(
                         text = "This will flush in-memory resolved audio streams, clear temporary search history, and reset playback checkpoints. Your downloaded offline songs will be preserved.",
                         fontFamily = OutfitFontFamily,
                         fontSize = 13.sp,
-                        color = SeitharolTextSecondary
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 },
                 confirmButton = {
@@ -667,17 +574,17 @@ fun ProfileScreen(
                             }
                         },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = SeitharolRedHeart,
-                            contentColor = Color.White
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError
                         ),
                         shape = RoundedCornerShape(20.dp)
                     ) {
-                        Text("Clear Cache", color = Color.White, fontFamily = OutfitFontFamily)
+                        Text("Clear Cache", fontFamily = OutfitFontFamily)
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showClearCacheDialog = false }) {
-                        Text("Cancel", color = SeitharolTextSecondary, fontFamily = OutfitFontFamily)
+                        Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OutfitFontFamily)
                     }
                 }
             )
@@ -719,7 +626,7 @@ fun EditProfileDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF1B1C1C),
+        containerColor = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(20.dp),
         title = {
             Text(
@@ -727,7 +634,7 @@ fun EditProfileDialog(
                 fontFamily = SyneFontFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 18.sp,
-                color = Color.White
+                color = MaterialTheme.colorScheme.onSurface
             )
         },
         text = {
@@ -735,14 +642,14 @@ fun EditProfileDialog(
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Name", color = Color.White.copy(alpha = 0.7f)) },
+                    label = { Text("Name", color = MaterialTheme.colorScheme.onSurfaceVariant) },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color.White,
-                        unfocusedBorderColor = Color.White.copy(alpha = 0.35f),
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        cursorColor = Color.White
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        cursorColor = MaterialTheme.colorScheme.primary
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -750,15 +657,15 @@ fun EditProfileDialog(
                 OutlinedTextField(
                     value = age,
                     onValueChange = { if (it.all { c -> c.isDigit() } && it.length <= 3) age = it },
-                    label = { Text("Age", color = Color.White.copy(alpha = 0.7f)) },
+                    label = { Text("Age", color = MaterialTheme.colorScheme.onSurfaceVariant) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color.White,
-                        unfocusedBorderColor = Color.White.copy(alpha = 0.35f),
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        cursorColor = Color.White
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        cursorColor = MaterialTheme.colorScheme.primary
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -771,8 +678,8 @@ fun EditProfileDialog(
                     onDismiss()
                 },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.White,
-                    contentColor = Color.Black
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
                 ),
                 shape = RoundedCornerShape(12.dp)
             ) {
@@ -781,7 +688,7 @@ fun EditProfileDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = Color.White)
+                Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     )

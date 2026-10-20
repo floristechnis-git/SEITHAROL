@@ -122,3 +122,71 @@ fun DiscoverEntryCard(
         }
     }
 }
+
+@Composable
+fun BackArrowSvgIcon(
+    tint: Color = MaterialTheme.colorScheme.onSurface,
+    modifier: Modifier = Modifier.size(22.dp)
+) {
+    Canvas(modifier = modifier) {
+        val sx = size.width / 24f
+        val sy = size.height / 24f
+        val stroke = Stroke(width = 2.2f * sx, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        val path = Path().apply {
+            moveTo(19f * sx, 12f * sy)
+            lineTo(5f * sx, 12f * sy)
+            moveTo(12f * sx, 19f * sy)
+            lineTo(5f * sx, 12f * sy)
+            lineTo(12f * sx, 5f * sy)
+        }
+        drawPath(path = path, color = tint, style = stroke)
+    }
+}
+
+@Composable
+fun DownloadSvgIcon(
+    tint: Color = MaterialTheme.colorScheme.onSurface,
+    modifier: Modifier = Modifier.size(20.dp)
+) {
+    Canvas(modifier = modifier) {
+        val sx = size.width / 24f
+        val sy = size.height / 24f
+        val stroke = Stroke(width = 2.2f * sx, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        val path = Path().apply {
+            moveTo(12f * sx, 3f * sy)
+            lineTo(12f * sx, 15f * sy)
+            moveTo(7f * sx, 10f * sy)
+            lineTo(12f * sx, 15f * sy)
+            lineTo(17f * sx, 10f * sy)
+            moveTo(4f * sx, 19f * sy)
+            lineTo(20f * sx, 19f * sy)
+        }
+        drawPath(path = path, color = tint, style = stroke)
+    }
+}
+
+@Composable
+fun QueueAddSvgIcon(
+    tint: Color = MaterialTheme.colorScheme.primary,
+    modifier: Modifier = Modifier.size(20.dp)
+) {
+    Canvas(modifier = modifier) {
+        val sx = size.width / 24f
+        val sy = size.height / 24f
+        val stroke = Stroke(width = 2.2f * sx, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        val path = Path().apply {
+            moveTo(3f * sx, 6f * sy)
+            lineTo(15f * sx, 6f * sy)
+            moveTo(3f * sx, 12f * sy)
+            lineTo(11f * sx, 12f * sy)
+            moveTo(3f * sx, 18f * sy)
+            lineTo(11f * sx, 18f * sy)
+            moveTo(18f * sx, 13f * sy)
+            lineTo(18f * sx, 19f * sy)
+            moveTo(15f * sx, 16f * sy)
+            lineTo(21f * sx, 16f * sy)
+        }
+        drawPath(path = path, color = tint, style = stroke)
+    }
+}
+

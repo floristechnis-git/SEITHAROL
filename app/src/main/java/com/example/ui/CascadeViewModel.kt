@@ -507,23 +507,6 @@ class CascadeViewModel(
         _followedArtists.value = current
     }
 
-    fun loadPlaylistTracks(playlistId: String, onResult: (List<Track>) -> Unit) {
-        viewModelScope.launch {
-            val localTracks = _userPlaylists.value[playlistId]
-            if (localTracks != null) {
-                onResult(localTracks)
-                return@launch
-            }
-            val dbTracks = musicRepository.getTracksForPlaylist(playlistId).firstOrNull()
-            if (!dbTracks.isNullOrEmpty()) {
-                onResult(dbTracks)
-                return@launch
-            }
-            val remoteTracks = com.example.data.remote.InnerTubeResolver.fetchAndParsePlaylistOrMixTracks(playlistId)
-            onResult(remoteTracks)
-        }
-    }
-
     fun createPlaylist(title: String, desc: String, initialTrack: Track? = null) {
         viewModelScope.launch {
             val id = musicRepository.createPlaylist(title, desc, initialTrack?.artUrl)

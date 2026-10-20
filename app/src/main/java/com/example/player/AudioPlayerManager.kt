@@ -834,7 +834,7 @@ class AudioPlayerManager(
                         title = it.title,
                         artist = it.artist,
                         durationSeconds = (it.durationMs / 1000).toInt(),
-                        artworkUrl = it.artUrl
+                        thumbnailUrl = it.artUrl
                     )
                 }
                 val seedMeta = TrackMetadata(
@@ -842,7 +842,7 @@ class AudioPlayerManager(
                     title = current.title,
                     artist = current.artist,
                     durationSeconds = (current.durationMs / 1000).toInt(),
-                    artworkUrl = current.artUrl
+                    thumbnailUrl = current.artUrl
                 )
                 val recommendations = QueueRecommendationEngine.fetchRelevantRecommendations(
                     currentTrack = seedMeta,
@@ -859,7 +859,7 @@ class AudioPlayerManager(
                         artist = nextRec.artist,
                         album = "",
                         durationMs = nextRec.durationSeconds * 1000L,
-                        artUrl = nextRec.artworkUrl
+                        artUrl = nextRec.thumbnailUrl
                     )
                     musicRepository.insertTrack(newTrack)
                     withContext(Dispatchers.Main) {
@@ -890,7 +890,7 @@ class AudioPlayerManager(
                         title = it.title,
                         artist = it.artist,
                         durationSeconds = (it.durationMs / 1000).toInt(),
-                        artworkUrl = it.artUrl
+                        thumbnailUrl = it.artUrl
                     )
                 }
                 val seedMeta = TrackMetadata(
@@ -898,7 +898,7 @@ class AudioPlayerManager(
                     title = current.title,
                     artist = current.artist,
                     durationSeconds = (current.durationMs / 1000).toInt(),
-                    artworkUrl = current.artUrl
+                    thumbnailUrl = current.artUrl
                 )
                 val recommendations = QueueRecommendationEngine.fetchRelevantRecommendations(
                     currentTrack = seedMeta,
@@ -915,7 +915,7 @@ class AudioPlayerManager(
                         artist = nextRec.artist,
                         album = "",
                         durationMs = nextRec.durationSeconds * 1000L,
-                        artUrl = nextRec.artworkUrl
+                        artUrl = nextRec.thumbnailUrl
                     )
                     musicRepository.insertTrack(newTrack)
                     withContext(Dispatchers.Main) {

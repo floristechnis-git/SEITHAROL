@@ -60,7 +60,11 @@ class AudioPlayerManager(
         })
     }
 
+    @Volatile
+    private var currentRequestId: Long = 0L
+
     fun playPreview(track: NormalizedTrack) {
+        val requestId = ++currentRequestId
         if (_activePreviewTrackId.value == track.sourceId && exoPlayer.isPlaying) return
 
         previewResolveJob?.cancel()
@@ -107,8 +111,9 @@ class AudioPlayerManager(
             }
 
             if (streamUrl.isNullOrBlank()) {
-                if (track.source == TrackSource.YOUTUBE && track.sourceId.length == 11) {
-                    streamUrl = InnerTubeStreamExtractor.resolveWorkingStreamUrl(track.sourceId, AudioQuality.LOW).getOrNull()
+                val extractedYt = InnerTubeStreamExtractor.extractVideoId(track.sourceId)
+                if (extractedYt != null) {
+                    streamUrl = InnerTubeStreamExtractor.resolveWorkingStreamUrl(extractedYt, AudioQuality.LOW).getOrNull()
                 } else if (track.source == TrackSource.JIOSAAVN) {
                     val meta = TrackMetadata(
                         id = track.sourceId,
@@ -130,31 +135,38 @@ class AudioPlayerManager(
                 }
             }
 
-            if (!streamUrl.isNullOrBlank() && _activePreviewTrackId.value == track.sourceId) {
+            if (!streamUrl.isNullOrBlank()) {
                 withContext(Dispatchers.Main) {
-                    if (_activePreviewTrackId.value != track.sourceId) return@withContext
+                    if (requestId != currentRequestId || _activePreviewTrackId.value != track.sourceId) return@withContext
                     exoPlayer.repeatMode = Player.REPEAT_MODE_ONE
                     val clipItem = MediaItem.Builder()
                         .setMediaId("preview_${track.sourceId}")
                         .setUri(Uri.parse(streamUrl))
-                        .setClippingConfiguration(
-                            MediaItem.ClippingConfiguration.Builder()
-                                .setStartPositionMs(0L)
-                                .setEndPositionMs(30_000L)
-                                .build()
-                        )
                         .build()
                     exoPlayer.setMediaItem(clipItem)
                     exoPlayer.prepare()
                     exoPlayer.playWhenReady = true
                     _isPreviewPlaying.value = true
-                }
-            } else if (_activePreviewTrackId.value == track.sourceId) {
-                withContext(Dispatchers.Main) {
                     _isPreviewBuffering.value = false
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    if (requestId == currentRequestId) {
+                        _isPreviewBuffering.value = false
+                    }
                 }
             }
         }
+    }
+
+    fun stopPreviewAndClear() {
+        previewResolveJob?.cancel()
+        currentRequestId++
+        _activePreviewTrackId.value = null
+        _isPreviewBuffering.value = false
+        _isPreviewPlaying.value = false
+        exoPlayer.stop()
+        exoPlayer.clearMediaItems()
     }
 
     fun resumeOrPlayPreview(track: NormalizedTrack) {

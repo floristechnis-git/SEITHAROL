@@ -127,18 +127,10 @@ class AudioPlayerManager(
         try {
             exoPlayer?.release()
 
-            val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-                .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                .setDefaultRequestProperties(
-                    mapOf(
-                        "Referer" to "https://music.youtube.com/"
-                    )
-                )
-                .setAllowCrossProtocolRedirects(true)
-                .setConnectTimeoutMs(15000)
-                .setReadTimeoutMs(20000)
-
-            val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
+            val resolvingFactory = com.seitharol.player.OuterTuneResolvingDataSource.createFactory {
+                com.seitharol.data.resolver.AudioQuality.LOW
+            }
+            val dataSourceFactory = DefaultDataSource.Factory(context, resolvingFactory)
             val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
 
             val builder = ExoPlayer.Builder(context)

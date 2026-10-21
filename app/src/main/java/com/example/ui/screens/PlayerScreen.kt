@@ -1339,11 +1339,12 @@ fun PlayerAudioAdjustmentSheet(
             Spacer(modifier = Modifier.height(12.dp))
 
             val switchColors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
-                checkedTrackColor = SeitharolAccent,
-                uncheckedThumbColor = Color(0xFFECECEC),
-                uncheckedTrackColor = Color(0xFF383838),
-                uncheckedBorderColor = Color(0xFF666666)
+                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+                uncheckedBorderColor = MaterialTheme.colorScheme.outline
             )
 
             // Equalizer Master Switch

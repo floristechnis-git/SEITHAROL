@@ -109,7 +109,7 @@ class AppPreferences(private val context: Context) {
     }
 
     fun setStreamingQuality(quality: String) {
-        val current = prefs.getString("streaming_quality", "NORMAL") ?: "NORMAL"
+        val current = prefs.getString("streaming_quality", "LOW") ?: "LOW"
         if (current.equals(quality, ignoreCase = true)) return
         prefs.edit().putString("streaming_quality", quality).apply()
         _settings.value = loadSettings()
@@ -117,21 +117,22 @@ class AppPreferences(private val context: Context) {
             val aq = when (quality.uppercase()) {
                 "LOW" -> com.seitharol.data.resolver.AudioQuality.LOW
                 "HIGH" -> com.seitharol.data.resolver.AudioQuality.HIGH
-                else -> com.seitharol.data.resolver.AudioQuality.NORMAL
+                else -> com.seitharol.data.resolver.AudioQuality.LOW
             }
             com.seitharol.data.preferences.AppSettingsManager.getInstance(context).setStreamingQuality(aq)
         }
     }
 
     fun setDownloadQuality(quality: String) {
-        val current = prefs.getString("download_quality", "NORMAL") ?: "NORMAL"
+        val current = prefs.getString("download_quality", "LOW") ?: "LOW"
         if (current.equals(quality, ignoreCase = true)) return
         prefs.edit().putString("download_quality", quality).apply()
         _settings.value = loadSettings()
         runCatching {
             val aq = when (quality.uppercase()) {
+                "LOW" -> com.seitharol.data.resolver.AudioQuality.LOW
                 "HIGH" -> com.seitharol.data.resolver.AudioQuality.HIGH
-                else -> com.seitharol.data.resolver.AudioQuality.NORMAL
+                else -> com.seitharol.data.resolver.AudioQuality.LOW
             }
             com.seitharol.data.preferences.AppSettingsManager.getInstance(context).setDownloadQuality(aq)
         }

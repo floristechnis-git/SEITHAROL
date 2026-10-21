@@ -35,14 +35,13 @@ data class TrackMetadata(
 object StreamResolver {
 
     private val BANNED_REMIX_KEYWORDS = listOf(
-        "remix", "slowed", "reverb", "lofi", "lo-fi", "cover", "karaoke",
+        "slowed", "reverb", "lofi", "lo-fi", "cover", "karaoke",
         "instrumental", "mashup", "nightcore", "8d", "bass boosted",
         "ringtone", "whatsapp status", "reaction", "live performance", "dj "
     )
 
     /**
      * Resolves the exact canonical audio stream for [track].
-     * Never returns a remix/cover unless explicitly requested in [track.title].
      */
     suspend fun resolveExactStreamUrl(
         track: TrackMetadata,
@@ -53,12 +52,10 @@ object StreamResolver {
             return@withContext track.directStreamUrl
         }
 
-        // 2. Direct videoId Passthrough: If track has a valid YouTube videoId, resolve directly (NO re-search)
-        if (InnerTubeStreamExtractor.isValidYoutubeVideoId(track.id)) {
-            val directResult = InnerTubeStreamExtractor.resolveExactYoutubeStreamById(track.id, quality)
-            if (directResult.isSuccess) {
-                return@withContext directResult.getOrNull()
-            }
+        // 2. Direct videoId Passthrough: If track has a valid YouTube videoId or watch?v/watch?id, resolve directly (NO re-search)
+        val extractedYtId = InnerTubeStreamExtractor.extractVideoId(track.id)
+        if (!extractedYtId.isNullOrBlank()) {
+            return@withContext InnerTubeStreamExtractor.resolveExactYoutubeStreamById(extractedYtId, quality).getOrNull()
         }
 
         // 3. If encryptedMediaUrl from JioSaavn is present, decrypt it directly
@@ -66,8 +63,8 @@ object StreamResolver {
             decryptJioSaavnUrl(track.encryptedMediaUrl, quality)?.let { return@withContext it }
         }
 
-        // 4. Strict external matching via YouTube Music canonical search (for Spotify/Discover tracks only)
-        resolveFromPipedStrict(track)
+        // 4. For non-YouTube tracks without videoId, try JioSaavn exact match
+        resolveFromJioSaavnExact(track, quality)
     }
 
     /**
@@ -144,72 +141,6 @@ object StreamResolver {
         }
     }
 
-    private fun resolveFromPipedStrict(track: TrackMetadata): String? {
-        val instances = listOf(
-            "https://pipedapi.kavin.rocks",
-            "https://pipedapi.tokhmi.xyz",
-            "https://pipedapi.moomoo.me"
-        )
-        val primaryArtist = track.artist.split(",", "&", "feat.").first().trim()
-        val encodedQuery = URLEncoder.encode("${track.title} $primaryArtist official audio", "UTF-8")
-
-        for (base in instances) {
-            try {
-                val jsonStr = httpGet("$base/search?q=$encodedQuery&filter=music_songs") ?: continue
-                val items = JSONObject(jsonStr).optJSONArray("items") ?: continue
-
-                var bestVideoId: String? = null
-                var bestScore = Int.MIN_VALUE
-
-                for (i in 0 until items.length()) {
-                    val item = items.getJSONObject(i)
-                    val title = item.optString("title")
-                    val uploader = item.optString("uploaderName")
-                    val duration = item.optInt("duration", 0)
-                    val urlPath = item.optString("url") // "/watch?v=XXXX"
-
-                    if (containsUnwantedVariant(track.title, title)) continue
-                    if (duration in 1..45 || duration > 720) continue
-                    if (track.durationSeconds > 0 && duration > 0 && abs(duration - track.durationSeconds) > 8) {
-                        continue
-                    }
-
-                    val score = computeMatchScore(
-                        targetTitle = track.title,
-                        targetArtist = primaryArtist,
-                        targetDuration = track.durationSeconds,
-                        candidateTitle = title,
-                        candidateArtist = uploader,
-                        candidateDuration = duration
-                    )
-
-                    if (score > bestScore) {
-                        bestScore = score
-                        bestVideoId = urlPath.substringAfter("v=", "")
-                    }
-                }
-
-                if (!bestVideoId.isNullOrBlank() && bestScore >= 160) {
-                    val streamJson = httpGet("$base/streams/$bestVideoId") ?: continue
-                    val audioStreams = JSONObject(streamJson).optJSONArray("audioStreams") ?: continue
-                    var bestAudioUrl: String? = null
-                    var highestBitrate = -1
-                    for (j in 0 until audioStreams.length()) {
-                        val stream = audioStreams.getJSONObject(j)
-                        val bitrate = stream.optInt("bitrate", 0)
-                        val url = stream.optString("url")
-                        if (url.isNotBlank() && bitrate > highestBitrate) {
-                            highestBitrate = bitrate
-                            bestAudioUrl = url
-                        }
-                    }
-                    if (!bestAudioUrl.isNullOrBlank()) return bestAudioUrl
-                }
-            } catch (_: Exception) {
-            }
-        }
-        return null
-    }
 
     fun containsUnwantedVariant(originalTitle: String, candidateTitle: String): Boolean {
         val origLower = originalTitle.lowercase()

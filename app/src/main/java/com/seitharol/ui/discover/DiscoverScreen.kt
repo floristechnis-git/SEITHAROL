@@ -48,6 +48,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
+import com.seitharol.data.preferences.ThumbnailQuality
+import com.seitharol.util.ThumbnailTargetSize
+import com.seitharol.util.ThumbnailUrlOptimizer
 import com.seitharol.data.resolver.AudioQuality
 import kotlinx.coroutines.launch
 
@@ -66,7 +69,17 @@ fun DiscoverScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val pagerState = rememberPagerState(pageCount = { feedTracks.size })
+    val activeFeed = remember { mutableStateListOf<NormalizedTrack>() }
+    LaunchedEffect(feedTracks) {
+        if (activeFeed.isEmpty() && feedTracks.isNotEmpty()) {
+            activeFeed.addAll(feedTracks)
+        } else {
+            feedTracks.forEach { t ->
+                if (activeFeed.none { it.sourceId == t.sourceId }) activeFeed.add(t)
+            }
+        }
+    }
+    val pagerState = rememberPagerState(pageCount = { activeFeed.size })
 
     var isInDiscoverSearchOpen by remember { mutableStateOf(false) }
     var trackForDownloadSheet by remember { mutableStateOf<NormalizedTrack?>(null) }
@@ -83,24 +96,19 @@ fun DiscoverScreen(
         }
     }
 
-    // Immediately stop previous audio when user starts scrolling to another track so audio never bleeds
-    LaunchedEffect(pagerState.isScrollInProgress) {
-        if (pagerState.isScrollInProgress) {
-            audioPlayerManager.pausePreview()
+    // 1. Immediately silence previous track as soon as user drags away from settled page
+    LaunchedEffect(pagerState.currentPage, pagerState.isScrollInProgress) {
+        if (pagerState.isScrollInProgress && pagerState.currentPage != pagerState.settledPage) {
+            audioPlayerManager.stopPreviewAndClear()
         }
     }
 
-    LaunchedEffect(pagerState.currentPage) {
-        if (pagerState.currentPage != pagerState.settledPage) {
-            audioPlayerManager.pausePreview()
-        }
-    }
-
-    LaunchedEffect(pagerState.settledPage, feedTracks, isInDiscoverSearchOpen) {
+    // 2. Play active track immediately on enter and when swipe settles
+    LaunchedEffect(pagerState.settledPage, activeFeed.size, activeFeed.firstOrNull()?.sourceId, isInDiscoverSearchOpen) {
         if (isInDiscoverSearchOpen) {
             audioPlayerManager.pausePreview()
-        } else {
-            val activeTrack = feedTracks.getOrNull(pagerState.settledPage)
+        } else if (activeFeed.isNotEmpty()) {
+            val activeTrack = activeFeed.getOrNull(pagerState.settledPage)
             if (activeTrack != null) {
                 audioPlayerManager.playPreview(activeTrack)
             }
@@ -108,14 +116,14 @@ fun DiscoverScreen(
     }
 
     DisposableEffect(Unit) {
-        onDispose { audioPlayerManager.pausePreview() }
+        onDispose { audioPlayerManager.stopPreviewAndClear() }
     }
 
     val isPreviewPlaying by audioPlayerManager.isPreviewPlaying.collectAsState()
     val isPreviewBuffering by audioPlayerManager.isPreviewBuffering.collectAsState()
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        if (feedTracks.isEmpty()) {
+        if (activeFeed.isEmpty()) {
             CircularProgressIndicator(
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.align(Alignment.Center)
@@ -126,7 +134,7 @@ fun DiscoverScreen(
                 modifier = Modifier.fillMaxSize(),
                 beyondViewportPageCount = 1
             ) { pageIndex ->
-                val track = feedTracks[pageIndex]
+                val track = activeFeed[pageIndex]
                 val primaryArtist = track.artists.firstOrNull().orEmpty().ifBlank { "Unknown Artist" }
 
                 DiscoverShortPage(
@@ -243,8 +251,14 @@ fun DiscoverScreen(
                 onSearch = onSearchPreviewTracks,
                 onOpenDownloadPicker = { selectedTrack -> trackForDownloadSheet = selectedTrack },
                 onOpenFullSong = { selectedTrack ->
-                    // Play selected song directly on the Discover and Download UI
-                    audioPlayerManager.playPreview(selectedTrack)
+                    audioPlayerManager.stopPreviewAndClear()
+                    activeFeed.removeAll { it.sourceId == selectedTrack.sourceId }
+                    activeFeed.add(0, selectedTrack)
+                    isInDiscoverSearchOpen = false
+                    scope.launch {
+                        pagerState.scrollToPage(0)
+                        audioPlayerManager.playPreview(selectedTrack)
+                    }
                 },
                 onVisitArtist = { name, browseId ->
                     isInDiscoverSearchOpen = false
@@ -262,15 +276,13 @@ fun DiscoverScreen(
                 onDismiss = { trackForDownloadSheet = null },
                 onStartDownload = { provider, format, quality ->
                     trackForDownloadSheet = null
-                    scope.launch {
-                        downloadService.downloadTrackToPublicMusicStorage(
-                            track = targetTrack,
-                            provider = provider,
-                            format = format,
-                            preferredQuality = quality,
-                            onTrackSavedAsLocalMusic = onTrackDownloadedLocally
-                        )
-                    }
+                    downloadService.startDownloadInBackground(
+                        track = targetTrack,
+                        provider = provider,
+                        format = format,
+                        preferredQuality = quality,
+                        onTrackSavedAsLocalMusic = onTrackDownloadedLocally
+                    )
                 }
             )
         }
@@ -296,8 +308,15 @@ private fun DiscoverShortPage(
     onShareClick: () -> Unit,
     onOpenFullSongClick: () -> Unit
 ) {
+    val context = LocalContext.current
     val primaryArtist = track.artists.firstOrNull().orEmpty().ifBlank { "Unknown Artist" }
-    val avatarModel = track.artistAvatarUrl.ifBlank { track.artUrl }
+    val rawAvatar = track.artistAvatarUrl.ifBlank { track.artUrl }
+    val optimizedArtUrl = remember(track.artUrl) {
+        ThumbnailUrlOptimizer.optimize(track.artUrl, ThumbnailQuality.MEDIUM, ThumbnailTargetSize.HERO_LARGE, context)
+    }
+    val avatarModel = remember(rawAvatar) {
+        ThumbnailUrlOptimizer.optimize(rawAvatar, ThumbnailQuality.MEDIUM, ThumbnailTargetSize.LIST_THUMB, context)
+    }
 
     Box(
         modifier = Modifier
@@ -309,7 +328,7 @@ private fun DiscoverShortPage(
     ) {
         // Blurred ambient background
         AsyncImage(
-            model = track.artUrl,
+            model = optimizedArtUrl,
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
@@ -339,7 +358,7 @@ private fun DiscoverShortPage(
                 .offset(y = (-48).dp)
         ) {
             AsyncImage(
-                model = track.artUrl,
+                model = optimizedArtUrl,
                 contentDescription = track.title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier

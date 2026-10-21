@@ -117,7 +117,7 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
      * Resolves title and artist for a YouTube videoId when Track metadata is blank.
      */
     suspend fun fetchMetadataById(videoId: String): Pair<String, String>? = withContext(Dispatchers.IO) {
-        val cleanId = videoId.trim()
+        val cleanId = extractVideoId(videoId) ?: videoId.trim()
         if (cleanId.isBlank()) return@withContext null
         try {
             val url = "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=$cleanId&format=json"
@@ -216,14 +216,19 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
 
         companion object {
             private val VALID_VIDEO_ID_REGEX = Regex("^[a-zA-Z0-9_-]{11}$")
+            fun extractVideoId(id: String?): String? =
+                com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(id)
             fun isValidYoutubeVideoId(id: String?): Boolean =
-                !id.isNullOrBlank() && VALID_VIDEO_ID_REGEX.matches(id.trim())
+                extractVideoId(id) != null
         }
 
     suspend fun resolveExactYoutubeStreamById(
         videoId: String,
         preferredQuality: com.seitharol.data.resolver.AudioQuality = com.seitharol.data.resolver.AudioQuality.HIGH
-    ): Result<String> = com.seitharol.data.resolver.InnerTubeStreamExtractor.resolveExactYoutubeStreamById(videoId, preferredQuality)
+    ): Result<String> {
+        val cleanId = extractVideoId(videoId) ?: videoId
+        return com.seitharol.data.resolver.InnerTubeStreamExtractor.resolveExactYoutubeStreamById(cleanId, preferredQuality)
+    }
 
     override suspend fun resolveStream(sourceId: String, preferredKbps: Int): ResolvedStream =
         withContext(Dispatchers.IO) {
@@ -232,8 +237,9 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                 preferredKbps in 97..192 -> com.seitharol.data.resolver.AudioQuality.NORMAL
                 else -> com.seitharol.data.resolver.AudioQuality.HIGH
             }
-            if (isValidYoutubeVideoId(sourceId)) {
-                val directResult = resolveExactYoutubeStreamById(sourceId, quality)
+            val cleanId = extractVideoId(sourceId)
+            if (cleanId != null) {
+                val directResult = resolveExactYoutubeStreamById(cleanId, quality)
                 if (directResult.isSuccess) {
                     val url = directResult.getOrThrow()
                     val now = System.currentTimeMillis()
@@ -243,7 +249,7 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                         com.seitharol.data.resolver.AudioQuality.HIGH -> "320 kbps (High)"
                     }
                     return@withContext ResolvedStream(
-                        videoId = sourceId,
+                        videoId = cleanId,
                         streamUrl = url,
                         itag = if (quality == com.seitharol.data.resolver.AudioQuality.LOW) 250 else 251,
                         codec = if (url.contains("opus")) "Opus" else "AAC",

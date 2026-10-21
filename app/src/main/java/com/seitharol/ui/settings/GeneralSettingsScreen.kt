@@ -161,11 +161,12 @@ fun GeneralSettingsScreen(
                                     checked = state.eqEnabled,
                                     onCheckedChange = { settingsManager.setEqEnabled(it) },
                                     colors = SwitchDefaults.colors(
-                                        checkedThumbColor = Color.White,
+                                        checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
                                         checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                        uncheckedThumbColor = Color(0xFFECECEC),
-                                        uncheckedTrackColor = Color(0xFF383838),
-                                        uncheckedBorderColor = Color(0xFF666666)
+                                        checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                        uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                        uncheckedBorderColor = MaterialTheme.colorScheme.outline
                                     )
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
@@ -371,11 +372,12 @@ private fun SettingsToggleRow(
             checked = checked,
             onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
+                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
                 checkedTrackColor = MaterialTheme.colorScheme.primary,
-                uncheckedThumbColor = Color(0xFFECECEC),
-                uncheckedTrackColor = Color(0xFF383838),
-                uncheckedBorderColor = Color(0xFF666666)
+                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+                uncheckedBorderColor = MaterialTheme.colorScheme.outline
             )
         )
     }

@@ -60,14 +60,26 @@ fun CascadeApp(viewModel: CascadeViewModel) {
     val context = LocalContext.current
 
     val downloadService = remember { com.seitharol.data.download.DownloadPreferencesAndService(context) }
-    val seitharolPlayerManager = remember(viewModel.playerManager.playerInstance) {
-        viewModel.playerManager.playerInstance?.let { exo ->
-            val innerTube = com.seitharol.data.resolver.DefaultInnerTubeProvider(viewModel.resolverEngine.youtubeInnerTubeProvider)
-            val jioSaavn = com.seitharol.data.resolver.DefaultJioSaavnProvider(viewModel.resolverEngine.jioSaavnProvider)
-            val matcher = com.seitharol.data.resolver.TrackMatcher(innerTube, jioSaavn)
-            val engine = com.seitharol.data.resolver.ResolverEngine(context, matcher, innerTube, jioSaavn)
-            com.seitharol.player.AudioPlayerManager(exo, engine, context.applicationContext)
-        }
+    val previewExoPlayer = remember {
+        androidx.media3.exoplayer.ExoPlayer.Builder(context)
+            .setMediaSourceFactory(
+                androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+                    com.seitharol.player.OuterTuneResolvingDataSource.createFactory {
+                        com.seitharol.data.resolver.AudioQuality.LOW
+                    }
+                )
+            )
+            .build()
+    }
+    DisposableEffect(Unit) {
+        onDispose { previewExoPlayer.release() }
+    }
+    val seitharolPlayerManager = remember(previewExoPlayer) {
+        val innerTube = com.seitharol.data.resolver.DefaultInnerTubeProvider(viewModel.resolverEngine.youtubeInnerTubeProvider)
+        val jioSaavn = com.seitharol.data.resolver.DefaultJioSaavnProvider(viewModel.resolverEngine.jioSaavnProvider)
+        val matcher = com.seitharol.data.resolver.TrackMatcher(innerTube, jioSaavn)
+        val engine = com.seitharol.data.resolver.ResolverEngine(context, matcher, innerTube, jioSaavn)
+        com.seitharol.player.AudioPlayerManager(previewExoPlayer, engine, context.applicationContext)
     }
 
     var currentDestination by remember { mutableStateOf(AppDestination.HOME) }

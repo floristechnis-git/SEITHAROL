@@ -92,8 +92,16 @@ fun InDiscoverSearchSurface(
                         searchJob = scope.launch {
                             delay(280L)
                             isLoading = true
-                            results = runCatching { onSearch(newText) }.getOrDefault(emptyList())
-                            isLoading = false
+                            try {
+                                val fetched = onSearch(newText.trim())
+                                results = fetched
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (_: Exception) {
+                                // Keep previous results or empty if none
+                            } finally {
+                                isLoading = false
+                            }
                         }
                     }
                 },
@@ -222,8 +230,7 @@ fun InDiscoverSearchSurface(
                             )
                             .clickable {
                                 focusManager.clearFocus()
-                                if (isThisPlaying) audioPlayerManager.pausePreview()
-                                else audioPlayerManager.playPreview(item)
+                                onOpenFullSong(item)
                             }
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
@@ -232,7 +239,12 @@ fun InDiscoverSearchSurface(
                                 Box(
                                     modifier = Modifier
                                         .size(64.dp)
-                                        .clip(RoundedCornerShape(14.dp)),
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .clickable {
+                                            focusManager.clearFocus()
+                                            if (isThisPlaying) audioPlayerManager.pausePreview()
+                                            else audioPlayerManager.playPreview(item)
+                                        },
                                     contentAlignment = Alignment.Center
                                 ) {
                                     AsyncImage(
@@ -338,8 +350,8 @@ fun InDiscoverSearchSurface(
 
                                 OutlinedButton(
                                     onClick = {
-                                        if (isThisPlaying) audioPlayerManager.pausePreview()
-                                        else audioPlayerManager.playPreview(item)
+                                        focusManager.clearFocus()
+                                        onOpenFullSong(item)
                                     },
                                     modifier = Modifier.weight(1f).height(38.dp),
                                     shape = RoundedCornerShape(50),
@@ -348,13 +360,13 @@ fun InDiscoverSearchSurface(
                                     border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.25f))
                                 ) {
                                     Icon(
-                                        painter = painterResource(id = if (isThisPlaying) R.drawable.ic_pause else R.drawable.ic_play),
+                                        painter = painterResource(id = R.drawable.ic_play),
                                         contentDescription = null,
                                         tint = Color.White,
                                         modifier = Modifier.size(14.dp)
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text(if (isThisPlaying) "Pause" else "Play", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    Text("Play", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                 }
                             }
                         }

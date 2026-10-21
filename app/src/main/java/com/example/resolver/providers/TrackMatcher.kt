@@ -15,7 +15,7 @@ import kotlin.math.abs
  * 1. Exact ISRC match
  * 2. Official Art Track Videos (MUSIC_VIDEO_TYPE_ATV / "- Topic" channels)
  * 3. Exact artist & title match with strict duration proximity (±5 seconds)
- * 4. Hard-penalizes and filters out unofficial remixes, loops, and edited audio
+ * 4. Filters out loops, slowed/reverb edits, and unauthorized re-uploads
  */
 class TrackMatcher(
     private val youtubeProvider: YouTubeInnerTubeProvider,
@@ -92,7 +92,7 @@ class TrackMatcher(
         }
 
     private val BANNED_MODIFIERS = listOf(
-        "remix", "re-mix", "loop", "extended", "1 hour", "10 hours", "hour version",
+        "loop", "extended", "1 hour", "10 hours", "hour version",
         "slowed", "reverb", "cover", "live", "tribute", "karaoke",
         "instrumental", "parody", "sped up", "nightcore", "8d", "mashup",
         "dj", "status", "ringtone", "lofi", "lo-fi",
@@ -164,12 +164,12 @@ class TrackMatcher(
             score += 25
         }
 
-        // 4. Strict Unrequested Remix / Loop / Edit Filtering
+        // 4. Strict Unrequested Loop / Edit Filtering
         for (keyword in BANNED_MODIFIERS) {
             val requestedInQuery = rawQueryLower.contains(keyword)
             val presentInCandidate = candTitleLower.contains(keyword) || c.artists.any { it.contains(keyword, ignoreCase = true) }
             if (presentInCandidate && !requestedInQuery) {
-                return -1000 // Strictly reject unrequested remix/loop/edit
+                return -1000 // Strictly reject unrequested loop/edit
             }
         }
 

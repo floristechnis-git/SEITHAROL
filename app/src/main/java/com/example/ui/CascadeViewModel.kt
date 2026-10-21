@@ -533,6 +533,20 @@ class CascadeViewModel(
         }
     }
 
+    fun playSingleRelease(collection: com.seitharol.data.resolver.YtmCollectionSummary, artistName: String) {
+        viewModelScope.launch {
+            val candidate = runCatching {
+                InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(collection.browseId).tracks.firstOrNull()
+            }.getOrNull() ?: runCatching {
+                InnerTubeStreamExtractor.searchOfficialYtmSongs("${collection.title} $artistName", limit = 1).firstOrNull()
+            }.getOrNull()
+
+            if (candidate != null) {
+                playTrack(candidate.toTrack())
+            }
+        }
+    }
+
     fun startRadioMix(seedTrack: Track) {
         viewModelScope.launch {
             musicRepository.insertTrack(seedTrack)

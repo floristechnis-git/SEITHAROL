@@ -76,18 +76,6 @@ object InnerTubeStreamExtractor {
 
     val VERIFIED_CLIENTS = listOf(
         InnerTubeClientConfig(
-            clientName = "IOS",
-            clientVersion = "19.45.4",
-            userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
-            clientId = "5",
-            deviceMake = "Apple",
-            deviceModel = "iPhone16,2",
-            osName = "iPhone",
-            osVersion = "18.1.0.22B83",
-            origin = "https://www.youtube.com",
-            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
-        ),
-        InnerTubeClientConfig(
             clientName = "ANDROID_VR",
             clientVersion = "1.60.19",
             userAgent = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
@@ -101,24 +89,65 @@ object InnerTubeStreamExtractor {
             playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
         ),
         InnerTubeClientConfig(
-            clientName = "ANDROID_TESTSUITE",
-            clientVersion = "1.9",
-            userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 13; en_US) gzip",
-            clientId = "30",
-            deviceMake = "Google",
-            deviceModel = "Pixel 7",
-            osName = "Android",
-            osVersion = "13",
-            androidSdkVersion = 33,
+            clientName = "IOS",
+            clientVersion = "19.45.4",
+            userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
+            clientId = "5",
+            deviceMake = "Apple",
+            deviceModel = "iPhone16,2",
+            osName = "iPhone",
+            osVersion = "18.1.0.22B83",
             origin = "https://www.youtube.com",
             playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
         )
     )
 
+    @Volatile
+    private var cachedVisitorData: String? = null
+
+    private fun getOrFetchVisitorData(): String? {
+        cachedVisitorData?.let { return it }
+        return runCatching {
+            val conn = (URL("https://music.youtube.com/youtubei/v1/visitor_id?prettyPrint=false").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 2500
+                readTimeout = 2500
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("User-Agent", com.seitharol.player.OuterTuneResolvingDataSource.VR_USER_AGENT)
+                setRequestProperty("Origin", "https://music.youtube.com")
+                setRequestProperty("Referer", "https://music.youtube.com/")
+            }
+            conn.outputStream.use { it.write(webRemixPayload().toString().toByteArray()) }
+            if (conn.responseCode == 200) {
+                val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                json.optJSONObject("responseContext")?.optString("visitorData")
+                    ?.takeIf { it.isNotBlank() }
+                    ?.also { cachedVisitorData = it }
+            } else null
+        }.getOrNull()
+    }
+
     val VALID_VIDEO_ID_REGEX = Regex("^[a-zA-Z0-9_-]{11}$")
 
+    fun extractVideoId(raw: String?): String? {
+        if (raw.isNullOrBlank()) return null
+        val trimmed = raw.trim()
+        if (VALID_VIDEO_ID_REGEX.matches(trimmed)) return trimmed
+        // 1. Check for query parameter v= or id= (e.g. ?v=..., &v=..., ?id=..., &id=...)
+        val paramMatch = Regex("[?&](?:v|id)=([a-zA-Z0-9_-]{11})").find(trimmed)
+        if (paramMatch != null) return paramMatch.groupValues[1]
+        // 2. Check for watch?v= or watch?id= prefix (e.g. watch?v=..., /watch?id=...)
+        val watchMatch = Regex("(?:^|/|\\?)watch\\?(?:.*&)?(?:v|id)=([a-zA-Z0-9_-]{11})").find(trimmed)
+        if (watchMatch != null) return watchMatch.groupValues[1]
+        // 3. Short URLs or paths (youtu.be/..., /embed/..., /v/..., /shorts/..., /live/...)
+        val pathMatch = Regex("(?:youtu\\.be/|/(?:embed|v|shorts|live)/)([a-zA-Z0-9_-]{11})").find(trimmed)
+        if (pathMatch != null) return pathMatch.groupValues[1]
+        return null
+    }
+
     fun isValidYoutubeVideoId(id: String?): Boolean =
-        !id.isNullOrBlank() && VALID_VIDEO_ID_REGEX.matches(id.trim())
+        extractVideoId(id) != null
 
     private fun extractStreamWithConfig(
         videoId: String,
@@ -156,6 +185,7 @@ object InnerTubeStreamExtractor {
                         client.osName?.let { put("osName", it) }
                         client.osVersion?.let { put("osVersion", it) }
                         client.androidSdkVersion?.let { put("androidSdkVersion", it) }
+                        getOrFetchVisitorData()?.let { put("visitorData", it) }
                     })
                 })
             }
@@ -191,31 +221,57 @@ object InnerTubeStreamExtractor {
         videoId: String,
         preferredQuality: AudioQuality = AudioQuality.HIGH
     ): Result<String> = withContext(Dispatchers.IO) {
-        require(isValidYoutubeVideoId(videoId)) { "Invalid YouTube videoId: $videoId" }
-        val cpn = (1..16).map { "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"[(0..63).random()] }.joinToString("")
+        val cleanVideoId = extractVideoId(videoId) ?: videoId
+        require(VALID_VIDEO_ID_REGEX.matches(cleanVideoId)) { "Invalid YouTube videoId: $videoId" }
 
-        // OuterTune-style concurrent race across verified clients:
-        // Whichever client returns a valid unthrottled audio stream first completes immediately.
-        coroutineScope {
-            val deferred = kotlinx.coroutines.CompletableDeferred<String>()
-            val jobs = VERIFIED_CLIENTS.map { client ->
-                launch {
-                    val url = extractStreamWithConfig(videoId, client, preferredQuality, cpn)
-                    if (!url.isNullOrBlank()) {
-                        deferred.complete(url)
-                    }
+        // 1. Check in-memory cache first
+        com.seitharol.player.OuterTuneResolvingDataSource.getCachedUrl(cleanVideoId, preferredQuality)?.let { cached ->
+            return@withContext Result.success(cached)
+        }
+
+        // 2. First attempt across verified clients
+        val firstAttempt = executeClientRace(cleanVideoId, preferredQuality)
+        if (firstAttempt.isSuccess) {
+            val url = firstAttempt.getOrThrow()
+            com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, url)
+            return@withContext Result.success(url)
+        }
+
+        // 3. Retry once with refreshed visitorData if first attempt failed
+        cachedVisitorData = null
+        val retryAttempt = executeClientRace(cleanVideoId, preferredQuality)
+        if (retryAttempt.isSuccess) {
+            val url = retryAttempt.getOrThrow()
+            com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, url)
+            return@withContext Result.success(url)
+        }
+
+        Result.failure(IllegalStateException("Failed to resolve stream for videoId=$cleanVideoId"))
+    }
+
+    private suspend fun executeClientRace(
+        cleanVideoId: String,
+        preferredQuality: AudioQuality
+    ): Result<String> = coroutineScope {
+        val cpn = (1..16).map { "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"[(0..63).random()] }.joinToString("")
+        val deferred = kotlinx.coroutines.CompletableDeferred<String>()
+        val jobs = VERIFIED_CLIENTS.map { client ->
+            launch {
+                val url = extractStreamWithConfig(cleanVideoId, client, preferredQuality, cpn)
+                if (!url.isNullOrBlank()) {
+                    deferred.complete(url)
                 }
             }
-            val winningUrl = kotlinx.coroutines.withTimeoutOrNull(3000L) {
-                deferred.await()
-            }
-            jobs.forEach { it.cancel() }
+        }
+        val winningUrl = kotlinx.coroutines.withTimeoutOrNull(3000L) {
+            deferred.await()
+        }
+        jobs.forEach { it.cancel() }
 
-            if (!winningUrl.isNullOrBlank()) {
-                Result.success(winningUrl)
-            } else {
-                Result.failure(IllegalStateException("Failed to resolve stream for videoId=$videoId"))
-            }
+        if (!winningUrl.isNullOrBlank()) {
+            Result.success(winningUrl)
+        } else {
+            Result.failure(IllegalStateException("No stream resolved across verified clients"))
         }
     }
 
@@ -223,8 +279,9 @@ object InnerTubeStreamExtractor {
         videoId: String,
         preferredQuality: AudioQuality = AudioQuality.NORMAL
     ): Result<String> = withContext(Dispatchers.IO) {
-        if (isValidYoutubeVideoId(videoId)) {
-            val directResult = resolveExactYoutubeStreamById(videoId, preferredQuality)
+        val cleanVideoId = extractVideoId(videoId)
+        if (cleanVideoId != null) {
+            val directResult = resolveExactYoutubeStreamById(cleanVideoId, preferredQuality)
             if (directResult.isSuccess) return@withContext directResult
         }
         Result.failure(IllegalStateException("Unable to resolve stream for $videoId"))
@@ -586,6 +643,22 @@ object InnerTubeStreamExtractor {
                     for (i in 0 until shelfContents.length()) {
                         val item = shelfContents.getJSONObject(i)
                             .optJSONObject("musicResponsiveListItemRenderer") ?: continue
+
+                        val flexColumns = item.optJSONArray("flexColumns")
+                        val itemTitle = flexColumns?.optJSONObject(0)
+                            ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+                            ?.optJSONObject("text")
+                            ?.optJSONArray("runs")
+                            ?.optJSONObject(0)
+                            ?.optString("text").orEmpty()
+
+                        val normItemTitle = CanonicalAudioResolver.normalizeText(itemTitle)
+                        val normArtist = CanonicalAudioResolver.normalizeText(artistName)
+                        val sharesTokens = normArtist.split(" ").filter { it.length >= 2 }.any { normItemTitle.contains(it) } ||
+                            normItemTitle.contains(normArtist) || normArtist.contains(normItemTitle)
+
+                        if (!sharesTokens && normItemTitle.isNotBlank()) continue
+
                         val browseId = item.optJSONObject("navigationEndpoint")
                             ?.optJSONObject("browseEndpoint")
                             ?.optString("browseId").orEmpty()
@@ -1032,7 +1105,7 @@ object InnerTubeStreamExtractor {
         defaultArt: String = "",
         defaultAlbum: String? = null
     ): CandidateStream? {
-        val videoId = item.optJSONObject("playlistItemData")?.optString("videoId")
+        val rawVideoId = item.optJSONObject("playlistItemData")?.optString("videoId")
             ?.takeIf { it.isNotBlank() }
             ?: item.optJSONObject("overlay")
                 ?.optJSONObject("musicItemThumbnailOverlayRenderer")
@@ -1042,7 +1115,28 @@ object InnerTubeStreamExtractor {
                 ?.optJSONObject("watchEndpoint")
                 ?.optString("videoId")
             ?.takeIf { it.isNotBlank() }
-            ?: return null
+            ?: item.optJSONObject("navigationEndpoint")
+                ?.optJSONObject("watchEndpoint")
+                ?.optString("videoId")
+            ?.takeIf { it.isNotBlank() }
+            ?: item.optJSONObject("onTap")
+                ?.optJSONObject("watchEndpoint")
+                ?.optString("videoId")
+            ?.takeIf { it.isNotBlank() }
+            ?: item.optJSONArray("flexColumns")?.optJSONObject(0)
+                ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+                ?.optJSONObject("text")
+                ?.optJSONArray("runs")?.optJSONObject(0)
+                ?.optJSONObject("navigationEndpoint")
+                ?.optJSONObject("watchEndpoint")
+                ?.optString("videoId")
+            ?.takeIf { it.isNotBlank() }
+            ?: item.optJSONObject("navigationEndpoint")
+                ?.optJSONObject("watchEndpoint")
+                ?.optString("url")
+            ?.takeIf { it.isNotBlank() }
+
+        val videoId = extractVideoId(rawVideoId) ?: return null
 
         val flexColumns = item.optJSONArray("flexColumns") ?: return null
         val titleRuns = flexColumns.optJSONObject(0)
@@ -1154,7 +1248,7 @@ object InnerTubeStreamExtractor {
             for (i in 0 until contents.length()) {
                 val renderer = contents.getJSONObject(i)
                     .optJSONObject("playlistPanelVideoRenderer") ?: continue
-                val vid = renderer.optString("videoId")
+                val vid = extractVideoId(renderer.optString("videoId")) ?: renderer.optString("videoId")
                 if (vid.isBlank() || (seedVideoId.isNotBlank() && vid == seedVideoId && i == 0)) continue
 
                 val title = renderer.optJSONObject("title")
@@ -1206,13 +1300,13 @@ object InnerTubeStreamExtractor {
         return runCatching {
             val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 4500
-                readTimeout = 4500
+                connectTimeout = 6000
+                readTimeout = 6000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
                 setRequestProperty("X-YouTube-Client-Name", "67")
-                setRequestProperty("X-YouTube-Client-Version", "1.20250101.01.00")
+                setRequestProperty("X-YouTube-Client-Version", "1.20250310.01.00")
                 setRequestProperty("Origin", "https://music.youtube.com")
                 setRequestProperty("Referer", "https://music.youtube.com/")
             }

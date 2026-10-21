@@ -130,12 +130,10 @@ class DownloadPreferencesAndService(private val context: Context) {
                 connectTimeout = 20_000
                 readTimeout = 60_000
                 if (isYt) {
-                    setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-                    setRequestProperty("Referer", "https://music.youtube.com/")
-                    setRequestProperty("Origin", "https://music.youtube.com")
+                    setRequestProperty("User-Agent", com.seitharol.player.OuterTuneResolvingDataSource.VR_USER_AGENT)
                     setRequestProperty("Range", "bytes=0-")
                 } else {
-                    setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Android 14; Mobile)")
                 }
             }
             if (conn.responseCode !in 200..299) {

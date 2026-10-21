@@ -19,7 +19,7 @@ data class CandidateStream(
 object CanonicalAudioResolver {
 
     private val BANNED_MODIFIERS = listOf(
-        "remix", "re-mix", "loop", "extended", "1 hour", "10 hours", "slowed", "reverb",
+        "loop", "extended", "1 hour", "10 hours", "slowed", "reverb",
         "sped up", "nightcore", "cover", "live", "8d", "mashup", "instrumental", "karaoke",
         "ringtone", "status", "dj "
     )
@@ -55,7 +55,7 @@ object CanonicalAudioResolver {
                     return@mapNotNull null
                 }
 
-                // HARD GATE 2: Reject unrequested remixes/covers/slowed/live
+                // HARD GATE 2: Reject unrequested covers/slowed/live/loops
                 if (containsBannedModifier(rawQueryLower, "${candidate.title} ${candidate.channelName}")) {
                     return@mapNotNull null
                 }
@@ -101,7 +101,7 @@ object CanonicalAudioResolver {
 
         if (!c.albumName.isNullOrBlank()) score += 20
 
-        // 2. Hard-penalize unrequested remixes, slowed/reverb, covers, loops
+        // 2. Hard-penalize unrequested slowed/reverb, covers, loops
         for (keyword in BANNED_MODIFIERS) {
             val requestedInQuery = rawQueryLower.contains(keyword)
             val presentInCandidate = candTitleLower.contains(keyword) || candChannelLower.contains(keyword)
@@ -208,14 +208,18 @@ object CanonicalAudioResolver {
             .map { it.first }
     }
 
-    fun filterVerifiedArtistsOnly(tracks: List<CandidateStream>): List<Pair<String, String?>> {
+    fun filterVerifiedArtistsOnly(
+        tracks: List<CandidateStream>,
+        searchQuery: String = ""
+    ): List<Pair<String, String?>> {
+        val normQuery = normalizeText(searchQuery)
         return tracks
+            .asSequence()
             .filter { track ->
                 val isOfficialSource = track.videoType == "MUSIC_VIDEO_TYPE_ATV" ||
                     track.channelName.endsWith("- Topic", ignoreCase = true) ||
                     track.isVerifiedArtist ||
                     (track.artistBrowseId?.startsWith("UC") == true || track.artistBrowseId?.startsWith("MPLA") == true)
-
                 val hasRemixUploaderName = BANNED_MODIFIERS.any { mod ->
                     track.artist.contains(mod, ignoreCase = true) || track.channelName.contains(mod, ignoreCase = true)
                 }
@@ -223,8 +227,25 @@ object CanonicalAudioResolver {
                     !track.artist.equals("Unknown Artist", ignoreCase = true) &&
                     !track.artist.equals("Unknown", ignoreCase = true)
             }
-            .map { it.artist.removeSuffix(" - Topic").trim() to it.artistBrowseId }
-            .distinctBy { it.first.lowercase() }
+            .flatMap { track ->
+                val parts = track.artist
+                    .removeSuffix(" - Topic")
+                    .split(",", "&", "feat.", "ft.", "/")
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() && !it.equals("Unknown Artist", true) }
+                parts.mapIndexedNotNull { index, singleArtist ->
+                    val normArtist = normalizeText(singleArtist)
+                    if (normQuery.isNotBlank() && !normArtist.contains(normQuery) && !normQuery.contains(normArtist)) {
+                        null
+                    } else {
+                        // Only attach track.artistBrowseId if this artist was the sole/primary artist
+                        val validBrowseId = if (index == 0 && parts.size == 1) track.artistBrowseId else null
+                        singleArtist to validBrowseId
+                    }
+                }.asSequence()
+            }
+            .distinctBy { normalizeText(it.first) }
+            .toList()
     }
 
     fun deduplicateTracks(tracks: List<CandidateStream>): List<CandidateStream> {

@@ -33,11 +33,9 @@ object InnerTubeResolver {
         title: String,
         artist: String
     ): String? = withContext(Dispatchers.IO) {
-        val validVideoId = if (!videoId.isNullOrBlank() && videoId.length == 11 && !videoId.contains(" ") && !videoId.startsWith("pl_")) {
-            videoId
-        } else {
-            searchFirstVideoId("$title $artist") ?: return@withContext null
-        }
+        val validVideoId = com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(videoId)
+            ?: searchFirstVideoId("$title $artist")
+            ?: return@withContext null
 
         // 1. Direct fast concurrent InnerTube extraction
         val directStream = com.seitharol.data.resolver.InnerTubeStreamExtractor
@@ -270,9 +268,12 @@ object InnerTubeResolver {
         findItemRenderers(json, renderers)
 
         for (item in renderers) {
-            val videoId = item.optString("videoId").takeIf { it.isNotBlank() }
+            val rawId = item.optString("videoId").takeIf { it.isNotBlank() }
                 ?: item.optJSONObject("navigationEndpoint")?.optJSONObject("watchEndpoint")?.optString("videoId")
-                ?: continue
+                ?: item.optJSONObject("playlistItemData")?.optString("videoId")
+                ?: item.optJSONObject("overlay")?.optJSONObject("musicItemThumbnailOverlayRenderer")?.optJSONObject("content")?.optJSONObject("musicPlayButtonRenderer")?.optJSONObject("playNavigationEndpoint")?.optJSONObject("watchEndpoint")?.optString("videoId")
+                ?: item.optJSONObject("navigationEndpoint")?.optJSONObject("watchEndpoint")?.optString("url")
+            val videoId = com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(rawId) ?: continue
 
             if (videoId.length != 11) continue
 

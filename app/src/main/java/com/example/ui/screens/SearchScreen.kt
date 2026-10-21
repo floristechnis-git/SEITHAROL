@@ -96,7 +96,7 @@ fun SearchScreen(
     // Split collaboration artist strings (e.g. "Dan + Shay, Justin Bieber" or "Artist A feat. Artist B")
     // into distinct individual artists so multi-artist combinations never appear as a bizarre pseudo-artist.
     val allArtists = remember(allTracksList, historyTracks, searchResults) {
-        val bannedModifiers = listOf("remix", "loop", "extended", "1 hour", "slowed", "reverb", "cover", "8d", "nightcore", "mashup", "bass boosted")
+        val bannedModifiers = listOf("loop", "extended", "1 hour", "slowed", "reverb", "cover", "8d", "nightcore", "mashup", "bass boosted")
         val bannedArtists = listOf("local artist", "device storage", "downloaded in seitharol", "<unknown>", "unknown artist", "unknown", "various artists")
         val splitRegex = Regex("[,/;&]|\\s+(?:feat\\.?|ft\\.?|&|x)\\s+", RegexOption.IGNORE_CASE)
         (searchResults + historyTracks + allTracksList)

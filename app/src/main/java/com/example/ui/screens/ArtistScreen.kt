@@ -201,12 +201,12 @@ fun ArtistScreen(
                         Button(
                             onClick = {
                                 if (domainTopSongs.isNotEmpty()) {
-                                    viewModel.playQueue(domainTopSongs, 0)
+                                    viewModel.playQueue(domainTopSongs, 0, isPlaylist = false)
                                 }
                             },
                             shape = RoundedCornerShape(50),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            modifier = Modifier.weight(1f).heightIn(min = 44.dp)
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            modifier = Modifier.weight(1f).height(42.dp)
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(4.dp))
@@ -215,6 +215,7 @@ fun ArtistScreen(
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.sp,
                                 maxLines = 1,
+                                softWrap = false,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
@@ -229,8 +230,8 @@ fun ArtistScreen(
                                 }
                             },
                             shape = RoundedCornerShape(50),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            modifier = Modifier.weight(1f).heightIn(min = 44.dp)
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            modifier = Modifier.weight(1f).height(42.dp)
                         ) {
                             Icon(Icons.Default.Shuffle, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(4.dp))
@@ -239,6 +240,7 @@ fun ArtistScreen(
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.sp,
                                 maxLines = 1,
+                                softWrap = false,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
@@ -308,22 +310,7 @@ fun ArtistScreen(
                                         .width(142.dp)
                                         .clickable {
                                             if (isSingle) {
-                                                viewModel.loadPlaylistTracks(release.browseId) { tracks ->
-                                                    val singleTrack = tracks.firstOrNull()
-                                                    if (singleTrack != null) {
-                                                        viewModel.playTrack(singleTrack)
-                                                    } else {
-                                                        viewModel.playTrack(
-                                                            Track(
-                                                                id = release.browseId,
-                                                                title = release.title,
-                                                                artist = page.name,
-                                                                album = release.title,
-                                                                artUrl = release.thumbnailUrl
-                                                            )
-                                                        )
-                                                    }
-                                                }
+                                                viewModel.playSingleRelease(release, page.name)
                                             } else {
                                                 onNavigateToPlaylist(release.browseId)
                                             }

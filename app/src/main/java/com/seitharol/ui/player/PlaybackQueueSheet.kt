@@ -4,11 +4,11 @@ package com.seitharol.ui.player
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -24,6 +25,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
@@ -34,6 +36,7 @@ import com.seitharol.ui.history.TrashSvgIcon
 import com.seitharol.ui.search.QueueAddSvgIcon
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlin.math.roundToInt
 
 @Composable
 fun PlaybackQueueSheet(
@@ -49,6 +52,7 @@ fun PlaybackQueueSheet(
     onMoveTrack: ((fromIndex: Int, toIndex: Int) -> Unit)? = null
 ) {
     var suggestedTracks by remember { mutableStateOf<List<TrackMetadata>>(emptyList()) }
+    var sheetDragOffsetY by remember { mutableFloatStateOf(0f) }
 
     // Always fetch context-relevant recommendations whenever the current track or queue changes
     LaunchedEffect(currentTrack?.id, queue.size) {
@@ -60,19 +64,24 @@ fun PlaybackQueueSheet(
         )
     }
 
-    var sheetDragOffsetY by remember { mutableFloatStateOf(0f) }
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .offset { androidx.compose.ui.unit.IntOffset(0, sheetDragOffsetY.toInt().coerceAtLeast(0)) }
+            .offset { IntOffset(0, sheetDragOffsetY.roundToInt().coerceAtLeast(0)) }
             .background(MaterialTheme.colorScheme.background)
             .pointerInput(Unit) {
-                androidx.compose.foundation.gestures.detectVerticalDragGestures(
+                detectVerticalDragGestures(
                     onDragEnd = {
-                        if (sheetDragOffsetY > 160f) onClose()
+                        if (sheetDragOffsetY > 160f) {
+                            sheetDragOffsetY = 0f
+                            onClose()
+                        } else {
+                            sheetDragOffsetY = 0f
+                        }
+                    },
+                    onDragCancel = {
                         sheetDragOffsetY = 0f
                     },
-                    onDragCancel = { sheetDragOffsetY = 0f },
                     onVerticalDrag = { change, dragAmount ->
                         if (dragAmount > 0f || sheetDragOffsetY > 0f) {
                             change.consume()
@@ -83,8 +92,19 @@ fun PlaybackQueueSheet(
             }
             .padding(horizontal = 16.dp)
     ) {
+        // Top Drag Handle Pill (Slide down anywhere on header/sheet to close)
+        Spacer(modifier = Modifier.height(10.dp))
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .width(42.dp)
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+
         // Queue Header
-        Spacer(modifier = Modifier.height(16.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -113,10 +133,11 @@ fun PlaybackQueueSheet(
             onMoveTrack = { from, to -> onMoveTrack?.invoke(from, to) },
             onSelectTrack = onSelectQueueTrack,
             onRemoveTrack = onRemoveFromQueue,
+            onSwipeDownAtTopToClose = onClose,
             modifier = Modifier.weight(1f)
         ) {
             // Autoplay Toggle Card
-            item {
+            item(key = "autoplay_toggle_card") {
                 Spacer(modifier = Modifier.height(6.dp))
                 Surface(
                     shape = RoundedCornerShape(16.dp),
@@ -130,7 +151,7 @@ fun PlaybackQueueSheet(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                             Text(
                                 text = "Autoplay",
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
@@ -148,7 +169,15 @@ fun PlaybackQueueSheet(
                         }
                         Switch(
                             checked = autoplayEnabled,
-                            onCheckedChange = onToggleAutoplay
+                            onCheckedChange = onToggleAutoplay,
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                uncheckedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         )
                     }
                 }
@@ -156,7 +185,7 @@ fun PlaybackQueueSheet(
 
             // Suggestions: ALWAYS rendered (whether Autoplay is ON or OFF)
             if (suggestedTracks.isNotEmpty()) {
-                item {
+                item(key = "suggested_header") {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = "Suggested for ${currentTrack?.title ?: "this queue"}",
@@ -164,7 +193,10 @@ fun PlaybackQueueSheet(
                         color = MaterialTheme.colorScheme.onBackground
                     )
                 }
-                items(suggestedTracks.distinctBy { it.id }, key = { "suggest_${it.id}" }) { suggestion ->
+                itemsIndexed(
+                    items = suggestedTracks,
+                    key = { index, item -> "suggest_${item.id}_$index" }
+                ) { _, suggestion ->
                     Surface(
                         shape = RoundedCornerShape(14.dp),
                         color = MaterialTheme.colorScheme.surface,
@@ -227,6 +259,7 @@ fun ReorderableQueueLazyColumn(
     onMoveTrack: (fromIndex: Int, toIndex: Int) -> Unit,
     onSelectTrack: (TrackMetadata) -> Unit,
     onRemoveTrack: (TrackMetadata) -> Unit,
+    onSwipeDownAtTopToClose: () -> Unit = {},
     modifier: Modifier = Modifier,
     footerContent: LazyListScope.() -> Unit
 ) {
@@ -337,9 +370,11 @@ fun ReorderableQueueLazyColumn(
         contentPadding = PaddingValues(vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        itemsIndexed(queue, key = { idx, track -> "queue_${track.id}_$idx" }) { index, track ->
+        // Unique key includes index so duplicate tracks in queue never crash LazyColumn
+        itemsIndexed(queue, key = { index, track -> "queue_${track.id}_$index" }) { index, track ->
             val isDragging = index == draggingIndex
             val isPlaying = track.id == currentTrackId
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -419,6 +454,7 @@ fun ReorderableQueueLazyColumn(
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
+
                         // Sleek '=' drag handle
                         Column(
                             verticalArrangement = Arrangement.spacedBy(3.dp),
@@ -448,6 +484,7 @@ fun ReorderableQueueLazyColumn(
                 }
             }
         }
+
         footerContent()
     }
 }

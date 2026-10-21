@@ -57,6 +57,7 @@ fun LibraryScreen(
     onNavigateToHistory: () -> Unit,
     onNavigateToDownloads: () -> Unit,
     onNavigateToLikedSongs: () -> Unit,
+    onNavigateToLocalMusic: () -> Unit = {},
     onCreatePlaylist: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -66,15 +67,18 @@ fun LibraryScreen(
     val activeHistory by viewModel.activeHistory.collectAsState()
     val isRefreshingLibrary by viewModel.isRefreshingLibrary.collectAsState()
 
-    val navTabs = remember { listOf("All", "Playlists", "Downloads", "Liked") }
+    val navTabs = remember { listOf("All", "Playlists", "Downloads", "Liked", "On Device") }
     var selectedNavTab by remember { mutableStateOf("All") }
     var showFilterMenu by remember { mutableStateOf(false) }
     var activeFilter by remember { mutableStateOf(LibraryFilterOption.RECENT) }
 
     val filteredPlaylists = remember(playlists, selectedNavTab, activeFilter) {
         val base = when (selectedNavTab) {
-            "Playlists" -> playlists
-            "All" -> playlists
+            "Playlists", "All" -> playlists.filterNot {
+                it.id == "pl_liked_songs" || it.id == "liked_songs" || it.title.equals("Liked Songs", ignoreCase = true) ||
+                it.id == "downloads" || it.id == "pl_downloads" || it.title.equals("Downloads", ignoreCase = true) || it.title.equals("Downloaded Music", ignoreCase = true) ||
+                it.id == "local_music" || it.title.equals("On-Device Music", ignoreCase = true)
+            }
             else -> emptyList()
         }
         when (activeFilter) {
@@ -216,7 +220,14 @@ fun LibraryScreen(
                         val isSelected = selectedNavTab == tab
                         FilterChip(
                             selected = isSelected,
-                            onClick = { selectedNavTab = tab },
+                            onClick = {
+                                when (tab) {
+                                    "Downloads" -> onNavigateToDownloads()
+                                    "Liked" -> onNavigateToLikedSongs()
+                                    "On Device" -> onNavigateToLocalMusic()
+                                    else -> selectedNavTab = tab
+                                }
+                            },
                             modifier = Modifier.height(32.dp),
                             shape = RoundedCornerShape(16.dp),
                             colors = FilterChipDefaults.filterChipColors(
@@ -294,8 +305,8 @@ fun LibraryScreen(
             }
         }
 
-        // 4. Liked Songs List Item (when All or Liked is selected)
-        if (selectedNavTab == "All" || selectedNavTab == "Liked") {
+        // 4. Liked Songs List Item (shown on All)
+        if (selectedNavTab == "All") {
             item {
                 Row(
                     modifier = Modifier
@@ -328,8 +339,8 @@ fun LibraryScreen(
             }
         }
 
-        // 5. Downloaded Songs List Item (when All or Downloads is selected)
-        if (selectedNavTab == "All" || selectedNavTab == "Downloads") {
+        // 5. Downloaded Songs List Item (shown on All)
+        if (selectedNavTab == "All") {
             item {
                 Row(
                     modifier = Modifier
@@ -354,6 +365,40 @@ fun LibraryScreen(
                         )
                         Text(
                             text = "${downloadedTracks.size} offline songs",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SeitharolTextSecondary
+                        )
+                    }
+                }
+            }
+        }
+
+        // 6. On-Device Local Audio Item (shown on All)
+        if (selectedNavTab == "All") {
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onNavigateToLocalMusic() }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    PlaylistThumbnailWithBadge(
+                        firstTrackThumbnailUrl = null,
+                        size = 64.dp,
+                        cornerRadius = 10.dp
+                    )
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "On-Device Music",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = SeitharolDark,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "Scan & play local audio from phone storage",
                             style = MaterialTheme.typography.bodySmall,
                             color = SeitharolTextSecondary
                         )

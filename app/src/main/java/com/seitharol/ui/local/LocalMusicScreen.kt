@@ -16,6 +16,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
@@ -37,11 +39,13 @@ import kotlinx.coroutines.withContext
 
 @Composable
 fun LocalMusicScreen(
-    appDownloadedTracks: List<NormalizedTrack>,
-    availablePlaylists: List<Pair<String, String>>, // (playlistId, title)
+    appDownloadedTracks: List<NormalizedTrack> = emptyList(),
+    availablePlaylists: List<Pair<String, String>> = emptyList(),
     onPlayLocalTrack: (CandidateStream) -> Unit,
-    onAddLocalTrackToPlaylist: (playlistId: String, track: CandidateStream) -> Unit
+    onAddLocalTrackToPlaylist: (playlistId: String, track: CandidateStream) -> Unit = { _, _ -> },
+    onBack: () -> Unit = {}
 ) {
+    BackHandler(onBack = onBack)
     val context = LocalContext.current
     val requiredPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         Manifest.permission.READ_MEDIA_AUDIO
@@ -103,19 +107,37 @@ fun LocalMusicScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .statusBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
-        Text(
-            text = "Local Music",
-            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
-            color = MaterialTheme.colorScheme.onBackground
-        )
-        Text(
-            text = "${mergedLocalTracks.size} songs on device",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(modifier = Modifier.height(12.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    tint = MaterialTheme.colorScheme.onBackground
+                )
+            }
+            Spacer(modifier = Modifier.width(4.dp))
+            Column {
+                Text(
+                    text = "Local Music",
+                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    text = "${mergedLocalTracks.size} songs on device",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
 
         if (!hasStoragePermission) {
             Surface(

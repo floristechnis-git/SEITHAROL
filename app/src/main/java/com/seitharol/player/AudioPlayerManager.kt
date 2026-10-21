@@ -60,22 +60,12 @@ class AudioPlayerManager(
                 if (_activePreviewTrackId.value != track.sourceId) return@launch
 
                 exoPlayer.repeatMode = Player.REPEAT_MODE_ONE
-                // Play a real 30-second chorus segment (35s -> 65s)
-                val clipStartMs = if (track.durationMs > 75_000L) 35_000L else 0L
-                val clipEndMs = clipStartMs + 30_000L
-
-                val clippedItem = MediaItem.Builder()
+                val fullItem = MediaItem.Builder()
                     .setMediaId("preview_${track.sourceId}")
                     .setUri(Uri.parse(streamUrl))
-                    .setClippingConfiguration(
-                        MediaItem.ClippingConfiguration.Builder()
-                            .setStartPositionMs(clipStartMs)
-                            .setEndPositionMs(clipEndMs)
-                            .build()
-                    )
                     .build()
 
-                exoPlayer.setMediaItem(clippedItem)
+                exoPlayer.setMediaItem(fullItem)
                 exoPlayer.prepare()
                 exoPlayer.playWhenReady = true
                 _isPreviewPlaying.value = true

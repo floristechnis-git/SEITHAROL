@@ -50,6 +50,7 @@ sealed interface SubScreen {
     data class InfoDetail(val pageType: InfoPageType) : SubScreen
     data object SoundSettings : SubScreen
     data object Discover : SubScreen
+    data object LocalMusic : SubScreen
 }
 
 @Composable
@@ -228,6 +229,53 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             onOpenInfoPage = { currentSubScreen = SubScreen.InfoDetail(it) },
                             onNavigateBack = { currentSubScreen = SubScreen.None }
                         )
+                        is SubScreen.LocalMusic -> {
+                            val downloadedTracks by viewModel.downloadedTracks.collectAsState()
+                            com.seitharol.ui.local.LocalMusicScreen(
+                                appDownloadedTracks = downloadedTracks.map {
+                                    com.seitharol.domain.model.NormalizedTrack(
+                                        source = com.seitharol.domain.model.SourceType.LOCAL,
+                                        sourceId = it.id,
+                                        title = it.title,
+                                        artists = listOf(it.artist),
+                                        album = it.album,
+                                        durationMs = it.durationMs,
+                                        artUrl = it.artUrl,
+                                        localPath = it.localPath
+                                    )
+                                },
+                                availablePlaylists = playlists.map { it.id to it.title },
+                                onPlayLocalTrack = { candidate ->
+                                    val localTrack = Track(
+                                        id = "local_${candidate.videoId.hashCode()}",
+                                        title = candidate.title,
+                                        artist = candidate.artist,
+                                        album = candidate.albumName ?: "Local Storage",
+                                        durationMs = candidate.durationSeconds * 1000L,
+                                        artUrl = candidate.thumbnailUrl,
+                                        genre = "Local Audio",
+                                        isDownloaded = true,
+                                        localPath = candidate.videoId
+                                    )
+                                    viewModel.playTrack(localTrack)
+                                },
+                                onAddLocalTrackToPlaylist = { plId, candidate ->
+                                    val localTrack = Track(
+                                        id = "local_${candidate.videoId.hashCode()}",
+                                        title = candidate.title,
+                                        artist = candidate.artist,
+                                        album = candidate.albumName ?: "Local Storage",
+                                        durationMs = candidate.durationSeconds * 1000L,
+                                        artUrl = candidate.thumbnailUrl,
+                                        genre = "Local Audio",
+                                        isDownloaded = true,
+                                        localPath = candidate.videoId
+                                    )
+                                    viewModel.addTrackToPlaylist(plId, localTrack)
+                                },
+                                onBack = { currentSubScreen = SubScreen.None }
+                            )
+                        }
                         is SubScreen.Discover -> {
                             val feedTracks by viewModel.discoverTracks.collectAsState()
                             if (seitharolPlayerManager != null) {
@@ -295,6 +343,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                 onNavigateToHistory = { currentSubScreen = SubScreen.History },
                                 onNavigateToDownloads = { currentSubScreen = SubScreen.Downloads },
                                 onNavigateToLikedSongs = { currentSubScreen = SubScreen.LikedSongs },
+                                onNavigateToLocalMusic = { currentSubScreen = SubScreen.LocalMusic },
                                 onCreatePlaylist = { showCreatePlaylistDialog = true }
                             )
                             AppDestination.PROFILE -> ProfileScreen(
@@ -418,6 +467,54 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             onNavigateBack = { currentSubScreen = SubScreen.None }
                         )
                     }
+                    is SubScreen.LocalMusic -> {
+                        BackHandler { currentSubScreen = SubScreen.None }
+                        val downloadedTracks by viewModel.downloadedTracks.collectAsState()
+                        com.seitharol.ui.local.LocalMusicScreen(
+                            appDownloadedTracks = downloadedTracks.map {
+                                com.seitharol.domain.model.NormalizedTrack(
+                                    source = com.seitharol.domain.model.SourceType.LOCAL,
+                                    sourceId = it.id,
+                                    title = it.title,
+                                    artists = listOf(it.artist),
+                                    album = it.album,
+                                    durationMs = it.durationMs,
+                                    artUrl = it.artUrl,
+                                    localPath = it.localPath
+                                )
+                            },
+                            availablePlaylists = playlists.map { it.id to it.title },
+                            onPlayLocalTrack = { candidate ->
+                                val localTrack = Track(
+                                    id = "local_${candidate.videoId.hashCode()}",
+                                    title = candidate.title,
+                                    artist = candidate.artist,
+                                    album = candidate.albumName ?: "Local Storage",
+                                    durationMs = candidate.durationSeconds * 1000L,
+                                    artUrl = candidate.thumbnailUrl,
+                                    genre = "Local Audio",
+                                    isDownloaded = true,
+                                    localPath = candidate.videoId
+                                )
+                                viewModel.playTrack(localTrack)
+                            },
+                            onAddLocalTrackToPlaylist = { plId, candidate ->
+                                val localTrack = Track(
+                                    id = "local_${candidate.videoId.hashCode()}",
+                                    title = candidate.title,
+                                    artist = candidate.artist,
+                                    album = candidate.albumName ?: "Local Storage",
+                                    durationMs = candidate.durationSeconds * 1000L,
+                                    artUrl = candidate.thumbnailUrl,
+                                    genre = "Local Audio",
+                                    isDownloaded = true,
+                                    localPath = candidate.videoId
+                                )
+                                viewModel.addTrackToPlaylist(plId, localTrack)
+                            },
+                            onBack = { currentSubScreen = SubScreen.None }
+                        )
+                    }
                     is SubScreen.Discover -> {
                         BackHandler { currentSubScreen = SubScreen.None }
                         val feedTracks by viewModel.discoverTracks.collectAsState()
@@ -498,6 +595,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                     onNavigateToHistory = { currentSubScreen = SubScreen.History },
                                     onNavigateToDownloads = { currentSubScreen = SubScreen.Downloads },
                                     onNavigateToLikedSongs = { currentSubScreen = SubScreen.LikedSongs },
+                                    onNavigateToLocalMusic = { currentSubScreen = SubScreen.LocalMusic },
                                     onCreatePlaylist = { showCreatePlaylistDialog = true }
                                 )
                             }

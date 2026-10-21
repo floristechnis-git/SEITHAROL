@@ -1349,6 +1349,14 @@ fun PlayerAudioAdjustmentSheet(
 
             Spacer(modifier = Modifier.height(12.dp))
 
+            val switchColors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = SeitharolAccent,
+                uncheckedThumbColor = Color(0xFFECECEC),
+                uncheckedTrackColor = Color(0xFF383838),
+                uncheckedBorderColor = Color(0xFF666666)
+            )
+
             // Equalizer Master Switch
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1358,7 +1366,8 @@ fun PlayerAudioAdjustmentSheet(
                 Text("5-Band Studio Equalizer", fontWeight = FontWeight.SemiBold)
                 Switch(
                     checked = state.eqEnabled,
-                    onCheckedChange = { settingsManager.setEqEnabled(it) }
+                    onCheckedChange = { settingsManager.setEqEnabled(it) },
+                    colors = switchColors
                 )
             }
 
@@ -1392,7 +1401,8 @@ fun PlayerAudioAdjustmentSheet(
                 Text("Normalize Volume", fontWeight = FontWeight.Medium)
                 Switch(
                     checked = state.audioNormalization,
-                    onCheckedChange = { settingsManager.setAudioNormalization(it) }
+                    onCheckedChange = { settingsManager.setAudioNormalization(it) },
+                    colors = switchColors
                 )
             }
             Row(
@@ -1403,7 +1413,8 @@ fun PlayerAudioAdjustmentSheet(
                 Text("Gapless Playback", fontWeight = FontWeight.Medium)
                 Switch(
                     checked = state.gaplessPlayback,
-                    onCheckedChange = { settingsManager.setGaplessPlayback(it) }
+                    onCheckedChange = { settingsManager.setGaplessPlayback(it) },
+                    colors = switchColors
                 )
             }
             Spacer(modifier = Modifier.height(16.dp))

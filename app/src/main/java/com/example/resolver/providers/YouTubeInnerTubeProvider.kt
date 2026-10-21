@@ -227,20 +227,30 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
 
     override suspend fun resolveStream(sourceId: String, preferredKbps: Int): ResolvedStream =
         withContext(Dispatchers.IO) {
+            val quality = when {
+                preferredKbps <= 96 -> com.seitharol.data.resolver.AudioQuality.LOW
+                preferredKbps in 97..192 -> com.seitharol.data.resolver.AudioQuality.NORMAL
+                else -> com.seitharol.data.resolver.AudioQuality.HIGH
+            }
             if (isValidYoutubeVideoId(sourceId)) {
-                val directResult = resolveExactYoutubeStreamById(sourceId)
+                val directResult = resolveExactYoutubeStreamById(sourceId, quality)
                 if (directResult.isSuccess) {
                     val url = directResult.getOrThrow()
                     val now = System.currentTimeMillis()
+                    val bitrateLabel = when (quality) {
+                        com.seitharol.data.resolver.AudioQuality.LOW -> "96 kbps (Data Saver)"
+                        com.seitharol.data.resolver.AudioQuality.NORMAL -> "160 kbps"
+                        com.seitharol.data.resolver.AudioQuality.HIGH -> "320 kbps (High)"
+                    }
                     return@withContext ResolvedStream(
                         videoId = sourceId,
                         streamUrl = url,
-                        itag = 251,
-                        codec = if (url.contains("opus")) "Opus 160k" else "AAC 128k",
-                        bitrate = "160 kbps",
+                        itag = if (quality == com.seitharol.data.resolver.AudioQuality.LOW) 250 else 251,
+                        codec = if (url.contains("opus")) "Opus" else "AAC",
+                        bitrate = bitrateLabel,
                         expiresAtMs = now + (6 * 3600 * 1000L),
                         isLocal = false,
-                        resolvedBy = "YouTube InnerTube Direct (OuterTune client rotation)",
+                        resolvedBy = "YouTube InnerTube Direct",
                         latencyMs = 15
                     )
                 }

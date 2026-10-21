@@ -11,6 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.seitharol.data.preferences.AppSettingsManager
@@ -148,7 +149,14 @@ fun GeneralSettingsScreen(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Switch(
                                     checked = state.eqEnabled,
-                                    onCheckedChange = { settingsManager.setEqEnabled(it) }
+                                    onCheckedChange = { settingsManager.setEqEnabled(it) },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color.White,
+                                        checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                        uncheckedThumbColor = Color(0xFFECECEC),
+                                        uncheckedTrackColor = Color(0xFF383838),
+                                        uncheckedBorderColor = Color(0xFF666666)
+                                    )
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
@@ -349,7 +357,17 @@ private fun SettingsToggleRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                uncheckedThumbColor = Color(0xFFECECEC),
+                uncheckedTrackColor = Color(0xFF383838),
+                uncheckedBorderColor = Color(0xFF666666)
+            )
+        )
     }
 }
 

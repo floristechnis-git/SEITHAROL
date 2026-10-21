@@ -251,7 +251,7 @@ class AudioPlayerManager(
                                     if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
                                     try {
                                         resolverEngine.clearCache()
-                                        val freshStream = resolverEngine.resolveTrack(current.copy(audioUrl = ""))
+                                        val freshStream = resolverEngine.resolveTrack(current.copy(audioUrl = ""), getPreferredAudioQuality())
                                         if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
                                         _state.value = _state.value.copy(activeStream = freshStream)
                                         setupAndPlaySource(freshStream.streamUrl, current)
@@ -371,7 +371,7 @@ class AudioPlayerManager(
                 coroutineScope.launch(Dispatchers.IO) {
                     try {
                         Log.d(TAG, "Prefetching stream for next track: ${nextTrack.title} (${nextTrack.id})")
-                        resolverEngine.resolveTrack(nextTrack)
+                        resolverEngine.resolveTrack(nextTrack, getPreferredAudioQuality())
                     } catch (e: Exception) {
                         Log.w(TAG, "Prefetch failed for ${nextTrack.id}: ${e.message}")
                     }
@@ -642,8 +642,9 @@ class AudioPlayerManager(
 
                 if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
 
-                // Resolve Stream using ResolverEngine
-                val stream = resolverEngine.resolveTrack(safeTrack)
+                // Resolve Stream using ResolverEngine honoring user's streaming audio quality setting
+                val preferredQuality = getPreferredAudioQuality()
+                val stream = resolverEngine.resolveTrack(safeTrack, preferredQuality)
 
                 if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
 
@@ -1061,6 +1062,12 @@ class AudioPlayerManager(
         val secondary = parts.getOrNull(1)?.trim()
             ?.takeIf { it.isNotEmpty() && !it.equals(primary, ignoreCase = true) }
         return primary to secondary
+    }
+
+    private fun getPreferredAudioQuality(): com.seitharol.data.resolver.AudioQuality {
+        return runCatching {
+            com.seitharol.data.preferences.AppSettingsManager.getInstance(context).state.value.streamingQuality
+        }.getOrDefault(com.seitharol.data.resolver.AudioQuality.NORMAL)
     }
 
     fun release() {

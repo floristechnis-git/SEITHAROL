@@ -483,7 +483,7 @@ fun ProfileScreen(
                     val features = listOf(
                         Pair("YouTube InnerTube On-Device", "Direct on-device search & unciphered stream extraction (ANDROID_VR / IOS). Zero python server required."),
                         Pair("JioSaavn Native DES Decryptor", "On-device DES/ECB/PKCS5Padding hardware decryption with 320kbps upgrade."),
-                        Pair("Spotify Metadata Importer", "Cross-source TrackMatcher matching 30s previews and canonical audio releases."),
+                        Pair("Spotify Metadata Importer", "Cross-source TrackMatcher matching catalog tracks and canonical audio releases."),
                         Pair("ExoPlayer Custom OkHttp Headers", "Full HTTP User-Agent and Range support eliminating 403 Forbidden errors."),
                         Pair("High-Fi Offline Storage", "Real direct MediaStore byte streaming with verified binary audio containers (>10KB).")
                     )

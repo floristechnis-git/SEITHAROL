@@ -109,9 +109,13 @@ class ResolverEngine {
         streamCache.clear()
     }
 
-    suspend fun resolveTrack(track: Track): ResolvedStream {
+    suspend fun resolveTrack(
+        track: Track,
+        preferredQuality: com.seitharol.data.resolver.AudioQuality = com.seitharol.data.resolver.AudioQuality.NORMAL
+    ): ResolvedStream {
         val now = System.currentTimeMillis()
         val rawId = track.id.trim()
+        val cacheKey = "${rawId}_${preferredQuality.name}"
 
         // 1. Verified Local File Priority
         if (track.isDownloaded && !track.localPath.isNullOrBlank()) {
@@ -152,9 +156,9 @@ class ResolverEngine {
             }
         }
 
-        // 2. Lookup in In-Memory Stream Cache
+        // 2. Lookup in In-Memory Stream Cache (quality-aware)
         if (rawId.isNotBlank()) {
-            val cached = streamCache[rawId]
+            val cached = streamCache[cacheKey]
             if (cached != null && now < cached.expiresAtMs - 120000L) {
                 return cached
             }
@@ -223,6 +227,8 @@ class ResolverEngine {
         val failures = mutableListOf<String>()
         var resolvedStream: ResolvedStream? = null
 
+        val targetKbps = preferredQuality.maxBitrateKbps
+
         // 5. Spotify TrackMatcher
         if (isSpotify && (effectiveTitle.isNotBlank() || effectiveArtist.isNotBlank())) {
             try {
@@ -236,7 +242,7 @@ class ResolverEngine {
                     artUrl = track.artUrl,
                     isPlayableNatively = false
                 )
-                resolvedStream = trackMatcher.matchAndResolve(normalized)
+                resolvedStream = trackMatcher.matchAndResolve(normalized, preferredKbps = targetKbps)
             } catch (e: Exception) {
                 failures.add("SpotifyMatcher: ${e.message}")
                 Log.w(TAG, "Spotify TrackMatcher failed for $rawId: ${e.message}")
@@ -246,7 +252,7 @@ class ResolverEngine {
         // 6. Direct JioSaavn ID resolution
         if (resolvedStream == null && isSaavn && rawId.isNotBlank() && !isSpotify && !isYouTubeId) {
             try {
-                resolvedStream = jioSaavnProvider.resolveStream(rawId, preferredKbps = 160)
+                resolvedStream = jioSaavnProvider.resolveStream(rawId, preferredKbps = targetKbps)
             } catch (e: Exception) {
                 failures.add("JioSaavnDirect: ${e.message}")
                 Log.w(TAG, "JioSaavn resolution failed for $rawId: ${e.message}")
@@ -256,7 +262,7 @@ class ResolverEngine {
         // 7. Primary: Direct YouTube InnerTube resolution (skip Spotify 22-char IDs and numeric Saavn IDs)
         if (resolvedStream == null && isYouTubeId) {
             try {
-                resolvedStream = youtubeInnerTubeProvider.resolveStream(rawId, preferredKbps = 160)
+                resolvedStream = youtubeInnerTubeProvider.resolveStream(rawId, preferredKbps = targetKbps)
             } catch (e: Exception) {
                 failures.add("InnerTubeDirect: ${e.message}")
                 Log.w(TAG, "On-device InnerTube direct resolve failed for $rawId: ${e.message}")
@@ -295,7 +301,7 @@ class ResolverEngine {
                 for (candidate in ranked) {
                     if (candidate.sourceId.isBlank()) continue
                     try {
-                        resolvedStream = youtubeInnerTubeProvider.resolveStream(candidate.sourceId, preferredKbps = 160)
+                        resolvedStream = youtubeInnerTubeProvider.resolveStream(candidate.sourceId, preferredKbps = targetKbps)
                         if (resolvedStream != null) break
                     } catch (_: Exception) {}
                 }
@@ -322,7 +328,7 @@ class ResolverEngine {
                 val rankedSaavn = trackMatcher.rankCandidates(targetTrack, results)
                 for (candidate in (if (rankedSaavn.isNotEmpty()) rankedSaavn else results)) {
                     try {
-                        resolvedStream = jioSaavnProvider.resolveStream(candidate.sourceId, preferredKbps = 160)
+                        resolvedStream = jioSaavnProvider.resolveStream(candidate.sourceId, preferredKbps = targetKbps)
                         if (resolvedStream != null) break
                     } catch (_: Exception) {}
                 }
@@ -346,7 +352,7 @@ class ResolverEngine {
                         streamUrl = directUrl,
                         itag = track.itag,
                         codec = if (directUrl.contains("opus") || directUrl.contains("webm")) "Opus" else "AAC",
-                        bitrate = "160 kbps",
+                        bitrate = "${targetKbps} kbps",
                         expiresAtMs = now + (6 * 3600 * 1000L),
                         isLocal = false,
                         resolvedBy = "YouTube Music InnerTube Direct",
@@ -365,7 +371,12 @@ class ResolverEngine {
             for (federated in listOf(pipedResolver, invidiousResolver)) {
                 try {
                     val res = federated.resolve(req)
-                    val fmt = res.formats.firstOrNull { it.url.isNotBlank() }
+                    val candidateFormats = res.formats.filter { it.url.isNotBlank() }
+                    val fmt = if (preferredQuality == com.seitharol.data.resolver.AudioQuality.LOW) {
+                        candidateFormats.minByOrNull { it.bitrate } ?: candidateFormats.firstOrNull()
+                    } else {
+                        candidateFormats.firstOrNull()
+                    }
                     if (fmt != null) {
                         resolvedStream = ResolvedStream(
                             videoId = rawId,
@@ -434,7 +445,7 @@ class ResolverEngine {
 
         _circuitBreakerState.value = CircuitBreakerState.CLOSED
         if (rawId.isNotBlank()) {
-            streamCache[rawId] = finalStream
+            streamCache[cacheKey] = finalStream
         }
         return finalStream
     }

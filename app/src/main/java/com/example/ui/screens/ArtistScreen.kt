@@ -298,7 +298,10 @@ fun ArtistScreen(
                                                 .clip(RoundedCornerShape(14.dp))
                                                 .background(MaterialTheme.colorScheme.surfaceVariant)
                                         )
-                                        val tag = if (release.type.equals("SINGLE", true) || release.subtitle.contains("Single", true)) "SINGLE" else "ALBUM"
+                                        val tag = if (release.type.equals("SINGLE", true) || 
+                                                      release.subtitle.contains("Single", true) ||
+                                                      release.subtitle.contains("1 song", true) ||
+                                                      release.subtitle.contains("1 track", true)) "SINGLE" else "ALBUM"
                                         Surface(
                                             color = Color(0xFF1B1C1C).copy(alpha = 0.85f),
                                             shape = RoundedCornerShape(6.dp),

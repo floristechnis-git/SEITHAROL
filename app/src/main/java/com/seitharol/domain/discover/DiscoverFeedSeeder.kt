@@ -81,8 +81,7 @@ class DiscoverFeedSeeder(
             }
             .map { track ->
                 track.copy(
-                    source = com.seitharol.domain.model.TrackSource.SPOTIFY,
-                    isPlayableNatively = false,
+                    isPlayableNatively = true,
                     isLiked = track.sourceId in likedIds
                 )
             }

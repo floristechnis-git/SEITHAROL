@@ -88,25 +88,31 @@ fun SearchScreen(
 
     val allTracksList by viewModel.allTracks.collectAsState()
     val historyTracks by viewModel.activeHistory.collectAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val appPreferences = remember { com.example.data.AppPreferences(context) }
+    val recentSearches by appPreferences.recentSearches.collectAsState()
 
-    // Verified Artists Only (filter out unverified remix/loop uploaders)
+    // Verified Artists Only (filter out unverified remix/loop uploaders and local storage artifacts)
     val allArtists = remember(allTracksList, historyTracks, searchResults) {
         val bannedModifiers = listOf("remix", "loop", "extended", "1 hour", "slowed", "reverb", "cover", "8d", "nightcore", "mashup", "bass boosted")
+        val bannedArtists = listOf("local artist", "device storage", "downloaded in seitharol", "<unknown>", "unknown artist", "unknown", "various artists")
         (searchResults + historyTracks + allTracksList)
-            .filter { track ->
-                track.artist.isNotBlank() &&
-                track.artist != "Unknown Artist" &&
-                bannedModifiers.none { mod -> track.artist.contains(mod, ignoreCase = true) }
+            .map { it.artist.trim() }
+            .filter { artist ->
+                artist.isNotBlank() &&
+                bannedArtists.none { banned -> artist.equals(banned, ignoreCase = true) } &&
+                bannedModifiers.none { mod -> artist.contains(mod, ignoreCase = true) }
             }
-            .distinctBy { it.artist.lowercase() }
-            .map { Pair(it.artist, it.artUrl) }
+            .distinctBy { it.lowercase() }
     }
 
     val filteredTracks = searchResults
 
+    // Strictly limit matching artists to at most 5
     val filteredArtists = remember(query, allArtists) {
-        if (query.isBlank()) allArtists
-        else allArtists.filter { it.first.contains(query, ignoreCase = true) }
+        val matches = if (query.isBlank()) allArtists
+        else allArtists.filter { it.contains(query, ignoreCase = true) }
+        matches.take(5)
     }
 
     val filteredPlaylists = remember(query, playlists) {
@@ -194,6 +200,9 @@ fun SearchScreen(
                         ),
                         keyboardActions = androidx.compose.foundation.text.KeyboardActions(
                             onSearch = {
+                                if (query.isNotBlank()) {
+                                    appPreferences.addRecentSearch(query.trim())
+                                }
                                 focusManager.clearFocus()
                                 keyboardController?.hide()
                                 viewModel.setQueryImmediately(query)
@@ -303,6 +312,92 @@ fun SearchScreen(
             }
         }
 
+        // Top 4 Recent Searches (Shown on top of search screen when idle or present)
+        if (recentSearches.isNotEmpty() && query.isBlank()) {
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.History,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Recent Searches",
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 15.sp,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                    }
+                    Text(
+                        text = "Clear all",
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 12.sp,
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .clickable { appPreferences.clearRecentSearches() }
+                            .padding(4.dp)
+                    )
+                }
+
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(bottom = 12.dp)
+                ) {
+                    items(recentSearches.take(4)) { recentQuery ->
+                        Surface(
+                            modifier = Modifier
+                                .height(34.dp)
+                                .clip(RoundedCornerShape(17.dp))
+                                .clickable {
+                                    viewModel.setQueryImmediately(recentQuery)
+                                    appPreferences.addRecentSearch(recentQuery)
+                                },
+                            shape = RoundedCornerShape(17.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .padding(start = 12.dp, end = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = recentQuery,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 13.sp,
+                                    fontFamily = OutfitFontFamily
+                                )
+                                IconButton(
+                                    onClick = { appPreferences.removeRecentSearch(recentQuery) },
+                                    modifier = Modifier.size(20.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Remove search",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Quick Search Chips (when query is empty)
         if (query.isBlank()) {
             item {
@@ -311,7 +406,7 @@ fun SearchScreen(
                     fontFamily = SyneFontFamily,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 15.sp,
-                    color = SeitharolDark,
+                    color = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
                 )
 
@@ -325,9 +420,12 @@ fun SearchScreen(
                             modifier = Modifier
                                 .height(34.dp)
                                 .clip(RoundedCornerShape(17.dp))
-                                .clickable { viewModel.setQueryImmediately(quickQuery) },
+                                .clickable { 
+                                    viewModel.setQueryImmediately(quickQuery)
+                                    appPreferences.addRecentSearch(quickQuery)
+                                },
                             shape = RoundedCornerShape(17.dp),
-                            color = SeitharolWhite
+                            color = MaterialTheme.colorScheme.surfaceVariant
                         ) {
                             Row(
                                 modifier = Modifier
@@ -339,12 +437,12 @@ fun SearchScreen(
                                 Icon(
                                     imageVector = Icons.Default.TrendingUp,
                                     contentDescription = null,
-                                    tint = SeitharolTextSecondary,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(14.dp)
                                 )
                                 Text(
                                     text = quickQuery,
-                                    color = SeitharolDark,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 13.sp,
                                     fontFamily = OutfitFontFamily
                                 )
@@ -368,9 +466,12 @@ fun SearchScreen(
                             modifier = Modifier
                                 .height(32.dp)
                                 .clip(RoundedCornerShape(16.dp))
-                                .clickable { viewModel.setQueryImmediately(suggestion) },
+                                .clickable { 
+                                    viewModel.setQueryImmediately(suggestion)
+                                    appPreferences.addRecentSearch(suggestion)
+                                },
                             shape = RoundedCornerShape(16.dp),
-                            color = SeitharolCardElevated
+                            color = MaterialTheme.colorScheme.surfaceVariant
                         ) {
                             Box(
                                 contentAlignment = Alignment.Center,
@@ -378,7 +479,7 @@ fun SearchScreen(
                             ) {
                                 Text(
                                     text = suggestion,
-                                    color = SeitharolDark,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 12.sp,
                                     fontFamily = OutfitFontFamily
                                 )
@@ -430,7 +531,7 @@ fun SearchScreen(
             )
         }
 
-        // Matching Artists (shown if TOP, ARTISTS, or query matches)
+        // Matching Artists (shown if TOP, ARTISTS, or query matches - strictly max 5)
         if (selectedTab == SearchTab.TOP || selectedTab == SearchTab.ARTISTS) {
             if (filteredArtists.isNotEmpty()) {
                 item {
@@ -439,12 +540,12 @@ fun SearchScreen(
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 16.sp,
-                        color = SeitharolDark,
+                        color = MaterialTheme.colorScheme.onBackground,
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
                     )
                 }
 
-                items(filteredArtists) { (name, img) ->
+                items(filteredArtists) { name ->
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -459,27 +560,17 @@ fun SearchScreen(
                                 .padding(horizontal = 8.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFFE0E0E0)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                AsyncImage(
-                                    model = img,
-                                    contentDescription = name,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            }
+                            SearchArtistAvatar(
+                                name = name,
+                                modifier = Modifier.size(46.dp)
+                            )
 
                             Spacer(modifier = Modifier.width(12.dp))
 
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = name,
-                                    color = SeitharolDark,
+                                    color = MaterialTheme.colorScheme.onBackground,
                                     fontSize = 15.sp,
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Medium,
@@ -487,8 +578,8 @@ fun SearchScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "Artist",
-                                    color = SeitharolTextSecondary,
+                                    text = "Verified Artist",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 12.sp,
                                     fontFamily = OutfitFontFamily
                                 )
@@ -497,7 +588,7 @@ fun SearchScreen(
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
                                 contentDescription = "View Artist",
-                                tint = SeitharolDark,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(16.dp)
                             )
                         }
@@ -690,5 +781,63 @@ fun SearchScreen(
                 showCreatePlaylistDialog = false
             }
         )
+    }
+}
+
+@Composable
+fun SearchArtistAvatar(
+    name: String,
+    modifier: Modifier = Modifier
+) {
+    var avatarUrl by remember(name) {
+        mutableStateOf(com.example.ui.components.ArtistAvatarCache.get(name).orEmpty())
+    }
+
+    LaunchedEffect(name) {
+        if (avatarUrl.isBlank() && name.isNotBlank()) {
+            val cached = com.example.ui.components.ArtistAvatarCache.get(name)
+            if (!cached.isNullOrBlank()) {
+                avatarUrl = cached
+            } else {
+                runCatching {
+                    val (_, avatar) = com.seitharol.data.resolver.InnerTubeStreamExtractor.resolveOfficialArtistBrowseId(name)
+                    if (avatar.isNotBlank()) {
+                        com.example.ui.components.ArtistAvatarCache.put(name, avatar)
+                        avatarUrl = avatar
+                    }
+                }
+            }
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(
+                androidx.compose.ui.graphics.Brush.linearGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.primaryContainer,
+                        MaterialTheme.colorScheme.surfaceVariant
+                    )
+                )
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        if (avatarUrl.isNotBlank()) {
+            AsyncImage(
+                model = avatarUrl,
+                contentDescription = name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            val initial = name.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "A"
+            Text(
+                text = initial,
+                color = MaterialTheme.colorScheme.primary,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }

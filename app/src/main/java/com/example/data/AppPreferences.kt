@@ -21,7 +21,8 @@ data class UserSettings(
     val eqBandsDb: List<Float> = listOf(0f, 0f, 0f, 0f, 0f),
     val eqEnabled: Boolean = false,
     val gaplessPlayback: Boolean = true,
-    val audioNormalization: Boolean = false
+    val audioNormalization: Boolean = false,
+    val stopImmediatelyOnNewTrack: Boolean = true
 )
 
 class AppPreferences(private val context: Context) {
@@ -30,6 +31,9 @@ class AppPreferences(private val context: Context) {
 
     private val _settings = MutableStateFlow(loadSettings())
     val settings: StateFlow<UserSettings> = _settings.asStateFlow()
+
+    private val _recentSearches = MutableStateFlow(loadRecentSearches())
+    val recentSearches: StateFlow<List<String>> = _recentSearches.asStateFlow()
 
     private fun loadSettings(): UserSettings {
         val bands = (0 until 5).map { idx ->
@@ -50,8 +54,43 @@ class AppPreferences(private val context: Context) {
             eqBandsDb = bands,
             eqEnabled = prefs.getBoolean("eq_enabled", false),
             gaplessPlayback = prefs.getBoolean("gapless_playback", true),
-            audioNormalization = prefs.getBoolean("audio_normalization", false)
+            audioNormalization = prefs.getBoolean("audio_normalization", false),
+            stopImmediatelyOnNewTrack = prefs.getBoolean("stop_immediately_on_new_track", true)
         )
+    }
+
+    fun setStopImmediatelyOnNewTrack(enabled: Boolean) {
+        prefs.edit().putBoolean("stop_immediately_on_new_track", enabled).apply()
+        _settings.value = loadSettings()
+    }
+
+    private fun loadRecentSearches(): List<String> {
+        val raw = prefs.getString("recent_searches_list", "") ?: ""
+        if (raw.isBlank()) return emptyList()
+        return raw.split("|||").filter { it.isNotBlank() }.take(4)
+    }
+
+    fun addRecentSearch(query: String) {
+        val clean = query.trim()
+        if (clean.isBlank()) return
+        val current = loadRecentSearches().toMutableList()
+        current.removeAll { it.equals(clean, ignoreCase = true) }
+        current.add(0, clean)
+        val updated = current.take(4)
+        prefs.edit().putString("recent_searches_list", updated.joinToString("|||")).apply()
+        _recentSearches.value = updated
+    }
+
+    fun removeRecentSearch(query: String) {
+        val current = loadRecentSearches().toMutableList()
+        current.removeAll { it.equals(query.trim(), ignoreCase = true) }
+        prefs.edit().putString("recent_searches_list", current.joinToString("|||")).apply()
+        _recentSearches.value = current
+    }
+
+    fun clearRecentSearches() {
+        prefs.edit().remove("recent_searches_list").apply()
+        _recentSearches.value = emptyList()
     }
 
     fun setThemeMode(mode: String) {

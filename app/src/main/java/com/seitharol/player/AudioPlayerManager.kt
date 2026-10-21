@@ -38,6 +38,19 @@ class AudioPlayerManager(
     private val _isPreviewPlaying = MutableStateFlow(false)
     val isPreviewPlaying: StateFlow<Boolean> = _isPreviewPlaying.asStateFlow()
 
+    init {
+        exoPlayer.addListener(object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                _isPreviewPlaying.value = isPlaying
+            }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) {
+                    _isPreviewPlaying.value = false
+                }
+            }
+        })
+    }
+
     fun playPreview(track: NormalizedTrack) {
         if (_activePreviewTrackId.value == track.sourceId && exoPlayer.isPlaying) return
 
@@ -50,12 +63,6 @@ class AudioPlayerManager(
             val mediaItem = MediaItem.Builder()
                 .setMediaId("preview_${track.sourceId}")
                 .setUri(Uri.parse(rawPreview))
-                .setClippingConfiguration(
-                    MediaItem.ClippingConfiguration.Builder()
-                        .setStartPositionMs(0L)
-                        .setEndPositionMs(30_000L)
-                        .build()
-                )
                 .build()
             exoPlayer.setMediaItem(mediaItem)
             exoPlayer.prepare()

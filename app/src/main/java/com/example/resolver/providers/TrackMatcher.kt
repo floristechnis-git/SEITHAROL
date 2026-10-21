@@ -116,7 +116,7 @@ class TrackMatcher(
             .map { candidate ->
                 candidate to scoreCandidate(candidate, normQueryTitle, normQueryArtist, targetQueryLower, targetDurationSec)
             }
-            .filter { it.second > -400 } // Filter out heavily penalized fake remixes
+            .filter { it.second > 0 } // Strictly require a genuine positive match score
             .sortedWith(
                 compareByDescending<Pair<NormalizedTrack, Int>> { it.first.isArtTrack || it.first.artists.any { a -> a.contains("Topic", ignoreCase = true) } }
                     .thenByDescending { it.second }
@@ -140,6 +140,16 @@ class TrackMatcher(
         // 1. Reject shorts / previews (<= 45 seconds)
         if (c.durationMs in 1..45_000L && targetDurationSec > 45) {
             return -1000
+        }
+
+        // HARD GATE: Reject candidate if title does not share words with query title
+        if (normQueryTitle.isNotBlank()) {
+            val titleTokens = normQueryTitle.split(" ").filter { it.length >= 2 }
+            val matchedTitleTokens = titleTokens.count { normCandTitle.contains(it) }
+            val titleMatchRatio = if (titleTokens.isNotEmpty()) matchedTitleTokens.toFloat() / titleTokens.size else 1f
+            if (normCandTitle != normQueryTitle && !normCandTitle.contains(normQueryTitle) && !normQueryTitle.contains(normCandTitle) && titleMatchRatio < 0.5f) {
+                return -1000
+            }
         }
 
         // 2. Prioritize Official Art Tracks (ATV) & "- Topic" Channels (+150, UGC: -150)

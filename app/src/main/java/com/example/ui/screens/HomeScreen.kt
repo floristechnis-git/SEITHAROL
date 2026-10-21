@@ -254,16 +254,25 @@ fun HomeScreen(
     // Dynamic suggested artists strictly personalized from user's listening history and liked songs (strictly max 4)
     val dynamicArtists = remember(activeHistory, likedTracks, trendingHits) {
         val artistScores = mutableMapOf<String, Int>()
+        fun isValidArtist(a: String): Boolean {
+            val lower = a.lowercase().trim()
+            return lower.isNotBlank() &&
+                   lower != "unknown artist" &&
+                   lower != "unknown" &&
+                   lower != "local artist" &&
+                   lower != "device storage" &&
+                   lower != "downloaded in seitharol"
+        }
         // Strictly score based on listening frequency (weight 2) and user likes (weight 3)
         activeHistory.forEach { track ->
             val a = track.artist.trim()
-            if (a.isNotBlank() && !a.equals("Unknown Artist", ignoreCase = true) && !a.equals("Unknown", ignoreCase = true)) {
+            if (isValidArtist(a)) {
                 artistScores[a] = (artistScores[a] ?: 0) + 2
             }
         }
         likedTracks.forEach { track ->
             val a = track.artist.trim()
-            if (a.isNotBlank() && !a.equals("Unknown Artist", ignoreCase = true) && !a.equals("Unknown", ignoreCase = true)) {
+            if (isValidArtist(a)) {
                 artistScores[a] = (artistScores[a] ?: 0) + 3
             }
         }
@@ -279,7 +288,7 @@ fun HomeScreen(
             // Only if brand-new user with zero history and zero likes, show at most 4 trending artists
             trendingHits
                 .map { it.artist.trim() }
-                .filter { it.isNotBlank() && !it.equals("Unknown Artist", ignoreCase = true) && !it.equals("Unknown", ignoreCase = true) }
+                .filter { isValidArtist(it) }
                 .distinct()
                 .take(4)
         }
@@ -555,21 +564,65 @@ fun HomeScreen(
             }
 
             // ────────────────────────────────────────────────────────────
-            // 2. Spotify-Style 2-Column "Speed Dial / Quick Picks" Bento Grid
+            // 2. Spotify-Style 2-Column "Speed Dial / Quick Picks" Bento Grid (All) OR Category Active Header
             // ────────────────────────────────────────────────────────────
-            if (quickDialItems.isNotEmpty()) {
-                item {
-                    QuickDialBentoSection(
-                        items = quickDialItems,
-                        onItemClick = { item ->
-                            if (item.isMix || item.isAlbumOrPlaylist) {
-                                viewModel.playPlaylistOrMix(item.id)
-                            } else {
-                                val track = item.originalTrack ?: item.toTrack()
-                                viewModel.playTrack(track)
+            val isAllMood = selectedMood.equals("All", ignoreCase = true)
+            if (isAllMood) {
+                if (quickDialItems.isNotEmpty()) {
+                    item {
+                        QuickDialBentoSection(
+                            items = quickDialItems,
+                            onItemClick = { item ->
+                                if (item.isMix || item.isAlbumOrPlaylist) {
+                                    viewModel.playPlaylistOrMix(item.id)
+                                } else {
+                                    val track = item.originalTrack ?: item.toTrack()
+                                    viewModel.playTrack(track)
+                                }
                             }
+                        )
+                    }
+                }
+            } else {
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(
+                                text = "$selectedMood Hits",
+                                fontFamily = SyneFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 20.sp,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Text(
+                                text = "Filtered specifically for $selectedMood vibes",
+                                fontFamily = OutfitFontFamily,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
-                    )
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable { viewModel.selectHomeMood("All") }
+                        ) {
+                            Text(
+                                text = "Clear",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
                 }
             }
 
@@ -578,8 +631,12 @@ fun HomeScreen(
             // ────────────────────────────────────────────────────────────
             if (trendingItems.isNotEmpty()) {
                 item {
+                    val shelfTitle = if (isAllMood) "Trending Songs for You" else "$selectedMood Top Songs"
+                    val shelfSubtitle = if (isAllMood) "Swipe for top charts & viral tracks" else "Popular releases under $selectedMood"
                     TrendingSongsHorizontalShelf(
                         tracks = trendingItems,
+                        title = shelfTitle,
+                        subtitle = shelfSubtitle,
                         currentPlayingId = playerState.currentTrack?.id,
                         onTrackClick = { item ->
                             val track = item.originalTrack ?: item.toTrack()

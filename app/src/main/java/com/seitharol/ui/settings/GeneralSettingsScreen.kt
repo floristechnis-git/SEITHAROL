@@ -110,6 +110,16 @@ fun GeneralSettingsScreen(
         item {
             SettingsGroupCard(title = "Playback & Sound Effects") {
                 SettingsToggleRow(
+                    title = "Stop audio immediately on new selection",
+                    subtitle = if (state.stopImmediatelyOnNewTrack)
+                        "Stops currently playing audio immediately when a new song is picked (Default)"
+                    else
+                        "Keeps existing audio playing in background until the new song finishes loading",
+                    checked = state.stopImmediatelyOnNewTrack,
+                    onCheckedChange = { settingsManager.setStopImmediatelyOnNewTrack(it) }
+                )
+                SettingsDivider()
+                SettingsToggleRow(
                     title = "Gapless Playback",
                     subtitle = "Seamless transitions between queued songs",
                     checked = state.gaplessPlayback,

@@ -92,6 +92,8 @@ class AudioPlayerManager(
     private var prefetchedTrackId: String? = null
     private var trackRetryCount = 0
     private var lastFailedTrackId: String? = null
+    private val appPreferences = com.example.data.AppPreferences(context)
+    private var lastUserSeekTimestamp: Long = 0L
 
     val playerInstance: ExoPlayer?
         get() = exoPlayer
@@ -128,8 +130,7 @@ class AudioPlayerManager(
                 .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                 .setDefaultRequestProperties(
                     mapOf(
-                        "Referer" to "https://music.youtube.com/",
-                        "Range" to "bytes=0-"
+                        "Referer" to "https://music.youtube.com/"
                     )
                 )
                 .setAllowCrossProtocolRedirects(true)
@@ -331,7 +332,8 @@ class AudioPlayerManager(
         positionJob = coroutineScope.launch {
             while (isActive) {
                 exoPlayer?.let { player ->
-                    if (player.isPlaying) {
+                    val isPastGracePeriod = (System.currentTimeMillis() - lastUserSeekTimestamp) > 700L
+                    if (player.isPlaying && isPastGracePeriod) {
                         val pos = player.currentPosition.coerceAtLeast(0L)
                         val dur = player.duration
                         val safeDur = if (dur > 0L && dur != C.TIME_UNSET) dur else _state.value.durationMs
@@ -561,6 +563,18 @@ class AudioPlayerManager(
         prefetchedTrackId = null
         loadTrackJob?.cancel()
         retryJob?.cancel()
+
+        val shouldStopImmediately = appPreferences.settings.value.stopImmediatelyOnNewTrack
+        if (shouldStopImmediately) {
+            try {
+                exoPlayer?.pause()
+            } catch (_: Throwable) {}
+            _state.value = _state.value.copy(
+                isPlaying = false,
+                isBuffering = true
+            )
+        }
+
         loadTrackJob = coroutineScope.launch {
             try {
                 val localLyrics = parseLrc(current.lyrics)
@@ -740,6 +754,7 @@ class AudioPlayerManager(
 
     fun seekTo(positionMs: Long) {
         val clamped = positionMs.coerceAtLeast(0L)
+        lastUserSeekTimestamp = System.currentTimeMillis()
         exoPlayer?.seekTo(clamped)
         val activeIdx = _state.value.lyricLines.indexOfLast { it.timestampMs <= clamped + _state.value.lyricOffsetMs }
         _state.value = _state.value.copy(currentPositionMs = clamped, activeLyricIndex = activeIdx)

@@ -63,7 +63,7 @@ import kotlinx.coroutines.launch
 fun SvgChevronIcon(
     isExpanded: Boolean,
     modifier: Modifier = Modifier.size(26.dp),
-    color: Color = Color.White
+    color: Color = MaterialTheme.colorScheme.onBackground
 ) {
     Canvas(modifier = modifier) {
         val w = size.width
@@ -218,16 +218,16 @@ fun PlayerScreen(
                 modifier = Modifier
                     .size(44.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFF282A2A))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
                     .testTag("player_collapse_btn")
             ) {
-                SvgChevronIcon(isExpanded = true, color = Color.White)
+                SvgChevronIcon(isExpanded = true, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     text = "PLAYING FROM SEITHAROL",
-                    color = Color(0xFF9EA1A1),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                     fontSize = 11.sp,
                     fontFamily = OutfitFontFamily,
                     fontWeight = FontWeight.SemiBold,
@@ -235,7 +235,7 @@ fun PlayerScreen(
                 )
                 Text(
                     text = if (track.isDownloaded) "Offline Opus • Direct Audio" else "Online Pure Stream",
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onBackground,
                     fontSize = 12.sp,
                     fontFamily = OutfitFontFamily,
                     fontWeight = FontWeight.Medium
@@ -247,13 +247,13 @@ fun PlayerScreen(
                 modifier = Modifier
                     .size(44.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFF282A2A))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
                     .testTag("player_like_btn")
             ) {
                 Icon(
                     imageVector = if (isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
                     contentDescription = "Like",
-                    tint = if (isLiked) Color(0xFFFF5252) else Color(0xFFE3E4E2),
+                    tint = if (isLiked) Color(0xFFFF5252) else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(22.dp)
                 )
             }
@@ -281,7 +281,7 @@ fun PlayerScreen(
                     // Replaced "Synchronized Lyrics" button text with "Show Artwork"
                     Surface(
                         shape = RoundedCornerShape(16.dp),
-                        color = Color(0xFF282A2A),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
                         modifier = Modifier
                             .clip(RoundedCornerShape(16.dp))
                             .clickable { showLyrics = false }
@@ -294,7 +294,7 @@ fun PlayerScreen(
                             Icon(
                                 imageVector = Icons.Default.Image,
                                 contentDescription = null,
-                                tint = Color(0xFFE3E4E2),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(16.dp)
                             )
                             Text(
@@ -302,7 +302,7 @@ fun PlayerScreen(
                                 fontFamily = SyneFontFamily,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 14.sp,
-                                color = Color(0xFFE3E4E2)
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -310,7 +310,7 @@ fun PlayerScreen(
                     // Fullscreen Expand SVG Maximize Button (opens full-screen Expanded Lyrics)
                     Surface(
                         shape = RoundedCornerShape(16.dp),
-                        color = Color(0xFF282A2A),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
                         modifier = Modifier
                             .clip(RoundedCornerShape(16.dp))
                             .clickable { showExpandedLyrics = true }
@@ -322,7 +322,7 @@ fun PlayerScreen(
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
                         ) {
                             FullscreenExpandSvgIcon(
-                                tint = Color(0xFFE3E4E2),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(15.dp)
                             )
                             Text(
@@ -330,7 +330,7 @@ fun PlayerScreen(
                                 fontFamily = SyneFontFamily,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 14.sp,
-                                color = Color(0xFFE3E4E2)
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -340,7 +340,7 @@ fun PlayerScreen(
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(
                             text = "No lyrics available for this track",
-                            color = Color(0xFF9EA1A1),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontFamily = OutfitFontFamily,
                             fontSize = 15.sp
                         )
@@ -363,7 +363,7 @@ fun PlayerScreen(
                                         contentAlignment = Alignment.CenterStart
                                     ) {
                                         InstrumentalGapMusicNoteIndicator(
-                                            tint = if (isCurrent) Color.White else Color(0xFF555555),
+                                            tint = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                                             modifier = Modifier
                                         )
                                     }
@@ -376,7 +376,7 @@ fun PlayerScreen(
                                     ) {
                                         Text(
                                             text = line.text,
-                                            color = if (isCurrent) Color.White else Color(0xFF757575),
+                                            color = if (isCurrent) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                                             fontSize = if (isCurrent) 20.sp else 16.sp,
                                             fontFamily = OutfitFontFamily,
                                             fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal
@@ -384,7 +384,7 @@ fun PlayerScreen(
                                         if (!line.translation.isNullOrBlank()) {
                                             Text(
                                                 text = line.translation,
-                                                color = if (isCurrent) Color(0xFFB0B0B0) else Color(0xFF505050),
+                                                color = if (isCurrent) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
                                                 fontSize = if (isCurrent) 14.sp else 12.sp,
                                                 fontFamily = OutfitFontFamily,
                                                 fontWeight = FontWeight.Normal,
@@ -405,9 +405,9 @@ fun PlayerScreen(
                                 .background(
                                     Brush.verticalGradient(
                                         listOf(
-                                            Color(0xFF0F0F0F),
-                                            Color(0xFF0F0F0F).copy(alpha = 0.8f),
-                                            Color(0xFF0F0F0F).copy(alpha = 0.25f),
+                                            MaterialTheme.colorScheme.background,
+                                            MaterialTheme.colorScheme.background.copy(alpha = 0.8f),
+                                            MaterialTheme.colorScheme.background.copy(alpha = 0.25f),
                                             Color.Transparent
                                         )
                                     )
@@ -424,9 +424,9 @@ fun PlayerScreen(
                                     Brush.verticalGradient(
                                         listOf(
                                             Color.Transparent,
-                                            Color(0xFF0F0F0F).copy(alpha = 0.25f),
-                                            Color(0xFF0F0F0F).copy(alpha = 0.8f),
-                                            Color(0xFF0F0F0F)
+                                            MaterialTheme.colorScheme.background.copy(alpha = 0.25f),
+                                            MaterialTheme.colorScheme.background.copy(alpha = 0.8f),
+                                            MaterialTheme.colorScheme.background
                                         )
                                     )
                                 )
@@ -464,7 +464,7 @@ fun PlayerScreen(
                         )
                         .clip(RoundedCornerShape(24.dp)),
                     shape = RoundedCornerShape(24.dp),
-                    color = Color(0xFF232526)
+                    color = MaterialTheme.colorScheme.surfaceVariant
                 ) {
                     AsyncImage(
                         model = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
@@ -486,7 +486,7 @@ fun PlayerScreen(
         ) {
             Text(
                 text = track.title,
-                color = Color(0xFFE3E4E2),
+                color = MaterialTheme.colorScheme.onBackground,
                 fontFamily = SyneFontFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 22.sp,
@@ -501,7 +501,7 @@ fun PlayerScreen(
             ) {
                 Text(
                     text = track.artist,
-                    color = Color(0xFF9EA1A1),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = OutfitFontFamily,
                     fontSize = 14.sp,
                     maxLines = 1,
@@ -522,7 +522,7 @@ fun PlayerScreen(
                 if (track.album.isNotBlank() && track.album != track.title && track.album != "Single") {
                     Text(
                         text = "• ${track.album}",
-                        color = Color(0xFF757575),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                         fontFamily = OutfitFontFamily,
                         fontSize = 14.sp,
                         maxLines = 1,
@@ -549,10 +549,10 @@ fun PlayerScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = { showAudioAdjustSheet = true }) {
-                Icon(Icons.Default.Tune, contentDescription = "Equalizer", tint = Color(0xFFE3E4E2))
+                Icon(Icons.Default.Tune, contentDescription = "Equalizer", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             IconButton(onClick = onOpenSleepTimer) {
-                Icon(Icons.Outlined.Timer, contentDescription = "Sleep Timer", tint = Color(0xFFE3E4E2))
+                Icon(Icons.Outlined.Timer, contentDescription = "Sleep Timer", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             // Real Download Button
@@ -579,14 +579,14 @@ fun PlayerScreen(
                                 progress = { downloadProgress },
                                 modifier = Modifier.size(24.dp),
                                 strokeWidth = 2.5.dp,
-                                color = Color.White,
-                                trackColor = Color(0xFF282A2A)
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant
                             )
                             Text(
                                 text = "${(downloadProgress * 100).toInt()}%",
                                 fontSize = 8.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFFE3E4E2),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontFamily = OutfitFontFamily
                             )
                         }
@@ -595,7 +595,7 @@ fun PlayerScreen(
                         Icon(
                             imageVector = Icons.Default.Download,
                             contentDescription = "Download track",
-                            tint = Color(0xFFE3E4E2),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(22.dp)
                         )
                     }
@@ -603,13 +603,13 @@ fun PlayerScreen(
             }
 
             IconButton(onClick = { onShareTrack(track.title) }) {
-                Icon(Icons.Outlined.Share, contentDescription = "Share", tint = Color(0xFFE3E4E2))
+                Icon(Icons.Outlined.Share, contentDescription = "Share", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             IconButton(onClick = { showLyrics = !showLyrics }) {
                 Icon(
                     imageVector = Icons.Outlined.Subtitles,
                     contentDescription = "Lyrics",
-                    tint = if (showLyrics) Color.White else Color(0xFF9EA1A1)
+                    tint = if (showLyrics) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             IconButton(
@@ -623,7 +623,7 @@ fun PlayerScreen(
                 Icon(
                     imageVector = Icons.Default.QueueMusic,
                     contentDescription = "Playback Queue (Up Next)",
-                    tint = if (showQueue) Color.White else Color(0xFFE3E4E2)
+                    tint = if (showQueue) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -650,9 +650,9 @@ fun PlayerScreen(
                     isUserDraggingSlider = false
                 },
                 colors = SliderDefaults.colors(
-                    thumbColor = Color.White,
-                    activeTrackColor = Color.White,
-                    inactiveTrackColor = Color.White.copy(alpha = 0.25f)
+                    thumbColor = MaterialTheme.colorScheme.primary,
+                    activeTrackColor = MaterialTheme.colorScheme.primary,
+                    inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant
                 ),
                 modifier = Modifier.testTag("player_scrubber")
             )
@@ -665,13 +665,13 @@ fun PlayerScreen(
             ) {
                 Text(
                     text = formatMs(displayPosition),
-                    color = Color(0xFF9EA1A1),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 12.sp,
                     fontFamily = OutfitFontFamily
                 )
                 Text(
                     text = formatMs(totalDuration),
-                    color = Color(0xFF9EA1A1),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 12.sp,
                     fontFamily = OutfitFontFamily
                 )
@@ -696,7 +696,7 @@ fun PlayerScreen(
                 Icon(
                     imageVector = Icons.Default.Shuffle,
                     contentDescription = "Shuffle",
-                    tint = if (playerState.isShuffle) Color.White else Color(0xFF888888)
+                    tint = if (playerState.isShuffle) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                 )
             }
 
@@ -708,7 +708,7 @@ fun PlayerScreen(
                 Icon(
                     imageVector = Icons.Default.SkipPrevious,
                     contentDescription = "Previous",
-                    tint = Color(0xFFE3E4E2),
+                    tint = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.size(32.dp)
                 )
             }
@@ -721,21 +721,21 @@ fun PlayerScreen(
                     .clickable { viewModel.togglePlayPause() }
                     .testTag("player_main_play_btn"),
                 shape = CircleShape,
-                color = Color(0xFFE3E4E2),
+                color = MaterialTheme.colorScheme.primary,
                 shadowElevation = 8.dp
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     if (playerState.isBuffering) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(28.dp),
-                            color = Color(0xFF1B1C1C),
+                            color = MaterialTheme.colorScheme.onPrimary,
                             strokeWidth = 3.dp
                         )
                     } else {
                         Icon(
                             imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                             contentDescription = "Play/Pause",
-                            tint = Color(0xFF1B1C1C),
+                            tint = MaterialTheme.colorScheme.onPrimary,
                             modifier = Modifier.size(34.dp)
                         )
                     }
@@ -750,7 +750,7 @@ fun PlayerScreen(
                 Icon(
                     imageVector = Icons.Default.SkipNext,
                     contentDescription = "Next",
-                    tint = Color(0xFFE3E4E2),
+                    tint = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.size(32.dp)
                 )
             }
@@ -767,7 +767,7 @@ fun PlayerScreen(
                 Icon(
                     imageVector = icon,
                     contentDescription = "Repeat",
-                    tint = if (playerState.repeatMode != RepeatMode.OFF) Color.White else Color(0xFF888888)
+                    tint = if (playerState.repeatMode != RepeatMode.OFF) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                 )
             }
         }
@@ -799,7 +799,7 @@ fun PlayerScreen(
                     .clickable { showQueue = true }
                     .testTag("player_upnext_button"),
                 shape = RoundedCornerShape(20.dp),
-                color = Color(0xFF232526),
+                color = MaterialTheme.colorScheme.surfaceVariant,
                 tonalElevation = 2.dp
             ) {
                 Row(
@@ -818,13 +818,13 @@ fun PlayerScreen(
                             modifier = Modifier
                                 .size(36.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFF2E3030)),
+                                .background(MaterialTheme.colorScheme.surface),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.QueueMusic,
                                 contentDescription = "Queue",
-                                tint = Color.White,
+                                tint = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -836,7 +836,7 @@ fun PlayerScreen(
                                     fontSize = 11.sp,
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF9EA1A1),
+                                    color = MaterialTheme.colorScheme.primary,
                                     letterSpacing = 1.sp
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
@@ -844,7 +844,7 @@ fun PlayerScreen(
                                     text = "• ${playerState.queue.size} in queue",
                                     fontSize = 11.sp,
                                     fontFamily = OutfitFontFamily,
-                                    color = Color(0xFF757575)
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                                 )
                             }
                             Text(
@@ -852,7 +852,7 @@ fun PlayerScreen(
                                 fontSize = 13.sp,
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = FontWeight.Medium,
-                                color = Color(0xFFE3E4E2),
+                                color = MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -861,7 +861,7 @@ fun PlayerScreen(
 
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = Color(0xFF282A2A),
+                        color = MaterialTheme.colorScheme.primaryContainer,
                         onClick = { showQueue = true }
                     ) {
                         Row(
@@ -874,12 +874,12 @@ fun PlayerScreen(
                                 fontSize = 12.sp,
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFFE3E4E2)
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
                             Icon(
                                 imageVector = Icons.Default.KeyboardArrowUp,
                                 contentDescription = null,
-                                tint = Color(0xFFE3E4E2),
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
                                 modifier = Modifier.size(16.dp)
                             )
                         }
@@ -968,8 +968,8 @@ fun ExpandedLyricsModal(
         Surface(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFF141414)),
-            color = Color(0xFF141414)
+                .background(MaterialTheme.colorScheme.background),
+            color = MaterialTheme.colorScheme.background
         ) {
             Column(
                 modifier = Modifier
@@ -996,7 +996,7 @@ fun ExpandedLyricsModal(
                             modifier = Modifier
                                 .size(44.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(Color(0xFF282A2A))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
                         ) {
                             AsyncImage(
                                 model = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
@@ -1009,7 +1009,7 @@ fun ExpandedLyricsModal(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = track.title,
-                                color = Color(0xFFE3E4E2),
+                                color = MaterialTheme.colorScheme.onBackground,
                                 fontFamily = SyneFontFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp,
@@ -1018,7 +1018,7 @@ fun ExpandedLyricsModal(
                             )
                             Text(
                                 text = track.artist,
-                                color = Color(0xFF9EA1A1),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontFamily = OutfitFontFamily,
                                 fontSize = 12.sp,
                                 maxLines = 1,
@@ -1030,7 +1030,7 @@ fun ExpandedLyricsModal(
                     // Minimize Button (CloseFullscreen)
                     Surface(
                         shape = RoundedCornerShape(16.dp),
-                        color = Color(0xFF282A2A),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
                         modifier = Modifier
                             .clip(RoundedCornerShape(16.dp))
                             .clickable(onClick = onDismiss)
@@ -1042,7 +1042,7 @@ fun ExpandedLyricsModal(
                             Icon(
                                 imageVector = Icons.Default.CloseFullscreen,
                                 contentDescription = "Minimize Lyrics",
-                                tint = Color.White,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(16.dp)
                             )
                         }
@@ -1062,7 +1062,7 @@ fun ExpandedLyricsModal(
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text(
                                 text = "No lyrics found for this track.",
-                                color = Color(0xFF9EA1A1),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontFamily = OutfitFontFamily,
                                 fontSize = 16.sp
                             )
@@ -1090,7 +1090,7 @@ fun ExpandedLyricsModal(
                                         contentAlignment = Alignment.CenterStart
                                     ) {
                                         InstrumentalGapMusicNoteIndicator(
-                                            tint = if (isCurrent) Color.White else Color(0xFF555555),
+                                            tint = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                                             modifier = Modifier
                                         )
                                     }
@@ -1104,7 +1104,7 @@ fun ExpandedLyricsModal(
                                     ) {
                                         Text(
                                             text = line.text,
-                                            color = if (isCurrent) Color.White else Color(0xFF6B6E6E),
+                                            color = if (isCurrent) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                                             fontSize = if (isCurrent) 24.sp else 18.sp,
                                             fontFamily = SyneFontFamily,
                                             fontWeight = if (isCurrent) FontWeight.ExtraBold else FontWeight.Medium,
@@ -1114,7 +1114,7 @@ fun ExpandedLyricsModal(
                                         if (!line.translation.isNullOrBlank()) {
                                             Text(
                                                 text = line.translation,
-                                                color = if (isCurrent) Color(0xFFB0B0B0) else Color(0xFF454848),
+                                                color = if (isCurrent) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
                                                 fontSize = if (isCurrent) 16.sp else 13.sp,
                                                 fontFamily = OutfitFontFamily,
                                                 fontWeight = FontWeight.Normal,
@@ -1135,9 +1135,9 @@ fun ExpandedLyricsModal(
                                 .background(
                                     Brush.verticalGradient(
                                         listOf(
-                                            Color(0xFF141414),
-                                            Color(0xFF141414).copy(alpha = 0.8f),
-                                            Color(0xFF141414).copy(alpha = 0.25f),
+                                            MaterialTheme.colorScheme.background,
+                                            MaterialTheme.colorScheme.background.copy(alpha = 0.8f),
+                                            MaterialTheme.colorScheme.background.copy(alpha = 0.25f),
                                             Color.Transparent
                                         )
                                     )
@@ -1154,9 +1154,9 @@ fun ExpandedLyricsModal(
                                     Brush.verticalGradient(
                                         listOf(
                                             Color.Transparent,
-                                            Color(0xFF141414).copy(alpha = 0.25f),
-                                            Color(0xFF141414).copy(alpha = 0.8f),
-                                            Color(0xFF141414)
+                                            MaterialTheme.colorScheme.background.copy(alpha = 0.25f),
+                                            MaterialTheme.colorScheme.background.copy(alpha = 0.8f),
+                                            MaterialTheme.colorScheme.background
                                         )
                                     )
                                 )
@@ -1169,18 +1169,9 @@ fun ExpandedLyricsModal(
                 // ────────────────────────────────────────────────────────────
                 Surface(
                     shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-                    color = Color(0xFF1B1D1D),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
                     tonalElevation = 8.dp,
                     shadowElevation = 24.dp,
-                    border = BorderStroke(
-                        width = 1.dp,
-                        brush = Brush.verticalGradient(
-                            listOf(
-                                Color.White.copy(alpha = 0.14f),
-                                Color.White.copy(alpha = 0.02f)
-                            )
-                        )
-                    ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
@@ -1188,14 +1179,6 @@ fun ExpandedLyricsModal(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(
-                                Brush.verticalGradient(
-                                    colors = listOf(
-                                        Color(0xFF222425),
-                                        Color(0xFF151617)
-                                    )
-                                )
-                            )
                             .padding(horizontal = 20.dp, vertical = 14.dp)
                             .navigationBarsPadding()
                     ) {
@@ -1213,9 +1196,9 @@ fun ExpandedLyricsModal(
                                 isUserDraggingSlider = false
                             },
                             colors = SliderDefaults.colors(
-                                thumbColor = Color.White,
-                                activeTrackColor = Color.White,
-                                inactiveTrackColor = Color.White.copy(alpha = 0.25f)
+                                thumbColor = MaterialTheme.colorScheme.primary,
+                                activeTrackColor = MaterialTheme.colorScheme.primary,
+                                inactiveTrackColor = MaterialTheme.colorScheme.surface
                             )
                         )
 
@@ -1227,13 +1210,13 @@ fun ExpandedLyricsModal(
                         ) {
                             Text(
                                 text = formatMs(displayPosition),
-                                color = Color(0xFF9EA1A1),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 12.sp,
                                 fontFamily = OutfitFontFamily
                             )
                             Text(
                                 text = formatMs(totalDuration),
-                                color = Color(0xFF9EA1A1),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 12.sp,
                                 fontFamily = OutfitFontFamily
                             )
@@ -1253,7 +1236,7 @@ fun ExpandedLyricsModal(
                                 Icon(
                                     imageVector = Icons.Default.SkipPrevious,
                                     contentDescription = "Previous",
-                                    tint = Color(0xFFE3E4E2),
+                                    tint = MaterialTheme.colorScheme.onBackground,
                                     modifier = Modifier.size(32.dp)
                                 )
                             }
@@ -1264,20 +1247,20 @@ fun ExpandedLyricsModal(
                                     .clip(CircleShape)
                                     .clickable { viewModel.togglePlayPause() },
                                 shape = CircleShape,
-                                color = Color(0xFFE3E4E2)
+                                color = MaterialTheme.colorScheme.primary
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     if (playerState.isBuffering) {
                                         CircularProgressIndicator(
                                             modifier = Modifier.size(24.dp),
-                                            color = Color(0xFF1B1C1C),
+                                            color = MaterialTheme.colorScheme.onPrimary,
                                             strokeWidth = 2.5.dp
                                         )
                                     } else {
                                         Icon(
                                             imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                             contentDescription = "Play/Pause",
-                                            tint = Color(0xFF1B1C1C),
+                                            tint = MaterialTheme.colorScheme.onPrimary,
                                             modifier = Modifier.size(30.dp)
                                         )
                                     }
@@ -1291,7 +1274,7 @@ fun ExpandedLyricsModal(
                                 Icon(
                                     imageVector = Icons.Default.SkipNext,
                                     contentDescription = "Next",
-                                    tint = Color(0xFFE3E4E2),
+                                    tint = MaterialTheme.colorScheme.onBackground,
                                     modifier = Modifier.size(32.dp)
                                 )
                             }

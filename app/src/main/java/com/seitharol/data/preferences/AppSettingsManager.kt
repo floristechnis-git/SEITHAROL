@@ -29,7 +29,8 @@ data class PersistedSettingsState(
     val eqEnabled: Boolean = false,
     val sleepTimerMinutes: Int = 0,
     val gaplessPlayback: Boolean = true,
-    val audioNormalization: Boolean = false
+    val audioNormalization: Boolean = false,
+    val stopImmediatelyOnNewTrack: Boolean = true
 )
 
 class AppSettingsManager(context: Context) {
@@ -65,8 +66,14 @@ class AppSettingsManager(context: Context) {
             eqEnabled = prefs.getBoolean(KEY_EQ_ENABLED, false),
             sleepTimerMinutes = prefs.getInt(KEY_SLEEP_TIMER, 0),
             gaplessPlayback = prefs.getBoolean(KEY_GAPLESS, true),
-            audioNormalization = prefs.getBoolean(KEY_NORMALIZATION, false)
+            audioNormalization = prefs.getBoolean(KEY_NORMALIZATION, false),
+            stopImmediatelyOnNewTrack = prefs.getBoolean(KEY_STOP_IMMEDIATELY, true)
         )
+    }
+
+    fun setStopImmediatelyOnNewTrack(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_STOP_IMMEDIATELY, enabled).apply()
+        _state.value = _state.value.copy(stopImmediatelyOnNewTrack = enabled)
     }
 
     fun setThemeMode(mode: ThemeMode) {
@@ -137,6 +144,7 @@ class AppSettingsManager(context: Context) {
         private const val KEY_SLEEP_TIMER = "sleep_timer_min"
         private const val KEY_GAPLESS = "gapless_playback"
         private const val KEY_NORMALIZATION = "audio_normalization"
+        private const val KEY_STOP_IMMEDIATELY = "stop_immediately_on_new_track"
 
         @Volatile
         private var INSTANCE: AppSettingsManager? = null

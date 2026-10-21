@@ -469,6 +469,11 @@ object InnerTubeStreamExtractor {
                             ?.optJSONArray("thumbnails")
                     )
 
+                    val isSingle = subtitle.contains("Single", ignoreCase = true) || 
+                                   subtitle.contains("1 song", ignoreCase = true) || 
+                                   subtitle.contains("1 track", ignoreCase = true)
+                    val effectiveType = if (isSingle && type == "ALBUM") "SINGLE" else type
+
                     out.add(
                         YtmCollectionSummary(
                             browseId = browseId,
@@ -476,7 +481,7 @@ object InnerTubeStreamExtractor {
                             title = title,
                             subtitle = subtitle,
                             thumbnailUrl = thumbUrl,
-                            type = type
+                            type = effectiveType
                         )
                     )
                     if (out.size >= limit) return@withContext out
@@ -520,7 +525,13 @@ object InnerTubeStreamExtractor {
         // Resilient fallback if artist lacks a dedicated YTM channel browse page
         val topSongs = searchOfficialYtmSongs(artistName, limit = 15)
         val playlists = searchYtmCollections(artistName, "EgWKAQIoAWoKEAkQChADEAUQBA==", "PLAYLIST", 6)
-        val albums = searchYtmCollections(artistName, "EgWKAQIYAWoKEAkQChADEAUQBA==", "ALBUM", 6)
+        val rawCollections = searchYtmCollections(artistName, "EgWKAQIYAWoKEAkQChADEAUQBA==", "ALBUM", 6)
+        val albums = rawCollections.filterNot { 
+            it.type == "SINGLE" || it.subtitle.contains("Single", true) || it.subtitle.contains("1 song", true) || it.subtitle.contains("1 track", true) 
+        }
+        val singles = rawCollections.filter { 
+            it.type == "SINGLE" || it.subtitle.contains("Single", true) || it.subtitle.contains("1 song", true) || it.subtitle.contains("1 track", true) 
+        }.map { it.copy(type = "SINGLE") }
         val verifiedAvatar = if (isAuthenticArtistAvatar(fallbackAvatar)) fallbackAvatar 
                              else resolveJioSaavnArtistAvatar(artistName)
 
@@ -535,7 +546,7 @@ object InnerTubeStreamExtractor {
             shufflePlaylistId = topSongs.firstOrNull()?.videoId?.let { "RDAMVM$it" },
             topSongs = topSongs,
             albums = albums,
-            singles = emptyList(),
+            singles = singles,
             playlists = playlists,
             similarArtists = emptyList()
         )
@@ -776,7 +787,14 @@ object InnerTubeStreamExtractor {
                             albumsOrSinglesAdd(singles, navBrowseId, watchPlaylistId, itemTitle, itemSubtitle, itemThumb, "SINGLE")
                         }
                         shelfTitle.contains("album") || navBrowseId.startsWith("MPREb_") -> {
-                            albumsOrSinglesAdd(albums, navBrowseId, watchPlaylistId, itemTitle, itemSubtitle, itemThumb, "ALBUM")
+                            val isSingleRelease = itemSubtitle.contains("Single", ignoreCase = true) ||
+                                itemSubtitle.contains("1 song", ignoreCase = true) ||
+                                itemSubtitle.contains("1 track", ignoreCase = true)
+                            if (isSingleRelease) {
+                                albumsOrSinglesAdd(singles, navBrowseId, watchPlaylistId, itemTitle, itemSubtitle, itemThumb, "SINGLE")
+                            } else {
+                                albumsOrSinglesAdd(albums, navBrowseId, watchPlaylistId, itemTitle, itemSubtitle, itemThumb, "ALBUM")
+                            }
                         }
                         else -> {
                             albumsOrSinglesAdd(playlists, navBrowseId, watchPlaylistId, itemTitle, itemSubtitle, itemThumb, "PLAYLIST")
@@ -793,6 +811,14 @@ object InnerTubeStreamExtractor {
             playlists.addAll(searchYtmCollections("$name mix", "EgWKAQIoAWoKEAkQChADEAUQBA==", "PLAYLIST", 5))
         }
 
+        // Cleanly separate any misclassified 1-song releases from albums
+        val cleanedAlbums = albums.filterNot { 
+            it.type == "SINGLE" || it.subtitle.contains("Single", true) || it.subtitle.contains("1 song", true) || it.subtitle.contains("1 track", true) 
+        }.distinctBy { it.browseId }
+        val cleanedSingles = (singles + albums.filter { 
+            it.type == "SINGLE" || it.subtitle.contains("Single", true) || it.subtitle.contains("1 song", true) || it.subtitle.contains("1 track", true) 
+        }).map { it.copy(type = "SINGLE") }.distinctBy { it.browseId }
+
         return YtmArtistPageData(
             browseId = browseId,
             name = name,
@@ -803,8 +829,8 @@ object InnerTubeStreamExtractor {
             radioPlaylistId = radioId ?: topSongs.firstOrNull()?.videoId?.let { "RDAMVM$it" },
             shufflePlaylistId = shuffleId,
             topSongs = CanonicalAudioResolver.deduplicateTracks(topSongs),
-            albums = albums.distinctBy { it.browseId },
-            singles = singles.distinctBy { it.browseId },
+            albums = cleanedAlbums,
+            singles = cleanedSingles,
             playlists = playlists.distinctBy { it.browseId },
             similarArtists = similarArtists.distinctBy { it.browseId }
         )

@@ -124,11 +124,19 @@ class DownloadPreferencesAndService(private val context: Context) {
             val streamUrl = resolveDirectDownloadUrl(track, primaryArtist, provider, preferredQuality)
                 ?: throw IllegalStateException("Could not resolve downloadable stream for ${track.title}")
 
+            val isYt = streamUrl.contains("googlevideo.com") || streamUrl.contains("youtube.com")
             val conn = (URL(streamUrl).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
-                connectTimeout = 15_000
+                connectTimeout = 20_000
                 readTimeout = 60_000
-                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
+                if (isYt) {
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+                    setRequestProperty("Referer", "https://music.youtube.com/")
+                    setRequestProperty("Origin", "https://music.youtube.com")
+                    setRequestProperty("Range", "bytes=0-")
+                } else {
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                }
             }
             if (conn.responseCode !in 200..299) {
                 throw IllegalStateException("Audio server returned HTTP ${conn.responseCode}")

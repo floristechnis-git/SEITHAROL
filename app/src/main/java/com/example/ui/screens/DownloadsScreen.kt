@@ -39,6 +39,9 @@ fun DownloadsScreen(
     val totalBytes by viewModel.totalDownloadedBytes.collectAsState()
     val isOfflineMode by viewModel.isOfflineMode.collectAsState()
     val isRefreshingLibrary by viewModel.isRefreshingLibrary.collectAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val downloadService = remember { com.seitharol.data.download.DownloadPreferencesAndService(context) }
+    val standaloneDownloads by downloadService.completedDownloads.collectAsState()
 
     val totalMb = totalBytes / (1024 * 1024)
     var showQualitySheet by remember { mutableStateOf(false) }
@@ -46,7 +49,7 @@ fun DownloadsScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(SeitharolBg)
+            .background(MaterialTheme.colorScheme.background)
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -167,6 +170,53 @@ fun DownloadsScreen(
             }
         }
 
+        // Standalone Discover / Public Downloads (Distinct card color from cache downloads)
+        if (standaloneDownloads.isNotEmpty()) {
+            item {
+                Spacer(modifier = Modifier.height(20.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Discover & Public Downloads (${standaloneDownloads.size})",
+                        fontFamily = SyneFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = "Standalone files",
+                        fontSize = 12.sp,
+                        fontFamily = OutfitFontFamily,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            items(standaloneDownloads) { track ->
+                StandaloneDownloadItemRow(
+                    track = track,
+                    onClick = {
+                        viewModel.playTrack(
+                            com.example.data.model.Track(
+                                id = track.sourceId,
+                                title = track.title,
+                                artist = track.artists.joinToString(", "),
+                                album = track.album ?: "Single",
+                                durationMs = track.durationMs,
+                                artUrl = track.artUrl,
+                                isDownloaded = true,
+                                localPath = track.localPath
+                            )
+                        )
+                    }
+                )
+            }
+        }
+
         item {
             Spacer(modifier = Modifier.height(20.dp))
             Text(
@@ -174,7 +224,7 @@ fun DownloadsScreen(
                 fontFamily = SyneFontFamily,
                 fontWeight = FontWeight.Medium,
                 fontSize = 16.sp,
-                color = SeitharolDark
+                color = MaterialTheme.colorScheme.onBackground
             )
             Spacer(modifier = Modifier.height(8.dp))
         }
@@ -391,6 +441,93 @@ fun DownloadItemRow(
                     fontFamily = OutfitFontFamily
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun StandaloneDownloadItemRow(
+    track: com.seitharol.domain.model.NormalizedTrack,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick),
+        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.40f)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                AsyncImage(
+                    model = track.artUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = track.title,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontSize = 14.sp,
+                    fontFamily = OutfitFontFamily,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+                Text(
+                    text = track.artists.joinToString(", "),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                    fontFamily = OutfitFontFamily,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(3.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text(
+                            text = "STANDALONE AUDIO",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Public Storage • Offline",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+
+            Icon(
+                imageVector = Icons.Default.PlayCircle,
+                contentDescription = "Play",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(28.dp)
+            )
         }
     }
 }

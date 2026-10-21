@@ -190,18 +190,6 @@ class AudioPlayerManager(
         }
     }
 
-    fun stopPreviewAndClear() {
-        previewResolveJob?.cancel()
-        _isPreviewBuffering.value = false
-        if (_activePreviewTrackId.value != null) {
-            exoPlayer.stop()
-            exoPlayer.clearMediaItems()
-            exoPlayer.repeatMode = Player.REPEAT_MODE_OFF
-            _activePreviewTrackId.value = null
-            _isPreviewPlaying.value = false
-        }
-    }
-
     suspend fun openFullLengthSong(
         track: NormalizedTrack,
         offlineMode: Boolean = false,

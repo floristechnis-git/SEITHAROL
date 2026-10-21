@@ -466,7 +466,7 @@ class ResolverEngine {
             }
         }
 
-        if (resolvedStream == null) {
+        val finalStream = resolvedStream ?: run {
             val failureSummary = failures.joinToString(" | ")
             Log.w(TAG, "Resolution failed for '$effectiveTitle' ($rawId): [$failureSummary]")
             val isNetworkIssue = failures.any { f ->
@@ -480,7 +480,6 @@ class ResolverEngine {
             }
             throw IllegalStateException("Unable to resolve audio stream for '$effectiveTitle'")
         }
-        val finalStream = resolvedStream
 
         _circuitBreakerState.value = CircuitBreakerState.CLOSED
         if (rawId.isNotBlank()) {

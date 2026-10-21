@@ -33,6 +33,7 @@ import com.example.R
 import com.seitharol.data.preferences.AppSettingsManager
 import com.seitharol.domain.model.NormalizedTrack
 import com.seitharol.player.AudioPlayerManager
+import com.seitharol.ui.home.SearchMagnifierSvgIcon
 import com.seitharol.ui.search.BackArrowSvgIcon
 import com.seitharol.ui.search.CloseCrossSvgIcon
 import com.seitharol.ui.search.DownloadSvgIcon

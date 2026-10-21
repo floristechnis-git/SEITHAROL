@@ -176,7 +176,9 @@ object InnerTubeStreamExtractor {
                         audioStreams.add((kbps + opusBoost) to url)
                     }
                 }
-                audioStreams.maxByOrNull { it.first }?.second
+                val withinCap = audioStreams.filter { it.first <= preferredQuality.maxBitrateKbps + 24 }
+                val pool = withinCap.ifEmpty { audioStreams }
+                pool.minByOrNull { kotlin.math.abs(it.first - preferredQuality.maxBitrateKbps) }?.second
             }.getOrNull()
 
             if (!streamUrl.isNullOrBlank()) {

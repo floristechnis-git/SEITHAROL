@@ -170,7 +170,7 @@ fun LibraryScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.padding(bottom = 12.dp)
                 ) {
-                    items(activeHistory.take(12), key = { "hist_top_${it.id}" }) { track ->
+                    items(activeHistory.distinctBy { it.id }.take(12), key = { "hist_top_${it.id}" }) { track ->
                         Column(
                             modifier = Modifier
                                 .width(104.dp)
@@ -363,7 +363,7 @@ fun LibraryScreen(
         }
 
         // 6. User Playlists with Clamped Swipe-to-Delete and Donut/Thumbnail badge
-        items(filteredPlaylists, key = { "pl_${it.id}" }) { pl ->
+        items(filteredPlaylists.distinctBy { it.id }, key = { "pl_${it.id}" }) { pl ->
             ClampedSwipeToDeleteRow(
                 onDelete = { viewModel.deletePlaylist(pl.id) }
             ) {
@@ -599,7 +599,7 @@ fun HistoryScreen(
                     }
                 }
             } else {
-                items(filteredTracks, key = { "hist_sc_${it.id}" }) { track ->
+                items(filteredTracks.distinctBy { it.id }, key = { "hist_sc_${it.id}" }) { track ->
                     ClampedSwipeToDeleteRow(onDelete = { viewModel.deleteTrackFromHistory(track.id) }) {
                         TrackCard(
                             track = track,
@@ -692,7 +692,7 @@ fun DownloadsScreen(
                     }
                 }
             } else {
-                items(filteredTracks, key = { "dl_sc_${it.id}" }) { track ->
+                items(filteredTracks.distinctBy { it.id }, key = { "dl_sc_${it.id}" }) { track ->
                     ClampedSwipeToDeleteRow(onDelete = { viewModel.removeDownload(track.id) }) {
                         TrackCard(
                             track = track,
@@ -785,7 +785,7 @@ fun LikedSongsScreen(
                     }
                 }
             } else {
-                items(filteredTracks, key = { "liked_sc_${it.id}" }) { track ->
+                items(filteredTracks.distinctBy { it.id }, key = { "liked_sc_${it.id}" }) { track ->
                     ClampedSwipeToDeleteRow(onDelete = { viewModel.toggleLike(track) }) {
                         TrackCard(
                             track = track,

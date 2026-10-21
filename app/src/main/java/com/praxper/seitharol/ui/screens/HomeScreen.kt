@@ -317,7 +317,7 @@ fun HomeScreen(
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
                 )
             }
-            items(quickPickSongs, key = { "qp_${it.id}" }) { song ->
+            items(quickPickSongs.distinctBy { it.id }, key = { "qp_${it.id}" }) { song ->
                 SongRowWithDot(song = song, onClick = { onSongClick(song) })
             }
         }
@@ -336,7 +336,7 @@ fun HomeScreen(
                 contentPadding = PaddingValues(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                items(featuredPlaylists, key = { "pl_${it.id}" }) { playlist ->
+                items(featuredPlaylists.distinctBy { it.id }, key = { "pl_${it.id}" }) { playlist ->
                     val playlistThumb = remember(playlist.thumbnailUrl, settings.thumbnailQuality) {
                         ThumbnailUrlOptimizer.optimize(
                             playlist.thumbnailUrl,
@@ -400,7 +400,7 @@ fun HomeScreen(
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
                 )
             }
-            items(moreRecommendations, key = { "more_${it.id}" }) { song ->
+            items(moreRecommendations.distinctBy { it.id }, key = { "more_${it.id}" }) { song ->
                 SongRowWithDot(song = song, onClick = { onSongClick(song) })
             }
         }

@@ -630,6 +630,7 @@ class AudioPlayerManager(
             if (_activePreviewTrackId.value != null) {
                 player.playWhenReady = false
                 player.pause()
+                player.repeatMode = Player.REPEAT_MODE_OFF
                 _isPreviewPlaying.value = false
             }
         }

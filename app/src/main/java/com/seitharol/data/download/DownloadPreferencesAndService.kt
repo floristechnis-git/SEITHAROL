@@ -1,3 +1,4 @@
+// seitharol/data/download/DownloadPreferencesAndService.kt
 package com.seitharol.data.download
 
 import android.content.ContentValues
@@ -7,22 +8,32 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import com.seitharol.data.resolver.AudioQuality
+import com.seitharol.data.preferences.AppSettingsManager
+import com.seitharol.data.resolver.CanonicalAudioResolver
 import com.seitharol.data.resolver.InnerTubeStreamExtractor
 import com.seitharol.data.resolver.StreamResolver
 import com.seitharol.data.resolver.TrackMetadata
 import com.seitharol.domain.model.NormalizedTrack
 import com.seitharol.domain.model.TrackSource
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.coroutines.coroutineContext
 
 enum class DownloadProvider(val id: String, val displayName: String, val subtitle: String) {
     JIOSAAVN("jiosaavn", "JioSaavn Direct", "320kbps Studio AAC / MP4"),
@@ -38,48 +49,55 @@ enum class DownloadFormat(val ext: String, val mimeType: String, val label: Stri
 
 sealed class DownloadTaskState {
     data object Idle : DownloadTaskState()
-    data class Downloading(val trackId: String, val progressPercent: Int, val provider: DownloadProvider) : DownloadTaskState()
+    data class Downloading(
+        val trackId: String,
+        val trackTitle: String,
+        val artistName: String,
+        val thumbnailUrl: String,
+        val progressPercent: Int,
+        val downloadedBytes: Long,
+        val totalBytes: Long,
+        val provider: DownloadProvider
+    ) : DownloadTaskState()
     data class Completed(val trackId: String, val publicUri: Uri) : DownloadTaskState()
+    data class Canceled(val trackId: String) : DownloadTaskState()
     data class Failed(val trackId: String, val message: String) : DownloadTaskState()
 }
 
 class DownloadPreferencesAndService(private val context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("discover_download_prefs", Context.MODE_PRIVATE)
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var activeDownloadJob: Job? = null
 
     private val _downloadState = MutableStateFlow<DownloadTaskState>(DownloadTaskState.Idle)
     val downloadState: StateFlow<DownloadTaskState> = _downloadState.asStateFlow()
 
-    fun getSortedProviders(): List<DownloadProvider> {
-        return DownloadProvider.entries.sortedWith(
-            compareByDescending<DownloadProvider> { getUsageCount(it) }
-                .thenByDescending { getLastUsedTimestamp(it) }
-        )
+    private val _completedDownloads = MutableStateFlow<List<NormalizedTrack>>(loadSavedDownloads())
+    val completedDownloads: StateFlow<List<NormalizedTrack>> = _completedDownloads.asStateFlow()
+
+    fun cancelActiveDownload() {
+        val current = _downloadState.value
+        activeDownloadJob?.cancel()
+        activeDownloadJob = null
+        if (current is DownloadTaskState.Downloading) {
+            _downloadState.value = DownloadTaskState.Canceled(current.trackId)
+        } else {
+            _downloadState.value = DownloadTaskState.Idle
+        }
     }
 
-    fun getPreferredFormat(): DownloadFormat {
-        val saved = prefs.getString("preferred_format", DownloadFormat.MP3.name) ?: DownloadFormat.MP3.name
-        return runCatching { DownloadFormat.valueOf(saved) }.getOrDefault(DownloadFormat.MP3)
+    fun startDownloadInBackground(
+        track: NormalizedTrack,
+        provider: DownloadProvider,
+        format: DownloadFormat,
+        onTrackSavedAsLocalMusic: (NormalizedTrack) -> Unit
+    ) {
+        activeDownloadJob?.cancel()
+        activeDownloadJob = serviceScope.launch {
+            downloadTrackToPublicMusicStorage(track, provider, format, onTrackSavedAsLocalMusic)
+        }
     }
 
-    fun recordProviderAndFormatSelection(provider: DownloadProvider, format: DownloadFormat) {
-        val nextCount = getUsageCount(provider) + 1
-        prefs.edit()
-            .putInt("provider_count_${provider.id}", nextCount)
-            .putLong("provider_last_${provider.id}", System.currentTimeMillis())
-            .putString("preferred_format", format.name)
-            .apply()
-    }
-
-    fun getUsageCount(provider: DownloadProvider): Int =
-        prefs.getInt("provider_count_${provider.id}", 0)
-
-    private fun getLastUsedTimestamp(provider: DownloadProvider): Long =
-        prefs.getLong("provider_last_${provider.id}", 0L)
-
-    /**
-     * Resolves the canonical full-length audio stream directly on-device (no localhost 10.0.2.2 server needed)
-     * and writes it to public Music storage (`Music/Seitharol/`).
-     */
     suspend fun downloadTrackToPublicMusicStorage(
         track: NormalizedTrack,
         provider: DownloadProvider,
@@ -87,10 +105,19 @@ class DownloadPreferencesAndService(private val context: Context) {
         onTrackSavedAsLocalMusic: (NormalizedTrack) -> Unit
     ): Result<Uri> = withContext(Dispatchers.IO) {
         recordProviderAndFormatSelection(provider, format)
-        _downloadState.value = DownloadTaskState.Downloading(track.sourceId, 2, provider)
+        val primaryArtist = track.artists.firstOrNull().orEmpty().ifBlank { "Unknown Artist" }
+        _downloadState.value = DownloadTaskState.Downloading(
+            trackId = track.sourceId,
+            trackTitle = track.title,
+            artistName = primaryArtist,
+            thumbnailUrl = track.artUrl,
+            progressPercent = 1,
+            downloadedBytes = 0L,
+            totalBytes = 0L,
+            provider = provider
+        )
 
         runCatching {
-            val primaryArtist = track.artists.firstOrNull().orEmpty().ifBlank { "Unknown Artist" }
             val streamUrl = resolveDirectDownloadUrl(track, primaryArtist, provider)
                 ?: throw IllegalStateException("Could not resolve downloadable stream for ${track.title}")
 
@@ -100,12 +127,13 @@ class DownloadPreferencesAndService(private val context: Context) {
                 readTimeout = 60_000
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
             }
-
             if (conn.responseCode !in 200..299) {
                 throw IllegalStateException("Audio server returned HTTP ${conn.responseCode}")
             }
 
-            val totalBytes = conn.contentLengthLong.coerceAtLeast(1L)
+            // Fallback estimated size if Content-Length is missing (-1)
+            val fallbackEstimatedBytes = ((track.durationMs / 1000L).coerceAtLeast(180L)) * 20_000L
+            val totalBytes = conn.contentLengthLong.takeIf { it > 1000L } ?: fallbackEstimatedBytes
             val safeFileName = sanitizeFileName("$primaryArtist - ${track.title}.${format.ext}")
 
             val savedUri: Uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -121,13 +149,12 @@ class DownloadPreferencesAndService(private val context: Context) {
                     put(MediaStore.Audio.Media.IS_MUSIC, 1)
                     put(MediaStore.Audio.Media.IS_PENDING, 1)
                 }
-
                 val itemUri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, contentValues)
                     ?: throw IllegalStateException("Failed to create MediaStore Audio entry")
 
                 try {
                     resolver.openOutputStream(itemUri)?.use { output ->
-                        streamWithProgress(conn, output, totalBytes, track.sourceId, provider)
+                        streamWithProgress(conn, output, totalBytes, track, primaryArtist, provider)
                     } ?: throw IllegalStateException("Failed to open output stream for $itemUri")
 
                     val publishValues = ContentValues().apply {
@@ -144,12 +171,15 @@ class DownloadPreferencesAndService(private val context: Context) {
                     Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
                     "Seitharol"
                 ).apply { if (!exists()) mkdirs() }
-
                 val destFile = File(publicMusicDir, safeFileName)
-                FileOutputStream(destFile).use { output ->
-                    streamWithProgress(conn, output, totalBytes, track.sourceId, provider)
+                try {
+                    FileOutputStream(destFile).use { output ->
+                        streamWithProgress(conn, output, totalBytes, track, primaryArtist, provider)
+                    }
+                } catch (e: Exception) {
+                    destFile.delete()
+                    throw e
                 }
-
                 MediaScannerConnection.scanFile(
                     context,
                     arrayOf(destFile.absolutePath),
@@ -164,15 +194,53 @@ class DownloadPreferencesAndService(private val context: Context) {
                 isPlayableNatively = true,
                 localPath = savedUri.toString()
             )
-            onTrackSavedAsLocalMusic(localMusicTrack)
+            persistCompletedDownload(localMusicTrack)
+            withContext(Dispatchers.Main) {
+                onTrackSavedAsLocalMusic(localMusicTrack)
+            }
             _downloadState.value = DownloadTaskState.Completed(track.sourceId, savedUri)
             savedUri
         }.onFailure { err ->
-            val friendlyMsg = com.example.util.ErrorFormatter.toUserFriendlyMessage(err, context, track.title)
-            _downloadState.value = DownloadTaskState.Failed(
-                trackId = track.sourceId,
-                message = friendlyMsg
-            )
+            if (err is CancellationException) {
+                _downloadState.value = DownloadTaskState.Canceled(track.sourceId)
+            } else {
+                _downloadState.value = DownloadTaskState.Failed(
+                    trackId = track.sourceId,
+                    message = err.localizedMessage ?: "Download failed for ${track.title}"
+                )
+            }
+        }
+    }
+
+    private suspend fun streamWithProgress(
+        conn: HttpURLConnection,
+        output: OutputStream,
+        totalBytes: Long,
+        track: NormalizedTrack,
+        primaryArtist: String,
+        provider: DownloadProvider
+    ) {
+        var downloadedBytes = 0L
+        conn.inputStream.use { input ->
+            val buffer = ByteArray(16 * 1024)
+            var bytesRead: Int
+            while (input.read(buffer).also { bytesRead = it } != -1) {
+                coroutineContext.ensureActive() // Enables immediate cancellation
+                output.write(buffer, 0, bytesRead)
+                downloadedBytes += bytesRead
+                val progress = ((downloadedBytes * 100L) / totalBytes.coerceAtLeast(1L)).toInt().coerceIn(1, 99)
+                _downloadState.value = DownloadTaskState.Downloading(
+                    trackId = track.sourceId,
+                    trackTitle = track.title,
+                    artistName = primaryArtist,
+                    thumbnailUrl = track.artUrl,
+                    progressPercent = progress,
+                    downloadedBytes = downloadedBytes,
+                    totalBytes = totalBytes,
+                    provider = provider
+                )
+            }
+            output.flush()
         }
     }
 
@@ -181,6 +249,7 @@ class DownloadPreferencesAndService(private val context: Context) {
         primaryArtist: String,
         provider: DownloadProvider
     ): String? {
+        val preferredQuality = AppSettingsManager.getInstance(context).state.value.downloadQuality
         val metadata = TrackMetadata(
             id = track.sourceId,
             title = track.title,
@@ -189,61 +258,91 @@ class DownloadPreferencesAndService(private val context: Context) {
             durationSeconds = (track.durationMs / 1000L).toInt(),
             thumbnailUrl = track.artUrl
         )
-
-        // 1. If track is already a YouTube videoId (11 chars) or user picked YouTube ATV Direct
         if (track.source == TrackSource.YOUTUBE && track.sourceId.length == 11) {
-            InnerTubeStreamExtractor.resolveWorkingStreamUrl(track.sourceId, AudioQuality.HIGH)
+            InnerTubeStreamExtractor.resolveWorkingStreamUrl(track.sourceId, preferredQuality)
                 .getOrNull()?.let { return it }
         }
-
-        // 2. Try JioSaavn 320kbps direct stream first if JIOSAAVN selected
         if (provider == DownloadProvider.JIOSAAVN) {
-            StreamResolver.resolveExactStreamUrl(metadata, AudioQuality.HIGH)?.let { return it }
+            StreamResolver.resolveExactStreamUrl(metadata, preferredQuality)?.let { return it }
         }
-
-        // 3. Search canonical YouTube Music ATV song and extract high-bitrate stream
         val ytCandidates = InnerTubeStreamExtractor.searchOfficialYtmSongs("${track.title} $primaryArtist", limit = 6)
-        val bestYt = com.seitharol.data.resolver.CanonicalAudioResolver.selectBestCanonicalMatch(
+        val bestYt = CanonicalAudioResolver.selectBestCanonicalMatch(
             queryTitle = track.title,
             queryArtist = primaryArtist,
             targetDurationSeconds = metadata.durationSeconds,
             candidates = ytCandidates
         )
         if (bestYt != null) {
-            InnerTubeStreamExtractor.resolveWorkingStreamUrl(bestYt.videoId, AudioQuality.HIGH)
+            InnerTubeStreamExtractor.resolveWorkingStreamUrl(bestYt.videoId, preferredQuality)
                 .getOrNull()?.let { return it }
         }
-
-        // 4. Final fallback to StreamResolver (JioSaavn 320kbps + Piped strict)
-        return StreamResolver.resolveExactStreamUrl(metadata, AudioQuality.HIGH)
+        return StreamResolver.resolveExactStreamUrl(metadata, preferredQuality)
     }
 
-    private fun streamWithProgress(
-        conn: HttpURLConnection,
-        output: OutputStream,
-        totalBytes: Long,
-        trackId: String,
-        provider: DownloadProvider
-    ) {
-        var downloadedBytes = 0L
-        conn.inputStream.use { input ->
-            val buffer = ByteArray(16 * 1024)
-            var bytesRead: Int
-            while (input.read(buffer).also { bytesRead = it } != -1) {
-                output.write(buffer, 0, bytesRead)
-                downloadedBytes += bytesRead
-                val progress = if (totalBytes > 1000L) {
-                    ((downloadedBytes * 100L) / totalBytes).toInt().coerceIn(1, 99)
-                } else {
-                    50
-                }
-                _downloadState.value = DownloadTaskState.Downloading(trackId, progress, provider)
-            }
-            output.flush()
+    private fun persistCompletedDownload(track: NormalizedTrack) {
+        val updated = (_completedDownloads.value.filterNot { it.sourceId == track.sourceId } + track).reversed()
+        _completedDownloads.value = updated
+        val arr = JSONArray()
+        updated.forEach { t ->
+            arr.put(JSONObject().apply {
+                put("sourceId", t.sourceId)
+                put("title", t.title)
+                put("artist", t.artists.firstOrNull().orEmpty())
+                put("album", t.album.orEmpty())
+                put("durationMs", t.durationMs)
+                put("artUrl", t.artUrl)
+                put("localPath", t.localPath.orEmpty())
+            })
         }
+        prefs.edit().putString("persisted_downloads_v1", arr.toString()).apply()
     }
 
-    private fun sanitizeFileName(name: String): String {
-        return name.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
+    private fun loadSavedDownloads(): List<NormalizedTrack> {
+        val raw = prefs.getString("persisted_downloads_v1", null) ?: return emptyList()
+        return runCatching {
+            val arr = JSONArray(raw)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    add(
+                        NormalizedTrack(
+                            source = TrackSource.LOCAL_FILE,
+                            sourceId = o.optString("sourceId"),
+                            title = o.optString("title"),
+                            artists = listOf(o.optString("artist", "Unknown Artist")),
+                            album = o.optString("album", "Single"),
+                            durationMs = o.optLong("durationMs", 210_000L),
+                            artUrl = o.optString("artUrl"),
+                            isPlayableNatively = true,
+                            localPath = o.optString("localPath")
+                        )
+                    )
+                }
+            }
+        }.getOrDefault(emptyList())
     }
+
+    fun getSortedProviders(): List<DownloadProvider> =
+        DownloadProvider.entries.sortedWith(
+            compareByDescending<DownloadProvider> { getUsageCount(it) }
+                .thenByDescending { getLastUsedTimestamp(it) }
+        )
+
+    fun getPreferredFormat(): DownloadFormat {
+        val saved = prefs.getString("preferred_format", DownloadFormat.MP3.name) ?: DownloadFormat.MP3.name
+        return runCatching { DownloadFormat.valueOf(saved) }.getOrDefault(DownloadFormat.MP3)
+    }
+
+    fun recordProviderAndFormatSelection(provider: DownloadProvider, format: DownloadFormat) {
+        val nextCount = getUsageCount(provider) + 1
+        prefs.edit()
+            .putInt("provider_count_${provider.id}", nextCount)
+            .putLong("provider_last_${provider.id}", System.currentTimeMillis())
+            .putString("preferred_format", format.name)
+            .apply()
+    }
+
+    fun getUsageCount(provider: DownloadProvider): Int = prefs.getInt("provider_count_${provider.id}", 0)
+    private fun getLastUsedTimestamp(provider: DownloadProvider): Long = prefs.getLong("provider_last_${provider.id}", 0L)
+    private fun sanitizeFileName(name: String): String = name.replace(Regex("[\\/:*?\"<>|]"), "_").trim()
 }

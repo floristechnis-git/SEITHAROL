@@ -129,7 +129,7 @@ fun LibraryScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.padding(bottom = 12.dp)
                 ) {
-                    items(historyTracks.take(12), key = { "hist_top_${it.videoId}" }) { track ->
+                    items(historyTracks.distinctBy { it.videoId }.take(12), key = { "hist_top_${it.videoId}" }) { track ->
                         val optimizedThumb = remember(track.thumbnailUrl, settings.thumbnailQuality) {
                             ThumbnailUrlOptimizer.optimize(
                                 track.thumbnailUrl,
@@ -263,7 +263,7 @@ fun LibraryScreen(
         }
 
         // 3. Library List Items (System items like Liked/Downloads cannot be swipe-deleted)
-        items(filteredEntries, key = { "lib_item_${it.id}" }) { item ->
+        items(filteredEntries.distinctBy { it.id }, key = { "lib_item_${it.id}" }) { item ->
             val isSystemPlaylist = item.id == "liked" || item.id == "downloads"
             val optimizedPlaylistThumb = remember(item.firstVideoThumbnailUrl, settings.thumbnailQuality) {
                 ThumbnailUrlOptimizer.optimize(
@@ -479,7 +479,7 @@ fun LibrarySubPageScreen(
         )
 
         LazyColumn(modifier = Modifier.fillMaxSize()) {
-            items(filteredTracks, key = { "sub_${it.videoId}" }) { track ->
+            items(filteredTracks.distinctBy { it.videoId }, key = { "sub_${it.videoId}" }) { track ->
                 val optimizedThumb = remember(track.thumbnailUrl, settings.thumbnailQuality) {
                     ThumbnailUrlOptimizer.optimize(
                         track.thumbnailUrl,

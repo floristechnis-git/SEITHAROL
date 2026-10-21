@@ -202,7 +202,7 @@ fun HomeScreen(
                 }
             }
         } else {
-            items(categoryTracks, key = { it.id }) { track ->
+            items(categoryTracks.distinctBy { it.id }, key = { it.id }) { track ->
                 HomeTrackRow(track = track, onClick = { onPlayTrack(track) })
             }
         }
@@ -218,7 +218,7 @@ fun HomeScreen(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                 )
             }
-            items(manipuriHighlights, key = { "manipuri_${it.id}" }) { track ->
+            items(manipuriHighlights.distinctBy { it.id }, key = { "manipuri_${it.id}" }) { track ->
                 HomeTrackRow(track = track, onClick = { onPlayTrack(track) })
             }
         }
@@ -304,7 +304,7 @@ fun SeitharolBottomNavBar(
         tonalElevation = 8.dp,
         shadowElevation = 8.dp,
         modifier = modifier
-            .padding(horizontal = 48.dp, vertical = 14.dp)
+            .padding(horizontal = 24.dp, vertical = 12.dp)
             .height(60.dp)
             .border(
                 width = 1.dp,
@@ -315,11 +315,11 @@ fun SeitharolBottomNavBar(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 12.dp),
+                .padding(horizontal = 8.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val tabs = listOf("Home", "Search", "Settings")
+            val tabs = listOf("Home", "Search", "Library", "LocalMusic", "Profile")
             tabs.forEachIndexed { index, _ ->
                 val isSelected = selectedTab == index
                 val iconTint = if (isSelected) {
@@ -341,6 +341,8 @@ fun SeitharolBottomNavBar(
                     when (index) {
                         0 -> HomeSvgIcon(tint = iconTint, modifier = Modifier.size(22.dp))
                         1 -> SearchMagnifierSvgIcon(tint = iconTint, modifier = Modifier.size(22.dp))
+                        2 -> HistoryClockSvgIcon(tint = iconTint, modifier = Modifier.size(22.dp))
+                        3 -> MusicNoteSvgIcon(tint = iconTint, modifier = Modifier.size(22.dp))
                         else -> SettingsGearSvgIcon(tint = iconTint, modifier = Modifier.size(22.dp))
                     }
                 }
@@ -434,6 +436,33 @@ fun SettingsGearSvgIcon(tint: Color, modifier: Modifier = Modifier.size(22.dp)) 
             radius = 8.5f * sx,
             center = Offset(12f * sx, 12f * sy),
             style = Stroke(width = 1.8f * sx, cap = StrokeCap.Round)
+        )
+    }
+}
+
+@Composable
+fun MusicNoteSvgIcon(tint: Color, modifier: Modifier = Modifier.size(22.dp)) {
+    Canvas(modifier = modifier) {
+        val sx = size.width / 24f
+        val sy = size.height / 24f
+        drawCircle(
+            color = tint,
+            radius = 3.5f * sx,
+            center = Offset(9f * sx, 16.5f * sy)
+        )
+        drawLine(
+            color = tint,
+            start = Offset(12.5f * sx, 16.5f * sy),
+            end = Offset(12.5f * sx, 6f * sy),
+            strokeWidth = 2f * sx,
+            cap = StrokeCap.Round
+        )
+        drawLine(
+            color = tint,
+            start = Offset(12.5f * sx, 6f * sy),
+            end = Offset(18f * sx, 4.5f * sy),
+            strokeWidth = 2.5f * sx,
+            cap = StrokeCap.Round
         )
     }
 }

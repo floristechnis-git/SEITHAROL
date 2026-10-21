@@ -97,7 +97,7 @@ fun SearchScreen(
             )
         } else {
             LazyColumn {
-                items(displayedSongs, key = { "${selectedTab}_${it.id}" }) { song ->
+                items(displayedSongs.distinctBy { it.id }, key = { "${selectedTab}_${it.id}" }) { song ->
                     SongRowWithDot(song = song, onClick = { onSongClick(song) })
                 }
             }

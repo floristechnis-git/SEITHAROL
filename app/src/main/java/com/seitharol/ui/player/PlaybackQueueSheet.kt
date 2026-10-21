@@ -60,10 +60,27 @@ fun PlaybackQueueSheet(
         )
     }
 
+    var sheetDragOffsetY by remember { mutableFloatStateOf(0f) }
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .offset { androidx.compose.ui.unit.IntOffset(0, sheetDragOffsetY.toInt().coerceAtLeast(0)) }
             .background(MaterialTheme.colorScheme.background)
+            .pointerInput(Unit) {
+                androidx.compose.foundation.gestures.detectVerticalDragGestures(
+                    onDragEnd = {
+                        if (sheetDragOffsetY > 160f) onClose()
+                        sheetDragOffsetY = 0f
+                    },
+                    onDragCancel = { sheetDragOffsetY = 0f },
+                    onVerticalDrag = { change, dragAmount ->
+                        if (dragAmount > 0f || sheetDragOffsetY > 0f) {
+                            change.consume()
+                            sheetDragOffsetY = (sheetDragOffsetY + dragAmount).coerceAtLeast(0f)
+                        }
+                    }
+                )
+            }
             .padding(horizontal = 16.dp)
     ) {
         // Queue Header
@@ -147,7 +164,7 @@ fun PlaybackQueueSheet(
                         color = MaterialTheme.colorScheme.onBackground
                     )
                 }
-                items(suggestedTracks, key = { "suggest_${it.id}" }) { suggestion ->
+                items(suggestedTracks.distinctBy { it.id }, key = { "suggest_${it.id}" }) { suggestion ->
                     Surface(
                         shape = RoundedCornerShape(14.dp),
                         color = MaterialTheme.colorScheme.surface,
@@ -320,7 +337,7 @@ fun ReorderableQueueLazyColumn(
         contentPadding = PaddingValues(vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        itemsIndexed(queue, key = { _, track -> "queue_${track.id}" }) { index, track ->
+        itemsIndexed(queue, key = { idx, track -> "queue_${track.id}_$idx" }) { index, track ->
             val isDragging = index == draggingIndex
             val isPlaying = track.id == currentTrackId
             Box(

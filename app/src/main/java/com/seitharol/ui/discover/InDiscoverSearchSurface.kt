@@ -157,7 +157,7 @@ fun InDiscoverSearchSurface(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(bottom = 90.dp)
             ) {
-                items(results, key = { "disc_sr_${it.sourceId}" }) { item ->
+                items(results.distinctBy { it.sourceId }, key = { "disc_sr_${it.sourceId}" }) { item ->
                     val isThisPlaying = activePreviewId == item.sourceId && isPreviewPlaying
                     val primaryArtist = item.artists.firstOrNull().orEmpty().ifBlank { "Unknown Artist" }
                     val itemThumb = remember(item.artUrl, settings.thumbnailQuality) {

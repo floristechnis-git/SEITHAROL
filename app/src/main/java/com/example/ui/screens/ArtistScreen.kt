@@ -215,7 +215,7 @@ fun ArtistScreen(
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
                         )
                     }
-                    items(domainTopSongs.take(10), key = { "art_song_${it.id}" }) { track ->
+                    items(domainTopSongs.distinctBy { it.id }.take(10), key = { "art_song_${it.id}" }) { track ->
                         ListItem(
                             headlineContent = {
                                 Text(track.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -256,7 +256,7 @@ fun ArtistScreen(
                             contentPadding = PaddingValues(horizontal = 20.dp),
                             horizontalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
-                            items(allReleases, key = { "rel_${it.browseId}" }) { release ->
+                            items(allReleases.distinctBy { it.browseId }, key = { "rel_${it.browseId}" }) { release ->
                                 Column(
                                     modifier = Modifier
                                         .width(142.dp)
@@ -306,7 +306,7 @@ fun ArtistScreen(
                             contentPadding = PaddingValues(horizontal = 20.dp),
                             horizontalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
-                            items(page.playlists, key = { "art_pl_${it.browseId}" }) { pl ->
+                            items(page.playlists.distinctBy { it.browseId }, key = { "art_pl_${it.browseId}" }) { pl ->
                                 Column(
                                     modifier = Modifier
                                         .width(142.dp)
@@ -356,7 +356,7 @@ fun ArtistScreen(
                             contentPadding = PaddingValues(horizontal = 20.dp),
                             horizontalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            items(page.similarArtists, key = { "sim_${it.browseId}" }) { sim ->
+                            items(page.similarArtists.distinctBy { it.browseId }, key = { "sim_${it.browseId}" }) { sim ->
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier

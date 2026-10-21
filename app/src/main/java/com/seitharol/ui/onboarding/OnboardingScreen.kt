@@ -152,7 +152,7 @@ fun WelcomeOpenSourcePopup(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "Welcome to my app, this distribution is entirely open source contribution from me",
+                    text = "Welcome to Seitharol — an open-source music streaming experience crafted for studio-quality playback and discovery.",
                     style = MaterialTheme.typography.bodyLarge.copy(
                         fontWeight = FontWeight.Medium,
                         lineHeight = 22.sp
@@ -163,7 +163,7 @@ fun WelcomeOpenSourcePopup(
 
                 Spacer(modifier = Modifier.height(18.dp))
 
-                // Hidden '+' with "Only for men" and Inverted Triangle SVG
+                // Hidden '+' with "More" and Inverted Triangle SVG
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
@@ -180,7 +180,7 @@ fun WelcomeOpenSourcePopup(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Only for men",
+                        text = "More",
                         style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -213,7 +213,7 @@ fun WelcomeOpenSourcePopup(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "If anybody is interested in connecting me, connect me on floristechnis@proton.me",
+                            text = "Have feedback or collaboration inquiries? Reach out anytime at floristechnis@proton.me",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center

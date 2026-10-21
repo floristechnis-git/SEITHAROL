@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.grid.LazyHorizontalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -1015,7 +1016,7 @@ fun FreshNewMusicShelf(
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            items(tracks, key = { it.id }) { track ->
+            itemsIndexed(tracks.distinctBy { it.id }, key = { idx, item -> "${item.id}_$idx" }) { _, track ->
                 Column(
                     modifier = Modifier
                         .width(176.dp)
@@ -1188,7 +1189,7 @@ fun MediaCarouselShelf(
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            items(items, key = { it.id }) { item ->
+            itemsIndexed(items.distinctBy { it.id }, key = { idx, item -> "${item.id}_$idx" }) { _, item ->
                 Column(
                     modifier = Modifier
                         .width(164.dp)

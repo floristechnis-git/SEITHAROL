@@ -98,6 +98,7 @@ class AudioPlayerManager(
         if (_activePreviewTrackId.value != null) {
             exoPlayer.playWhenReady = false
             exoPlayer.pause()
+            exoPlayer.repeatMode = Player.REPEAT_MODE_OFF
             _isPreviewPlaying.value = false
         }
     }

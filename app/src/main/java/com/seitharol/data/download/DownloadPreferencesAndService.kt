@@ -42,9 +42,9 @@ enum class DownloadProvider(val id: String, val displayName: String, val subtitl
     QOBUZ("qobuz", "Qobuz Studio Relay", "High Bitrate Studio Stream")
 }
 
-enum class DownloadFormat(val ext: String, val mimeType: String, val label: String) {
-    MP3("m4a", "audio/mp4", "High Quality (320 kbps)"),
-    FLAC("flac", "audio/flac", "Lossless / Master")
+enum class DownloadFormat(val ext: String, val mimeType: String, val label: String, val badge: String) {
+    MP3("m4a", "audio/mp4", "Standard Audio", "M4A / AAC (320 kbps)"),
+    FLAC("flac", "audio/flac", "Lossless / Master", "Hi-Res FLAC • 24-bit")
 }
 
 sealed class DownloadTaskState {
@@ -90,11 +90,12 @@ class DownloadPreferencesAndService(private val context: Context) {
         track: NormalizedTrack,
         provider: DownloadProvider,
         format: DownloadFormat,
+        preferredQuality: AudioQuality = AppSettingsManager.getInstance(context).state.value.downloadQuality,
         onTrackSavedAsLocalMusic: (NormalizedTrack) -> Unit
     ) {
         activeDownloadJob?.cancel()
         activeDownloadJob = serviceScope.launch {
-            downloadTrackToPublicMusicStorage(track, provider, format, onTrackSavedAsLocalMusic)
+            downloadTrackToPublicMusicStorage(track, provider, format, preferredQuality, onTrackSavedAsLocalMusic)
         }
     }
 
@@ -102,6 +103,7 @@ class DownloadPreferencesAndService(private val context: Context) {
         track: NormalizedTrack,
         provider: DownloadProvider,
         format: DownloadFormat,
+        preferredQuality: AudioQuality = AppSettingsManager.getInstance(context).state.value.downloadQuality,
         onTrackSavedAsLocalMusic: (NormalizedTrack) -> Unit
     ): Result<Uri> = withContext(Dispatchers.IO) {
         recordProviderAndFormatSelection(provider, format)
@@ -118,7 +120,7 @@ class DownloadPreferencesAndService(private val context: Context) {
         )
 
         runCatching {
-            val streamUrl = resolveDirectDownloadUrl(track, primaryArtist, provider)
+            val streamUrl = resolveDirectDownloadUrl(track, primaryArtist, provider, preferredQuality)
                 ?: throw IllegalStateException("Could not resolve downloadable stream for ${track.title}")
 
             val conn = (URL(streamUrl).openConnection() as HttpURLConnection).apply {
@@ -247,9 +249,9 @@ class DownloadPreferencesAndService(private val context: Context) {
     private suspend fun resolveDirectDownloadUrl(
         track: NormalizedTrack,
         primaryArtist: String,
-        provider: DownloadProvider
+        provider: DownloadProvider,
+        preferredQuality: AudioQuality = AppSettingsManager.getInstance(context).state.value.downloadQuality
     ): String? {
-        val preferredQuality = AppSettingsManager.getInstance(context).state.value.downloadQuality
         val metadata = TrackMetadata(
             id = track.sourceId,
             title = track.title,

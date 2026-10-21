@@ -20,6 +20,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import com.seitharol.data.resolver.StreamResolver
+import com.seitharol.data.resolver.TrackMetadata
 
 class AudioPlayerManager(
     val exoPlayer: ExoPlayer,
@@ -36,39 +39,93 @@ class AudioPlayerManager(
     val isPreviewPlaying: StateFlow<Boolean> = _isPreviewPlaying.asStateFlow()
 
     fun playPreview(track: NormalizedTrack) {
-        val rawPreview = track.previewUrl ?: return
         if (_activePreviewTrackId.value == track.sourceId && exoPlayer.isPlaying) return
 
         previewResolveJob?.cancel()
         _activePreviewTrackId.value = track.sourceId
 
-        if (rawPreview.startsWith("http")) {
+        val rawPreview = track.previewUrl
+        if (rawPreview != null && rawPreview.startsWith("http")) {
             exoPlayer.repeatMode = Player.REPEAT_MODE_ONE
             val mediaItem = MediaItem.Builder()
                 .setMediaId("preview_${track.sourceId}")
                 .setUri(Uri.parse(rawPreview))
+                .setClippingConfiguration(
+                    MediaItem.ClippingConfiguration.Builder()
+                        .setStartPositionMs(0L)
+                        .setEndPositionMs(30_000L)
+                        .build()
+                )
                 .build()
             exoPlayer.setMediaItem(mediaItem)
             exoPlayer.prepare()
             exoPlayer.playWhenReady = true
             _isPreviewPlaying.value = true
-        } else if (rawPreview.startsWith("ytm_clip:")) {
-            val videoId = rawPreview.removePrefix("ytm_clip:")
-            previewResolveJob = scope.launch {
-                val streamUrl = InnerTubeStreamExtractor.resolveWorkingStreamUrl(videoId, AudioQuality.NORMAL).getOrNull()
-                    ?: return@launch
-                if (_activePreviewTrackId.value != track.sourceId) return@launch
+            return
+        }
 
-                exoPlayer.repeatMode = Player.REPEAT_MODE_ONE
-                val fullItem = MediaItem.Builder()
-                    .setMediaId("preview_${track.sourceId}")
-                    .setUri(Uri.parse(streamUrl))
-                    .build()
+        previewResolveJob = scope.launch(Dispatchers.IO) {
+            var streamUrl: String? = null
 
-                exoPlayer.setMediaItem(fullItem)
-                exoPlayer.prepare()
-                exoPlayer.playWhenReady = true
-                _isPreviewPlaying.value = true
+            if (rawPreview != null && rawPreview.startsWith("ytm_clip:")) {
+                val videoId = rawPreview.removePrefix("ytm_clip:")
+                streamUrl = InnerTubeStreamExtractor.resolveWorkingStreamUrl(videoId, AudioQuality.NORMAL).getOrNull()
+            } else if (rawPreview != null && rawPreview.startsWith("saavn_clip:")) {
+                val saavnId = rawPreview.removePrefix("saavn_clip:")
+                val meta = TrackMetadata(
+                    id = saavnId,
+                    title = track.title,
+                    artist = track.artists.firstOrNull().orEmpty(),
+                    album = track.album.orEmpty(),
+                    durationSeconds = (track.durationMs / 1000L).toInt(),
+                    thumbnailUrl = track.artUrl
+                )
+                streamUrl = StreamResolver.resolveExactStreamUrl(meta, AudioQuality.NORMAL)
+            }
+
+            if (streamUrl.isNullOrBlank()) {
+                if (track.source == TrackSource.YOUTUBE && track.sourceId.length == 11) {
+                    streamUrl = InnerTubeStreamExtractor.resolveWorkingStreamUrl(track.sourceId, AudioQuality.NORMAL).getOrNull()
+                } else if (track.source == TrackSource.JIOSAAVN) {
+                    val meta = TrackMetadata(
+                        id = track.sourceId,
+                        title = track.title,
+                        artist = track.artists.firstOrNull().orEmpty(),
+                        album = track.album.orEmpty(),
+                        durationSeconds = (track.durationMs / 1000L).toInt(),
+                        thumbnailUrl = track.artUrl
+                    )
+                    streamUrl = StreamResolver.resolveExactStreamUrl(meta, AudioQuality.NORMAL)
+                }
+            }
+
+            if (streamUrl.isNullOrBlank()) {
+                val q = "${track.title} ${track.artists.firstOrNull().orEmpty()}".trim()
+                val match = InnerTubeStreamExtractor.searchOfficialYtmSongs(q, limit = 1).firstOrNull()
+                if (match != null) {
+                    streamUrl = InnerTubeStreamExtractor.resolveWorkingStreamUrl(match.videoId, AudioQuality.NORMAL).getOrNull()
+                }
+            }
+
+            if (!streamUrl.isNullOrBlank() && _activePreviewTrackId.value == track.sourceId) {
+                withContext(Dispatchers.Main) {
+                    if (_activePreviewTrackId.value != track.sourceId) return@withContext
+                    exoPlayer.repeatMode = Player.REPEAT_MODE_ONE
+                    val clipItem = MediaItem.Builder()
+                        .setMediaId("preview_${track.sourceId}")
+                        .setUri(Uri.parse(streamUrl))
+                        .setClippingConfiguration(
+                            MediaItem.ClippingConfiguration.Builder()
+                                .setStartPositionMs(0L)
+                                .setEndPositionMs(30_000L)
+                                .build()
+                        )
+                        .build()
+                    exoPlayer.setMediaItem(clipItem)
+                    exoPlayer.prepare()
+                    exoPlayer.playWhenReady = true
+                    _isPreviewPlaying.value = true
+                }
             }
         }
     }

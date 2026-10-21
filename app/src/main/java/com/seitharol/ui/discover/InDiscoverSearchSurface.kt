@@ -283,56 +283,42 @@ fun InDiscoverSearchSurface(
 
                             Spacer(modifier = Modifier.height(12.dp))
 
-                            // Action Row: Full Song + Download + Search on YouTube
+                            // Action Row: Download + Play Full
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Button(
                                     onClick = { onOpenDownloadPicker(item) },
-                                    modifier = Modifier.weight(1f).height(36.dp),
+                                    modifier = Modifier.weight(1f).height(38.dp),
                                     shape = RoundedCornerShape(50),
-                                    contentPadding = PaddingValues(horizontal = 12.dp),
+                                    contentPadding = PaddingValues(horizontal = 14.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = MaterialTheme.colorScheme.primary,
                                         contentColor = Color.White
                                     )
                                 ) {
-                                    DownloadSvgIcon(tint = Color.White, modifier = Modifier.size(14.dp))
+                                    DownloadSvgIcon(tint = Color.White, modifier = Modifier.size(15.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text("Download", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
 
                                 OutlinedButton(
                                     onClick = { onOpenFullSong(item) },
-                                    modifier = Modifier.height(36.dp),
+                                    modifier = Modifier.weight(1f).height(38.dp),
                                     shape = RoundedCornerShape(50),
-                                    contentPadding = PaddingValues(horizontal = 12.dp),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                                    contentPadding = PaddingValues(horizontal = 14.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.25f))
                                 ) {
-                                    Text("Play Full", fontSize = 12.sp)
-                                }
-
-                                OutlinedButton(
-                                    onClick = {
-                                        val ytQuery = Uri.encode("${item.title} $primaryArtist")
-                                        runCatching {
-                                            context.startActivity(
-                                                Intent(
-                                                    Intent.ACTION_VIEW,
-                                                    Uri.parse("https://www.youtube.com/results?search_query=$ytQuery")
-                                                )
-                                            )
-                                        }
-                                    },
-                                    modifier = Modifier.height(36.dp),
-                                    shape = RoundedCornerShape(50),
-                                    contentPadding = PaddingValues(horizontal = 12.dp),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
-                                ) {
-                                    YouTubePlayBadgeSvgIcon(tint = Color(0xFFFF4E45), modifier = Modifier.size(14.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("YouTube", fontSize = 12.sp)
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_play),
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Play Full", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                 }
                             }
                         }

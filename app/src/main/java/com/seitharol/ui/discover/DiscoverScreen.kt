@@ -41,8 +41,12 @@ import com.seitharol.data.download.DownloadTaskState
 import com.seitharol.domain.model.NormalizedTrack
 import com.seitharol.player.AudioPlayerManager
 import com.seitharol.ui.history.HeartSvgIcon
-import com.seitharol.ui.home.SearchMagnifierSvgIcon
-import com.seitharol.ui.search.BackArrowSvgIcon
+import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Settings
+import com.seitharol.data.resolver.AudioQuality
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -61,6 +65,16 @@ fun DiscoverScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val pagerState = rememberPagerState(pageCount = { feedTracks.size })
+
+    BackHandler {
+        if (isInDiscoverSearchOpen) {
+            isInDiscoverSearchOpen = false
+            audioPlayerManager.pausePreview()
+        } else {
+            audioPlayerManager.stopPreviewAndClear()
+            onNavigateBack()
+        }
+    }
 
     var isInDiscoverSearchOpen by remember { mutableStateOf(false) }
     var trackForDownloadSheet by remember { mutableStateOf<NormalizedTrack?>(null) }
@@ -115,17 +129,6 @@ fun DiscoverScreen(
                     onVisitArtistClick = {
                         audioPlayerManager.pausePreview()
                         onVisitArtist(primaryArtist, track.primaryArtistBrowseId)
-                    },
-                    onSearchOnYouTubeClick = {
-                        // Searches or opens the track directly on YouTube / YouTube Music
-                        val query = Uri.encode("${track.title} $primaryArtist official")
-                        runCatching {
-                            val ytIntent = Intent(
-                                Intent.ACTION_VIEW,
-                                Uri.parse("https://www.youtube.com/results?search_query=$query")
-                            )
-                            context.startActivity(ytIntent)
-                        }
                     },
                     onShareClick = {
                         val shareIntent = Intent(Intent.ACTION_SEND).apply {
@@ -245,13 +248,14 @@ fun DiscoverScreen(
                 track = targetTrack,
                 downloadService = downloadService,
                 onDismiss = { trackForDownloadSheet = null },
-                onStartDownload = { provider, format ->
+                onStartDownload = { provider, format, quality ->
                     trackForDownloadSheet = null
                     scope.launch {
                         downloadService.downloadTrackToPublicMusicStorage(
                             track = targetTrack,
                             provider = provider,
                             format = format,
+                            preferredQuality = quality,
                             onTrackSavedAsLocalMusic = onTrackDownloadedLocally
                         )
                     }
@@ -276,7 +280,6 @@ private fun DiscoverShortPage(
     onLikeClick: () -> Unit,
     onDownloadClick: () -> Unit,
     onVisitArtistClick: () -> Unit,
-    onSearchOnYouTubeClick: () -> Unit,
     onShareClick: () -> Unit,
     onOpenFullSongClick: () -> Unit
 ) {
@@ -451,18 +454,23 @@ private fun DiscoverShortPage(
                         Text("Download", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
 
-                    // 3. Search on YouTube Pill Button
+                    // 3. Artist Page Pill Button
                     OutlinedButton(
-                        onClick = onSearchOnYouTubeClick,
+                        onClick = onVisitArtistClick,
                         shape = RoundedCornerShape(50),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
                         border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.35f)),
                         modifier = Modifier.height(38.dp)
                     ) {
-                        YouTubePlayBadgeSvgIcon(tint = Color(0xFFFF0000), modifier = Modifier.size(16.dp))
+                        Icon(
+                            imageVector = Icons.Default.Person,
+                            contentDescription = "Artist Profile",
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
                         Spacer(modifier = Modifier.width(5.dp))
-                        Text("YouTube", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Artist", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
 
@@ -506,8 +514,13 @@ private fun DiscoverShortPage(
                 DiscoverSvgActionButton(label = "Save", onClick = onDownloadClick) {
                     com.seitharol.ui.search.DownloadSvgIcon(tint = Color.White, modifier = Modifier.size(20.dp))
                 }
-                DiscoverSvgActionButton(label = "YouTube", onClick = onSearchOnYouTubeClick) {
-                    YouTubePlayBadgeSvgIcon(tint = Color.White, modifier = Modifier.size(20.dp))
+                DiscoverSvgActionButton(label = "Artist", onClick = onVisitArtistClick) {
+                    Icon(
+                        imageVector = Icons.Default.Person,
+                        contentDescription = "Artist Profile",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
                 DiscoverSvgActionButton(label = "Share", onClick = onShareClick) {
                     ShareArrowSvgIcon(tint = Color.White, modifier = Modifier.size(20.dp))
@@ -616,57 +629,195 @@ fun DownloadProviderFormatBottomSheet(
     track: NormalizedTrack,
     downloadService: DownloadPreferencesAndService,
     onDismiss: () -> Unit,
-    onStartDownload: (DownloadProvider, DownloadFormat) -> Unit
+    onStartDownload: (DownloadProvider, DownloadFormat, AudioQuality) -> Unit
 ) {
+    val context = LocalContext.current
+    val settingsManager = remember { com.seitharol.data.preferences.AppSettingsManager.getInstance(context) }
+    val persistedState by settingsManager.state.collectAsState()
+
     val sortedProviders = remember { downloadService.getSortedProviders() }
     var selectedProvider by remember { mutableStateOf(sortedProviders.first()) }
     var selectedFormat by remember { mutableStateOf(downloadService.getPreferredFormat()) }
+    var selectedQuality by remember { mutableStateOf(persistedState.downloadQuality) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 6.dp
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 12.dp)
+                .padding(horizontal = 20.dp, vertical = 10.dp)
         ) {
-            Text(
-                text = "Download Full Track",
-                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
-            )
-            Text(
-                text = "${track.title} • ${track.artists.joinToString(", ")}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "Select Format",
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold)
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                DownloadFormat.entries.forEach { format ->
-                    val formatIconRes = when (format) {
-                        DownloadFormat.MP3 -> R.drawable.ic_mp3
-                        DownloadFormat.FLAC -> R.drawable.ic_flac
-                    }
-                    FilterChip(
-                        selected = selectedFormat == format,
-                        onClick = { selectedFormat = format },
-                        leadingIcon = {
-                            Image(
-                                painter = painterResource(id = formatIconRes),
-                                contentDescription = format.label,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        },
-                        label = { Text(format.label) }
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Download Track",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                ) {
+                    Text(
+                        text = selectedQuality.label,
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "Select Provider (Most Used First)",
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold)
+                text = "${track.title} • ${track.artists.joinToString(", ")}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // 1. Audio Quality (Bitrate Tier)
+            Text(
+                text = "Download Audio Quality",
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            val qualityTiers = listOf(
+                Triple(AudioQuality.HIGH, "High", "320 kbps"),
+                Triple(AudioQuality.NORMAL, "Normal", "160 kbps"),
+                Triple(AudioQuality.LOW, "Low", "96 kbps")
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                qualityTiers.forEach { (tier, title, bitrate) ->
+                    val isSelected = selectedQuality == tier
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .border(
+                                width = if (isSelected) 1.5.dp else 1.dp,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .clickable {
+                                selectedQuality = tier
+                                settingsManager.setDownloadQuality(tier)
+                            },
+                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = bitrate,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // 2. Format Selection (Lossless / Master vs Standard)
+            Text(
+                text = "Audio Container / Format",
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                DownloadFormat.entries.forEach { format ->
+                    val isSelected = selectedFormat == format
+                    val isFlac = format == DownloadFormat.FLAC
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(14.dp))
+                            .border(
+                                width = if (isSelected) 1.8.dp else 1.dp,
+                                color = if (isSelected) {
+                                    if (isFlac) Color(0xFFFFD700) else MaterialTheme.colorScheme.primary
+                                } else MaterialTheme.colorScheme.outlineVariant,
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                            .clickable {
+                                selectedFormat = format
+                                if (isFlac) {
+                                    selectedQuality = AudioQuality.HIGH
+                                    settingsManager.setDownloadQuality(AudioQuality.HIGH)
+                                }
+                            },
+                        color = if (isSelected) {
+                            if (isFlac) Color(0xFFFFD700).copy(alpha = 0.12f)
+                            else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.40f)
+                        } else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = format.label,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = if (isSelected) {
+                                        if (isFlac) Color(0xFFFFD700) else MaterialTheme.colorScheme.primary
+                                    } else MaterialTheme.colorScheme.onSurface
+                                )
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = if (isFlac) Color(0xFFFFD700) else MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = format.badge,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // 3. Provider Selection
+            Text(
+                text = "Download Audio Provider",
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(modifier = Modifier.height(8.dp))
             sortedProviders.forEachIndexed { index, provider ->
@@ -682,7 +833,7 @@ fun DownloadProviderFormatBottomSheet(
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
                         .clickable { selectedProvider = provider }
-                        .padding(vertical = 10.dp, horizontal = 8.dp),
+                        .padding(vertical = 8.dp, horizontal = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     RadioButton(
@@ -700,7 +851,7 @@ fun DownloadProviderFormatBottomSheet(
                         Image(
                             painter = painterResource(id = providerIconRes),
                             contentDescription = provider.displayName,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
@@ -714,7 +865,7 @@ fun DownloadProviderFormatBottomSheet(
                                     shape = RoundedCornerShape(6.dp)
                                 ) {
                                     Text(
-                                        text = "Most Used",
+                                        text = "Recommended",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -730,15 +881,29 @@ fun DownloadProviderFormatBottomSheet(
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(16.dp))
+
+            Spacer(modifier = Modifier.height(18.dp))
+
             Button(
-                onClick = { onStartDownload(selectedProvider, selectedFormat) },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
+                onClick = { onStartDownload(selectedProvider, selectedFormat, selectedQuality) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = Color.White
+                )
             ) {
-                Text("Download ${selectedFormat.ext.uppercase()} via ${selectedProvider.displayName}")
+                com.seitharol.ui.search.DownloadSvgIcon(tint = Color.White, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Download ${selectedFormat.ext.uppercase()} (${selectedQuality.maxBitrateKbps} kbps)",
+                    fontWeight = FontWeight.Bold
+                )
             }
-            Spacer(modifier = Modifier.height(24.dp))
+
+            Spacer(modifier = Modifier.height(20.dp))
         }
     }
 }

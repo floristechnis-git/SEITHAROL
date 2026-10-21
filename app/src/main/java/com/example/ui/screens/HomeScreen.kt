@@ -886,6 +886,8 @@ fun AestheticMusicHomeScreen(
 @Composable
 fun TrendingSongsHorizontalShelf(
     tracks: List<HomeMediaItem>,
+    title: String = "Trending Songs for You",
+    subtitle: String = "Swipe for top charts & viral tracks",
     currentPlayingId: String? = null,
     onTrackClick: (HomeMediaItem) -> Unit,
     onMoreClick: ((HomeMediaItem) -> Unit)? = null,
@@ -900,8 +902,8 @@ fun TrendingSongsHorizontalShelf(
 
     Column(modifier = Modifier.fillMaxWidth()) {
         SectionHeader(
-            title = "Trending Songs for You",
-            subtitle = "Swipe for top charts & viral tracks"
+            title = title,
+            subtitle = subtitle
         )
 
         Spacer(modifier = Modifier.height(12.dp))

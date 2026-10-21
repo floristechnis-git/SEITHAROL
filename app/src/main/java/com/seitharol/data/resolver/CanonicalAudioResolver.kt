@@ -106,7 +106,7 @@ object CanonicalAudioResolver {
             val requestedInQuery = rawQueryLower.contains(keyword)
             val presentInCandidate = candTitleLower.contains(keyword) || candChannelLower.contains(keyword)
             if (presentInCandidate && !requestedInQuery) {
-                score -= 320
+                return -1000
             }
         }
 

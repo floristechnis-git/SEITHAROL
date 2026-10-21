@@ -349,9 +349,35 @@ class CascadeViewModel(
     }
 
     suspend fun searchDiscoverPreviews(query: String): List<com.seitharol.domain.model.NormalizedTrack> {
-        return runCatching {
-            spotifyProviderInstance.searchTracksWithPreviews(query, limit = 20)
-        }.getOrDefault(emptyList())
+        val clean = query.trim()
+        if (clean.isBlank()) return emptyList()
+        val results = mutableListOf<com.seitharol.domain.model.NormalizedTrack>()
+        runCatching {
+            val previewTracks = spotifyProviderInstance.searchTracksWithPreviews(clean, limit = 20)
+            results.addAll(previewTracks)
+        }
+        if (results.isEmpty()) {
+            runCatching {
+                val ytmTracks = com.seitharol.data.resolver.InnerTubeStreamExtractor.searchOfficialYtmSongs(clean, limit = 20)
+                val mapped = ytmTracks.map { yt ->
+                    com.seitharol.domain.model.NormalizedTrack(
+                        source = com.seitharol.domain.model.TrackSource.YOUTUBE,
+                        sourceId = yt.videoId,
+                        title = yt.title,
+                        artists = listOf(yt.artist),
+                        primaryArtistBrowseId = yt.artistBrowseId,
+                        artistAvatarUrl = yt.thumbnailUrl,
+                        album = yt.albumName ?: "Single",
+                        durationMs = yt.durationSeconds * 1000L,
+                        artUrl = yt.thumbnailUrl,
+                        isPlayableNatively = true,
+                        previewUrl = "ytm_clip:${yt.videoId}"
+                    )
+                }
+                results.addAll(mapped)
+            }
+        }
+        return results.distinctBy { it.sourceId }
     }
 
     fun playNormalizedTrackFull(track: com.seitharol.domain.model.NormalizedTrack) {
@@ -484,9 +510,9 @@ class CascadeViewModel(
         }
     }
 
-    fun playQueue(tracks: List<Track>, startIndex: Int = 0) {
+    fun playQueue(tracks: List<Track>, startIndex: Int = 0, isPlaylist: Boolean = true) {
         viewModelScope.launch { tracks.forEach { musicRepository.insertTrack(it) } }
-        playerManager.playQueue(tracks, startIndex)
+        playerManager.playQueue(tracks, startIndex, isPlaylist = isPlaylist)
     }
 
     fun playPlaylistOrMix(playlistId: String) {
@@ -495,12 +521,12 @@ class CascadeViewModel(
                 val details = InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(playlistId)
                 val tracks = details.tracks.map { it.toTrack() }
                 if (tracks.isNotEmpty()) {
-                    playQueue(tracks, 0)
+                    playQueue(tracks, 0, isPlaylist = true)
                 } else {
                     val seed = playlistId.removePrefix("VL").removePrefix("RDAMVM")
                     if (seed.length == 11) {
                         val automix = InnerTubeStreamExtractor.fetchAutomixQueue(seed, limit = 35)
-                        if (automix.isNotEmpty()) playQueue(automix.map { it.toTrack() }, 0)
+                        if (automix.isNotEmpty()) playQueue(automix.map { it.toTrack() }, 0, isPlaylist = true)
                     }
                 }
             }
@@ -511,7 +537,7 @@ class CascadeViewModel(
         viewModelScope.launch {
             musicRepository.insertTrack(seedTrack)
             musicRepository.recordPlayHistory(seedTrack)
-            playerManager.playQueue(listOf(seedTrack), 0)
+            playerManager.playQueue(listOf(seedTrack), 0, isPlaylist = false)
             runCatching {
                 val automix = InnerTubeStreamExtractor.fetchAutomixQueue(seedTrack.id, limit = 35)
                 val radioTracks = listOf(seedTrack) + automix.filter { it.videoId != seedTrack.id }.map { it.toTrack() }

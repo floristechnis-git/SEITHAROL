@@ -131,8 +131,12 @@ fun DownloadsScreen(
                             checked = isOfflineMode,
                             onCheckedChange = { viewModel.setOfflineMode(it) },
                             colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color.White,
-                                checkedTrackColor = MaterialTheme.colorScheme.primary
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = Color.Transparent,
+                                uncheckedThumbColor = MaterialTheme.colorScheme.primary,
+                                uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                uncheckedBorderColor = MaterialTheme.colorScheme.outline
                             ),
                             modifier = Modifier.testTag("downloads_offline_switch")
                         )

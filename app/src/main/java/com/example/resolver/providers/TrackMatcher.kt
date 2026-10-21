@@ -169,7 +169,7 @@ class TrackMatcher(
             val requestedInQuery = rawQueryLower.contains(keyword)
             val presentInCandidate = candTitleLower.contains(keyword) || c.artists.any { it.contains(keyword, ignoreCase = true) }
             if (presentInCandidate && !requestedInQuery) {
-                score -= 400 // Hard penalty for unrequested remix/loop/edit
+                return -1000 // Strictly reject unrequested remix/loop/edit
             }
         }
 

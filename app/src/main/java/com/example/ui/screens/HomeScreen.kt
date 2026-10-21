@@ -805,12 +805,12 @@ fun AestheticMusicHomeScreen(
                     val isSelected = mood == selectedMood
                     Surface(
                         shape = RoundedCornerShape(20.dp),
-                        color = if (isSelected) Color(0xFFE3E4E2) else Color(0xFF282A2A),
+                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
                         modifier = Modifier.clickable { selectedMood = mood }
                     ) {
                         Text(
                             text = mood,
-                            color = if (isSelected) Color(0xFF1B1C1C) else Color(0xFFE3E4E2),
+                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.labelLarge.copy(
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                             ),

@@ -60,7 +60,8 @@ data class PlayerState(
     val loudnessGainDb: Float = 0f,
     val currentPresetName: String = "Flat",
     val sleepTimerMinutesLeft: Int = 0,
-    val isSingleTrackPlayback: Boolean = false
+    val isSingleTrackPlayback: Boolean = false,
+    val isPartOfPlaylist: Boolean = false
 )
 
 /**
@@ -394,7 +395,7 @@ class AudioPlayerManager(
         }
     }
 
-    fun playQueue(tracks: List<Track>, startIndex: Int = 0) {
+    fun playQueue(tracks: List<Track>, startIndex: Int = 0, isPlaylist: Boolean = true) {
         if (tracks.isEmpty()) return
         trackRetryCount = 0
         lastFailedTrackId = null
@@ -405,7 +406,8 @@ class AudioPlayerManager(
             queue = tracks,
             currentIndex = validIndex,
             currentTrack = tracks[validIndex],
-            isSingleTrackPlayback = false
+            isSingleTrackPlayback = !isPlaylist,
+            isPartOfPlaylist = isPlaylist
         )
         loadAndPlayCurrent()
     }
@@ -421,7 +423,8 @@ class AudioPlayerManager(
             _state.value = _state.value.copy(
                 currentIndex = index,
                 currentTrack = track,
-                isSingleTrackPlayback = true
+                isSingleTrackPlayback = true,
+                isPartOfPlaylist = false
             )
         } else {
             currentQueue.add(0, track)
@@ -429,7 +432,8 @@ class AudioPlayerManager(
                 queue = currentQueue,
                 currentIndex = 0,
                 currentTrack = track,
-                isSingleTrackPlayback = true
+                isSingleTrackPlayback = true,
+                isPartOfPlaylist = false
             )
         }
         loadAndPlayCurrent()
@@ -449,22 +453,20 @@ class AudioPlayerManager(
         if (newQueue.isEmpty()) return
         val current = _state.value.currentTrack
         if (current == null) {
-            playQueue(newQueue, 0)
+            playQueue(newQueue, 0, isPlaylist = false)
             return
         }
         val currentIdx = newQueue.indexOfFirst { it.id == current.id }
         if (currentIdx >= 0) {
             _state.value = _state.value.copy(
                 queue = newQueue,
-                currentIndex = currentIdx,
-                isSingleTrackPlayback = false
+                currentIndex = currentIdx
             )
         } else {
             val merged = listOf(current) + newQueue.filter { it.id != current.id }
             _state.value = _state.value.copy(
                 queue = merged,
-                currentIndex = 0,
-                isSingleTrackPlayback = false
+                currentIndex = 0
             )
         }
     }

@@ -39,16 +39,20 @@ object InnerTubeResolver {
             searchFirstVideoId("$title $artist") ?: return@withContext null
         }
 
-        // Try ANDROID_VR client first (does not require PoToken or signature deciphering)
+        // 1. Direct fast concurrent InnerTube extraction
+        val directStream = com.seitharol.data.resolver.InnerTubeStreamExtractor
+            .resolveWorkingStreamUrl(validVideoId)
+            .getOrNull()
+        if (!directStream.isNullOrBlank()) return@withContext directStream
+
+        // 2. Direct player endpoint fallback
         val androidVrStream = fetchAudioUrlFromPlayer(validVideoId, clientName = "ANDROID_VR", clientVersion = "1.60.19")
         if (!androidVrStream.isNullOrBlank()) return@withContext androidVrStream
 
-        // Try IOS client fallback
         val iosStream = fetchAudioUrlFromPlayer(validVideoId, clientName = "IOS", clientVersion = "19.45.4")
         if (!iosStream.isNullOrBlank()) return@withContext iosStream
 
-        // Fallback to public Piped API instances
-        fetchAudioUrlFromPiped(validVideoId)
+        null
     }
 
     private fun fetchAudioUrlFromPlayer(
@@ -137,8 +141,8 @@ object InnerTubeResolver {
             try {
                 val conn = (URL("$instance/streams/$videoId").openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
-                    connectTimeout = 6000
-                    readTimeout = 8000
+                    connectTimeout = 2500
+                    readTimeout = 2500
                     setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                     setRequestProperty("Accept", "application/json")
                 }

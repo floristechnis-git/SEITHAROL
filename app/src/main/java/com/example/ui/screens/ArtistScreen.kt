@@ -196,7 +196,7 @@ fun ArtistScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 20.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Button(
                             onClick = {
@@ -205,11 +205,18 @@ fun ArtistScreen(
                                 }
                             },
                             shape = RoundedCornerShape(50),
-                            modifier = Modifier.weight(1f).height(46.dp)
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.weight(1f).heightIn(min = 44.dp)
                         ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Play Top Songs", fontWeight = FontWeight.Bold)
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Play Top",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
 
                         OutlinedButton(
@@ -222,11 +229,18 @@ fun ArtistScreen(
                                 }
                             },
                             shape = RoundedCornerShape(50),
-                            modifier = Modifier.weight(1f).height(46.dp)
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.weight(1f).heightIn(min = 44.dp)
                         ) {
-                            Icon(Icons.Default.Shuffle, contentDescription = null)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Artist Radio", fontWeight = FontWeight.Bold)
+                            Icon(Icons.Default.Shuffle, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Artist Radio",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
                 }
@@ -283,10 +297,37 @@ fun ArtistScreen(
                             horizontalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
                             items(allReleases.distinctBy { it.browseId }, key = { "rel_${it.browseId}" }) { release ->
+                                val isSingle = release.type.equals("SINGLE", true) || 
+                                               release.subtitle.contains("Single", true) ||
+                                               release.subtitle.contains("1 song", true) ||
+                                               release.subtitle.contains("1 track", true) ||
+                                               page.singles.any { it.browseId == release.browseId }
+
                                 Column(
                                     modifier = Modifier
                                         .width(142.dp)
-                                        .clickable { onNavigateToPlaylist(release.browseId) }
+                                        .clickable {
+                                            if (isSingle) {
+                                                viewModel.loadPlaylistTracks(release.browseId) { tracks ->
+                                                    val singleTrack = tracks.firstOrNull()
+                                                    if (singleTrack != null) {
+                                                        viewModel.playTrack(singleTrack)
+                                                    } else {
+                                                        viewModel.playTrack(
+                                                            Track(
+                                                                id = release.browseId,
+                                                                title = release.title,
+                                                                artist = page.name,
+                                                                album = release.title,
+                                                                artUrl = release.thumbnailUrl
+                                                            )
+                                                        )
+                                                    }
+                                                }
+                                            } else {
+                                                onNavigateToPlaylist(release.browseId)
+                                            }
+                                        }
                                 ) {
                                     Box(modifier = Modifier.size(142.dp)) {
                                         AsyncImage(
@@ -298,10 +339,7 @@ fun ArtistScreen(
                                                 .clip(RoundedCornerShape(14.dp))
                                                 .background(MaterialTheme.colorScheme.surfaceVariant)
                                         )
-                                        val tag = if (release.type.equals("SINGLE", true) || 
-                                                      release.subtitle.contains("Single", true) ||
-                                                      release.subtitle.contains("1 song", true) ||
-                                                      release.subtitle.contains("1 track", true)) "SINGLE" else "ALBUM"
+                                        val tag = if (isSingle) "SINGLE" else "ALBUM"
                                         Surface(
                                             color = Color(0xFF1B1C1C).copy(alpha = 0.85f),
                                             shape = RoundedCornerShape(6.dp),

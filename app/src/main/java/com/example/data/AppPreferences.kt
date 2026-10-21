@@ -11,9 +11,9 @@ data class UserSettings(
     val userName: String = "",
     val userAge: String = "",
     val themeMode: String = "SYSTEM", // "SYSTEM", "LIGHT", "DARK"
-    val audioQuality: String = "Good (160 kbps)",
-    val streamingQuality: String = "NORMAL", // "LOW", "NORMAL", "HIGH"
-    val downloadQuality: String = "NORMAL", // "NORMAL", "HIGH"
+    val audioQuality: String = "Data Saver (96 kbps)",
+    val streamingQuality: String = "LOW", // "LOW", "NORMAL", "HIGH" - Data Saver default
+    val downloadQuality: String = "LOW", // "LOW", "NORMAL", "HIGH" - Data Saver default
     val normalizeVolume: Boolean = true,
     val bassBoostLevel: Float = 0f,
     val crossfadeSeconds: Int = 0,
@@ -44,9 +44,9 @@ class AppPreferences(private val context: Context) {
             userName = prefs.getString("user_name", "") ?: "",
             userAge = prefs.getString("user_age", "") ?: "",
             themeMode = prefs.getString("theme_mode", "SYSTEM") ?: "SYSTEM",
-            audioQuality = prefs.getString("audio_quality", "Good (160 kbps)") ?: "Good (160 kbps)",
-            streamingQuality = prefs.getString("streaming_quality", "NORMAL") ?: "NORMAL",
-            downloadQuality = prefs.getString("download_quality", "NORMAL") ?: "NORMAL",
+            audioQuality = prefs.getString("audio_quality", "Data Saver (96 kbps)") ?: "Data Saver (96 kbps)",
+            streamingQuality = prefs.getString("streaming_quality", "LOW") ?: "LOW",
+            downloadQuality = prefs.getString("download_quality", "LOW") ?: "LOW",
             normalizeVolume = prefs.getBoolean("normalize_volume", true),
             bassBoostLevel = prefs.getFloat("bass_boost", 0f),
             crossfadeSeconds = prefs.getInt("crossfade_sec", 0),

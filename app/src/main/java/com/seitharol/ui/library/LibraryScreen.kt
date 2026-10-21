@@ -167,56 +167,53 @@ fun LibraryScreen(
         }
 
         // 2. Scrollable Category Pills + Real SVG Filter Button (Strict 36.dp height, 20.dp divider, compact 32.dp filter pill)
+        // 2. Scrollable Category Pills (Full-width horizontal scrolling with plenty of room)
+        item {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+            ) {
+                items(navTabs) { tab ->
+                    val isSelected = selectedNavTab == tab
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { selectedNavTab = tab },
+                        modifier = Modifier.height(32.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primary,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
+                        border = null,
+                        label = {
+                            Text(
+                                text = tab,
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    )
+                }
+            }
+        }
+
+        // 3. Filter Button Row (Moved directly below the category chips row)
         item {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp)
-                    .height(36.dp),
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    items(navTabs) { tab ->
-                        val isSelected = selectedNavTab == tab
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = { selectedNavTab = tab },
-                            modifier = Modifier.height(32.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                            ),
-                            border = null,
-                            label = {
-                                Text(
-                                    text = tab,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        )
-                    }
-                }
-
-                // Compact Vertical Bar (Strictly 20.dp tall so it NEVER stretches)
-                HorizontalDivider(
-                    modifier = Modifier
-                        .padding(horizontal = 8.dp)
-                        .height(20.dp)
-                        .width(1.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
-                )
-
-                // Compact Filter Button (Strictly 32.dp tall to match chips)
                 Box {
                     Surface(
                         shape = RoundedCornerShape(16.dp),

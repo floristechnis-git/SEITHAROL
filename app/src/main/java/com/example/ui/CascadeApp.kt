@@ -43,7 +43,7 @@ enum class AppDestination(val label: String, val icon: ImageVector) {
 sealed interface SubScreen {
     data object None : SubScreen
     data class Artist(val artistName: String) : SubScreen
-    data class Playlist(val playlistId: String) : SubScreen
+    data class Playlist(val playlistId: String, val returnSubScreen: SubScreen? = null) : SubScreen
     data object History : SubScreen
     data object Downloads : SubScreen
     data object LikedSongs : SubScreen
@@ -96,6 +96,13 @@ fun CascadeApp(viewModel: CascadeViewModel) {
         viewModel.artistNavigationEvent.collectLatest { artistName ->
             isPlayerExpanded = false
             currentSubScreen = SubScreen.Artist(artistName)
+        }
+    }
+
+    // On visit to Discover and Download page, pause current playing music
+    LaunchedEffect(currentSubScreen) {
+        if (currentSubScreen is SubScreen.Discover) {
+            viewModel.pause()
         }
     }
 
@@ -196,13 +203,13 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             playerState = playerState,
                             onBack = { currentSubScreen = SubScreen.None },
                             onShareArtist = { shareTargetArtist = it },
-                            onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) }
+                            onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it, returnSubScreen = currentSubScreen) }
                         )
                         is SubScreen.Playlist -> PlaylistScreen(
                             playlistId = sub.playlistId,
                             viewModel = viewModel,
                             playerState = playerState,
-                            onBack = { currentSubScreen = SubScreen.None },
+                            onBack = { currentSubScreen = sub.returnSubScreen ?: SubScreen.None },
                             onAddToPlaylist = { trackToAddToPlaylist = it }
                         )
                         is SubScreen.History -> HistoryScreen(
@@ -416,16 +423,16 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             playerState = playerState,
                             onBack = { currentSubScreen = SubScreen.None },
                             onShareArtist = { shareTargetArtist = it },
-                            onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) }
+                            onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it, returnSubScreen = currentSubScreen) }
                         )
                     }
                     is SubScreen.Playlist -> {
-                        BackHandler { currentSubScreen = SubScreen.None }
+                        BackHandler { currentSubScreen = sub.returnSubScreen ?: SubScreen.None }
                         PlaylistScreen(
                             playlistId = sub.playlistId,
                             viewModel = viewModel,
                             playerState = playerState,
-                            onBack = { currentSubScreen = SubScreen.None },
+                            onBack = { currentSubScreen = sub.returnSubScreen ?: SubScreen.None },
                             onAddToPlaylist = { trackToAddToPlaylist = it }
                         )
                     }
@@ -623,8 +630,8 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                         .navigationBarsPadding(),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // Floating Mini Player (if playing & player not expanded)
-                    if (playerState.currentTrack != null && !isPlayerExpanded) {
+                    // Floating Mini Player (if playing & player not expanded & not on Discover screen)
+                    if (playerState.currentTrack != null && !isPlayerExpanded && currentSubScreen !is SubScreen.Discover) {
                         MiniPlayer(
                             playerState = playerState,
                             onExpand = { isPlayerExpanded = true },

@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
@@ -262,20 +263,22 @@ class ResolverEngine {
         // 7. Primary: Direct YouTube InnerTube resolution (skip Spotify 22-char IDs and numeric Saavn IDs)
         if (resolvedStream == null && isYouTubeId) {
             try {
-                val directResult = com.seitharol.data.resolver.InnerTubeStreamExtractor.resolveWorkingStreamUrl(rawId, preferredQuality)
-                if (directResult.isSuccess && directResult.getOrNull()?.isNotBlank() == true) {
-                    val streamUrl = directResult.getOrNull()!!
-                    resolvedStream = ResolvedStream(
-                        videoId = rawId,
-                        streamUrl = streamUrl,
-                        itag = track.itag,
-                        codec = if (streamUrl.contains("opus") || streamUrl.contains("webm")) "Opus" else "AAC",
-                        bitrate = "${targetKbps} kbps",
-                        expiresAtMs = now + (6 * 3600 * 1000L),
-                        isLocal = false,
-                        resolvedBy = "YouTube Music InnerTube Direct",
-                        latencyMs = 12
-                    )
+                withTimeoutOrNull(4500L) {
+                    val directResult = com.seitharol.data.resolver.InnerTubeStreamExtractor.resolveWorkingStreamUrl(rawId, preferredQuality)
+                    if (directResult.isSuccess && directResult.getOrNull()?.isNotBlank() == true) {
+                        val streamUrl = directResult.getOrNull()!!
+                        resolvedStream = ResolvedStream(
+                            videoId = rawId,
+                            streamUrl = streamUrl,
+                            itag = track.itag,
+                            codec = if (streamUrl.contains("opus") || streamUrl.contains("webm")) "Opus" else "AAC",
+                            bitrate = "${targetKbps} kbps",
+                            expiresAtMs = now + (6 * 3600 * 1000L),
+                            isLocal = false,
+                            resolvedBy = "YouTube Music InnerTube Direct",
+                            latencyMs = 12
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 failures.add("InnerTubeDirectExtractor: ${e.message}")
@@ -283,7 +286,9 @@ class ResolverEngine {
 
             if (resolvedStream == null) {
                 try {
-                    resolvedStream = youtubeInnerTubeProvider.resolveStream(rawId, preferredKbps = targetKbps)
+                    withTimeoutOrNull(3500L) {
+                        resolvedStream = youtubeInnerTubeProvider.resolveStream(rawId, preferredKbps = targetKbps)
+                    }
                 } catch (e: Exception) {
                     failures.add("InnerTubeDirect: ${e.message}")
                     Log.w(TAG, "On-device InnerTube direct resolve failed for $rawId: ${e.message}")
@@ -335,31 +340,33 @@ class ResolverEngine {
         // 9. Fallback 2: Federated Piped & Invidious resolvers (for exact YouTube videoId before third-party searches)
         if (resolvedStream == null && isYouTubeId) {
             val req = ResolveRequest(videoId = rawId, title = effectiveTitle, artist = effectiveArtist)
-            for (federated in listOf(pipedResolver, invidiousResolver)) {
-                try {
-                    val res = federated.resolve(req)
-                    val candidateFormats = res.formats.filter { it.url.isNotBlank() }
-                    val fmt = if (preferredQuality == com.seitharol.data.resolver.AudioQuality.LOW) {
-                        candidateFormats.minByOrNull { it.bitrate } ?: candidateFormats.firstOrNull()
-                    } else {
-                        candidateFormats.firstOrNull()
+            withTimeoutOrNull(3000L) {
+                for (federated in listOf(pipedResolver, invidiousResolver)) {
+                    try {
+                        val res = federated.resolve(req)
+                        val candidateFormats = res.formats.filter { it.url.isNotBlank() }
+                        val fmt = if (preferredQuality == com.seitharol.data.resolver.AudioQuality.LOW) {
+                            candidateFormats.minByOrNull { it.bitrate } ?: candidateFormats.firstOrNull()
+                        } else {
+                            candidateFormats.firstOrNull()
+                        }
+                        if (fmt != null) {
+                            resolvedStream = ResolvedStream(
+                                videoId = rawId,
+                                streamUrl = fmt.url,
+                                itag = fmt.id.toIntOrNull() ?: 140,
+                                codec = fmt.codec.uppercase(),
+                                bitrate = "${fmt.bitrate / 1000} kbps",
+                                expiresAtMs = res.expiresAt,
+                                isLocal = false,
+                                resolvedBy = res.resolverId,
+                                latencyMs = 25
+                            )
+                            break
+                        }
+                    } catch (e: Exception) {
+                        failures.add("${federated.id}: ${e.message}")
                     }
-                    if (fmt != null) {
-                        resolvedStream = ResolvedStream(
-                            videoId = rawId,
-                            streamUrl = fmt.url,
-                            itag = fmt.id.toIntOrNull() ?: 140,
-                            codec = fmt.codec.uppercase(),
-                            bitrate = "${fmt.bitrate / 1000} kbps",
-                            expiresAtMs = res.expiresAt,
-                            isLocal = false,
-                            resolvedBy = res.resolverId,
-                            latencyMs = 25
-                        )
-                        break
-                    }
-                } catch (e: Exception) {
-                    failures.add("${federated.id}: ${e.message}")
                 }
             }
         }

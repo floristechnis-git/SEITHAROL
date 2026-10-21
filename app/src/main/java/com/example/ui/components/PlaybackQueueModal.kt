@@ -127,7 +127,7 @@ fun PlaybackQueueModal(
         modifier = modifier
             .fillMaxSize()
             .testTag("playback_queue_modal"),
-        color = Color(0xFF1B1C1C) // SEITHAROL Dark Palette
+        color = MaterialTheme.colorScheme.background
     ) {
         Column(
             modifier = Modifier
@@ -152,14 +152,14 @@ fun PlaybackQueueModal(
                     Icon(
                         imageVector = Icons.Default.KeyboardArrowDown,
                         contentDescription = "Collapse Queue",
-                        tint = Color(0xFFE3E4E2),
+                        tint = MaterialTheme.colorScheme.onBackground,
                         modifier = Modifier.size(28.dp)
                     )
                 }
 
                 Text(
                     text = "Playback Queue",
-                    color = Color(0xFFE3E4E2),
+                    color = MaterialTheme.colorScheme.onBackground,
                     fontFamily = SyneFontFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp
@@ -172,8 +172,8 @@ fun PlaybackQueueModal(
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Close Queue",
-                        tint = Color(0xFFE3E4E2),
-                        modifier = Modifier.size(24.dp)
+                        tint = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.size(22.dp)
                     )
                 }
             }
@@ -193,14 +193,14 @@ fun PlaybackQueueModal(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Up Next",
-                        color = Color(0xFFE3E4E2),
+                        color = MaterialTheme.colorScheme.onBackground,
                         fontFamily = SyneFontFamily,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
                         text = "${queue.size} tracks",
-                        color = Color(0xFF9EA1A1),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontFamily = OutfitFontFamily,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium
@@ -210,7 +210,7 @@ fun PlaybackQueueModal(
                 if (queue.size > 1) {
                     Surface(
                         shape = RoundedCornerShape(16.dp),
-                        color = Color(0xFF282A2A),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
                         modifier = Modifier
                             .clip(RoundedCornerShape(16.dp))
                             .clickable { viewModel.clearQueue() }
@@ -241,7 +241,7 @@ fun PlaybackQueueModal(
                 ) {
                     Text(
                         text = "Queue is empty.\nAdd tracks from Search or Home to play.",
-                        color = Color(0xFF9EA1A1),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontFamily = OutfitFontFamily,
                         fontSize = 14.sp,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -290,9 +290,9 @@ fun PlaybackQueueModal(
                                 .clickable { viewModel.playQueueIndex(index) }
                                 .testTag("queue_item_$index"),
                             color = when {
-                                isDragging -> Color(0xFF323535)
-                                isPlaying -> Color(0xFF2B2E2E)
-                                else -> Color(0xFF232526)
+                                isDragging -> MaterialTheme.colorScheme.surfaceVariant
+                                isPlaying -> MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
                             },
                             shape = RoundedCornerShape(12.dp),
                             shadowElevation = if (isDragging) 16.dp else 0.dp
@@ -311,7 +311,7 @@ fun PlaybackQueueModal(
                                     Icon(
                                         imageVector = Icons.Outlined.DeleteOutline,
                                         contentDescription = "Remove from Queue",
-                                        tint = Color(0xFF9EA1A1),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
@@ -323,7 +323,7 @@ fun PlaybackQueueModal(
                                     modifier = Modifier
                                         .size(48.dp)
                                         .clip(RoundedCornerShape(8.dp))
-                                        .background(Color(0xFF2E2E2E))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant)
                                 ) {
                                     AsyncImage(
                                         model = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
@@ -340,7 +340,7 @@ fun PlaybackQueueModal(
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
                                             text = track.title,
-                                            color = if (isPlaying) Color.White else Color(0xFFE3E4E2),
+                                            color = if (isPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                                             fontFamily = OutfitFontFamily,
                                             fontWeight = FontWeight.SemiBold,
                                             fontSize = 14.sp,
@@ -353,12 +353,12 @@ fun PlaybackQueueModal(
                                             Box(
                                                 modifier = Modifier
                                                     .clip(RoundedCornerShape(4.dp))
-                                                    .background(Color.White.copy(alpha = 0.2f))
+                                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
                                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                                             ) {
                                                 Text(
                                                     text = "PLAYING",
-                                                    color = Color.White,
+                                                    color = MaterialTheme.colorScheme.primary,
                                                     fontSize = 9.sp,
                                                     fontWeight = FontWeight.ExtraBold
                                                 )
@@ -370,7 +370,7 @@ fun PlaybackQueueModal(
 
                                     Text(
                                         text = track.artist,
-                                        color = Color(0xFF9EA1A1),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         fontFamily = OutfitFontFamily,
                                         fontSize = 12.sp,
                                         maxLines = 1,
@@ -425,7 +425,7 @@ fun PlaybackQueueModal(
                                                 .width(18.dp)
                                                 .height(2.dp)
                                                 .background(
-                                                    if (isDragging) Color.White else Color(0xFF888888),
+                                                    if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                                                     RoundedCornerShape(1.dp)
                                                 )
                                         )
@@ -434,7 +434,7 @@ fun PlaybackQueueModal(
                                                 .width(18.dp)
                                                 .height(2.dp)
                                                 .background(
-                                                    if (isDragging) Color.White else Color(0xFF888888),
+                                                    if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                                                     RoundedCornerShape(1.dp)
                                                 )
                                         )
@@ -457,7 +457,7 @@ fun PlaybackQueueModal(
                         Spacer(modifier = Modifier.height(14.dp))
                         Surface(
                             shape = RoundedCornerShape(14.dp),
-                            color = Color(0xFF232526),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("queue_autoplay_card")
@@ -472,14 +472,14 @@ fun PlaybackQueueModal(
                                 Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                                     Text(
                                         text = "Autoplay",
-                                        color = Color(0xFFE3E4E2),
+                                        color = MaterialTheme.colorScheme.onSurface,
                                         fontFamily = SyneFontFamily,
                                         fontSize = 15.sp,
                                         fontWeight = FontWeight.Bold
                                     )
                                     Text(
                                         text = "Add similar songs to the end of the queue",
-                                        color = Color(0xFF9EA1A1),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         fontFamily = OutfitFontFamily,
                                         fontSize = 12.sp
                                     )
@@ -489,10 +489,11 @@ fun PlaybackQueueModal(
                                     checked = isAutoSuggest,
                                     onCheckedChange = { viewModel.toggleAutoSuggest() },
                                     colors = SwitchDefaults.colors(
-                                        checkedThumbColor = Color(0xFF1B1C1C),
-                                        checkedTrackColor = Color.White,
-                                        uncheckedThumbColor = Color(0xFF9EA1A1),
-                                        uncheckedTrackColor = Color(0xFF2E3030)
+                                        checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                        checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                        uncheckedThumbColor = MaterialTheme.colorScheme.primary,
+                                        uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                        uncheckedBorderColor = MaterialTheme.colorScheme.outline
                                     )
                                 )
                             }
@@ -505,7 +506,7 @@ fun PlaybackQueueModal(
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
                                 text = "Auto-suggested",
-                                color = Color.White,
+                                color = MaterialTheme.colorScheme.onBackground,
                                 fontFamily = SyneFontFamily,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
@@ -516,7 +517,7 @@ fun PlaybackQueueModal(
                         itemsIndexed(suggestedTracks, key = { _, track -> "suggested_${track.id}" }) { _, track ->
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
-                                color = Color(0xFF202222),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
@@ -546,7 +547,7 @@ fun PlaybackQueueModal(
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
                                             text = track.title,
-                                            color = Color(0xFFE3E4E2),
+                                            color = MaterialTheme.colorScheme.onSurface,
                                             fontSize = 13.sp,
                                             fontFamily = OutfitFontFamily,
                                             fontWeight = FontWeight.Medium,
@@ -555,7 +556,7 @@ fun PlaybackQueueModal(
                                         )
                                         Text(
                                             text = track.artist,
-                                            color = Color(0xFF9EA1A1),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             fontSize = 11.sp,
                                             fontFamily = OutfitFontFamily,
                                             maxLines = 1,
@@ -570,7 +571,7 @@ fun PlaybackQueueModal(
                                         Icon(
                                             imageVector = Icons.Default.PlaylistAdd,
                                             contentDescription = "Add to Queue",
-                                            tint = Color.White,
+                                            tint = MaterialTheme.colorScheme.primary,
                                             modifier = Modifier.size(20.dp)
                                         )
                                     }
@@ -605,7 +606,7 @@ private fun LandingDropIndicatorLine() {
             modifier = Modifier
                 .size(6.dp)
                 .clip(CircleShape)
-                .background(Color.White)
+                .background(MaterialTheme.colorScheme.primary)
         )
         Spacer(modifier = Modifier.width(4.dp))
         // Glowing 2.5dp insertion line
@@ -616,9 +617,9 @@ private fun LandingDropIndicatorLine() {
                 .background(
                     Brush.horizontalGradient(
                         colors = listOf(
-                            Color.White,
-                            Color.White.copy(alpha = 0.75f),
-                            Color.White.copy(alpha = 0.15f)
+                            MaterialTheme.colorScheme.primary,
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.75f),
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                         )
                     ),
                     shape = RoundedCornerShape(1.25.dp)

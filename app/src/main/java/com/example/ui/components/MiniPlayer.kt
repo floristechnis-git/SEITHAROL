@@ -121,7 +121,7 @@ fun MiniPlayer(
                 }
             }
             .testTag("mini_player_bar"),
-        color = Color(0xFF232526),
+        color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(30.dp),
         shadowElevation = 10.dp
     ) {
@@ -137,7 +137,7 @@ fun MiniPlayer(
                     modifier = Modifier
                         .size(44.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF333333)),
+                        .background(MaterialTheme.colorScheme.surface),
                     contentAlignment = Alignment.Center
                 ) {
                     AsyncImage(
@@ -156,7 +156,7 @@ fun MiniPlayer(
                 ) {
                     Text(
                         text = track.title,
-                        color = Color(0xFFE3E4E2),
+                        color = MaterialTheme.colorScheme.onSurface,
                         fontSize = 14.sp,
                         fontFamily = OutfitFontFamily,
                         fontWeight = FontWeight.SemiBold,
@@ -165,7 +165,7 @@ fun MiniPlayer(
                     )
                     Text(
                         text = track.artist,
-                        color = Color(0xFF9EA1A1),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp,
                         fontFamily = OutfitFontFamily,
                         maxLines = 1,
@@ -183,7 +183,7 @@ fun MiniPlayer(
                     Icon(
                         imageVector = Icons.Default.SkipPrevious,
                         contentDescription = "Previous Track",
-                        tint = Color(0xFFE3E4E2),
+                        tint = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -198,14 +198,14 @@ fun MiniPlayer(
                     if (playerState.isBuffering) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
-                            color = Color.White,
+                            color = MaterialTheme.colorScheme.primary,
                             strokeWidth = 2.dp
                         )
                     } else {
                         Icon(
                             imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                             contentDescription = if (playerState.isPlaying) "Pause" else "Play",
-                            tint = Color(0xFFE3E4E2),
+                            tint = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.size(24.dp)
                         )
                     }
@@ -221,7 +221,7 @@ fun MiniPlayer(
                     Icon(
                         imageVector = Icons.Default.SkipNext,
                         contentDescription = "Next Track",
-                        tint = Color(0xFFE3E4E2),
+                        tint = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -234,7 +234,7 @@ fun MiniPlayer(
                     .fillMaxWidth()
                     .height(2.5.dp)
                     .align(Alignment.BottomCenter),
-                color = Color.White,
+                color = MaterialTheme.colorScheme.primary,
                 trackColor = Color.Transparent
             )
         }

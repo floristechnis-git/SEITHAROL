@@ -118,13 +118,14 @@ fun PlayerScreen(
     var showAudioAdjustSheet by remember { mutableStateOf(false) }
 
     // Conditional "Up Next" bottom bar:
-    // If played as a single track, hide until user clicks Queue button at least once.
-    // Can be swiped down to hide, and reappears when clicking Queue button.
-    var hasClickedQueueButton by remember(track.id, playerState.isSingleTrackPlayback) {
-        mutableStateOf(!playerState.isSingleTrackPlayback)
+    // Never pops up automatically unless the playing track is part of an active playlist.
+    // When playing a single song (from Search, Home, Discover, or recommendations), it remains hidden
+    // unless the user explicitly clicks the Queue button. Can be swiped down to hide.
+    var hasClickedQueueButton by remember(track.id, playerState.isPartOfPlaylist) {
+        mutableStateOf(playerState.isPartOfPlaylist && !playerState.isSingleTrackPlayback)
     }
-    var isUpNextVisible by remember(track.id, playerState.isSingleTrackPlayback) {
-        mutableStateOf(!playerState.isSingleTrackPlayback)
+    var isUpNextVisible by remember(track.id, playerState.isPartOfPlaylist) {
+        mutableStateOf(playerState.isPartOfPlaylist && !playerState.isSingleTrackPlayback)
     }
 
     val inlineLyricListState = rememberLazyListState()
@@ -477,7 +478,7 @@ fun PlayerScreen(
         }
 
         // ────────────────────────────────────────────────────────────
-        // Track Title & Artist Details
+        // Track Title & Artist Details (Isolated Touch Targets: Title has NO click action)
         // ────────────────────────────────────────────────────────────
         Column(
             modifier = Modifier
@@ -491,43 +492,48 @@ fun PlayerScreen(
                 fontWeight = FontWeight.Bold,
                 fontSize = 22.sp,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.testTag("player_song_title")
             )
-            Spacer(modifier = Modifier.height(3.dp))
-            // Artist name is clickable — isolated to artist only (not album)
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Text(
-                    text = track.artist,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontFamily = OutfitFontFamily,
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {
-                            if (track.artist.isNotBlank()) {
-                                onDismiss()
-                                viewModel.navigateToArtist(track.artist)
-                            }
-                        }
-                        .testTag("player_artist_name")
-                )
-                if (track.album.isNotBlank() && track.album != track.title && track.album != "Single") {
+            Spacer(modifier = Modifier.height(6.dp))
+            // Artist name is clickable — strictly isolated touch target so clicking song title NEVER triggers it
+            @OptIn(ExperimentalMaterial3Api::class)
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
                     Text(
-                        text = "• ${track.album}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        text = track.artist,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontFamily = OutfitFontFamily,
                         fontSize = 14.sp,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                if (track.artist.isNotBlank()) {
+                                    onDismiss()
+                                    viewModel.navigateToArtist(track.artist)
+                                }
+                            }
+                            .padding(vertical = 2.dp, horizontal = 2.dp)
+                            .testTag("player_artist_name")
                     )
+                    if (track.album.isNotBlank() && track.album != track.title && track.album != "Single") {
+                        Text(
+                            text = "• ${track.album}",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            fontFamily = OutfitFontFamily,
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }

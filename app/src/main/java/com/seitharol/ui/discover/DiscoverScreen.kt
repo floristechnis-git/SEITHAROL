@@ -83,6 +83,19 @@ fun DiscoverScreen(
         }
     }
 
+    // Immediately stop previous audio when user starts scrolling to another track so audio never bleeds
+    LaunchedEffect(pagerState.isScrollInProgress) {
+        if (pagerState.isScrollInProgress) {
+            audioPlayerManager.pausePreview()
+        }
+    }
+
+    LaunchedEffect(pagerState.currentPage) {
+        if (pagerState.currentPage != pagerState.settledPage) {
+            audioPlayerManager.pausePreview()
+        }
+    }
+
     LaunchedEffect(pagerState.settledPage, feedTracks, isInDiscoverSearchOpen) {
         if (isInDiscoverSearchOpen) {
             audioPlayerManager.pausePreview()
@@ -99,6 +112,7 @@ fun DiscoverScreen(
     }
 
     val isPreviewPlaying by audioPlayerManager.isPreviewPlaying.collectAsState()
+    val isPreviewBuffering by audioPlayerManager.isPreviewBuffering.collectAsState()
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         if (feedTracks.isEmpty()) {
@@ -119,6 +133,7 @@ fun DiscoverScreen(
                     track = track,
                     downloadState = downloadTaskState,
                     isPreviewPlaying = isPreviewPlaying,
+                    isPreviewBuffering = isPreviewBuffering && pagerState.settledPage == pageIndex,
                     onTogglePlayPause = {
                         if (isPreviewPlaying) {
                             audioPlayerManager.pausePreview()
@@ -228,13 +243,8 @@ fun DiscoverScreen(
                 onSearch = onSearchPreviewTracks,
                 onOpenDownloadPicker = { selectedTrack -> trackForDownloadSheet = selectedTrack },
                 onOpenFullSong = { selectedTrack ->
-                    scope.launch {
-                        isInDiscoverSearchOpen = false
-                        audioPlayerManager.openFullLengthSong(
-                            track = selectedTrack,
-                            onMaximizePlayer = onOpenFullSongMaximized
-                        )
-                    }
+                    // Play selected song directly on the Discover and Download UI
+                    audioPlayerManager.playPreview(selectedTrack)
                 },
                 onVisitArtist = { name, browseId ->
                     isInDiscoverSearchOpen = false
@@ -278,6 +288,7 @@ private fun DiscoverShortPage(
     track: NormalizedTrack,
     downloadState: DownloadTaskState,
     isPreviewPlaying: Boolean,
+    isPreviewBuffering: Boolean = false,
     onTogglePlayPause: () -> Unit,
     onLikeClick: () -> Unit,
     onDownloadClick: () -> Unit,
@@ -338,15 +349,28 @@ private fun DiscoverShortPage(
             )
         }
 
-        // Show Play indicator overlay in center when paused:
-        androidx.compose.animation.AnimatedVisibility(
-            visible = !isPreviewPlaying,
-            modifier = Modifier
-                .align(Alignment.Center)
-                .offset(y = (-48).dp)
-        ) {
+        // Show Loading spinner when resolving preview or Play indicator overlay when paused:
+        if (isPreviewBuffering) {
             Box(
                 modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(y = (-48).dp)
+                    .size(68.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.65f)),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(
+                    color = MaterialTheme.colorScheme.primary,
+                    strokeWidth = 3.dp,
+                    modifier = Modifier.size(34.dp)
+                )
+            }
+        } else if (!isPreviewPlaying) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(y = (-48).dp)
                     .size(68.dp)
                     .clip(CircleShape)
                     .background(Color.Black.copy(alpha = 0.65f)),

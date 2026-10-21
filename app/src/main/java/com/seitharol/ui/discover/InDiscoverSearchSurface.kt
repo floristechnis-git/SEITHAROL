@@ -92,7 +92,7 @@ fun InDiscoverSearchSurface(
                         searchJob = scope.launch {
                             delay(280L)
                             isLoading = true
-                            results = onSearch(newText)
+                            results = runCatching { onSearch(newText) }.getOrDefault(emptyList())
                             isLoading = false
                         }
                     }
@@ -137,7 +137,18 @@ fun InDiscoverSearchSurface(
                     unfocusedIndicatorColor = Color.Transparent
                 ),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
+                keyboardActions = KeyboardActions(onSearch = {
+                    focusManager.clearFocus()
+                    val clean = query.trim()
+                    if (clean.isNotBlank()) {
+                        searchJob?.cancel()
+                        searchJob = scope.launch {
+                            isLoading = true
+                            results = runCatching { onSearch(clean) }.getOrDefault(emptyList())
+                            isLoading = false
+                        }
+                    }
+                }),
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -150,6 +161,28 @@ fun InDiscoverSearchSurface(
                         .padding(bottom = 10.dp),
                     color = MaterialTheme.colorScheme.primary
                 )
+            }
+
+            if (!isLoading && query.isNotBlank() && results.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 40.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        SearchMagnifierSvgIcon(
+                            tint = Color.White.copy(alpha = 0.35f),
+                            modifier = Modifier.size(36.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "No songs found for \"$query\"",
+                            color = Color.White.copy(alpha = 0.6f),
+                            fontSize = 14.sp
+                        )
+                    }
+                }
             }
 
             LazyColumn(
@@ -304,7 +337,10 @@ fun InDiscoverSearchSurface(
                                 }
 
                                 OutlinedButton(
-                                    onClick = { onOpenFullSong(item) },
+                                    onClick = {
+                                        if (isThisPlaying) audioPlayerManager.pausePreview()
+                                        else audioPlayerManager.playPreview(item)
+                                    },
                                     modifier = Modifier.weight(1f).height(38.dp),
                                     shape = RoundedCornerShape(50),
                                     contentPadding = PaddingValues(horizontal = 14.dp),
@@ -312,13 +348,13 @@ fun InDiscoverSearchSurface(
                                     border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.25f))
                                 ) {
                                     Icon(
-                                        painter = painterResource(id = R.drawable.ic_play),
+                                        painter = painterResource(id = if (isThisPlaying) R.drawable.ic_pause else R.drawable.ic_play),
                                         contentDescription = null,
                                         tint = Color.White,
                                         modifier = Modifier.size(14.dp)
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Play Full", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    Text(if (isThisPlaying) "Pause" else "Play", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                 }
                             }
                         }

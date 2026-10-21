@@ -21,7 +21,13 @@ data class InnerTubeClientConfig(
     val clientVersion: String,
     val userAgent: String,
     val clientId: String,
-    val androidSdkVersion: Int? = null
+    val deviceMake: String? = null,
+    val deviceModel: String? = null,
+    val osName: String? = null,
+    val osVersion: String? = null,
+    val androidSdkVersion: Int? = null,
+    val origin: String = "https://www.youtube.com",
+    val playerEndpoint: String = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
 )
 
 data class YtmCollectionSummary(
@@ -68,26 +74,44 @@ data class YtmCollectionPageData(
 
 object InnerTubeStreamExtractor {
 
-    val FALLBACK_CLIENTS = listOf(
+    val VERIFIED_CLIENTS = listOf(
+        InnerTubeClientConfig(
+            clientName = "IOS",
+            clientVersion = "19.45.4",
+            userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
+            clientId = "5",
+            deviceMake = "Apple",
+            deviceModel = "iPhone16,2",
+            osName = "iPhone",
+            osVersion = "18.1.0.22B83",
+            origin = "https://www.youtube.com",
+            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+        ),
         InnerTubeClientConfig(
             clientName = "ANDROID_VR",
             clientVersion = "1.60.19",
             userAgent = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
             clientId = "28",
-            androidSdkVersion = 32
-        ),
-        InnerTubeClientConfig(
-            clientName = "IOS",
-            clientVersion = "19.45.4",
-            userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
-            clientId = "5"
+            deviceMake = "Oculus",
+            deviceModel = "Quest 3",
+            osName = "Android",
+            osVersion = "12L",
+            androidSdkVersion = 32,
+            origin = "https://www.youtube.com",
+            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
         ),
         InnerTubeClientConfig(
             clientName = "ANDROID_TESTSUITE",
             clientVersion = "1.9",
             userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 13; en_US) gzip",
             clientId = "30",
-            androidSdkVersion = 33
+            deviceMake = "Google",
+            deviceModel = "Pixel 7",
+            osName = "Android",
+            osVersion = "13",
+            androidSdkVersion = 33,
+            origin = "https://www.youtube.com",
+            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
         )
     )
 
@@ -96,6 +120,73 @@ object InnerTubeStreamExtractor {
     fun isValidYoutubeVideoId(id: String?): Boolean =
         !id.isNullOrBlank() && VALID_VIDEO_ID_REGEX.matches(id.trim())
 
+    private fun extractStreamWithConfig(
+        videoId: String,
+        client: InnerTubeClientConfig,
+        preferredQuality: AudioQuality,
+        cpn: String
+    ): String? {
+        return runCatching {
+            val endpoint = URL(client.playerEndpoint)
+            val conn = (endpoint.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 3000
+                readTimeout = 3000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("User-Agent", client.userAgent)
+                setRequestProperty("X-YouTube-Client-Name", client.clientId)
+                setRequestProperty("X-YouTube-Client-Version", client.clientVersion)
+                setRequestProperty("Origin", client.origin)
+                setRequestProperty("Referer", "${client.origin}/")
+            }
+            val payload = JSONObject().apply {
+                put("videoId", videoId)
+                put("cpn", cpn)
+                put("contentCheckOk", true)
+                put("racyCheckOk", true)
+                put("context", JSONObject().apply {
+                    put("client", JSONObject().apply {
+                        put("clientName", client.clientName)
+                        put("clientVersion", client.clientVersion)
+                        put("hl", "en")
+                        put("gl", "IN")
+                        client.deviceMake?.let { put("deviceMake", it) }
+                        client.deviceModel?.let { put("deviceModel", it) }
+                        client.osName?.let { put("osName", it) }
+                        client.osVersion?.let { put("osVersion", it) }
+                        client.androidSdkVersion?.let { put("androidSdkVersion", it) }
+                    })
+                })
+            }
+            conn.outputStream.use { it.write(payload.toString().toByteArray()) }
+            if (conn.responseCode != 200) return@runCatching null
+            val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+            if (json.optJSONObject("playabilityStatus")?.optString("status") != "OK") return@runCatching null
+
+            val returnedVideoId = json.optJSONObject("videoDetails")?.optString("videoId")
+            if (returnedVideoId != null && returnedVideoId != videoId) return@runCatching null
+
+            val adaptiveFormats = json.optJSONObject("streamingData")?.optJSONArray("adaptiveFormats")
+                ?: return@runCatching null
+            val audioStreams = mutableListOf<Pair<Int, String>>()
+            for (i in 0 until adaptiveFormats.length()) {
+                val fmt = adaptiveFormats.getJSONObject(i)
+                val mime = fmt.optString("mimeType", "")
+                val url = fmt.optString("url", "")
+                if (mime.startsWith("audio/") && url.isNotBlank()) {
+                    val kbps = fmt.optInt("bitrate", 128000) / 1000
+                    val opusBoost = if (mime.contains("opus") || mime.contains("mp4a")) 25 else 0
+                    audioStreams.add((kbps + opusBoost) to url)
+                }
+            }
+            if (audioStreams.isEmpty()) return@runCatching null
+            val withinCap = audioStreams.filter { it.first <= preferredQuality.maxBitrateKbps + 24 }
+            val pool = withinCap.ifEmpty { audioStreams }
+            pool.minByOrNull { kotlin.math.abs(it.first - preferredQuality.maxBitrateKbps) }?.second
+        }.getOrNull()
+    }
+
     suspend fun resolveExactYoutubeStreamById(
         videoId: String,
         preferredQuality: AudioQuality = AudioQuality.HIGH
@@ -103,89 +194,29 @@ object InnerTubeStreamExtractor {
         require(isValidYoutubeVideoId(videoId)) { "Invalid YouTube videoId: $videoId" }
         val cpn = (1..16).map { "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"[(0..63).random()] }.joinToString("")
 
-        // OuterTune / InnerTune verified client priority order
-        val clients = listOf(
-            InnerTubeClientConfig(
-                clientName = "ANDROID_VR",
-                clientVersion = "1.60.19",
-                userAgent = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
-                clientId = "28",
-                androidSdkVersion = 32
-            ),
-            InnerTubeClientConfig(
-                clientName = "IOS",
-                clientVersion = "19.45.4",
-                userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
-                clientId = "5"
-            ),
-            InnerTubeClientConfig(
-                clientName = "ANDROID_TESTSUITE",
-                clientVersion = "1.9",
-                userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 13; en_US) gzip",
-                clientId = "30",
-                androidSdkVersion = 33
-            )
-        )
-
-        for (client in clients) {
-            val streamUrl = runCatching {
-                val endpoint = URL("https://youtubei.googleapis.com/youtubei/v1/player?prettyPrint=false")
-                val conn = (endpoint.openConnection() as HttpURLConnection).apply {
-                    requestMethod = "POST"
-                    connectTimeout = 8000
-                    readTimeout = 8000
-                    doOutput = true
-                    setRequestProperty("Content-Type", "application/json")
-                    setRequestProperty("User-Agent", client.userAgent)
-                    setRequestProperty("X-YouTube-Client-Name", client.clientId)
-                    setRequestProperty("X-YouTube-Client-Version", client.clientVersion)
-                }
-                val payload = JSONObject().apply {
-                    put("videoId", videoId)
-                    put("cpn", cpn)
-                    put("contentCheckOk", true)
-                    put("racyCheckOk", true)
-                    put("context", JSONObject().apply {
-                        put("client", JSONObject().apply {
-                            put("clientName", client.clientName)
-                            put("clientVersion", client.clientVersion)
-                            put("hl", "en")
-                            put("gl", "IN")
-                            client.androidSdkVersion?.let { put("androidSdkVersion", it) }
-                        })
-                    })
-                }
-                conn.outputStream.use { it.write(payload.toString().toByteArray()) }
-                if (conn.responseCode != 200) return@runCatching null
-                val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-                if (json.optJSONObject("playabilityStatus")?.optString("status") != "OK") return@runCatching null
-
-                val returnedVideoId = json.optJSONObject("videoDetails")?.optString("videoId")
-                if (returnedVideoId != null && returnedVideoId != videoId) return@runCatching null
-
-                val adaptiveFormats = json.optJSONObject("streamingData")?.optJSONArray("adaptiveFormats")
-                    ?: return@runCatching null
-                val audioStreams = mutableListOf<Pair<Int, String>>()
-                for (i in 0 until adaptiveFormats.length()) {
-                    val fmt = adaptiveFormats.getJSONObject(i)
-                    val mime = fmt.optString("mimeType", "")
-                    val url = fmt.optString("url", "")
-                    if (mime.startsWith("audio/") && url.isNotBlank()) {
-                        val kbps = fmt.optInt("bitrate", 128000) / 1000
-                        val opusBoost = if (mime.contains("opus") || mime.contains("mp4a")) 25 else 0
-                        audioStreams.add((kbps + opusBoost) to url)
+        // OuterTune-style concurrent race across verified clients:
+        // Whichever client returns a valid unthrottled audio stream first completes immediately.
+        coroutineScope {
+            val deferred = kotlinx.coroutines.CompletableDeferred<String>()
+            val jobs = VERIFIED_CLIENTS.map { client ->
+                launch {
+                    val url = extractStreamWithConfig(videoId, client, preferredQuality, cpn)
+                    if (!url.isNullOrBlank()) {
+                        deferred.complete(url)
                     }
                 }
-                val withinCap = audioStreams.filter { it.first <= preferredQuality.maxBitrateKbps + 24 }
-                val pool = withinCap.ifEmpty { audioStreams }
-                pool.minByOrNull { kotlin.math.abs(it.first - preferredQuality.maxBitrateKbps) }?.second
-            }.getOrNull()
+            }
+            val winningUrl = kotlinx.coroutines.withTimeoutOrNull(3000L) {
+                deferred.await()
+            }
+            jobs.forEach { it.cancel() }
 
-            if (!streamUrl.isNullOrBlank()) {
-                return@withContext Result.success(streamUrl)
+            if (!winningUrl.isNullOrBlank()) {
+                Result.success(winningUrl)
+            } else {
+                Result.failure(IllegalStateException("Failed to resolve stream for videoId=$videoId"))
             }
         }
-        Result.failure(IllegalStateException("Failed to extract direct stream for videoId=$videoId"))
     }
 
     suspend fun resolveWorkingStreamUrl(
@@ -196,79 +227,7 @@ object InnerTubeStreamExtractor {
             val directResult = resolveExactYoutubeStreamById(videoId, preferredQuality)
             if (directResult.isSuccess) return@withContext directResult
         }
-        var lastError: Throwable? = null
-        for (client in FALLBACK_CLIENTS) {
-            try {
-                val url = extractStreamFromClient(videoId, client, preferredQuality)
-                if (!url.isNullOrBlank()) {
-                    return@withContext Result.success(url)
-                }
-            } catch (e: Exception) {
-                lastError = e
-            }
-        }
-        Result.failure(lastError ?: IllegalStateException("Unable to resolve stream for $videoId"))
-    }
-
-    private fun extractStreamFromClient(
-        videoId: String,
-        client: InnerTubeClientConfig,
-        quality: AudioQuality
-    ): String? {
-        val endpoint = URL("https://youtubei.googleapis.com/youtubei/v1/player?prettyPrint=false")
-        val conn = (endpoint.openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = 8000
-            readTimeout = 8000
-            doOutput = true
-            setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("User-Agent", client.userAgent)
-            setRequestProperty("X-YouTube-Client-Name", client.clientId)
-            setRequestProperty("X-YouTube-Client-Version", client.clientVersion)
-            setRequestProperty("Origin", "https://music.youtube.com")
-        }
-
-        val payload = JSONObject().apply {
-            put("videoId", videoId)
-            put("contentCheckOk", true)
-            put("racyCheckOk", true)
-            put("context", JSONObject().apply {
-                put("client", JSONObject().apply {
-                    put("clientName", client.clientName)
-                    put("clientVersion", client.clientVersion)
-                    put("hl", "en")
-                    put("gl", "IN")
-                    client.androidSdkVersion?.let { put("androidSdkVersion", it) }
-                })
-            })
-        }
-
-        conn.outputStream.use { it.write(payload.toString().toByteArray()) }
-        if (conn.responseCode != 200) return null
-
-        val response = conn.inputStream.bufferedReader().use { it.readText() }
-        val json = JSONObject(response)
-        if (json.optJSONObject("playabilityStatus")?.optString("status") != "OK") return null
-
-        val adaptiveFormats = json.optJSONObject("streamingData")
-            ?.optJSONArray("adaptiveFormats") ?: return null
-
-        val audioStreams = mutableListOf<Pair<Int, String>>()
-        for (i in 0 until adaptiveFormats.length()) {
-            val fmt = adaptiveFormats.getJSONObject(i)
-            val mimeType = fmt.optString("mimeType", "")
-            val directUrl = fmt.optString("url", "")
-            if (mimeType.startsWith("audio/") && directUrl.isNotBlank()) {
-                val bitrateKbps = fmt.optInt("bitrate", 128000) / 1000
-                val codecBoost = if (mimeType.contains("mp4a") || mimeType.contains("opus")) 0 else 20
-                audioStreams.add((bitrateKbps + codecBoost) to directUrl)
-            }
-        }
-        if (audioStreams.isEmpty()) return null
-
-        val withinCap = audioStreams.filter { it.first <= quality.maxBitrateKbps + 24 }
-        val pool = withinCap.ifEmpty { audioStreams }
-        return pool.minByOrNull { kotlin.math.abs(it.first - quality.maxBitrateKbps) }?.second
+        Result.failure(IllegalStateException("Unable to resolve stream for $videoId"))
     }
 
     /**
@@ -1247,12 +1206,15 @@ object InnerTubeStreamExtractor {
         return runCatching {
             val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 8000
-                readTimeout = 8000
+                connectTimeout = 4500
+                readTimeout = 4500
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+                setRequestProperty("X-YouTube-Client-Name", "67")
+                setRequestProperty("X-YouTube-Client-Version", "1.20250101.01.00")
                 setRequestProperty("Origin", "https://music.youtube.com")
+                setRequestProperty("Referer", "https://music.youtube.com/")
             }
             conn.outputStream.use { it.write(payload.toString().toByteArray()) }
             if (conn.responseCode != 200) return null

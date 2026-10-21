@@ -357,7 +357,16 @@ fun ProfileScreen(
 
                         Switch(
                             checked = isOfflineMode,
-                            onCheckedChange = { viewModel.setOfflineMode(it) }
+                            onCheckedChange = { viewModel.setOfflineMode(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = Color.Transparent,
+                                uncheckedThumbColor = MaterialTheme.colorScheme.primary,
+                                uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                uncheckedBorderColor = MaterialTheme.colorScheme.outline
+                            ),
+                            modifier = Modifier.testTag("profile_offline_switch")
                         )
                     }
                 }

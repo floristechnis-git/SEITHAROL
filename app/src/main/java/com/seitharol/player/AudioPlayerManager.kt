@@ -38,14 +38,23 @@ class AudioPlayerManager(
     private val _isPreviewPlaying = MutableStateFlow(false)
     val isPreviewPlaying: StateFlow<Boolean> = _isPreviewPlaying.asStateFlow()
 
+    private val _isPreviewBuffering = MutableStateFlow(false)
+    val isPreviewBuffering: StateFlow<Boolean> = _isPreviewBuffering.asStateFlow()
+
     init {
         exoPlayer.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _isPreviewPlaying.value = isPlaying
             }
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_ENDED) {
-                    _isPreviewPlaying.value = false
+                when (playbackState) {
+                    Player.STATE_BUFFERING -> _isPreviewBuffering.value = true
+                    Player.STATE_READY -> _isPreviewBuffering.value = false
+                    Player.STATE_ENDED -> {
+                        _isPreviewPlaying.value = false
+                        _isPreviewBuffering.value = false
+                    }
+                    Player.STATE_IDLE -> _isPreviewBuffering.value = false
                 }
             }
         })
@@ -56,6 +65,12 @@ class AudioPlayerManager(
 
         previewResolveJob?.cancel()
         _activePreviewTrackId.value = track.sourceId
+        _isPreviewBuffering.value = true
+        _isPreviewPlaying.value = false
+
+        // Stop prior audio immediately so previous track never bleeds while resolving new track
+        exoPlayer.stop()
+        exoPlayer.clearMediaItems()
 
         val rawPreview = track.previewUrl
         if (rawPreview != null && rawPreview.startsWith("http")) {
@@ -68,6 +83,7 @@ class AudioPlayerManager(
             exoPlayer.prepare()
             exoPlayer.playWhenReady = true
             _isPreviewPlaying.value = true
+            _isPreviewBuffering.value = false
             return
         }
 
@@ -76,7 +92,7 @@ class AudioPlayerManager(
 
             if (rawPreview != null && rawPreview.startsWith("ytm_clip:")) {
                 val videoId = rawPreview.removePrefix("ytm_clip:")
-                streamUrl = InnerTubeStreamExtractor.resolveWorkingStreamUrl(videoId, AudioQuality.NORMAL).getOrNull()
+                streamUrl = InnerTubeStreamExtractor.resolveWorkingStreamUrl(videoId, AudioQuality.LOW).getOrNull()
             } else if (rawPreview != null && rawPreview.startsWith("saavn_clip:")) {
                 val saavnId = rawPreview.removePrefix("saavn_clip:")
                 val meta = TrackMetadata(
@@ -87,12 +103,12 @@ class AudioPlayerManager(
                     durationSeconds = (track.durationMs / 1000L).toInt(),
                     thumbnailUrl = track.artUrl
                 )
-                streamUrl = StreamResolver.resolveExactStreamUrl(meta, AudioQuality.NORMAL)
+                streamUrl = StreamResolver.resolveExactStreamUrl(meta, AudioQuality.LOW)
             }
 
             if (streamUrl.isNullOrBlank()) {
                 if (track.source == TrackSource.YOUTUBE && track.sourceId.length == 11) {
-                    streamUrl = InnerTubeStreamExtractor.resolveWorkingStreamUrl(track.sourceId, AudioQuality.NORMAL).getOrNull()
+                    streamUrl = InnerTubeStreamExtractor.resolveWorkingStreamUrl(track.sourceId, AudioQuality.LOW).getOrNull()
                 } else if (track.source == TrackSource.JIOSAAVN) {
                     val meta = TrackMetadata(
                         id = track.sourceId,
@@ -102,7 +118,7 @@ class AudioPlayerManager(
                         durationSeconds = (track.durationMs / 1000L).toInt(),
                         thumbnailUrl = track.artUrl
                     )
-                    streamUrl = StreamResolver.resolveExactStreamUrl(meta, AudioQuality.NORMAL)
+                    streamUrl = StreamResolver.resolveExactStreamUrl(meta, AudioQuality.LOW)
                 }
             }
 
@@ -110,7 +126,7 @@ class AudioPlayerManager(
                 val q = "${track.title} ${track.artists.firstOrNull().orEmpty()}".trim()
                 val match = InnerTubeStreamExtractor.searchOfficialYtmSongs(q, limit = 1).firstOrNull()
                 if (match != null) {
-                    streamUrl = InnerTubeStreamExtractor.resolveWorkingStreamUrl(match.videoId, AudioQuality.NORMAL).getOrNull()
+                    streamUrl = InnerTubeStreamExtractor.resolveWorkingStreamUrl(match.videoId, AudioQuality.LOW).getOrNull()
                 }
             }
 
@@ -133,6 +149,10 @@ class AudioPlayerManager(
                     exoPlayer.playWhenReady = true
                     _isPreviewPlaying.value = true
                 }
+            } else if (_activePreviewTrackId.value == track.sourceId) {
+                withContext(Dispatchers.Main) {
+                    _isPreviewBuffering.value = false
+                }
             }
         }
     }
@@ -149,6 +169,7 @@ class AudioPlayerManager(
 
     fun pausePreview() {
         previewResolveJob?.cancel()
+        _isPreviewBuffering.value = false
         if (_activePreviewTrackId.value != null) {
             exoPlayer.playWhenReady = false
             exoPlayer.pause()
@@ -159,6 +180,7 @@ class AudioPlayerManager(
 
     fun stopPreviewAndClear() {
         previewResolveJob?.cancel()
+        _isPreviewBuffering.value = false
         if (_activePreviewTrackId.value != null) {
             exoPlayer.stop()
             exoPlayer.clearMediaItems()

@@ -22,9 +22,9 @@ enum class ThumbnailQuality(val label: String, val description: String) {
 
 data class PersistedSettingsState(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
-    val streamingQuality: AudioQuality = AudioQuality.NORMAL,
-    val downloadQuality: AudioQuality = AudioQuality.HIGH,
-    val thumbnailQuality: ThumbnailQuality = ThumbnailQuality.AUTO,
+    val streamingQuality: AudioQuality = AudioQuality.LOW,
+    val downloadQuality: AudioQuality = AudioQuality.LOW,
+    val thumbnailQuality: ThumbnailQuality = ThumbnailQuality.MEDIUM,
     val eqBandsDb: List<Float> = listOf(0f, 0f, 0f, 0f, 0f),
     val eqEnabled: Boolean = false,
     val sleepTimerMinutes: Int = 0,
@@ -51,17 +51,17 @@ class AppSettingsManager(context: Context) {
 
     private fun loadFromPrefs(): PersistedSettingsState {
         val themeName = prefs.getString(KEY_THEME_MODE, ThemeMode.SYSTEM.name) ?: ThemeMode.SYSTEM.name
-        val streamName = prefs.getString(KEY_STREAM_QUALITY, AudioQuality.NORMAL.name) ?: AudioQuality.NORMAL.name
-        val downloadName = prefs.getString(KEY_DOWNLOAD_QUALITY, AudioQuality.HIGH.name) ?: AudioQuality.HIGH.name
-        val thumbName = prefs.getString(KEY_THUMBNAIL_QUALITY, ThumbnailQuality.AUTO.name) ?: ThumbnailQuality.AUTO.name
+        val streamName = prefs.getString(KEY_STREAM_QUALITY, AudioQuality.LOW.name) ?: AudioQuality.LOW.name
+        val downloadName = prefs.getString(KEY_DOWNLOAD_QUALITY, AudioQuality.LOW.name) ?: AudioQuality.LOW.name
+        val thumbName = prefs.getString(KEY_THUMBNAIL_QUALITY, ThumbnailQuality.MEDIUM.name) ?: ThumbnailQuality.MEDIUM.name
         val bands = (0 until 5).map { idx ->
             prefs.getFloat("${KEY_EQ_BAND_PREFIX}$idx", 0f)
         }
         return PersistedSettingsState(
             themeMode = runCatching { ThemeMode.valueOf(themeName) }.getOrDefault(ThemeMode.SYSTEM),
-            streamingQuality = runCatching { AudioQuality.valueOf(streamName) }.getOrDefault(AudioQuality.NORMAL),
-            downloadQuality = runCatching { AudioQuality.valueOf(downloadName) }.getOrDefault(AudioQuality.HIGH),
-            thumbnailQuality = runCatching { ThumbnailQuality.valueOf(thumbName) }.getOrDefault(ThumbnailQuality.AUTO),
+            streamingQuality = runCatching { AudioQuality.valueOf(streamName) }.getOrDefault(AudioQuality.LOW),
+            downloadQuality = runCatching { AudioQuality.valueOf(downloadName) }.getOrDefault(AudioQuality.LOW),
+            thumbnailQuality = runCatching { ThumbnailQuality.valueOf(thumbName) }.getOrDefault(ThumbnailQuality.MEDIUM),
             eqBandsDb = bands,
             eqEnabled = prefs.getBoolean(KEY_EQ_ENABLED, false),
             sleepTimerMinutes = prefs.getInt(KEY_SLEEP_TIMER, 0),

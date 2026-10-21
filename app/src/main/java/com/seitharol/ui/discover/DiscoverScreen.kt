@@ -64,6 +64,7 @@ fun DiscoverScreen(
 
     var isInDiscoverSearchOpen by remember { mutableStateOf(false) }
     var trackForDownloadSheet by remember { mutableStateOf<NormalizedTrack?>(null) }
+    var showQualitySheet by remember { mutableStateOf(false) }
     val downloadTaskState by downloadService.downloadState.collectAsState()
 
     LaunchedEffect(pagerState.settledPage, feedTracks, isInDiscoverSearchOpen) {
@@ -148,7 +149,7 @@ fun DiscoverScreen(
             }
         }
 
-        // Floating Top Bar with Search Pill Trigger
+        // Floating Top Bar with Search Pill & Quality Settings
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -176,7 +177,7 @@ fun DiscoverScreen(
                 color = Color.White.copy(alpha = 0.14f),
                 modifier = Modifier
                     .weight(1f)
-                    .padding(horizontal = 12.dp)
+                    .padding(horizontal = 8.dp)
                     .height(42.dp)
                     .clip(RoundedCornerShape(50))
                     .clickable { isInDiscoverSearchOpen = true }
@@ -184,19 +185,35 @@ fun DiscoverScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 16.dp),
+                        .padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     SearchMagnifierSvgIcon(tint = Color.White.copy(alpha = 0.85f), modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Search 30s previews & download...",
+                        text = "Search songs & download...",
                         color = Color.White.copy(alpha = 0.85f),
                         fontSize = 13.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+            }
+
+            // Quality Adjustment Settings Icon
+            IconButton(
+                onClick = { showQualitySheet = true },
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.5f))
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Audio Quality Settings",
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp)
+                )
             }
         }
 
@@ -239,6 +256,12 @@ fun DiscoverScreen(
                         )
                     }
                 }
+            )
+        }
+
+        if (showQualitySheet) {
+            com.example.ui.components.QualitySettingsBottomSheet(
+                onDismiss = { showQualitySheet = false }
             )
         }
     }
@@ -308,32 +331,6 @@ private fun DiscoverShortPage(
                     .clip(RoundedCornerShape(26.dp))
                     .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(26.dp))
             )
-            Surface(
-                color = Color.Black.copy(alpha = 0.72f),
-                shape = RoundedCornerShape(50),
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF1DB954))
-                    )
-                    Text(
-                        text = "30s PERSONALIZED PREVIEW",
-                        color = Color.White,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                }
-            }
         }
 
         // Show Play indicator overlay in center when paused:

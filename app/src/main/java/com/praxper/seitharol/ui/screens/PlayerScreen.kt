@@ -175,7 +175,7 @@ fun PlayerScreen(
         modifier = Modifier
             .fillMaxSize()
             .offset { IntOffset(0, offsetY.value.roundToInt()) }
-            .background(Color(0xFF0F0F0F))
+            .background(MaterialTheme.colorScheme.background)
             .pointerInput(maxDragPx) {
                 detectVerticalDragGestures(
                     onDragEnd = {

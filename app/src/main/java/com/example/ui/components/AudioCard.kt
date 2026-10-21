@@ -474,17 +474,47 @@ fun FreshMusicCard(
     }
 }
 
+object ArtistAvatarCache {
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    fun get(name: String): String? = cache[name.lowercase().trim()]
+    fun put(name: String, url: String) {
+        if (url.isNotBlank()) cache[name.lowercase().trim()] = url
+    }
+}
+
 /**
  * Suggested Artist Circular Avatar (from Home board):
  * 104dp width, 104dp circular photo avatar, artist name centered below in 12sp.
+ * Uses official artist channel avatar or stylish monogram, never a song thumbnail.
  */
 @Composable
 fun SuggestedArtistItem(
     name: String,
-    imageUrl: String,
+    imageUrl: String = "",
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var resolvedAvatar by remember(name, imageUrl) {
+        mutableStateOf(imageUrl.ifBlank { ArtistAvatarCache.get(name).orEmpty() })
+    }
+
+    LaunchedEffect(name) {
+        if (resolvedAvatar.isBlank() && name.isNotBlank()) {
+            val cached = ArtistAvatarCache.get(name)
+            if (!cached.isNullOrBlank()) {
+                resolvedAvatar = cached
+            } else {
+                runCatching {
+                    val (_, avatar) = com.seitharol.data.resolver.InnerTubeStreamExtractor.resolveOfficialArtistBrowseId(name)
+                    if (avatar.isNotBlank()) {
+                        ArtistAvatarCache.put(name, avatar)
+                        resolvedAvatar = avatar
+                    }
+                }
+            }
+        }
+    }
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier
@@ -495,22 +525,40 @@ fun SuggestedArtistItem(
             modifier = Modifier
                 .size(104.dp)
                 .clip(CircleShape)
-                .background(Color(0xFFE0E0E0)),
+                .background(
+                    androidx.compose.ui.graphics.Brush.linearGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.primaryContainer,
+                            MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    )
+                ),
             contentAlignment = Alignment.Center
         ) {
-            AsyncImage(
-                model = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(imageUrl),
-                contentDescription = name,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
+            if (resolvedAvatar.isNotBlank()) {
+                AsyncImage(
+                    model = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(resolvedAvatar),
+                    contentDescription = name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                val initial = name.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "A"
+                Text(
+                    text = initial,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 32.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = SyneFontFamily
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(6.dp))
 
         Text(
             text = name,
-            color = SeitharolTextSecondary,
+            color = MaterialTheme.colorScheme.onBackground,
             fontSize = 12.sp,
             fontFamily = OutfitFontFamily,
             textAlign = TextAlign.Center,

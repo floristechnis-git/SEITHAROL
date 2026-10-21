@@ -40,6 +40,7 @@ fun DownloadsScreen(
     val isRefreshingLibrary by viewModel.isRefreshingLibrary.collectAsState()
 
     val totalMb = totalBytes / (1024 * 1024)
+    var showQualitySheet by remember { mutableStateOf(false) }
 
     Box(
         modifier = modifier
@@ -51,19 +52,41 @@ fun DownloadsScreen(
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 140.dp)
         ) {
         item {
-            Text(
-                text = "Downloads & Offline",
-                fontFamily = SyneFontFamily,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 24.sp,
-                color = SeitharolDark
-            )
-            Text(
-                text = "Persistent on-device Opus audio storage",
-                fontFamily = OutfitFontFamily,
-                color = SeitharolTextSecondary,
-                fontSize = 12.sp
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Downloads & Offline",
+                        fontFamily = SyneFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 24.sp,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = "Persistent on-device Opus audio storage",
+                        fontFamily = OutfitFontFamily,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp
+                    )
+                }
+                IconButton(
+                    onClick = { showQualitySheet = true },
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Audio Quality Settings",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(16.dp))
         }
 
@@ -105,7 +128,7 @@ fun DownloadsScreen(
                             onCheckedChange = { viewModel.setOfflineMode(it) },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color.White,
-                                checkedTrackColor = SeitharolDark
+                                checkedTrackColor = MaterialTheme.colorScheme.primary
                             ),
                             modifier = Modifier.testTag("downloads_offline_switch")
                         )
@@ -194,6 +217,12 @@ fun DownloadsScreen(
                 )
             }
         }
+    }
+
+    if (showQualitySheet) {
+        com.example.ui.components.QualitySettingsBottomSheet(
+            onDismiss = { showQualitySheet = false }
+        )
     }
 }
 }

@@ -24,7 +24,7 @@ data class UserSettings(
     val audioNormalization: Boolean = false
 )
 
-class AppPreferences(context: Context) {
+class AppPreferences(private val context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("seitharol_prefs", Context.MODE_PRIVATE)
 
@@ -55,18 +55,47 @@ class AppPreferences(context: Context) {
     }
 
     fun setThemeMode(mode: String) {
+        val current = prefs.getString("theme_mode", "SYSTEM") ?: "SYSTEM"
+        if (current.equals(mode, ignoreCase = true)) return
         prefs.edit().putString("theme_mode", mode).apply()
         _settings.value = loadSettings()
+        runCatching {
+            val tm = when (mode.uppercase()) {
+                "LIGHT" -> com.seitharol.data.preferences.ThemeMode.LIGHT
+                "DARK" -> com.seitharol.data.preferences.ThemeMode.DARK
+                else -> com.seitharol.data.preferences.ThemeMode.SYSTEM
+            }
+            com.seitharol.data.preferences.AppSettingsManager.getInstance(context).setThemeMode(tm)
+        }
     }
 
     fun setStreamingQuality(quality: String) {
+        val current = prefs.getString("streaming_quality", "NORMAL") ?: "NORMAL"
+        if (current.equals(quality, ignoreCase = true)) return
         prefs.edit().putString("streaming_quality", quality).apply()
         _settings.value = loadSettings()
+        runCatching {
+            val aq = when (quality.uppercase()) {
+                "LOW" -> com.seitharol.data.preferences.AudioQuality.LOW
+                "HIGH" -> com.seitharol.data.preferences.AudioQuality.HIGH
+                else -> com.seitharol.data.preferences.AudioQuality.NORMAL
+            }
+            com.seitharol.data.preferences.AppSettingsManager.getInstance(context).setStreamingQuality(aq)
+        }
     }
 
     fun setDownloadQuality(quality: String) {
+        val current = prefs.getString("download_quality", "NORMAL") ?: "NORMAL"
+        if (current.equals(quality, ignoreCase = true)) return
         prefs.edit().putString("download_quality", quality).apply()
         _settings.value = loadSettings()
+        runCatching {
+            val aq = when (quality.uppercase()) {
+                "HIGH" -> com.seitharol.data.preferences.AudioQuality.HIGH
+                else -> com.seitharol.data.preferences.AudioQuality.NORMAL
+            }
+            com.seitharol.data.preferences.AppSettingsManager.getInstance(context).setDownloadQuality(aq)
+        }
     }
 
     fun setEqBand(bandIndex: Int, gainDb: Float) {

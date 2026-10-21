@@ -236,7 +236,7 @@ fun InDiscoverSearchSurface(
                                             shape = RoundedCornerShape(50)
                                         ) {
                                             Text(
-                                                text = if (isThisPlaying) "PLAYING 30s" else "30s PREVIEW",
+                                                text = if (isThisPlaying) "PLAYING" else "PREVIEW",
                                                 fontSize = 9.sp,
                                                 fontWeight = FontWeight.ExtraBold,
                                                 color = if (isThisPlaying) Color(0xFF1DB954) else Color.White.copy(alpha = 0.7f),

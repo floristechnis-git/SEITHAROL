@@ -64,8 +64,8 @@ class ResolverEngine {
             ),
             ResolverNode(
                 id = "node_studio_master",
-                name = "Studio Master CDN",
-                url = "https://itunes.apple.com",
+                name = "Studio Master CDN (JioSaavn / YTM)",
+                url = "https://www.jiosaavn.com",
                 trustZone = ModelTrustZone.ZONE_1_DEVICE,
                 pingMs = 14,
                 isOnline = true,
@@ -305,8 +305,8 @@ class ResolverEngine {
             }
         }
 
-        // 9. Fallback 2: On-Device JioSaavn search + 160kbps AAC DES decryption - ONLY for non-YouTube tracks
-        if (resolvedStream == null && !isYouTubeId && searchQuery.isNotBlank()) {
+        // 9. Fallback 2: On-Device JioSaavn search + 160kbps AAC DES decryption for full track
+        if (resolvedStream == null && searchQuery.isNotBlank()) {
             try {
                 val results = jioSaavnProvider.searchTracks(searchQuery, limit = 5)
                 val targetTrack = NormalizedTrack(

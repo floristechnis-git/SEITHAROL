@@ -110,7 +110,7 @@ fun DiscoverEntryCard(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "Swipe 30s previews & lossless downloads",
+                    text = "Swipe previews & lossless downloads",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

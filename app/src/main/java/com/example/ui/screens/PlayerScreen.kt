@@ -164,7 +164,7 @@ fun PlayerScreen(
                 translationY = dragOffsetY.value.coerceAtLeast(0f)
                 alpha = (1f - (dragOffsetY.value / 1200f)).coerceIn(0.2f, 1f)
             }
-            .background(Color(0xFF0F0F0F)) // Pure Dark theme background
+            .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
             .navigationBarsPadding()
             .testTag("full_player_screen")

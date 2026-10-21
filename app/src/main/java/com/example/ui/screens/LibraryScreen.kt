@@ -632,6 +632,7 @@ fun DownloadsScreen(
     BackHandler(onBack = onBack)
     val downloadedTracks by viewModel.downloadedTracks.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
+    var showQualitySheet by remember { mutableStateOf(false) }
 
     val filteredTracks = remember(downloadedTracks, searchQuery) {
         if (searchQuery.isBlank()) downloadedTracks
@@ -654,13 +655,21 @@ fun DownloadsScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = SeitharolDark)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.onSurface)
             }
             Text(
                 text = "Downloaded Songs",
                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                color = SeitharolDark
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
             )
+            IconButton(onClick = { showQualitySheet = true }) {
+                Icon(
+                    Icons.Default.Settings,
+                    contentDescription = "Audio Quality Settings",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
 
         OutlinedTextField(
@@ -709,6 +718,12 @@ fun DownloadsScreen(
                     }
                 }
             }
+        }
+
+        if (showQualitySheet) {
+            com.example.ui.components.QualitySettingsBottomSheet(
+                onDismiss = { showQualitySheet = false }
+            )
         }
     }
 }

@@ -61,10 +61,10 @@ class MainActivity : ComponentActivity() {
             val systemDark = isSystemInDarkTheme()
 
             // Single reactive source of truth for Theme Mode across the entire app
-            val effectiveDark = when (persistedSettings.themeMode) {
-                ThemeMode.LIGHT -> false
-                ThemeMode.DARK -> true
-                ThemeMode.SYSTEM -> systemDark
+            val effectiveDark = when {
+                userSettings.themeMode.equals("LIGHT", ignoreCase = true) || persistedSettings.themeMode == ThemeMode.LIGHT -> false
+                userSettings.themeMode.equals("DARK", ignoreCase = true) || persistedSettings.themeMode == ThemeMode.DARK -> true
+                else -> systemDark
             }
 
             var isSplashFinished by remember { mutableStateOf(hasShownSplashThisProcess) }

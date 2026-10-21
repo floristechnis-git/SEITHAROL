@@ -155,12 +155,8 @@ fun HomeScreen(
     }
 
     val currentlyPlayingSongId = playerState.currentTrack?.id
-    val heroTrack = remember(personalizedTracks, deduplicatedTrendingHits, deduplicatedAllTracks, currentlyPlayingSongId) {
-        val pool = (personalizedTracks + deduplicatedTrendingHits + deduplicatedAllTracks).distinctBy { it.id }
-        pool.firstOrNull { it.id != currentlyPlayingSongId } ?: pool.firstOrNull()
-    }
-    val excludedHeroIds = remember(heroTrack?.id, currentlyPlayingSongId) {
-        setOfNotNull(heroTrack?.id, currentlyPlayingSongId)
+    val excludedHeroIds = remember(currentlyPlayingSongId) {
+        setOfNotNull(currentlyPlayingSongId)
     }
 
     // Prepare Trending Items (Deduplicated, excluding Hero & Currently Playing)
@@ -239,14 +235,12 @@ fun HomeScreen(
         items.take(6)
     }
 
-    // Dynamic suggested artists derived from listening history, likes, and trending
+    // Dynamic suggested artists derived from listening history, likes, and trending (names only, never song album art)
     val dynamicArtists = remember(activeHistory, likedTracks, trendingHits, allTracks) {
         val pool = activeHistory + likedTracks + trendingHits + allTracks
         pool.filter { it.artist.isNotBlank() && it.artist != "Unknown Artist" && it.artist != "Unknown" }
-            .groupBy { it.artist }
-            .map { (artistName, tracks) ->
-                Pair(artistName, tracks.firstOrNull { !it.artUrl.isNullOrBlank() }?.artUrl ?: "")
-            }
+            .map { it.artist }
+            .distinct()
             .take(12)
     }
 
@@ -282,7 +276,7 @@ fun HomeScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF0F0F0F)) // Pure Deep Dark Background
+            .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
             .testTag("home_screen")
     ) {
@@ -303,7 +297,7 @@ fun HomeScreen(
                 ) {
                     Text(
                         text = "SEITHAROL",
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onBackground,
                         fontSize = 22.sp,
                         fontWeight = FontWeight.ExtraBold,
                         letterSpacing = 1.5.sp,
@@ -319,14 +313,14 @@ fun HomeScreen(
                                 .size(40.dp)
                                 .testTag("home_search_btn"),
                             shape = CircleShape,
-                            color = Color(0xFF1B1C1C),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
                             onClick = onNavigateToSearch
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
                                     imageVector = Icons.Default.Search,
                                     contentDescription = "Search",
-                                    tint = Color.White,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -337,14 +331,14 @@ fun HomeScreen(
                                 .size(40.dp)
                                 .testTag("home_profile_avatar_btn"),
                             shape = CircleShape,
-                            color = Color(0xFF1B1C1C),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
                             onClick = onNavigateToProfile
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
                                     imageVector = Icons.Default.Person,
                                     contentDescription = "Profile",
-                                    tint = Color.White,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -363,7 +357,7 @@ fun HomeScreen(
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 24.sp,
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onBackground,
                         modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -374,7 +368,7 @@ fun HomeScreen(
                             .clip(RoundedCornerShape(24.dp))
                             .clickable(onClick = onNavigateToSearch)
                             .testTag("home_search_bar"),
-                        color = Color(0xFF1B1C1C),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
                         shape = RoundedCornerShape(24.dp)
                     ) {
                         Row(
@@ -386,13 +380,13 @@ fun HomeScreen(
                             Icon(
                                 imageVector = Icons.Default.Search,
                                 contentDescription = "Search",
-                                tint = Color.White.copy(alpha = 0.7f),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
                                 text = "Search songs, artists, albums, or mixes...",
-                                color = Color.White.copy(alpha = 0.6f),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                                 fontSize = 14.sp,
                                 fontFamily = OutfitFontFamily,
                                 maxLines = 1,
@@ -415,7 +409,7 @@ fun HomeScreen(
                         val isSelected = mood.equals(selectedMood, ignoreCase = true) || (mood == "All" && selectedMood == "All")
                         Surface(
                             shape = RoundedCornerShape(20.dp),
-                            color = if (isSelected) Color.White else Color(0xFF1B1C1C),
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(20.dp))
                                 .clickable {
@@ -428,7 +422,7 @@ fun HomeScreen(
                         ) {
                             Text(
                                 text = mood,
-                                color = if (isSelected) Color.Black else Color.White,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontFamily = OutfitFontFamily,
                                 fontSize = 13.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
@@ -452,28 +446,14 @@ fun HomeScreen(
                                 .fillMaxWidth()
                                 .height(2.dp)
                                 .clip(RoundedCornerShape(1.dp)),
-                            color = Color.White,
-                            trackColor = Color(0xFF282A2A)
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant
                         )
                     }
                 }
             }
 
-            // ────────────────────────────────────────────────────────────
-            // 1B. First Ready-To-Play Spotlight Hero Card
-            // ────────────────────────────────────────────────────────────
-            heroTrack?.let { hero ->
-                item(key = "spotlight_hero_${hero.id}_$selectedMood") {
-                    Box(modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)) {
-                        ReadyToPlayHeroCard(
-                            track = hero,
-                            selectedMood = selectedMood,
-                            onPlayNow = { viewModel.playTrack(hero) },
-                            onStartRadioMix = { viewModel.playPlaylistOrMix("RDAMVM${hero.id}") }
-                        )
-                    }
-                }
-            }
+
 
             // ────────────────────────────────────────────────────────────
             // First-launch empty state (when offline or loading hasn't completed yet)
@@ -517,11 +497,11 @@ fun HomeScreen(
                                     .clickable { viewModel.loadHomeScreenMusic() }
                                     .testTag("home_retry_btn"),
                                 shape = RoundedCornerShape(24.dp),
-                                color = Color.White
+                                color = MaterialTheme.colorScheme.primary
                             ) {
                                 Text(
                                     text = "  Retry  ",
-                                    color = Color(0xFF0F0F0F),
+                                    color = MaterialTheme.colorScheme.onPrimary,
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Medium,
                                     fontSize = 14.sp,
@@ -654,11 +634,10 @@ fun HomeScreen(
                             contentPadding = PaddingValues(horizontal = 16.dp),
                             horizontalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
-                            items(dynamicArtists) { (name, imageUrl) ->
+                            items(dynamicArtists) { artistName ->
                                 SuggestedArtistItem(
-                                    name = name,
-                                    imageUrl = imageUrl,
-                                    onClick = { onNavigateToArtist(name) }
+                                    name = artistName,
+                                    onClick = { onNavigateToArtist(artistName) }
                                 )
                             }
                         }
@@ -854,7 +833,7 @@ fun TrendingSongsHorizontalShelf(
 
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = if (isPlaying) Color(0xFF2E3030) else Color(0xFF232526),
+                    color = if (isPlaying) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                     modifier = Modifier
                         .width(320.dp) // Leaves right-edge peek inviting horizontal swipe
                         .height(60.dp)
@@ -888,7 +867,7 @@ fun TrendingSongsHorizontalShelf(
                         ) {
                             Text(
                                 text = track.title,
-                                color = if (isPlaying) Color.White else Color(0xFFE3E4E2),
+                                color = if (isPlaying) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
@@ -896,7 +875,7 @@ fun TrendingSongsHorizontalShelf(
                             )
                             Text(
                                 text = track.subtitle,
-                                color = Color(0xFF9EA1A1),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 12.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -912,7 +891,7 @@ fun TrendingSongsHorizontalShelf(
                                 Icon(
                                     imageVector = if (isPlaying) Icons.Default.GraphicEq else Icons.Default.PlayArrow,
                                     contentDescription = "Play",
-                                    tint = if (isPlaying) Color.White else Color(0xFFE3E4E2),
+                                    tint = if (isPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -931,7 +910,7 @@ fun TrendingSongsHorizontalShelf(
                                     Icon(
                                         imageVector = Icons.Default.MoreVert,
                                         contentDescription = "More options",
-                                        tint = Color(0xFF9EA1A1),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(18.dp)
                                     )
                                 }
@@ -940,27 +919,27 @@ fun TrendingSongsHorizontalShelf(
                                     DropdownMenu(
                                         expanded = showMenu,
                                         onDismissRequest = { showMenu = false },
-                                        modifier = Modifier.background(Color(0xFF282A2A))
+                                        modifier = Modifier.background(MaterialTheme.colorScheme.surface)
                                     ) {
                                         DropdownMenuItem(
-                                            text = { Text("Play Next", color = Color(0xFFE3E4E2)) },
-                                            leadingIcon = { Icon(Icons.Default.PlaylistPlay, null, tint = Color(0xFF9EA1A1)) },
+                                            text = { Text("Play Next", color = MaterialTheme.colorScheme.onSurface) },
+                                            leadingIcon = { Icon(Icons.Default.PlaylistPlay, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                                             onClick = {
                                                 showMenu = false
                                                 onPlayNext(track)
                                             }
                                         )
                                         DropdownMenuItem(
-                                            text = { Text("Add to Queue", color = Color(0xFFE3E4E2)) },
-                                            leadingIcon = { Icon(Icons.Default.QueueMusic, null, tint = Color(0xFF9EA1A1)) },
+                                            text = { Text("Add to Queue", color = MaterialTheme.colorScheme.onSurface) },
+                                            leadingIcon = { Icon(Icons.Default.QueueMusic, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                                             onClick = {
                                                 showMenu = false
                                                 onAddToQueue(track)
                                             }
                                         )
                                         DropdownMenuItem(
-                                            text = { Text("Add to Playlist", color = Color(0xFFE3E4E2)) },
-                                            leadingIcon = { Icon(Icons.Default.PlaylistAdd, null, tint = Color(0xFF9EA1A1)) },
+                                            text = { Text("Add to Playlist", color = MaterialTheme.colorScheme.onSurface) },
+                                            leadingIcon = { Icon(Icons.Default.PlaylistAdd, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                                             onClick = {
                                                 showMenu = false
                                                 onAddToPlaylist(track)
@@ -969,8 +948,8 @@ fun TrendingSongsHorizontalShelf(
                                         val artistName = track.subtitle.split("•").firstOrNull()?.trim() ?: track.subtitle
                                         if (artistName.isNotBlank() && artistName != "Unknown Artist") {
                                             DropdownMenuItem(
-                                                text = { Text("Go to Artist", color = Color(0xFFE3E4E2)) },
-                                                leadingIcon = { Icon(Icons.Default.Person, null, tint = Color(0xFF9EA1A1)) },
+                                                text = { Text("Go to Artist", color = MaterialTheme.colorScheme.onSurface) },
+                                                leadingIcon = { Icon(Icons.Default.Person, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                                                 onClick = {
                                                     showMenu = false
                                                     onGoToArtist(artistName)
@@ -978,8 +957,8 @@ fun TrendingSongsHorizontalShelf(
                                             )
                                         }
                                         DropdownMenuItem(
-                                            text = { Text("Download (Standard)", color = Color(0xFFE3E4E2)) },
-                                            leadingIcon = { Icon(Icons.Default.CloudDownload, null, tint = Color(0xFF9EA1A1)) },
+                                            text = { Text("Download (Standard)", color = MaterialTheme.colorScheme.onSurface) },
+                                            leadingIcon = { Icon(Icons.Default.CloudDownload, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                                             onClick = {
                                                 showMenu = false
                                                 onDownload(track, DownloadTier.STANDARD)
@@ -1070,7 +1049,7 @@ fun FreshNewMusicShelf(
 
                         // Floating Rounded Square Play Action (Bottom-Right, NO Circle)
                         Surface(
-                            color = Color(0xFFE3E4E2),
+                            color = MaterialTheme.colorScheme.primary,
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
@@ -1080,7 +1059,7 @@ fun FreshNewMusicShelf(
                             Icon(
                                 imageVector = Icons.Default.PlayArrow,
                                 contentDescription = "Play",
-                                tint = Color(0xFF1B1C1C),
+                                tint = MaterialTheme.colorScheme.onPrimary,
                                 modifier = Modifier.padding(6.dp)
                             )
                         }
@@ -1090,7 +1069,7 @@ fun FreshNewMusicShelf(
 
                     Text(
                         text = track.title,
-                        color = Color(0xFFE3E4E2),
+                        color = MaterialTheme.colorScheme.onBackground,
                         fontSize = 14.sp,
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.SemiBold,
@@ -1099,7 +1078,7 @@ fun FreshNewMusicShelf(
                     )
                     Text(
                         text = track.subtitle,
-                        color = Color(0xFF9EA1A1),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 12.sp,
                         fontFamily = OutfitFontFamily,
                         maxLines = 1,
@@ -1133,7 +1112,7 @@ fun QuickDialBentoSection(
                 rowItems.forEach { item ->
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = Color(0xFF282A2A),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
                         modifier = Modifier
                             .weight(1f)
                             .height(56.dp)
@@ -1149,7 +1128,7 @@ fun QuickDialBentoSection(
                             )
                             Text(
                                 text = item.title,
-                                color = Color(0xFFE3E4E2),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 13.sp,
                                 fontFamily = SyneFontFamily,
                                 fontWeight = FontWeight.SemiBold,
@@ -1227,7 +1206,7 @@ fun MediaCarouselShelf(
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = item.title,
-                        color = Color(0xFFE3E4E2),
+                        color = MaterialTheme.colorScheme.onBackground,
                         fontSize = 14.sp,
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.SemiBold,
@@ -1236,7 +1215,7 @@ fun MediaCarouselShelf(
                     )
                     Text(
                         text = item.subtitle,
-                        color = Color(0xFF9EA1A1),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 12.sp,
                         fontFamily = OutfitFontFamily,
                         maxLines = 2,
@@ -1253,7 +1232,7 @@ private fun SectionHeader(title: String, subtitle: String) {
     Column(modifier = Modifier.padding(horizontal = 16.dp)) {
         Text(
             text = title,
-            color = Color(0xFFE3E4E2),
+            color = MaterialTheme.colorScheme.onBackground,
             fontSize = 20.sp,
             fontFamily = SyneFontFamily,
             fontWeight = FontWeight.Bold,
@@ -1261,169 +1240,9 @@ private fun SectionHeader(title: String, subtitle: String) {
         )
         Text(
             text = subtitle,
-            color = Color(0xFF9EA1A1),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontFamily = OutfitFontFamily,
             fontSize = 12.sp
         )
     }
 }
-
-@Composable
-fun ReadyToPlayHeroCard(
-    track: Track,
-    selectedMood: String,
-    onPlayNow: () -> Unit,
-    onStartRadioMix: () -> Unit
-) {
-    val badgeLabel = remember(selectedMood) {
-        if (selectedMood.equals("All", true)) {
-            "READY TO PLAY • FOR YOU"
-        } else {
-            "READY TO PLAY • ${selectedMood.uppercase()}"
-        }
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .wrapContentHeight()
-            .heightIn(min = 184.dp)
-            .clip(RoundedCornerShape(22.dp))
-            .border(
-                width = 1.dp,
-                color = Color.White.copy(alpha = 0.14f),
-                shape = RoundedCornerShape(22.dp)
-            )
-            .clickable { onPlayNow() }
-    ) {
-        AsyncImage(
-            model = track.artUrl,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxSize()
-                .blur(26.dp)
-        )
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            Color(0xFF0E0F12).copy(alpha = 0.92f),
-                            Color(0xFF0E0F12).copy(alpha = 0.72f),
-                            Color(0xFF1A1B20).copy(alpha = 0.55f)
-                        )
-                    )
-                )
-        )
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                Surface(
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
-                    shape = RoundedCornerShape(50)
-                ) {
-                    Text(
-                        text = badgeLabel,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 0.8.sp,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = track.title,
-                    color = Color.White,
-                    fontSize = 19.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    maxLines = 2,
-                    lineHeight = 23.sp,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                Spacer(modifier = Modifier.height(3.dp))
-
-                Text(
-                    text = track.artist,
-                    color = Color.White.copy(alpha = 0.78f),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Button(
-                        onClick = onPlayNow,
-                        shape = RoundedCornerShape(50),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = Color.White
-                        ),
-                        modifier = Modifier.height(34.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Play", fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                    }
-
-                    OutlinedButton(
-                        onClick = onStartRadioMix,
-                        shape = RoundedCornerShape(50),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.35f)),
-                        modifier = Modifier.height(34.dp)
-                    ) {
-                        Text("Radio", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            Box(
-                modifier = Modifier
-                    .size(122.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color.Black.copy(alpha = 0.3f))
-            ) {
-                AsyncImage(
-                    model = track.artUrl,
-                    contentDescription = track.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-        }
-    }
-}
-

@@ -87,6 +87,8 @@ class AudioPlayerManager(
     private var activeSponsorSegments: List<SponsorSegment> = emptyList()
     private var positionJob: Job? = null
     private var sleepTimerJob: Job? = null
+    private var loadTrackJob: Job? = null
+    private var retryJob: Job? = null
     private var prefetchedTrackId: String? = null
     private var trackRetryCount = 0
     private var lastFailedTrackId: String? = null
@@ -208,7 +210,8 @@ class AudioPlayerManager(
                             Log.e(TAG, "ExoPlayer error: ${error.errorCodeName} - ${error.message}", error)
                             _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
                             val current = _state.value.currentTrack
-                            coroutineScope.launch {
+                            retryJob?.cancel()
+                            retryJob = coroutineScope.launch {
                                 val title = current?.title?.ifBlank { "Track" } ?: "Track"
 
                                 if (current != null) {
@@ -233,7 +236,7 @@ class AudioPlayerManager(
                                         _skipEvent.emit(friendlyMsg)
                                         trackRetryCount = 0
                                         lastFailedTrackId = null
-                                        if (_state.value.currentIndex < _state.value.queue.lastIndex) {
+                                        if (!_state.value.isSingleTrackPlayback && _state.value.currentIndex < _state.value.queue.lastIndex) {
                                             next()
                                         } else {
                                             _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
@@ -245,19 +248,22 @@ class AudioPlayerManager(
                                     trackRetryCount++
                                     // Silent background reconnect delay without spamming dev logs in UI
                                     delay(800)
+                                    if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
                                     try {
                                         resolverEngine.clearCache()
                                         val freshStream = resolverEngine.resolveTrack(current.copy(audioUrl = ""))
+                                        if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
                                         _state.value = _state.value.copy(activeStream = freshStream)
                                         setupAndPlaySource(freshStream.streamUrl, current)
                                     } catch (e: Exception) {
+                                        if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
                                         Log.e(TAG, "Retry attempt $trackRetryCount failed: ${e.message}", e)
                                         if (trackRetryCount >= 3) {
                                             val friendlyMsg = com.example.util.ErrorFormatter.toUserFriendlyMessage(e, context, title)
                                             _skipEvent.emit(friendlyMsg)
                                             trackRetryCount = 0
                                             lastFailedTrackId = null
-                                            if (_state.value.currentIndex < _state.value.queue.lastIndex) {
+                                            if (!_state.value.isSingleTrackPlayback && _state.value.currentIndex < _state.value.queue.lastIndex) {
                                                 next()
                                             } else {
                                                 _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
@@ -265,7 +271,7 @@ class AudioPlayerManager(
                                             }
                                         }
                                     }
-                                } else if (_state.value.currentIndex < _state.value.queue.lastIndex) {
+                                } else if (!_state.value.isSingleTrackPlayback && _state.value.currentIndex < _state.value.queue.lastIndex) {
                                     next()
                                 } else {
                                     _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
@@ -291,11 +297,20 @@ class AudioPlayerManager(
             }
             val mediaItem = track.toMediaItem(parsedUri)
 
+            player.repeatMode = when (_state.value.repeatMode) {
+                RepeatMode.OFF -> Player.REPEAT_MODE_OFF
+                RepeatMode.ONE -> Player.REPEAT_MODE_ONE
+                RepeatMode.ALL -> Player.REPEAT_MODE_ALL
+            }
+            _activePreviewTrackId.value = null
+            _isPreviewPlaying.value = false
+
             player.setMediaItem(mediaItem)
             player.prepare()
             player.play()
 
             _state.value = _state.value.copy(
+                currentTrack = track,
                 isPlaying = true,
                 isBuffering = false
             )
@@ -381,9 +396,13 @@ class AudioPlayerManager(
         if (tracks.isEmpty()) return
         trackRetryCount = 0
         lastFailedTrackId = null
+        loadTrackJob?.cancel()
+        retryJob?.cancel()
+        val validIndex = startIndex.coerceIn(0, tracks.lastIndex)
         _state.value = _state.value.copy(
             queue = tracks,
-            currentIndex = startIndex.coerceIn(0, tracks.lastIndex),
+            currentIndex = validIndex,
+            currentTrack = tracks[validIndex],
             isSingleTrackPlayback = false
         )
         loadAndPlayCurrent()
@@ -392,13 +411,24 @@ class AudioPlayerManager(
     fun playTrack(track: Track) {
         trackRetryCount = 0
         lastFailedTrackId = null
+        loadTrackJob?.cancel()
+        retryJob?.cancel()
         val currentQueue = _state.value.queue.toMutableList()
         val index = currentQueue.indexOfFirst { it.id == track.id }
         if (index != -1) {
-            _state.value = _state.value.copy(currentIndex = index, isSingleTrackPlayback = true)
+            _state.value = _state.value.copy(
+                currentIndex = index,
+                currentTrack = track,
+                isSingleTrackPlayback = true
+            )
         } else {
             currentQueue.add(0, track)
-            _state.value = _state.value.copy(queue = currentQueue, currentIndex = 0, isSingleTrackPlayback = true)
+            _state.value = _state.value.copy(
+                queue = currentQueue,
+                currentIndex = 0,
+                currentTrack = track,
+                isSingleTrackPlayback = true
+            )
         }
         loadAndPlayCurrent()
     }
@@ -406,7 +436,9 @@ class AudioPlayerManager(
     fun playQueueIndex(index: Int) {
         val q = _state.value.queue
         if (index in q.indices) {
-            _state.value = _state.value.copy(currentIndex = index)
+            loadTrackJob?.cancel()
+            retryJob?.cancel()
+            _state.value = _state.value.copy(currentIndex = index, currentTrack = q[index])
             loadAndPlayCurrent()
         }
     }
@@ -469,6 +501,8 @@ class AudioPlayerManager(
 
     fun stopPlayback() {
         positionJob?.cancel()
+        loadTrackJob?.cancel()
+        retryJob?.cancel()
         try {
             exoPlayer?.stop()
             exoPlayer?.clearMediaItems()
@@ -501,7 +535,9 @@ class AudioPlayerManager(
     private fun loadAndPlayCurrent() {
         val current = _state.value.queue.getOrNull(_state.value.currentIndex) ?: return
         prefetchedTrackId = null
-        coroutineScope.launch {
+        loadTrackJob?.cancel()
+        retryJob?.cancel()
+        loadTrackJob = coroutineScope.launch {
             try {
                 val localLyrics = parseLrc(current.lyrics)
                 val expectedDuration = if (current.durationMs > 0L) current.durationMs else 210000L
@@ -580,17 +616,23 @@ class AudioPlayerManager(
                 // Record listening history in Room
                 musicRepository.recordPlayHistory(safeTrack)
 
+                if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
+
                 // Resolve Stream using ResolverEngine
                 val stream = resolverEngine.resolveTrack(safeTrack)
+
+                if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
+
                 _state.value = _state.value.copy(activeStream = stream)
 
                 setupAndPlaySource(stream.streamUrl, safeTrack)
             } catch (e: Exception) {
+                if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
                 Log.e(TAG, "Error loading track: ${e.message}", e)
                 _state.value = _state.value.copy(isBuffering = false, isPlaying = false)
                 val friendlyMessage = com.example.util.ErrorFormatter.toUserFriendlyMessage(e, context, current.title)
                 _skipEvent.emit(friendlyMessage)
-                if (_state.value.currentIndex < _state.value.queue.lastIndex) {
+                if (!_state.value.isSingleTrackPlayback && _state.value.currentIndex < _state.value.queue.lastIndex) {
                     next()
                 }
             }

@@ -173,26 +173,42 @@ fun HomeScreen(
         pool.filterNot { it.id in excludedHeroIds }.take(12).map { it.toHomeMediaItem() }
     }
 
-    // Prepare YouTube Mixes Shelf (real RDAMVM mixes, no fake "+ Mix" tags)
+    // Prepare YouTube Mixes Shelf (real continuous mixes with genuine mix identities)
     val youtubeMixes = remember(personalizedTracks, activeHistory) {
         val mixes = mutableListOf<HomeMediaItem>()
+        // Authentic RD mixes from YouTube Music
         personalizedTracks.filter { it.id.startsWith("RD") }
             .forEach { mixes.add(it.toHomeMediaItem(isMix = true)) }
 
-        val seedTracks = activeHistory.distinctBy { it.id }.take(4)
-        seedTracks.forEach { track ->
+        val seedTracks = activeHistory.distinctBy { it.id }.take(3)
+        if (seedTracks.isNotEmpty()) {
+            val primarySeed = seedTracks.first()
             mixes.add(
+                0,
                 HomeMediaItem(
-                    id = if (track.id.startsWith("RD")) track.id else "RDAMVM${track.id}",
-                    title = track.title,
-                    subtitle = "${track.artist} Radio",
-                    thumbnailUrl = track.artUrl,
+                    id = "RDAMVM${primarySeed.id}",
+                    title = "My SuperMix",
+                    subtitle = "Continuous blend of ${primarySeed.artist} and more",
+                    thumbnailUrl = primarySeed.artUrl,
                     isMix = true,
-                    originalTrack = track
+                    originalTrack = primarySeed
                 )
             )
+            if (seedTracks.size > 1) {
+                val secondSeed = seedTracks[1]
+                mixes.add(
+                    HomeMediaItem(
+                        id = "RDAMVM${secondSeed.id}",
+                        title = "${secondSeed.artist} Radio",
+                        subtitle = "Endless mix inspired by ${secondSeed.artist}",
+                        thumbnailUrl = secondSeed.artUrl,
+                        isMix = true,
+                        originalTrack = secondSeed
+                    )
+                )
+            }
         }
-        mixes.distinctBy { it.id }
+        mixes.distinctBy { it.id }.take(6)
     }
 
     // Prepare Featured Albums & Playlists (Liked Songs once on far left, non-empty playlists only)
@@ -235,13 +251,38 @@ fun HomeScreen(
         items.take(6)
     }
 
-    // Dynamic suggested artists derived from listening history, likes, and trending (names only, never song album art)
-    val dynamicArtists = remember(activeHistory, likedTracks, trendingHits, allTracks) {
-        val pool = activeHistory + likedTracks + trendingHits + allTracks
-        pool.filter { it.artist.isNotBlank() && it.artist != "Unknown Artist" && it.artist != "Unknown" }
-            .map { it.artist }
-            .distinct()
-            .take(12)
+    // Dynamic suggested artists strictly personalized from user's listening history and liked songs (strictly max 4)
+    val dynamicArtists = remember(activeHistory, likedTracks, trendingHits) {
+        val artistScores = mutableMapOf<String, Int>()
+        // Strictly score based on listening frequency (weight 2) and user likes (weight 3)
+        activeHistory.forEach { track ->
+            val a = track.artist.trim()
+            if (a.isNotBlank() && !a.equals("Unknown Artist", ignoreCase = true) && !a.equals("Unknown", ignoreCase = true)) {
+                artistScores[a] = (artistScores[a] ?: 0) + 2
+            }
+        }
+        likedTracks.forEach { track ->
+            val a = track.artist.trim()
+            if (a.isNotBlank() && !a.equals("Unknown Artist", ignoreCase = true) && !a.equals("Unknown", ignoreCase = true)) {
+                artistScores[a] = (artistScores[a] ?: 0) + 3
+            }
+        }
+
+        val personalized = artistScores.entries
+            .sortedByDescending { it.value }
+            .map { it.key }
+
+        // If user has listened/liked artists, show ONLY their top personalized artists (strictly max 4)
+        if (personalized.isNotEmpty()) {
+            personalized.take(4)
+        } else {
+            // Only if brand-new user with zero history and zero likes, show at most 4 trending artists
+            trendingHits
+                .map { it.artist.trim() }
+                .filter { it.isNotBlank() && !it.equals("Unknown Artist", ignoreCase = true) && !it.equals("Unknown", ignoreCase = true) }
+                .distinct()
+                .take(4)
+        }
     }
 
     // Modal state for Add to Playlist
@@ -590,7 +631,7 @@ fun HomeScreen(
                         items = youtubeMixes,
                         badgeText = "MIX",
                         onItemClick = { item ->
-                            viewModel.playPlaylistOrMix(item.id)
+                            onNavigateToPlaylist(item.id)
                         }
                     )
                 }
@@ -605,15 +646,9 @@ fun HomeScreen(
                         title = "Featured Albums & Playlists",
                         subtitle = "Full albums and curated tracklists",
                         items = albumsAndPlaylists,
-                        badgeText = null,
+                        badgeText = "PLAYLIST",
                         onItemClick = { item ->
-                            if (item.id == "liked_songs") {
-                                onNavigateToPlaylist("liked_songs")
-                            } else if (item.id.startsWith("RD") || item.id.startsWith("PL") || item.id.startsWith("VL") || item.id.startsWith("MPREb_") || item.id.startsWith("OLAK5uy_")) {
-                                viewModel.playPlaylistOrMix(item.id)
-                            } else {
-                                onNavigateToPlaylist(item.id)
-                            }
+                            onNavigateToPlaylist(item.id)
                         }
                     )
                 }
@@ -1185,7 +1220,8 @@ fun MediaCarouselShelf(
                             size = 164.dp,
                             cornerRadius = 12.dp
                         )
-                        if (badgeText != null) {
+                        val badge = if (item.isMix) "MIX" else (badgeText ?: if (item.isAlbumOrPlaylist) "PLAYLIST" else null)
+                        if (badge != null) {
                             Surface(
                                 color = Color(0xFF1B1C1C).copy(alpha = 0.85f),
                                 shape = RoundedCornerShape(6.dp),
@@ -1194,7 +1230,7 @@ fun MediaCarouselShelf(
                                     .padding(8.dp)
                             ) {
                                 Text(
-                                    text = badgeText,
+                                    text = badge,
                                     color = Color.White,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.ExtraBold,

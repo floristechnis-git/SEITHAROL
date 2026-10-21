@@ -805,7 +805,11 @@ fun LikedSongsScreen(
                         TrackCard(
                             track = track,
                             isPlaying = playerState.currentTrack?.id == track.id,
-                            onTrackClick = { viewModel.playTrack(track) },
+                            onTrackClick = {
+                                val distinctList = filteredTracks.distinctBy { it.id }
+                                val idx = distinctList.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
+                                viewModel.playQueue(distinctList, idx)
+                            },
                             onLikeClick = { viewModel.toggleLike(track) },
                             onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
                             onPlayNextClick = { viewModel.playNext(track) },

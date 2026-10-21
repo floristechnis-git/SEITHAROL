@@ -134,15 +134,41 @@ fun ArtistScreen(
                                 .padding(horizontal = 20.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            AsyncImage(
-                                model = page.avatarUrl,
-                                contentDescription = page.name,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .size(76.dp)
-                                    .clip(CircleShape)
-                                    .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
-                            )
+                            if (page.avatarUrl.isNotBlank() && InnerTubeStreamExtractor.isAuthenticArtistAvatar(page.avatarUrl)) {
+                                AsyncImage(
+                                    model = page.avatarUrl,
+                                    contentDescription = page.name,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(76.dp)
+                                        .clip(CircleShape)
+                                        .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(76.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            Brush.linearGradient(
+                                                colors = listOf(
+                                                    MaterialTheme.colorScheme.primaryContainer,
+                                                    MaterialTheme.colorScheme.primary
+                                                )
+                                            )
+                                        )
+                                        .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    val initial = page.name.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "A"
+                                    Text(
+                                        text = initial,
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        fontSize = 30.sp,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                }
+                            }
                             Spacer(modifier = Modifier.width(14.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
@@ -188,11 +214,11 @@ fun ArtistScreen(
 
                         OutlinedButton(
                             onClick = {
-                                val radioId = page.radioPlaylistId
-                                if (!radioId.isNullOrBlank()) {
-                                    viewModel.playPlaylistOrMix(radioId)
-                                } else if (domainTopSongs.isNotEmpty()) {
-                                    viewModel.playQueue(domainTopSongs.shuffled(), 0)
+                                val seed = domainTopSongs.firstOrNull()
+                                if (seed != null) {
+                                    viewModel.startRadioMix(seed)
+                                } else if (!page.radioPlaylistId.isNullOrBlank()) {
+                                    viewModel.playPlaylistOrMix(page.radioPlaylistId)
                                 }
                             },
                             shape = RoundedCornerShape(50),
@@ -262,15 +288,33 @@ fun ArtistScreen(
                                         .width(142.dp)
                                         .clickable { onNavigateToPlaylist(release.browseId) }
                                 ) {
-                                    AsyncImage(
-                                        model = release.thumbnailUrl,
-                                        contentDescription = release.title,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier
-                                            .size(142.dp)
-                                            .clip(RoundedCornerShape(14.dp))
-                                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                                    )
+                                    Box(modifier = Modifier.size(142.dp)) {
+                                        AsyncImage(
+                                            model = release.thumbnailUrl,
+                                            contentDescription = release.title,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .clip(RoundedCornerShape(14.dp))
+                                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                        )
+                                        val tag = if (release.type.equals("SINGLE", true) || release.subtitle.contains("Single", true)) "SINGLE" else "ALBUM"
+                                        Surface(
+                                            color = Color(0xFF1B1C1C).copy(alpha = 0.85f),
+                                            shape = RoundedCornerShape(6.dp),
+                                            modifier = Modifier
+                                                .align(Alignment.BottomStart)
+                                                .padding(6.dp)
+                                        ) {
+                                            Text(
+                                                text = tag,
+                                                color = Color.White,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
                                         text = release.title,
@@ -312,15 +356,33 @@ fun ArtistScreen(
                                         .width(142.dp)
                                         .clickable { onNavigateToPlaylist(pl.browseId) }
                                 ) {
-                                    AsyncImage(
-                                        model = pl.thumbnailUrl,
-                                        contentDescription = pl.title,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier
-                                            .size(142.dp)
-                                            .clip(RoundedCornerShape(14.dp))
-                                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                                    )
+                                    Box(modifier = Modifier.size(142.dp)) {
+                                        AsyncImage(
+                                            model = pl.thumbnailUrl,
+                                            contentDescription = pl.title,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .clip(RoundedCornerShape(14.dp))
+                                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                        )
+                                        val tag = if (pl.title.contains("Mix", true) || pl.browseId.startsWith("RD")) "MIX" else "PLAYLIST"
+                                        Surface(
+                                            color = Color(0xFF1B1C1C).copy(alpha = 0.85f),
+                                            shape = RoundedCornerShape(6.dp),
+                                            modifier = Modifier
+                                                .align(Alignment.BottomStart)
+                                                .padding(6.dp)
+                                        ) {
+                                            Text(
+                                                text = tag,
+                                                color = Color.White,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
                                         text = pl.title,
@@ -363,15 +425,40 @@ fun ArtistScreen(
                                         .width(104.dp)
                                         .clickable { viewModel.navigateToArtist(sim.name) }
                                 ) {
-                                    AsyncImage(
-                                        model = sim.avatarUrl,
-                                        contentDescription = sim.name,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier
-                                            .size(92.dp)
-                                            .clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                                    )
+                                    if (sim.avatarUrl.isNotBlank() && InnerTubeStreamExtractor.isAuthenticArtistAvatar(sim.avatarUrl)) {
+                                        AsyncImage(
+                                            model = sim.avatarUrl,
+                                            contentDescription = sim.name,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .size(92.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(92.dp)
+                                                .clip(CircleShape)
+                                                .background(
+                                                    Brush.linearGradient(
+                                                        colors = listOf(
+                                                            MaterialTheme.colorScheme.primaryContainer,
+                                                            MaterialTheme.colorScheme.surfaceVariant
+                                                        )
+                                                    )
+                                                ),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            val initial = sim.name.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "A"
+                                            Text(
+                                                text = initial,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontSize = 28.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
                                         text = sim.name,

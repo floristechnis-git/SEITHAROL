@@ -180,6 +180,37 @@ fun PlaylistScreen(
                         .padding(top = 40.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    val badgeTag = remember(playlistId, displayTitle, displayDescription) {
+                        when {
+                            playlistId.startsWith("RD") || displayTitle.contains("Mix", ignoreCase = true) -> "MIX"
+                            playlistId.startsWith("MPREb_") || playlistId.startsWith("OLAK5uy_") || displayTitle.contains("Album", ignoreCase = true) -> "ALBUM"
+                            displayDescription.contains("Single", ignoreCase = true) -> "SINGLE"
+                            else -> "PLAYLIST"
+                        }
+                    }
+                    val badgeColor = when (badgeTag) {
+                        "MIX" -> Color(0xFFE50914)
+                        "ALBUM" -> Color(0xFF8E24AA)
+                        "SINGLE" -> Color(0xFF00897B)
+                        else -> Color(0xFF2E66FF)
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = badgeColor
+                    ) {
+                        Text(
+                            text = badgeTag,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White,
+                            letterSpacing = 0.8.sp,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
                     Text(
                         text = currentPlaylist.title,
                         fontFamily = SyneFontFamily,
@@ -238,7 +269,13 @@ fun PlaylistScreen(
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier.clickable {
-                                if (filteredTracks.isNotEmpty()) viewModel.playQueue(filteredTracks, 0)
+                                if (filteredTracks.isNotEmpty()) {
+                                    if (filteredTracks.size == 1 && (playlistId.startsWith("RD") || playlistId.startsWith("RDAMVM"))) {
+                                        viewModel.startRadioMix(filteredTracks.first())
+                                    } else {
+                                        viewModel.playQueue(filteredTracks, 0)
+                                    }
+                                }
                             }
                         ) {
                             Surface(
@@ -363,7 +400,13 @@ fun PlaylistScreen(
                         track = track,
                         isPlaying = playerState.currentTrack?.id == track.id,
                         rankNumber = index + 1,
-                        onTrackClick = { viewModel.playTrack(track) },
+                        onTrackClick = {
+                            if (filteredTracks.isNotEmpty()) {
+                                viewModel.playQueue(filteredTracks, index)
+                            } else {
+                                viewModel.playTrack(track)
+                            }
+                        },
                         onLikeClick = { viewModel.toggleLike(track) },
                         onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
                         onPlayNextClick = { viewModel.playNext(track) },

@@ -521,15 +521,16 @@ object InnerTubeStreamExtractor {
         val topSongs = searchOfficialYtmSongs(artistName, limit = 15)
         val playlists = searchYtmCollections(artistName, "EgWKAQIoAWoKEAkQChADEAUQBA==", "PLAYLIST", 6)
         val albums = searchYtmCollections(artistName, "EgWKAQIYAWoKEAkQChADEAUQBA==", "ALBUM", 6)
-        val bestArt = fallbackAvatar.ifBlank { topSongs.firstOrNull()?.thumbnailUrl.orEmpty() }
+        val verifiedAvatar = if (isAuthenticArtistAvatar(fallbackAvatar)) fallbackAvatar 
+                             else resolveJioSaavnArtistAvatar(artistName)
 
         YtmArtistPageData(
             browseId = browseId.ifBlank { artistName },
             name = artistName,
             description = "Official tracks, albums, and playlists by $artistName on YouTube Music.",
             subscriberCountText = "Verified Artist",
-            avatarUrl = bestArt,
-            bannerUrl = bestArt,
+            avatarUrl = verifiedAvatar,
+            bannerUrl = verifiedAvatar,
             radioPlaylistId = topSongs.firstOrNull()?.videoId?.let { "RDAMVM$it" },
             shufflePlaylistId = topSongs.firstOrNull()?.videoId?.let { "RDAMVM$it" },
             topSongs = topSongs,
@@ -538,6 +539,46 @@ object InnerTubeStreamExtractor {
             playlists = playlists,
             similarArtists = emptyList()
         )
+    }
+
+    /**
+     * Strictly verifies whether a URL represents a genuine portrait avatar of an artist
+     * rather than a 16:9 track/video frame thumbnail.
+     */
+    fun isAuthenticArtistAvatar(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        val lower = url.lowercase()
+        if (lower.contains("i.ytimg.com/vi/") || lower.contains("img.youtube.com/vi/") ||
+            lower.contains("hqdefault") || lower.contains("mqdefault") || lower.contains("sddefault")) {
+            return false
+        }
+        return lower.contains("ggpht.com") || lower.contains("googleusercontent.com") ||
+               lower.contains("/artists/") || lower.contains("saavncdn.com/artists/")
+    }
+
+    /**
+     * Resolves the official studio circular portrait image of an artist via JioSaavn.
+     */
+    fun resolveJioSaavnArtistAvatar(artistName: String): String {
+        return runCatching {
+            val encQuery = java.net.URLEncoder.encode(artistName.trim(), "UTF-8")
+            val urlStr = "https://www.jiosaavn.com/api.php?__call=search.getArtistResults&api_version=4&_format=json&_marker=0&ctx=web6dot0&q=$encQuery&n=1"
+            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 4000
+                readTimeout = 4000
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            }
+            if (conn.responseCode != 200) return ""
+            val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+            val results = json.optJSONArray("results") ?: return ""
+            if (results.length() == 0) return ""
+            val first = results.getJSONObject(0)
+            val img = first.optString("image", "")
+            if (img.isNotBlank() && !img.contains("default")) {
+                img.replace("50x50", "500x500").replace("150x150", "500x500")
+            } else ""
+        }.getOrDefault("")
     }
 
     /**
@@ -551,11 +592,14 @@ object InnerTubeStreamExtractor {
                 put("params", "EgWKAQIgAWoKEAkQChADEAUQBA==") // Official YTM Artists filter
             }
             val root = postWebRemix("https://music.youtube.com/youtubei/v1/search?prettyPrint=false", payload)
-                ?: return@withContext "" to ""
+                ?: return@withContext "" to resolveJioSaavnArtistAvatar(artistName)
 
             val tabs = root.optJSONObject("contents")
                 ?.optJSONObject("tabbedSearchResultsRenderer")
-                ?.optJSONArray("tabs") ?: return@withContext "" to ""
+                ?.optJSONArray("tabs")
+            if (tabs == null) {
+                return@withContext "" to resolveJioSaavnArtistAvatar(artistName)
+            }
 
             for (t in 0 until tabs.length()) {
                 val sections = tabs.getJSONObject(t)
@@ -576,18 +620,23 @@ object InnerTubeStreamExtractor {
                             ?.optJSONObject("browseEndpoint")
                             ?.optString("browseId").orEmpty()
                         if (browseId.startsWith("UC") || browseId.startsWith("MPLA")) {
-                            val avatar = extractBestThumbnail(
+                            val rawAvatar = extractBestThumbnail(
                                 item.optJSONObject("thumbnail")
                                     ?.optJSONObject("musicThumbnailRenderer")
                                     ?.optJSONObject("thumbnail")
                                     ?.optJSONArray("thumbnails")
                             )
+                            val avatar = if (isAuthenticArtistAvatar(rawAvatar)) {
+                                rawAvatar.replace(Regex("=w\\d+-h\\d+"), "=w500-h500")
+                            } else {
+                                resolveJioSaavnArtistAvatar(artistName)
+                            }
                             return@withContext browseId to avatar
                         }
                     }
                 }
             }
-            "" to ""
+            "" to resolveJioSaavnArtistAvatar(artistName)
         }
 
     private suspend fun parseArtistBrowseResponse(
@@ -617,8 +666,11 @@ object InnerTubeStreamExtractor {
             ?.optJSONObject("musicThumbnailRenderer")
             ?.optJSONObject("thumbnail")
             ?.optJSONArray("thumbnails")
-        val bannerUrl = extractBestThumbnail(bannerThumbs).ifBlank { fallbackAvatar }
-        val avatarUrl = fallbackAvatar.ifBlank { bannerUrl }
+        val rawBanner = extractBestThumbnail(bannerThumbs)
+        val bannerUrl = if (isAuthenticArtistAvatar(rawBanner)) rawBanner else fallbackAvatar
+        val avatarUrl = if (isAuthenticArtistAvatar(fallbackAvatar)) fallbackAvatar
+                        else if (isAuthenticArtistAvatar(rawBanner)) rawBanner
+                        else resolveJioSaavnArtistAvatar(name)
 
         val radioId = header?.optJSONObject("startRadioButton")
             ?.optJSONObject("buttonRenderer")

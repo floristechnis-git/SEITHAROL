@@ -467,20 +467,21 @@ class CascadeViewModel(
             playPlaylistOrMix(track.id)
             return
         }
+        playerManager.playTrack(track)
         viewModelScope.launch {
             musicRepository.insertTrack(track)
             musicRepository.recordPlayHistory(track)
             if (track.id.length == 11) {
                 runCatching {
-                    val automix = InnerTubeStreamExtractor.fetchAutomixQueue(track.id, limit = 15)
+                    val automix = InnerTubeStreamExtractor.fetchAutomixQueue(track.id, limit = 30)
                     if (automix.isNotEmpty()) {
                         val mixTracks = listOf(track) + automix.filter { it.videoId != track.id }.map { it.toTrack() }
                         personalizedTracks.value = mixTracks
+                        playerManager.updateQueuePreservingPlayback(mixTracks)
                     }
                 }
             }
         }
-        playerManager.playTrack(track)
     }
 
     fun playQueue(tracks: List<Track>, startIndex: Int = 0) {
@@ -493,7 +494,30 @@ class CascadeViewModel(
             runCatching {
                 val details = InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(playlistId)
                 val tracks = details.tracks.map { it.toTrack() }
-                if (tracks.isNotEmpty()) playQueue(tracks, 0)
+                if (tracks.isNotEmpty()) {
+                    playQueue(tracks, 0)
+                } else {
+                    val seed = playlistId.removePrefix("VL").removePrefix("RDAMVM")
+                    if (seed.length == 11) {
+                        val automix = InnerTubeStreamExtractor.fetchAutomixQueue(seed, limit = 35)
+                        if (automix.isNotEmpty()) playQueue(automix.map { it.toTrack() }, 0)
+                    }
+                }
+            }
+        }
+    }
+
+    fun startRadioMix(seedTrack: Track) {
+        viewModelScope.launch {
+            musicRepository.insertTrack(seedTrack)
+            musicRepository.recordPlayHistory(seedTrack)
+            playerManager.playQueue(listOf(seedTrack), 0)
+            runCatching {
+                val automix = InnerTubeStreamExtractor.fetchAutomixQueue(seedTrack.id, limit = 35)
+                val radioTracks = listOf(seedTrack) + automix.filter { it.videoId != seedTrack.id }.map { it.toTrack() }
+                if (radioTracks.size > 1) {
+                    playerManager.updateQueuePreservingPlayback(radioTracks)
+                }
             }
         }
     }
@@ -511,7 +535,18 @@ class CascadeViewModel(
                 return@launch
             }
             val remoteDetails = InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(playlistId)
-            onResult(remoteDetails.tracks.map { it.toTrack() })
+            val tracks = remoteDetails.tracks.map { it.toTrack() }
+            if (tracks.isNotEmpty()) {
+                onResult(tracks)
+            } else {
+                val cleanId = playlistId.removePrefix("VL").removePrefix("RDAMVM")
+                if (cleanId.length == 11) {
+                    val automix = InnerTubeStreamExtractor.fetchAutomixQueue(cleanId, limit = 35)
+                    onResult(automix.map { it.toTrack() })
+                } else {
+                    onResult(emptyList())
+                }
+            }
         }
     }
 

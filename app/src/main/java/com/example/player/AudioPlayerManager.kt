@@ -443,6 +443,30 @@ class AudioPlayerManager(
         }
     }
 
+    fun updateQueuePreservingPlayback(newQueue: List<Track>) {
+        if (newQueue.isEmpty()) return
+        val current = _state.value.currentTrack
+        if (current == null) {
+            playQueue(newQueue, 0)
+            return
+        }
+        val currentIdx = newQueue.indexOfFirst { it.id == current.id }
+        if (currentIdx >= 0) {
+            _state.value = _state.value.copy(
+                queue = newQueue,
+                currentIndex = currentIdx,
+                isSingleTrackPlayback = false
+            )
+        } else {
+            val merged = listOf(current) + newQueue.filter { it.id != current.id }
+            _state.value = _state.value.copy(
+                queue = merged,
+                currentIndex = 0,
+                isSingleTrackPlayback = false
+            )
+        }
+    }
+
     fun removeFromQueue(index: Int) {
         val q = _state.value.queue.toMutableList()
         if (index in q.indices) {

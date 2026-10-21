@@ -80,7 +80,7 @@ class StudioMasterResolver : Resolver {
                         videoId = req.videoId,
                         resolveId = "ytm_${bestYt.videoId}",
                         expiresAt = System.currentTimeMillis() + (6 * 3600 * 1000L),
-                        durationMs = bestYt.durationMs.takeIf { it > 0 } ?: 210000L,
+                        durationMs = if (bestYt.durationSeconds > 0) bestYt.durationSeconds * 1000L else 210000L,
                         title = bestYt.title.ifBlank { req.title ?: "Song" },
                         artist = bestYt.artist.ifBlank { req.artist ?: "Artist" },
                         artUrl = bestYt.thumbnailUrl,

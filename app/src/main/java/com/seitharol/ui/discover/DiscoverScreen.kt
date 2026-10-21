@@ -41,6 +41,8 @@ import com.seitharol.data.download.DownloadTaskState
 import com.seitharol.domain.model.NormalizedTrack
 import com.seitharol.player.AudioPlayerManager
 import com.seitharol.ui.history.HeartSvgIcon
+import com.seitharol.ui.home.SearchMagnifierSvgIcon
+import com.seitharol.ui.search.BackArrowSvgIcon
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -66,6 +68,11 @@ fun DiscoverScreen(
     val scope = rememberCoroutineScope()
     val pagerState = rememberPagerState(pageCount = { feedTracks.size })
 
+    var isInDiscoverSearchOpen by remember { mutableStateOf(false) }
+    var trackForDownloadSheet by remember { mutableStateOf<NormalizedTrack?>(null) }
+    var showQualitySheet by remember { mutableStateOf(false) }
+    val downloadTaskState by downloadService.downloadState.collectAsState()
+
     BackHandler {
         if (isInDiscoverSearchOpen) {
             isInDiscoverSearchOpen = false
@@ -75,11 +82,6 @@ fun DiscoverScreen(
             onNavigateBack()
         }
     }
-
-    var isInDiscoverSearchOpen by remember { mutableStateOf(false) }
-    var trackForDownloadSheet by remember { mutableStateOf<NormalizedTrack?>(null) }
-    var showQualitySheet by remember { mutableStateOf(false) }
-    val downloadTaskState by downloadService.downloadState.collectAsState()
 
     LaunchedEffect(pagerState.settledPage, feedTracks, isInDiscoverSearchOpen) {
         if (isInDiscoverSearchOpen) {

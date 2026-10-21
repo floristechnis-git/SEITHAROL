@@ -76,9 +76,9 @@ class AppPreferences(private val context: Context) {
         _settings.value = loadSettings()
         runCatching {
             val aq = when (quality.uppercase()) {
-                "LOW" -> com.seitharol.data.preferences.AudioQuality.LOW
-                "HIGH" -> com.seitharol.data.preferences.AudioQuality.HIGH
-                else -> com.seitharol.data.preferences.AudioQuality.NORMAL
+                "LOW" -> com.seitharol.data.resolver.AudioQuality.LOW
+                "HIGH" -> com.seitharol.data.resolver.AudioQuality.HIGH
+                else -> com.seitharol.data.resolver.AudioQuality.NORMAL
             }
             com.seitharol.data.preferences.AppSettingsManager.getInstance(context).setStreamingQuality(aq)
         }
@@ -91,8 +91,8 @@ class AppPreferences(private val context: Context) {
         _settings.value = loadSettings()
         runCatching {
             val aq = when (quality.uppercase()) {
-                "HIGH" -> com.seitharol.data.preferences.AudioQuality.HIGH
-                else -> com.seitharol.data.preferences.AudioQuality.NORMAL
+                "HIGH" -> com.seitharol.data.resolver.AudioQuality.HIGH
+                else -> com.seitharol.data.resolver.AudioQuality.NORMAL
             }
             com.seitharol.data.preferences.AppSettingsManager.getInstance(context).setDownloadQuality(aq)
         }

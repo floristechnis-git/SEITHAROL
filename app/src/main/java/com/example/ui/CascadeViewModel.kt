@@ -627,6 +627,15 @@ class CascadeViewModel(
         }
     }
 
+    fun addTrackToPlaylist(playlistId: String, track: Track) {
+        viewModelScope.launch {
+            musicRepository.insertTracks(listOf(track))
+            musicRepository.addTrackToPlaylist(playlistId, track.id)
+            val currentList = _userPlaylists.value[playlistId].orEmpty()
+            _userPlaylists.value = _userPlaylists.value + (playlistId to (currentList.filterNot { it.id == track.id } + track))
+        }
+    }
+
     fun togglePlaylistLike(playlist: Playlist) {
         viewModelScope.launch { musicRepository.togglePlaylistLike(playlist.id, !playlist.isLiked) }
     }

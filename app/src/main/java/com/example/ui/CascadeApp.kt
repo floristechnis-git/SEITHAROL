@@ -234,13 +234,14 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             com.seitharol.ui.local.LocalMusicScreen(
                                 appDownloadedTracks = downloadedTracks.map {
                                     com.seitharol.domain.model.NormalizedTrack(
-                                        source = com.seitharol.domain.model.SourceType.LOCAL,
+                                        source = com.seitharol.domain.model.TrackSource.LOCAL_FILE,
                                         sourceId = it.id,
                                         title = it.title,
                                         artists = listOf(it.artist),
                                         album = it.album,
                                         durationMs = it.durationMs,
                                         artUrl = it.artUrl,
+                                        isPlayableNatively = true,
                                         localPath = it.localPath
                                     )
                                 },
@@ -473,13 +474,14 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                         com.seitharol.ui.local.LocalMusicScreen(
                             appDownloadedTracks = downloadedTracks.map {
                                 com.seitharol.domain.model.NormalizedTrack(
-                                    source = com.seitharol.domain.model.SourceType.LOCAL,
+                                    source = com.seitharol.domain.model.TrackSource.LOCAL_FILE,
                                     sourceId = it.id,
                                     title = it.title,
                                     artists = listOf(it.artist),
                                     album = it.album,
                                     durationMs = it.durationMs,
                                     artUrl = it.artUrl,
+                                    isPlayableNatively = true,
                                     localPath = it.localPath
                                 )
                             },

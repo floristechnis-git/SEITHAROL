@@ -662,7 +662,6 @@ fun SearchScreen(
                         }
                     }
                 }
-            }
         }
 
         // Matching Playlists (shown if TOP or PLAYLISTS)

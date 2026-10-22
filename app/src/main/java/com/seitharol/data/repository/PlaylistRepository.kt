@@ -1,4 +1,4 @@
-package com.seitharol.data.repository
+﻿package com.seitharol.data.repository
 
 import com.seitharol.data.resolver.CandidateStream
 import com.seitharol.ui.home.PlaylistSummary
@@ -23,7 +23,6 @@ data class UserPlaylistEntity(
 }
 
 class PlaylistRepository {
-
     private val _playlists = MutableStateFlow<List<UserPlaylistEntity>>(
         listOf(
             UserPlaylistEntity(id = "liked", title = "Liked Songs"),
@@ -32,10 +31,6 @@ class PlaylistRepository {
     )
     val playlists: StateFlow<List<UserPlaylistEntity>> = _playlists.asStateFlow()
 
-    /**
-     * Atomically creates a new playlist AND optionally adds the pending track to it,
-     * immediately emitting the updated track list and thumbnail to the UI.
-     */
     fun createPlaylistAndAddTrack(title: String, initialTrack: CandidateStream? = null): UserPlaylistEntity {
         val cleanTitle = title.trim().ifEmpty { "New Playlist" }
         val newPlaylist = UserPlaylistEntity(

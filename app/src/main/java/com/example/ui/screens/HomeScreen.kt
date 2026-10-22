@@ -1192,24 +1192,26 @@ fun QuickDialBentoSection(
     items: List<HomeMediaItem>,
     onItemClick: (HomeMediaItem) -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+    val topItems = items.take(12)
+    val columns = topItems.chunked(2)
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        items.take(6).chunked(2).forEach { rowItems ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+        items(columns.size) { colIdx ->
+            val colItems = columns[colIdx]
+            Column(
+                modifier = Modifier.width(260.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                rowItems.forEach { item ->
+                colItems.forEach { item ->
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant,
                         modifier = Modifier
-                            .weight(1f)
-                            .height(56.dp)
+                            .fillMaxWidth()
+                            .height(58.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .clickable { onItemClick(item) }
                     ) {
@@ -1218,7 +1220,7 @@ fun QuickDialBentoSection(
                                 model = upgradeThumbnail(item.thumbnailUrl),
                                 contentDescription = item.title,
                                 contentScale = ContentScale.Crop,
-                                modifier = Modifier.size(56.dp)
+                                modifier = Modifier.size(58.dp)
                             )
                             Text(
                                 text = item.title,
@@ -1229,14 +1231,11 @@ fun QuickDialBentoSection(
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier
-                                    .padding(horizontal = 10.dp)
+                                    .padding(horizontal = 12.dp)
                                     .weight(1f)
                             )
                         }
                     }
-                }
-                if (rowItems.size == 1) {
-                    Spacer(modifier = Modifier.weight(1f))
                 }
             }
         }

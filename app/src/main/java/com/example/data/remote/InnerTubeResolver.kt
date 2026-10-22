@@ -47,9 +47,6 @@ object InnerTubeResolver {
         val androidVrStream = fetchAudioUrlFromPlayer(validVideoId, clientName = "ANDROID_VR", clientVersion = "1.60.19")
         if (!androidVrStream.isNullOrBlank()) return@withContext androidVrStream
 
-        val iosStream = fetchAudioUrlFromPlayer(validVideoId, clientName = "IOS", clientVersion = "19.45.4")
-        if (!iosStream.isNullOrBlank()) return@withContext iosStream
-
         null
     }
 
@@ -60,7 +57,6 @@ object InnerTubeResolver {
     ): String? {
         return try {
             val isAndroidVr = clientName == "ANDROID_VR"
-            val isIos = clientName == "IOS"
             val body = JSONObject().apply {
                 put("videoId", videoId)
                 put("contentCheckOk", true)
@@ -77,24 +73,18 @@ object InnerTubeResolver {
                             put("osName", "Android")
                             put("osVersion", "12")
                             put("androidSdkVersion", 32)
-                        } else if (isIos) {
-                            put("deviceMake", "Apple")
-                            put("deviceModel", "iPhone16,2")
-                            put("osName", "iOS")
-                            put("osVersion", "17.5.1.21F90")
                         }
                     })
                 })
             }
-            // ANDROID_VR uses www.youtube.com; IOS/WEB use music.youtube.com
-            val endpoint = if (isAndroidVr || isIos)
+            // ANDROID_VR uses www.youtube.com
+            val endpoint = if (isAndroidVr)
                 "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
             else
                 "https://music.youtube.com/youtubei/v1/player?prettyPrint=false"
 
             val userAgent = when {
                 isAndroidVr -> "com.google.android.apps.youtube.vr.oculus/$clientVersion (Linux; U; Android 12; Quest 3 Build/SQ3A.220705.003.A1) gzip"
-                isIos -> "com.google.ios.youtube/$clientVersion (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)"
                 else -> "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
             val response = postJson(endpoint, body, userAgent)

@@ -551,44 +551,95 @@ class DownloadRepository(
     suspend fun rescanLocalDownloads() = withContext(Dispatchers.IO) {
         try {
             val downloadDir = File(context.filesDir, "downloads")
-            if (!downloadDir.exists()) return@withContext
-            val files = downloadDir.listFiles() ?: return@withContext
+            val publicDir = File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+                "Seitharol"
+            )
 
-            for (file in files) {
-                if (file.isFile && file.length() > 10_240L && !file.name.endsWith(".tmp")) {
-                    val baseName = file.nameWithoutExtension
-                    val trackId = baseName.substringBeforeLast("_", baseName)
-                    val tierName = baseName.substringAfterLast("_", "standard")
+            val directoriesToScan = listOfNotNull(
+                downloadDir.takeIf { it.exists() },
+                publicDir.takeIf { it.exists() }
+            )
 
-                    val existingTrack = trackDao.getTrackById(trackId)
-                    if (existingTrack == null) {
-                        val cleanTitle = trackId.replace("_", " ").replaceFirstChar { it.uppercase() }
-                        val newEntity = TrackEntity(
-                            id = trackId,
-                            title = cleanTitle,
-                            artist = "Downloaded Music",
-                            album = "Offline Storage",
-                            durationMs = 0,
-                            artUrl = "",
-                            isDownloaded = true,
-                            localPath = file.absolutePath
+            for (dir in directoriesToScan) {
+                val files = dir.listFiles() ?: continue
+                for (file in files) {
+                    if (file.isFile && file.length() > 10_240L && !file.name.endsWith(".tmp")) {
+                        val baseName = file.nameWithoutExtension
+                        val trackId = baseName.substringBeforeLast("_", baseName)
+                        val tierName = baseName.substringAfterLast("_", "standard")
+
+                        val existingTrack = trackDao.getTrackById(trackId)
+                        if (existingTrack == null) {
+                            val cleanTitle = trackId.replace("_", " ").replaceFirstChar { it.uppercase() }
+                            val newEntity = TrackEntity(
+                                id = trackId,
+                                title = cleanTitle,
+                                artist = "Downloaded Music",
+                                album = "Offline Storage",
+                                durationMs = 0,
+                                artUrl = "",
+                                isDownloaded = true,
+                                localPath = file.absolutePath
+                            )
+                            trackDao.insertTrack(newEntity)
+                        } else if (!existingTrack.isDownloaded || existingTrack.localPath.isNullOrBlank()) {
+                            trackDao.setDownloaded(trackId, true, file.absolutePath)
+                        }
+
+                        val existingDl = downloadDao.getDownload(trackId)
+                        if (existingDl == null || existingDl.state != "COMPLETED") {
+                            downloadDao.insertDownload(
+                                DownloadEntity(
+                                    trackId = trackId,
+                                    tier = tierName.replaceFirstChar { it.uppercase() },
+                                    state = "COMPLETED",
+                                    localPath = file.absolutePath,
+                                    progress = 1.0f,
+                                    bytesDownloaded = file.length(),
+                                    totalBytes = file.length()
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Also sync Discover persisted downloads into TrackDao and DownloadDao
+            val discoverService = runCatching {
+                com.seitharol.data.download.DownloadPreferencesAndService.getInstance(context)
+            }.getOrNull()
+            discoverService?.completedDownloads?.value?.forEach { norm ->
+                if (!norm.localPath.isNullOrBlank()) {
+                    val existing = trackDao.getTrackById(norm.sourceId)
+                    if (existing == null) {
+                        trackDao.insertTrack(
+                            TrackEntity(
+                                id = norm.sourceId,
+                                title = norm.title,
+                                artist = norm.artists.firstOrNull() ?: "Unknown Artist",
+                                album = norm.album ?: "Discover Downloads",
+                                durationMs = norm.durationMs,
+                                artUrl = norm.artUrl.orEmpty(),
+                                isDownloaded = true,
+                                localPath = norm.localPath
+                            )
                         )
-                        trackDao.insertTrack(newEntity)
-                    } else if (!existingTrack.isDownloaded || existingTrack.localPath.isNullOrBlank()) {
-                        trackDao.setDownloaded(trackId, true, file.absolutePath)
+                    } else if (!existing.isDownloaded || existing.localPath.isNullOrBlank()) {
+                        trackDao.setDownloaded(norm.sourceId, true, norm.localPath)
                     }
 
-                    val existingDl = downloadDao.getDownload(trackId)
-                    if (existingDl == null || existingDl.state != "COMPLETED") {
+                    val dl = downloadDao.getDownload(norm.sourceId)
+                    if (dl == null || dl.state != "COMPLETED") {
                         downloadDao.insertDownload(
                             DownloadEntity(
-                                trackId = trackId,
-                                tier = tierName.replaceFirstChar { it.uppercase() },
+                                trackId = norm.sourceId,
+                                tier = "High",
                                 state = "COMPLETED",
-                                localPath = file.absolutePath,
+                                localPath = norm.localPath,
                                 progress = 1.0f,
-                                bytesDownloaded = file.length(),
-                                totalBytes = file.length()
+                                bytesDownloaded = 100_000L,
+                                totalBytes = 100_000L
                             )
                         )
                     }

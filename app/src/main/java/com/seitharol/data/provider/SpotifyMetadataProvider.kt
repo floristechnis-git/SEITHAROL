@@ -1,7 +1,8 @@
-// seitharol/data/provider/SpotifyMetadataProvider.kt
-package com.seitharol.data.provider
+﻿package com.seitharol.data.provider
 
+import com.seitharol.data.resolver.AudioQuality
 import com.seitharol.data.resolver.InnerTubeStreamExtractor
+import com.seitharol.data.resolver.StreamResolver
 import com.seitharol.domain.model.NormalizedTrack
 import com.seitharol.domain.model.TrackSource
 import kotlinx.coroutines.Dispatchers
@@ -26,7 +27,12 @@ class DefaultSpotifyMetadataProvider : SpotifyMetadataProvider {
             if (clean.isBlank()) return@withContext emptyList()
 
             coroutineScope {
-                // 1. Primary: Official YouTube Music Songs
+                // 1. JioSaavn Direct CDN Streams (0ms instant preview playback via decrypted URL)
+                val saavnDeferred = async {
+                    runCatching { searchJioSaavnTracks(clean, limit) }.getOrDefault(emptyList())
+                }
+
+                // 2. Official YouTube Music Songs
                 val ytmDeferred = async {
                     runCatching {
                         InnerTubeStreamExtractor.searchOfficialYtmSongs(clean, limit = limit).map { yt ->
@@ -47,13 +53,8 @@ class DefaultSpotifyMetadataProvider : SpotifyMetadataProvider {
                     }.getOrDefault(emptyList())
                 }
 
-                // 2. Secondary: JioSaavn Official Catalog
-                val saavnDeferred = async {
-                    runCatching { searchJioSaavnTracks(clean, limit) }.getOrDefault(emptyList())
-                }
-
                 val merged = mutableListOf<NormalizedTrack>()
-                for (track in (ytmDeferred.await() + saavnDeferred.await())) {
+                for (track in (saavnDeferred.await() + ytmDeferred.await())) {
                     val exists = merged.any {
                         it.title.equals(track.title, ignoreCase = true) &&
                             it.artists.firstOrNull().equals(track.artists.firstOrNull(), ignoreCase = true)
@@ -68,11 +69,11 @@ class DefaultSpotifyMetadataProvider : SpotifyMetadataProvider {
 
     private fun searchJioSaavnTracks(query: String, limit: Int): List<NormalizedTrack> {
         val encoded = URLEncoder.encode(query, "UTF-8")
-        val url = "https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&cc=in&q=" + encoded + "&n=" + limit
+        val url = "https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&cc=in&q=$encoded&n=$limit"
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
-            connectTimeout = 6000
-            readTimeout = 6000
+            connectTimeout = 4500
+            readTimeout = 4500
             setRequestProperty("User-Agent", "Mozilla/5.0 (Android 14; Mobile)")
         }
         if (conn.responseCode !in 200..299) return emptyList()
@@ -92,6 +93,13 @@ class DefaultSpotifyMetadataProvider : SpotifyMetadataProvider {
                 ?.optString("name")
                 ?: obj.optString("subtitle").ifBlank { "Unknown Artist" }
             val image = obj.optString("image").replace("150x150", "500x500")
+
+            // Decrypt encrypted_media_url immediately so Discover preview starts in 0ms without re-querying!
+            val encryptedUrl = moreInfo?.optString("encrypted_media_url").orEmpty()
+            val directCdnUrl = if (encryptedUrl.isNotBlank()) {
+                StreamResolver.decryptJioSaavnUrl(encryptedUrl, AudioQuality.LOW)
+            } else null
+
             out.add(
                 NormalizedTrack(
                     source = TrackSource.JIOSAAVN,
@@ -103,7 +111,7 @@ class DefaultSpotifyMetadataProvider : SpotifyMetadataProvider {
                     durationMs = durationSec * 1000L,
                     artUrl = image,
                     isPlayableNatively = true,
-                    previewUrl = "saavn_clip:" + id
+                    previewUrl = directCdnUrl ?: "saavn_clip:$id"
                 )
             )
         }

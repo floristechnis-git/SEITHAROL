@@ -83,6 +83,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
     }
 
     var currentDestination by remember { mutableStateOf(AppDestination.HOME) }
+    var previousDestination by remember { mutableStateOf(AppDestination.HOME) }
     var currentSubScreen by remember { mutableStateOf<SubScreen>(SubScreen.None) }
     var isPlayerExpanded by remember { mutableStateOf(false) }
 
@@ -163,7 +164,10 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             selected = isSelected,
                             onClick = {
                                 currentSubScreen = SubScreen.None
-                                currentDestination = dest
+                                if (currentDestination != dest) {
+                                    previousDestination = currentDestination
+                                    currentDestination = dest
+                                }
                             },
                             icon = {
                                 if (dest == AppDestination.HOME) {
@@ -335,8 +339,18 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             AppDestination.HOME -> HomeScreen(
                                 viewModel = viewModel,
                                 playerState = playerState,
-                                onNavigateToSearch = { currentDestination = AppDestination.SEARCH },
-                                onNavigateToProfile = { currentDestination = AppDestination.PROFILE },
+                                onNavigateToSearch = {
+                                    if (currentDestination != AppDestination.SEARCH) {
+                                        previousDestination = currentDestination
+                                        currentDestination = AppDestination.SEARCH
+                                    }
+                                },
+                                onNavigateToProfile = {
+                                    if (currentDestination != AppDestination.PROFILE) {
+                                        previousDestination = currentDestination
+                                        currentDestination = AppDestination.PROFILE
+                                    }
+                                },
                                 onNavigateToArtist = { currentSubScreen = SubScreen.Artist(it) },
                                 onNavigateToPlaylist = {
                                     if (it == "liked_songs") currentSubScreen = SubScreen.LikedSongs
@@ -349,6 +363,9 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                 playerState = playerState,
                                 onNavigateToArtist = { currentSubScreen = SubScreen.Artist(it) },
                                 onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) },
+                                onNavigateToHome = {
+                                    currentDestination = if (previousDestination != AppDestination.SEARCH) previousDestination else AppDestination.HOME
+                                },
                                 onOpenDiscover = { currentSubScreen = SubScreen.Discover },
                                 onPlayTrackAndMaximize = { track ->
                                     viewModel.playTrack(track)
@@ -577,8 +594,18 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             AppDestination.HOME -> HomeScreen(
                                 viewModel = viewModel,
                                 playerState = playerState,
-                                onNavigateToSearch = { currentDestination = AppDestination.SEARCH },
-                                onNavigateToProfile = { currentDestination = AppDestination.PROFILE },
+                                onNavigateToSearch = {
+                                    if (currentDestination != AppDestination.SEARCH) {
+                                        previousDestination = currentDestination
+                                        currentDestination = AppDestination.SEARCH
+                                    }
+                                },
+                                onNavigateToProfile = {
+                                    if (currentDestination != AppDestination.PROFILE) {
+                                        previousDestination = currentDestination
+                                        currentDestination = AppDestination.PROFILE
+                                    }
+                                },
                                 onNavigateToArtist = { currentSubScreen = SubScreen.Artist(it) },
                                 onNavigateToPlaylist = {
                                     if (it == "liked_songs") currentSubScreen = SubScreen.LikedSongs
@@ -591,7 +618,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                     if (viewModel.searchQuery.value.isNotEmpty()) {
                                         viewModel.searchQuery.value = ""
                                     } else {
-                                        currentDestination = AppDestination.HOME
+                                        currentDestination = if (previousDestination != AppDestination.SEARCH) previousDestination else AppDestination.HOME
                                     }
                                 }
                                 SearchScreen(
@@ -599,6 +626,9 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                     playerState = playerState,
                                     onNavigateToArtist = { currentSubScreen = SubScreen.Artist(it) },
                                     onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) },
+                                    onNavigateToHome = {
+                                        currentDestination = if (previousDestination != AppDestination.SEARCH) previousDestination else AppDestination.HOME
+                                    },
                                     onOpenDiscover = { currentSubScreen = SubScreen.Discover },
                                     onPlayTrackAndMaximize = { track ->
                                         viewModel.playTrack(track)
@@ -684,7 +714,10 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                         color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent,
                                         onClick = {
                                             currentSubScreen = SubScreen.None
-                                            currentDestination = dest
+                                            if (currentDestination != dest) {
+                                                previousDestination = currentDestination
+                                                currentDestination = dest
+                                            }
                                         }
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {

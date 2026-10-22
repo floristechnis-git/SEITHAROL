@@ -35,7 +35,7 @@ private enum class SettingsDialogType {
 @Composable
 fun GeneralSettingsScreen(
     settingsManager: AppSettingsManager,
-    onOpenInfoPage: (InfoPageType) -> Unit,
+    onOpenInfoPage: (InfoPageType) -> Unit = {},
     onNavigateBack: (() -> Unit)? = null
 ) {
     val state by settingsManager.state.collectAsState()
@@ -203,20 +203,7 @@ fun GeneralSettingsScreen(
             }
         }
 
-        // 4. ABOUT & LEGAL
         item {
-            SettingsGroupCard(title = "About & Legal") {
-                InfoPageType.entries.forEachIndexed { index, page ->
-                    SettingsValueRow(
-                        title = page.title,
-                        subtitle = null,
-                        onClick = { onOpenInfoPage(page) }
-                    )
-                    if (index < InfoPageType.entries.lastIndex) {
-                        SettingsDivider()
-                    }
-                }
-            }
             Spacer(modifier = Modifier.height(84.dp))
         }
     }

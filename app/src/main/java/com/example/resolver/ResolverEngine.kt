@@ -119,7 +119,7 @@ class ResolverEngine {
         val cacheKey = "${rawId}_${preferredQuality.name}"
 
         // 1. Verified Local File Priority
-        if (track.isDownloaded && !track.localPath.isNullOrBlank()) {
+        if (!track.localPath.isNullOrBlank()) {
             if (track.localPath.startsWith("content://")) {
                 return ResolvedStream(
                     videoId = rawId.ifBlank { "local_track" },
@@ -178,17 +178,37 @@ class ResolverEngine {
                 resolvedBy = "Direct Verified Stream",
                 latencyMs = 6
             )
-            if (rawId.isNotBlank()) streamCache[rawId] = resolved
+            if (rawId.isNotBlank()) streamCache[cacheKey] = resolved
+            return resolved
+        }
+
+        // 4. Exact YouTube ID direct resolution (Strictly no fallback to text/title searches)
+        val cleanYtId = com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(rawId)
+        if (!cleanYtId.isNullOrBlank()) {
+            val url = com.seitharol.data.resolver.InnerTubeStreamExtractor
+                .resolveExactYoutubeStreamById(cleanYtId, preferredQuality)
+                .getOrThrow() // Do NOT fall back to title/artist search on failure
+            val resolved = ResolvedStream(
+                videoId = cleanYtId,
+                streamUrl = url,
+                itag = track.itag,
+                codec = if (url.contains("opus") || url.contains("webm")) "Opus" else "AAC",
+                bitrate = "${preferredQuality.maxBitrateKbps} kbps",
+                expiresAtMs = now + (6 * 3600 * 1000L),
+                isLocal = false,
+                resolvedBy = "YouTube Music InnerTube Direct",
+                latencyMs = 10
+            )
+            streamCache[cacheKey] = resolved
             return resolved
         }
 
         var effectiveTitle = track.title.trim()
         var effectiveArtist = track.artist.trim()
-        val extractedYtId = com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(rawId)
-        val isYouTubeId = extractedYtId != null
-        val targetVideoId = extractedYtId ?: rawId
-        val isSpotify = !isYouTubeId && rawId.length == 22 && !rawId.contains("_") && !rawId.contains("-")
-        val isSaavn = !isYouTubeId && ((rawId.isNotBlank() && rawId.all { it.isDigit() }) ||
+        val isYouTubeId = false
+        val targetVideoId = rawId
+        val isSpotify = rawId.length == 22 && !rawId.contains("_") && !rawId.contains("-")
+        val isSaavn = ((rawId.isNotBlank() && rawId.all { it.isDigit() }) ||
             track.genre.contains("Indian", ignoreCase = true) ||
             track.genre.contains("Bollywood", ignoreCase = true))
 

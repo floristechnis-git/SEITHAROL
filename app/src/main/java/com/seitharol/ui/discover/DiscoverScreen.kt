@@ -1,7 +1,7 @@
-package com.seitharol.ui.discover
+﻿package com.seitharol.ui.discover
 
 import android.content.Intent
-import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -12,6 +12,10 @@ import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -38,20 +42,17 @@ import com.seitharol.data.download.DownloadFormat
 import com.seitharol.data.download.DownloadPreferencesAndService
 import com.seitharol.data.download.DownloadProvider
 import com.seitharol.data.download.DownloadTaskState
+import com.seitharol.data.preferences.ThumbnailQuality
+import com.seitharol.data.resolver.AudioQuality
+import com.seitharol.data.resolver.InnerTubeStreamExtractor
 import com.seitharol.domain.model.NormalizedTrack
 import com.seitharol.player.AudioPlayerManager
 import com.seitharol.ui.history.HeartSvgIcon
 import com.seitharol.ui.home.SearchMagnifierSvgIcon
 import com.seitharol.ui.search.BackArrowSvgIcon
-import androidx.activity.compose.BackHandler
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Settings
-import com.seitharol.data.preferences.ThumbnailQuality
 import com.seitharol.util.ThumbnailTargetSize
 import com.seitharol.util.ThumbnailUrlOptimizer
-import com.seitharol.data.resolver.AudioQuality
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -69,6 +70,7 @@ fun DiscoverScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
     val activeFeed = remember { mutableStateListOf<NormalizedTrack>() }
     LaunchedEffect(feedTracks) {
         if (activeFeed.isEmpty() && feedTracks.isNotEmpty()) {
@@ -79,11 +81,12 @@ fun DiscoverScreen(
             }
         }
     }
-    val pagerState = rememberPagerState(pageCount = { activeFeed.size })
 
+    val pagerState = rememberPagerState(pageCount = { activeFeed.size })
     var isInDiscoverSearchOpen by remember { mutableStateOf(false) }
     var trackForDownloadSheet by remember { mutableStateOf<NormalizedTrack?>(null) }
     var showQualitySheet by remember { mutableStateOf(false) }
+
     val downloadTaskState by downloadService.downloadState.collectAsState()
 
     BackHandler {
@@ -96,21 +99,27 @@ fun DiscoverScreen(
         }
     }
 
-    // 1. Immediately silence previous track as soon as user drags away from settled page
-    LaunchedEffect(pagerState.currentPage, pagerState.isScrollInProgress) {
-        if (pagerState.isScrollInProgress && pagerState.currentPage != pagerState.settledPage) {
-            audioPlayerManager.stopPreviewAndClear()
-        }
-    }
-
-    // 2. Play active track immediately on enter and when swipe settles
-    LaunchedEffect(pagerState.settledPage, activeFeed.size, activeFeed.firstOrNull()?.sourceId, isInDiscoverSearchOpen) {
+    // Play active page track when settledPage changes OR when search overlay closes,
+    // and pre-warm the next page's stream URL in background so swiping is instantaneous.
+    LaunchedEffect(pagerState.settledPage, activeFeed.size, isInDiscoverSearchOpen) {
         if (isInDiscoverSearchOpen) {
             audioPlayerManager.pausePreview()
         } else if (activeFeed.isNotEmpty()) {
             val activeTrack = activeFeed.getOrNull(pagerState.settledPage)
             if (activeTrack != null) {
                 audioPlayerManager.playPreview(activeTrack)
+            }
+            // Pre-resolve next track in background
+            val nextTrack = activeFeed.getOrNull(pagerState.settledPage + 1)
+            if (nextTrack != null) {
+                launch(Dispatchers.IO) {
+                    val nextYtId = InnerTubeStreamExtractor.extractVideoId(
+                        nextTrack.previewUrl?.removePrefix("ytm_clip:") ?: nextTrack.sourceId
+                    )
+                    if (!nextYtId.isNullOrBlank()) {
+                        InnerTubeStreamExtractor.resolveExactYoutubeStreamById(nextYtId, AudioQuality.LOW)
+                    }
+                }
             }
         }
     }
@@ -140,7 +149,7 @@ fun DiscoverScreen(
                 DiscoverShortPage(
                     track = track,
                     downloadState = downloadTaskState,
-                    isPreviewPlaying = isPreviewPlaying,
+                    isPreviewPlaying = isPreviewPlaying && pagerState.settledPage == pageIndex,
                     isPreviewBuffering = isPreviewBuffering && pagerState.settledPage == pageIndex,
                     onTogglePlayPause = {
                         if (isPreviewPlaying) {
@@ -177,7 +186,6 @@ fun DiscoverScreen(
             }
         }
 
-        // Floating Top Bar with Search Pill & Quality Settings
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -199,7 +207,6 @@ fun DiscoverScreen(
                 BackArrowSvgIcon(tint = Color.White, modifier = Modifier.size(22.dp))
             }
 
-            // Sleek Glassmorphic Search Pill on Top Bar
             Surface(
                 shape = RoundedCornerShape(50),
                 color = Color.White.copy(alpha = 0.14f),
@@ -228,7 +235,6 @@ fun DiscoverScreen(
                 }
             }
 
-            // Quality Adjustment Settings Icon
             IconButton(
                 onClick = { showQualitySheet = true },
                 modifier = Modifier
@@ -326,7 +332,6 @@ private fun DiscoverShortPage(
                 indication = null
             ) { onTogglePlayPause() }
     ) {
-        // Blurred ambient background
         AsyncImage(
             model = optimizedArtUrl,
             contentDescription = null,
@@ -336,7 +341,6 @@ private fun DiscoverShortPage(
                 .blur(30.dp)
         )
 
-        // Cinematic dark gradient scrim
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -351,7 +355,6 @@ private fun DiscoverShortPage(
                 )
         )
 
-        // Center Vinyl / Hero Artwork Card
         Box(
             modifier = Modifier
                 .align(Alignment.Center)
@@ -368,7 +371,6 @@ private fun DiscoverShortPage(
             )
         }
 
-        // Show Loading spinner when resolving preview or Play indicator overlay when paused:
         if (isPreviewBuffering) {
             Box(
                 modifier = Modifier
@@ -404,7 +406,6 @@ private fun DiscoverShortPage(
             }
         }
 
-        // Bottom Metadata + Action Rail
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -413,9 +414,7 @@ private fun DiscoverShortPage(
                 .padding(start = 18.dp, end = 14.dp, bottom = 28.dp),
             verticalAlignment = Alignment.Bottom
         ) {
-            // BOTTOM-LEFT: Artist Profile Picture + Song Name + Download + Search on YouTube + Full Song
             Column(modifier = Modifier.weight(1f)) {
-                // Artist Profile Pic + Song Name & Artist Name Row at Bottom-Left
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -456,13 +455,11 @@ private fun DiscoverShortPage(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Quick Action Pills Row: Full Song + Download + Search on YouTube
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // 1. Play Full Song
                     Button(
                         onClick = onOpenFullSongClick,
                         shape = RoundedCornerShape(50),
@@ -483,7 +480,6 @@ private fun DiscoverShortPage(
                         Text("Play Full", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
 
-                    // 2. Direct Download Pill Button
                     Button(
                         onClick = onDownloadClick,
                         shape = RoundedCornerShape(50),
@@ -499,7 +495,6 @@ private fun DiscoverShortPage(
                         Text("Download", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
 
-                    // 3. Artist Page Pill Button
                     OutlinedButton(
                         onClick = onVisitArtistClick,
                         shape = RoundedCornerShape(50),
@@ -519,7 +514,6 @@ private fun DiscoverShortPage(
                     }
                 }
 
-                // Live Download Progress Banner
                 if (downloadState is DownloadTaskState.Downloading && downloadState.trackId == track.sourceId) {
                     Spacer(modifier = Modifier.height(10.dp))
                     LinearProgressIndicator(
@@ -544,7 +538,6 @@ private fun DiscoverShortPage(
 
             Spacer(modifier = Modifier.width(10.dp))
 
-            // Right Vertical Rail: Like, Download, YouTube, Share
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -695,7 +688,6 @@ fun DownloadProviderFormatBottomSheet(
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp, vertical = 10.dp)
         ) {
-            // Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -728,18 +720,19 @@ fun DownloadProviderFormatBottomSheet(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // 1. Audio Quality (Bitrate Tier)
             Text(
                 text = "Download Audio Quality",
                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(modifier = Modifier.height(8.dp))
+
             val qualityTiers = listOf(
                 Triple(AudioQuality.HIGH, "High", "320 kbps"),
                 Triple(AudioQuality.NORMAL, "Normal", "160 kbps"),
                 Triple(AudioQuality.LOW, "Low", "96 kbps")
             )
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -784,13 +777,13 @@ fun DownloadProviderFormatBottomSheet(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // 2. Format Selection (Lossless / Master vs Standard)
             Text(
                 text = "Audio Container / Format",
                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(modifier = Modifier.height(8.dp))
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -858,13 +851,13 @@ fun DownloadProviderFormatBottomSheet(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // 3. Provider Selection
             Text(
                 text = "Download Audio Provider",
                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(modifier = Modifier.height(8.dp))
+
             sortedProviders.forEachIndexed { index, provider ->
                 val usageCount = downloadService.getUsageCount(provider)
                 val providerIconRes = when (provider) {
@@ -947,7 +940,6 @@ fun DownloadProviderFormatBottomSheet(
                     fontWeight = FontWeight.Bold
                 )
             }
-
             Spacer(modifier = Modifier.height(20.dp))
         }
     }

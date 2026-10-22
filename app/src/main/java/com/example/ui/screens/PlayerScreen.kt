@@ -912,6 +912,10 @@ fun PlayerScreen(
         val settingsManager = remember(context) { AppSettingsManager.getInstance(context) }
         PlayerAudioAdjustmentSheet(
             settingsManager = settingsManager,
+            currentTrackQuality = viewModel.getTemporaryTrackQuality(),
+            onSetTrackQuality = { quality ->
+                viewModel.setTemporaryTrackQuality(quality)
+            },
             onDismiss = { showAudioAdjustSheet = false }
         )
     }
@@ -1304,6 +1308,8 @@ private fun formatMs(ms: Long): String {
 @Composable
 fun PlayerAudioAdjustmentSheet(
     settingsManager: AppSettingsManager,
+    currentTrackQuality: com.seitharol.data.resolver.AudioQuality? = null,
+    onSetTrackQuality: (com.seitharol.data.resolver.AudioQuality) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val state by settingsManager.state.collectAsState()
@@ -1406,6 +1412,51 @@ fun PlayerAudioAdjustmentSheet(
                     onCheckedChange = { settingsManager.setGaplessPlayback(it) },
                     colors = switchColors
                 )
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            // Current Track Audio Quality Selector
+            Text(
+                text = "Track Quality (Current Song)",
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = "Temporary override for currently playing track",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            val activeQuality = currentTrackQuality ?: state.streamingQuality
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                com.seitharol.data.resolver.AudioQuality.values().forEach { quality ->
+                    val isSelected = quality == activeQuality
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { onSetTrackQuality(quality) },
+                        label = {
+                            Text(
+                                text = when (quality) {
+                                    com.seitharol.data.resolver.AudioQuality.LOW -> "Data Saver"
+                                    com.seitharol.data.resolver.AudioQuality.NORMAL -> "Normal"
+                                    com.seitharol.data.resolver.AudioQuality.HIGH -> "High (HQ)"
+                                },
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(16.dp))
         }

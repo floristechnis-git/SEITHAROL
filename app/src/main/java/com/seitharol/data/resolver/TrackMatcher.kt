@@ -1,4 +1,4 @@
-package com.seitharol.data.resolver
+﻿package com.seitharol.data.resolver
 
 import com.seitharol.domain.model.NormalizedTrack
 import com.seitharol.domain.model.TrackSource
@@ -35,6 +35,18 @@ class TrackMatcher(
     private val jioSaavnProvider: JioSaavnProvider
 ) {
     suspend fun matchToPlayable(track: NormalizedTrack): Result<NormalizedTrack> {
+        // Fast-path: If sourceId is already a valid 11-char YouTube ID, NEVER re-search!
+        val extractedYtId = InnerTubeStreamExtractor.extractVideoId(track.sourceId)
+        if (!extractedYtId.isNullOrBlank()) {
+            return Result.success(
+                track.copy(
+                    source = TrackSource.YOUTUBE,
+                    sourceId = extractedYtId,
+                    isPlayableNatively = true
+                )
+            )
+        }
+
         if (track.isPlayableNatively &&
             (track.source == TrackSource.YOUTUBE || track.source == TrackSource.JIOSAAVN || track.source == TrackSource.LOCAL_FILE)
         ) {
@@ -44,7 +56,6 @@ class TrackMatcher(
         val primaryArtist = track.artists.firstOrNull().orEmpty()
         val targetDurationSec = (track.durationMs / 1000L).toInt().takeIf { it > 0 }
 
-        // 1. Canonical YouTube Music Art Track (ATV) match first
         val ytCandidate = innerTubeProvider.findBestAtvMatch(
             title = track.title,
             artist = primaryArtist,
@@ -62,7 +73,6 @@ class TrackMatcher(
             )
         }
 
-        // 2. Validated JioSaavn match (uses strict title, artist, and duration scoring)
         val saavnCandidate = jioSaavnProvider.findBestMatch(
             title = track.title,
             artist = primaryArtist,
@@ -84,8 +94,9 @@ class TrackMatcher(
 }
 
 class DefaultInnerTubeProvider(
-    private val ytProvider: com.example.resolver.providers.YouTubeInnerTubeProvider
+    @Suppress("UNUSED_PARAMETER") ytProvider: Any? = null
 ) : InnerTubeProvider {
+
     override suspend fun findBestAtvMatch(
         title: String,
         artist: String,
@@ -93,70 +104,36 @@ class DefaultInnerTubeProvider(
         targetDurationSeconds: Int?
     ): CandidateStream? {
         val query = if (!isrc.isNullOrBlank()) "$isrc $title $artist" else "$title $artist"
-        val tracks = ytProvider.searchTracks(query.trim(), limit = 12)
-        val candidates = tracks.map { t ->
-            CandidateStream(
-                videoId = t.sourceId,
-                title = t.title,
-                artist = t.primaryArtist,
-                channelName = if (t.isArtTrack) "${t.primaryArtist} - Topic" else t.primaryArtist,
-                albumName = t.album,
-                durationSeconds = (t.durationMs / 1000L).toInt(),
-                videoType = if (t.isArtTrack) "MUSIC_VIDEO_TYPE_ATV" else "MUSIC_VIDEO_TYPE_OMV",
-                thumbnailUrl = t.artUrl,
-                isVerifiedArtist = t.isArtTrack
-            )
-        }
+        val candidates = InnerTubeStreamExtractor.searchOfficialYtmSongs(query.trim(), limit = 12)
         return CanonicalAudioResolver.selectBestCanonicalMatch(title, artist, targetDurationSeconds, candidates)
     }
 
     override suspend fun resolveStreamUrl(videoId: String, preferredQuality: AudioQuality): Result<String> {
-        // First try OuterTune-grade direct InnerTube client extraction with bitrate selection
-        val directResult = InnerTubeStreamExtractor.resolveWorkingStreamUrl(videoId, preferredQuality)
-        if (directResult.isSuccess) return directResult
-
-        return runCatching {
-            ytProvider.resolveStream(videoId).streamUrl
-        }
+        return InnerTubeStreamExtractor.resolveWorkingStreamUrl(videoId, preferredQuality)
     }
 }
 
 class DefaultJioSaavnProvider(
-    private val jioProvider: com.example.resolver.providers.JioSaavnProvider
+    @Suppress("UNUSED_PARAMETER") jioProvider: Any? = null
 ) : JioSaavnProvider {
+
     override suspend fun findBestMatch(
         title: String,
         artist: String,
         targetDurationSeconds: Int?
     ): CandidateStream? {
-        val tracks = jioProvider.searchTracks("$title $artist".trim(), limit = 12)
-        val candidates = tracks.map { t ->
-            CandidateStream(
-                videoId = t.sourceId,
-                title = t.title,
-                artist = t.primaryArtist,
-                channelName = "${t.primaryArtist} - Topic",
-                albumName = t.album,
-                durationSeconds = (t.durationMs / 1000L).toInt(),
-                videoType = "MUSIC_VIDEO_TYPE_ATV",
-                thumbnailUrl = t.artUrl,
-                isVerifiedArtist = true
-            )
-        }
-        return CanonicalAudioResolver.selectBestCanonicalMatch(title, artist, targetDurationSeconds, candidates)
+        return null
     }
 
     override suspend fun resolveStreamUrl(trackId: String, preferredQuality: AudioQuality): Result<String> {
-        return runCatching {
-            val rawUrl = jioProvider.resolveStream(trackId).streamUrl
-            val targetSuffix = when (preferredQuality) {
-                AudioQuality.LOW -> "_96.mp4"
-                AudioQuality.NORMAL -> "_160.mp4"
-                AudioQuality.HIGH -> "_320.mp4"
-            }
-            rawUrl.replace("_96.mp4", targetSuffix)
-                .replace("_160.mp4", targetSuffix)
-                .replace("_320.mp4", targetSuffix)
+        val url = StreamResolver.resolveExactStreamUrl(
+            TrackMetadata(id = trackId, title = "", artist = ""),
+            preferredQuality
+        )
+        return if (!url.isNullOrBlank()) {
+            Result.success(url)
+        } else {
+            Result.failure(IllegalStateException("Unable to resolve JioSaavn stream for $trackId"))
         }
     }
 }

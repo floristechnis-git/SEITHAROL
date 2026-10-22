@@ -19,7 +19,7 @@ object StreamResolver {
             bitrate = "160 kbps",
             expiresAtMs = now + (6 * 3600 * 1000L),
             isLocal = false,
-            resolvedBy = "YouTube Music InnerTube Direct (Android VR / iOS)",
+            resolvedBy = "YouTube Music InnerTube Direct (Android VR)",
             latencyMs = 20
         )
     }

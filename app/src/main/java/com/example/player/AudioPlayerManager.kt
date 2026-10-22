@@ -128,7 +128,7 @@ class AudioPlayerManager(
             exoPlayer?.release()
 
             val resolvingFactory = com.seitharol.player.OuterTuneResolvingDataSource.createFactory {
-                com.seitharol.data.resolver.AudioQuality.LOW
+                temporaryTrackQuality ?: com.seitharol.data.preferences.AppSettingsManager.getInstance(context).state.value.streamingQuality
             }
             val dataSourceFactory = DefaultDataSource.Factory(context, resolvingFactory)
             val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
@@ -180,7 +180,9 @@ class AudioPlayerManager(
 
                         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                             super.onMediaItemTransition(mediaItem, reason)
-                            if (isAutoplayEnabled) {
+                            val current = _state.value.currentTrack
+                            val isCurrentOffline = current?.isDownloaded == true || !current?.localPath.isNullOrBlank()
+                            if (isAutoplayEnabled && !isCurrentOffline) {
                                 val isNearEnd = _state.value.currentIndex >= _state.value.queue.size - 1
                                 if (isNearEnd && _state.value.queue.isNotEmpty()) {
                                     prefetchAutoplayRecommendation()
@@ -204,72 +206,66 @@ class AudioPlayerManager(
                             Log.e(TAG, "ExoPlayer error: ${error.errorCodeName} - ${error.message}", error)
                             _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
                             val current = _state.value.currentTrack
+                            val currentId = current?.id ?: return
+                            com.seitharol.player.OuterTuneResolvingDataSource.invalidate(currentId)
+
                             retryJob?.cancel()
                             retryJob = coroutineScope.launch {
-                                val title = current?.title?.ifBlank { "Track" } ?: "Track"
+                                val title = current.title.ifBlank { "Track" }
 
-                                if (current != null) {
-                                    if (lastFailedTrackId != current.id) {
-                                        lastFailedTrackId = current.id
-                                        trackRetryCount = 0
-                                    }
+                                if (lastFailedTrackId != current.id) {
+                                    lastFailedTrackId = current.id
+                                    trackRetryCount = 0
+                                }
 
-                                    // Fail fast with clear notice if device is offline
-                                    if (!com.example.util.ErrorFormatter.isOnline(context)) {
-                                        _skipEvent.emit("No internet connection. Please check your network.")
-                                        trackRetryCount = 0
-                                        lastFailedTrackId = null
-                                        _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
-                                        MediaPlaybackService.stopService(context)
-                                        return@launch
-                                    }
-
-                                    if (trackRetryCount >= 3) {
-                                        Log.w(TAG, "Max retries (3) reached for '$title'. Skipping to next track.")
-                                        val friendlyMsg = com.example.util.ErrorFormatter.toUserFriendlyMessage(error, context, title)
-                                        _skipEvent.emit(friendlyMsg)
-                                        trackRetryCount = 0
-                                        lastFailedTrackId = null
-                                        if (!_state.value.isSingleTrackPlayback && _state.value.currentIndex < _state.value.queue.lastIndex) {
-                                            next()
-                                        } else {
-                                            _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
-                                            MediaPlaybackService.stopService(context)
-                                        }
-                                        return@launch
-                                    }
-
-                                    trackRetryCount++
-                                    // Silent background reconnect delay without spamming dev logs in UI
-                                    delay(800)
-                                    if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
-                                    try {
-                                        resolverEngine.clearCache()
-                                        val freshStream = resolverEngine.resolveTrack(current.copy(audioUrl = ""), getPreferredAudioQuality())
-                                        if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
-                                        _state.value = _state.value.copy(activeStream = freshStream)
-                                        setupAndPlaySource(freshStream.streamUrl, current)
-                                    } catch (e: Exception) {
-                                        if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
-                                        Log.e(TAG, "Retry attempt $trackRetryCount failed: ${e.message}", e)
-                                        if (trackRetryCount >= 3) {
-                                            val friendlyMsg = com.example.util.ErrorFormatter.toUserFriendlyMessage(e, context, title)
-                                            _skipEvent.emit(friendlyMsg)
-                                            trackRetryCount = 0
-                                            lastFailedTrackId = null
-                                            if (!_state.value.isSingleTrackPlayback && _state.value.currentIndex < _state.value.queue.lastIndex) {
-                                                next()
-                                            } else {
-                                                _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
-                                                MediaPlaybackService.stopService(context)
-                                            }
-                                        }
-                                    }
-                                } else if (!_state.value.isSingleTrackPlayback && _state.value.currentIndex < _state.value.queue.lastIndex) {
-                                    next()
-                                } else {
+                                // Fail fast with clear notice if device is offline
+                                if (!com.example.util.ErrorFormatter.isOnline(context)) {
+                                    _skipEvent.emit("No internet connection. Please check your network.")
+                                    trackRetryCount = 0
+                                    lastFailedTrackId = null
                                     _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
                                     MediaPlaybackService.stopService(context)
+                                    return@launch
+                                }
+
+                                if (trackRetryCount >= 2) {
+                                    Log.w(TAG, "Max retries reached for '$title'. Skipping to next track.")
+                                    val friendlyMsg = com.example.util.ErrorFormatter.toUserFriendlyMessage(error, context, title)
+                                    _skipEvent.emit(friendlyMsg)
+                                    trackRetryCount = 0
+                                    lastFailedTrackId = null
+                                    if (!_state.value.isSingleTrackPlayback && _state.value.currentIndex < _state.value.queue.lastIndex) {
+                                        next()
+                                    } else {
+                                        _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+                                        MediaPlaybackService.stopService(context)
+                                    }
+                                    return@launch
+                                }
+
+                                trackRetryCount++
+                                delay(600)
+                                if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
+                                try {
+                                    resolverEngine.clearCache()
+                                    // Retry the exact same videoId once; never re-search by title/artist
+                                    val freshStream = resolverEngine.resolveTrack(current.copy(audioUrl = ""), getPreferredAudioQuality())
+                                    if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
+                                    _state.value = _state.value.copy(activeStream = freshStream)
+                                    setupAndPlaySource(freshStream.streamUrl, current)
+                                } catch (e: Exception) {
+                                    if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
+                                    Log.e(TAG, "Retry attempt $trackRetryCount failed: ${e.message}", e)
+                                    val friendlyMsg = com.example.util.ErrorFormatter.toUserFriendlyMessage(e, context, title)
+                                    _skipEvent.emit(friendlyMsg)
+                                    trackRetryCount = 0
+                                    lastFailedTrackId = null
+                                    if (!_state.value.isSingleTrackPlayback && _state.value.currentIndex < _state.value.queue.lastIndex) {
+                                        next()
+                                    } else {
+                                        _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+                                        MediaPlaybackService.stopService(context)
+                                    }
                                 }
                             }
                         }
@@ -394,6 +390,10 @@ class AudioPlayerManager(
         loadTrackJob?.cancel()
         retryJob?.cancel()
         val validIndex = startIndex.coerceIn(0, tracks.lastIndex)
+        val isOfflineQueue = tracks.isNotEmpty() && tracks.all { it.isDownloaded || !it.localPath.isNullOrBlank() }
+        if (isOfflineQueue) {
+            isAutoplayEnabled = false
+        }
         _state.value = _state.value.copy(
             queue = tracks,
             currentIndex = validIndex,
@@ -409,6 +409,9 @@ class AudioPlayerManager(
         lastFailedTrackId = null
         loadTrackJob?.cancel()
         retryJob?.cancel()
+        if (track.isDownloaded || !track.localPath.isNullOrBlank()) {
+            isAutoplayEnabled = false
+        }
         val currentQueue = _state.value.queue.toMutableList()
         val index = currentQueue.indexOfFirst { it.id == track.id }
         if (index != -1) {
@@ -625,8 +628,21 @@ class AudioPlayerManager(
                 val safeTrack = if (isContentReadable) {
                     current.copy(isDownloaded = true, localPath = current.localPath)
                 } else {
+                    val dbTrack = runCatching { musicRepository.getTrackById(current.id) }.getOrNull()
+                    val dbPath = dbTrack?.takeIf { it.isDownloaded }?.localPath
+                    val discoverDownloadPath = runCatching {
+                        com.seitharol.data.download.DownloadPreferencesAndService.getInstance(context)
+                            .completedDownloads.value.firstOrNull { it.sourceId == current.id }?.localPath
+                    }.getOrNull()
+                    val discoverDir = File(
+                        android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC),
+                        "Seitharol"
+                    )
+
                     val localCandidates = listOfNotNull(
                         current.localPath?.takeIf { !it.startsWith("content://") }?.let { File(it.removePrefix("file://")) },
+                        dbPath?.takeIf { !it.startsWith("content://") }?.let { File(it.removePrefix("file://")) },
+                        discoverDownloadPath?.takeIf { !it.startsWith("content://") }?.let { File(it.removePrefix("file://")) },
                         File(downloadDir, "$safeId.audio"),
                         File(downloadDir, "${current.id}.audio"),
                         File(downloadDir, "${current.id}_high.opus"),
@@ -640,6 +656,10 @@ class AudioPlayerManager(
                     val foundLocal = localCandidates.firstOrNull { it.exists() && it.length() > 0L }
                     if (foundLocal != null) {
                         current.copy(isDownloaded = true, localPath = foundLocal.absolutePath)
+                    } else if (dbPath?.startsWith("content://") == true) {
+                        current.copy(isDownloaded = true, localPath = dbPath)
+                    } else if (discoverDownloadPath?.startsWith("content://") == true) {
+                        current.copy(isDownloaded = true, localPath = discoverDownloadPath)
                     } else {
                         current.copy(isDownloaded = false, localPath = null)
                     }
@@ -883,8 +903,10 @@ class AudioPlayerManager(
                 }
                 RepeatMode.OFF -> {
                     val isLast = _state.value.currentIndex >= _state.value.queue.lastIndex
+                    val current = _state.value.currentTrack
+                    val isCurrentOffline = current?.isDownloaded == true || !current?.localPath.isNullOrBlank()
                     if (isLast) {
-                        if (isAutoplayEnabled) {
+                        if (isAutoplayEnabled && !isCurrentOffline) {
                             triggerAutoplayNext()
                         } else {
                             _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
@@ -902,6 +924,8 @@ class AudioPlayerManager(
     private fun prefetchAutoplayRecommendation() {
         if (isFetchingAutoplay) return
         val current = _state.value.currentTrack ?: return
+        val isOffline = current.isDownloaded || !current.localPath.isNullOrBlank() || _state.value.queue.all { it.isDownloaded || !it.localPath.isNullOrBlank() }
+        if (isOffline || !isAutoplayEnabled) return
         isFetchingAutoplay = true
         coroutineScope.launch(Dispatchers.IO) {
             try {
@@ -955,6 +979,11 @@ class AudioPlayerManager(
         if (isFetchingAutoplay) return
         val current = _state.value.currentTrack ?: _state.value.queue.lastOrNull()
         if (current == null) {
+            _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
+            return
+        }
+        val isOffline = current.isDownloaded || !current.localPath.isNullOrBlank() || _state.value.queue.all { it.isDownloaded || !it.localPath.isNullOrBlank() }
+        if (isOffline || !isAutoplayEnabled) {
             _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
             return
         }
@@ -1073,8 +1102,30 @@ class AudioPlayerManager(
         return primary to secondary
     }
 
+    private var temporaryTrackQuality: com.seitharol.data.resolver.AudioQuality? = null
+
+    fun getTemporaryTrackQuality(): com.seitharol.data.resolver.AudioQuality? = temporaryTrackQuality
+
+    fun setTemporaryTrackQuality(quality: com.seitharol.data.resolver.AudioQuality) {
+        temporaryTrackQuality = quality
+        val current = _state.value.currentTrack ?: return
+        val currentPos = exoPlayer?.currentPosition ?: 0L
+        coroutineScope.launch {
+            try {
+                _state.value = _state.value.copy(isBuffering = true)
+                val stream = resolverEngine.resolveTrack(current.copy(audioUrl = ""), quality)
+                _state.value = _state.value.copy(activeStream = stream)
+                setupAndPlaySource(stream.streamUrl, current)
+                exoPlayer?.seekTo(currentPos)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to apply temporary track quality: ${e.message}")
+                _state.value = _state.value.copy(isBuffering = false)
+            }
+        }
+    }
+
     private fun getPreferredAudioQuality(): com.seitharol.data.resolver.AudioQuality {
-        return runCatching {
+        return temporaryTrackQuality ?: runCatching {
             com.seitharol.data.preferences.AppSettingsManager.getInstance(context).state.value.streamingQuality
         }.getOrDefault(com.seitharol.data.resolver.AudioQuality.NORMAL)
     }

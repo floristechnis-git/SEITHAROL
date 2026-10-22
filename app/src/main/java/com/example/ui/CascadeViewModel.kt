@@ -18,6 +18,7 @@ import com.example.player.EqualizerPreset
 import com.example.player.PlayerState
 import com.example.resolver.CircuitBreakerState
 import com.example.resolver.ResolverEngine
+import com.seitharol.data.resolver.AudioQuality
 import com.seitharol.data.resolver.CanonicalAudioResolver
 import com.seitharol.data.resolver.InnerTubeStreamExtractor
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -695,6 +696,8 @@ class CascadeViewModel(
     fun setLoudnessGain(gainDb: Float) = playerManager.setLoudnessGain(gainDb)
     fun setSleepTimer(minutes: Int) = playerManager.setSleepTimer(minutes)
     fun adjustLyricOffset(deltaMs: Long) = playerManager.adjustLyricOffset(deltaMs)
+    fun setTemporaryTrackQuality(quality: AudioQuality) = playerManager.setTemporaryTrackQuality(quality)
+    fun getTemporaryTrackQuality(): AudioQuality? = playerManager.getTemporaryTrackQuality()
 
     val isDarkMode = MutableStateFlow<Boolean?>(null)
     fun toggleDarkMode(currentIsDark: Boolean = false) {

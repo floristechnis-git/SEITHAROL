@@ -8,6 +8,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.util.Log
+import androidx.core.app.NotificationCompat
 import com.seitharol.data.preferences.AppSettingsManager
 import com.seitharol.data.resolver.AudioQuality
 import com.seitharol.data.resolver.CanonicalAudioResolver
@@ -69,6 +73,60 @@ class DownloadPreferencesAndService(private val context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("discover_download_prefs", Context.MODE_PRIVATE)
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var activeDownloadJob: Job? = null
+    private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+    private val DOWNLOAD_CHANNEL_ID = "seitharol_download_channel"
+
+    init {
+        createDownloadNotificationChannel()
+    }
+
+    private fun createDownloadNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                DOWNLOAD_CHANNEL_ID,
+                "Seitharol Downloads",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Shows download progress and completion notifications"
+                setShowBadge(false)
+            }
+            notificationManager?.createNotificationChannel(channel)
+        }
+    }
+
+    private fun updateDownloadNotification(title: String, progress: Int, isCompleted: Boolean = false, isFailed: Boolean = false) {
+        try {
+            val notifId = title.hashCode()
+            if (isCompleted || isFailed) {
+                notificationManager?.cancel(notifId)
+                val completedNotification = NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
+                    .setSmallIcon(com.example.R.drawable.ic_stat_music_note)
+                    .setContentTitle(if (isFailed) "Download Failed" else "Download Completed")
+                    .setContentText(if (isFailed) "$title • Tap to retry" else "$title is ready for offline playback")
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setOngoing(false)
+                    .setAutoCancel(true)
+                    .setProgress(0, 0, false)
+                    .build()
+                notificationManager?.notify(notifId + 10_000, completedNotification)
+                return
+            }
+
+            val clamped = progress.coerceIn(0, 99)
+            val builder = NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
+                .setSmallIcon(com.example.R.drawable.ic_stat_music_note)
+                .setContentTitle("Downloading $title")
+                .setContentText("$clamped%")
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setProgress(100, clamped, false)
+
+            notificationManager?.notify(notifId, builder.build())
+        } catch (e: Exception) {
+            Log.w("DownloadPreferences", "Notification error: ${e.message}")
+        }
+    }
 
     private val _downloadState = MutableStateFlow<DownloadTaskState>(DownloadTaskState.Idle)
     val downloadState: StateFlow<DownloadTaskState> = _downloadState.asStateFlow()
@@ -81,6 +139,7 @@ class DownloadPreferencesAndService(private val context: Context) {
         activeDownloadJob?.cancel()
         activeDownloadJob = null
         if (current is DownloadTaskState.Downloading) {
+            notificationManager?.cancel(current.trackTitle.hashCode())
             _downloadState.value = DownloadTaskState.Canceled(current.trackId)
         } else {
             _downloadState.value = DownloadTaskState.Idle
@@ -207,12 +266,15 @@ class DownloadPreferencesAndService(private val context: Context) {
             withContext(Dispatchers.Main) {
                 onTrackSavedAsLocalMusic(localMusicTrack)
             }
+            updateDownloadNotification(track.title, 100, isCompleted = true)
             _downloadState.value = DownloadTaskState.Completed(track.sourceId, savedUri)
             savedUri
         }.onFailure { err ->
             if (err is CancellationException) {
+                notificationManager?.cancel(track.title.hashCode())
                 _downloadState.value = DownloadTaskState.Canceled(track.sourceId)
             } else {
+                updateDownloadNotification(track.title, 0, isFailed = true)
                 _downloadState.value = DownloadTaskState.Failed(
                     trackId = track.sourceId,
                     message = err.localizedMessage ?: "Download failed for ${track.title}"
@@ -230,6 +292,7 @@ class DownloadPreferencesAndService(private val context: Context) {
         provider: DownloadProvider
     ) {
         var downloadedBytes = 0L
+        var lastNotifMs = 0L
         conn.inputStream.use { input ->
             val buffer = ByteArray(16 * 1024)
             var bytesRead: Int
@@ -248,6 +311,11 @@ class DownloadPreferencesAndService(private val context: Context) {
                     totalBytes = totalBytes,
                     provider = provider
                 )
+                val now = System.currentTimeMillis()
+                if (now - lastNotifMs > 300L) {
+                    lastNotifMs = now
+                    updateDownloadNotification(track.title, progress)
+                }
             }
             output.flush()
         }
@@ -354,4 +422,15 @@ class DownloadPreferencesAndService(private val context: Context) {
     fun getUsageCount(provider: DownloadProvider): Int = prefs.getInt("provider_count_${provider.id}", 0)
     private fun getLastUsedTimestamp(provider: DownloadProvider): Long = prefs.getLong("provider_last_${provider.id}", 0L)
     private fun sanitizeFileName(name: String): String = name.replace(Regex("[\\/:*?\"<>|]"), "_").trim()
+
+    companion object {
+        @Volatile
+        private var instance: DownloadPreferencesAndService? = null
+
+        fun getInstance(context: Context): DownloadPreferencesAndService {
+            return instance ?: synchronized(this) {
+                instance ?: DownloadPreferencesAndService(context.applicationContext).also { instance = it }
+            }
+        }
+    }
 }

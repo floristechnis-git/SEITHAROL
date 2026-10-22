@@ -49,23 +49,6 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             }
         ),
         ClientProfile(
-            name = "IOS",
-            version = "19.45.4",
-            clientId = "5",
-            userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)",
-            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-            clientJson = JSONObject().apply {
-                put("clientName", "IOS")
-                put("clientVersion", "19.45.4")
-                put("deviceMake", "Apple")
-                put("deviceModel", "iPhone16,2")
-                put("osName", "iPhone")
-                put("osVersion", "18.1.0.22B83")
-                put("hl", "en")
-                put("gl", "US")
-            }
-        ),
-        ClientProfile(
             name = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
             version = "2.0",
             clientId = "85",

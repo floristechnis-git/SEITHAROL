@@ -125,7 +125,10 @@ fun PlaylistScreen(
                     .height(340.dp)
                     .background(
                         Brush.verticalGradient(
-                            listOf(Color(0xFF5A5A5A), Color(0xFF0D0D0D))
+                            listOf(
+                                MaterialTheme.colorScheme.surfaceVariant,
+                                MaterialTheme.colorScheme.background
+                            )
                         )
                     )
             ) {
@@ -142,14 +145,14 @@ fun PlaylistScreen(
                     Surface(
                         modifier = Modifier.size(44.dp),
                         shape = CircleShape,
-                        color = SeitharolGlassDark,
+                        color = MaterialTheme.colorScheme.surfaceVariant,
                         onClick = onBack
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = "Back",
-                                tint = Color.White,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -159,14 +162,14 @@ fun PlaylistScreen(
                     Surface(
                         modifier = Modifier.size(44.dp),
                         shape = CircleShape,
-                        color = SeitharolGlassDark,
+                        color = MaterialTheme.colorScheme.surfaceVariant,
                         onClick = { showMoreSheet = true }
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 imageVector = Icons.Default.MoreHoriz,
                                 contentDescription = "More",
-                                tint = Color.White,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -216,7 +219,7 @@ fun PlaylistScreen(
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 26.sp,
-                        color = Color.White
+                        color = MaterialTheme.colorScheme.onBackground
                     )
 
                     Spacer(modifier = Modifier.height(4.dp))
@@ -225,7 +228,7 @@ fun PlaylistScreen(
                         text = currentPlaylist.description.ifBlank { "The best tracks every week" },
                         fontFamily = OutfitFontFamily,
                         fontSize = 13.sp,
-                        color = Color(0xFFD0D0D0)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
                     Spacer(modifier = Modifier.height(20.dp))
@@ -245,13 +248,13 @@ fun PlaylistScreen(
                             Surface(
                                 modifier = Modifier.size(48.dp),
                                 shape = CircleShape,
-                                color = SeitharolGlassDarkActive
+                                color = MaterialTheme.colorScheme.surfaceVariant
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
                                         imageVector = Icons.Default.Download,
                                         contentDescription = "Download",
-                                        tint = Color.White,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
@@ -259,13 +262,13 @@ fun PlaylistScreen(
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = "Download",
-                                color = Color(0xFFD0D0D0),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 11.sp,
                                 fontFamily = OutfitFontFamily
                             )
                         }
 
-                        // Big Play Button (64dp white circle)
+                        // Big Play Button
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier.clickable {
@@ -281,13 +284,13 @@ fun PlaylistScreen(
                             Surface(
                                 modifier = Modifier.size(64.dp),
                                 shape = CircleShape,
-                                color = Color.White
+                                color = MaterialTheme.colorScheme.primary
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
                                         imageVector = Icons.Default.PlayArrow,
                                         contentDescription = "Play Playlist",
-                                        tint = Color(0xFF0D0D0D),
+                                        tint = MaterialTheme.colorScheme.onPrimary,
                                         modifier = Modifier.size(32.dp)
                                     )
                                 }
@@ -295,7 +298,7 @@ fun PlaylistScreen(
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = "Play",
-                                color = Color(0xFFD0D0D0),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 11.sp,
                                 fontFamily = OutfitFontFamily
                             )
@@ -311,13 +314,13 @@ fun PlaylistScreen(
                             Surface(
                                 modifier = Modifier.size(48.dp),
                                 shape = CircleShape,
-                                color = SeitharolGlassDarkActive
+                                color = MaterialTheme.colorScheme.surfaceVariant
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
                                         imageVector = if (currentPlaylist.isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
                                         contentDescription = "Like",
-                                        tint = if (currentPlaylist.isLiked) SeitharolRedHeart else Color.White,
+                                        tint = if (currentPlaylist.isLiked) SeitharolRedHeart else MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
@@ -325,7 +328,7 @@ fun PlaylistScreen(
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = if (currentPlaylist.isLiked) "Liked" else "Like",
-                                color = Color(0xFFD0D0D0),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 11.sp,
                                 fontFamily = OutfitFontFamily
                             )

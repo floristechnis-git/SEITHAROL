@@ -86,6 +86,8 @@ fun SearchScreen(
         )
     }
 
+    androidx.activity.compose.BackHandler(onBack = onNavigateToHome)
+    val downloadedTracks by viewModel.downloadedTracks.collectAsState()
     val allTracksList by viewModel.allTracks.collectAsState()
     val historyTracks by viewModel.activeHistory.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -93,13 +95,17 @@ fun SearchScreen(
     val recentSearches by appPreferences.recentSearches.collectAsState()
 
     // Verified Distinct Artists Only:
-    // Split collaboration artist strings (e.g. "Dan + Shay, Justin Bieber" or "Artist A feat. Artist B")
-    // into distinct individual artists so multi-artist combinations never appear as a bizarre pseudo-artist.
-    val allArtists = remember(allTracksList, historyTracks, searchResults) {
+    // Split collaboration artist strings into distinct individual artists
+    val allArtists = remember(allTracksList, historyTracks, searchResults, currentProvider, downloadedTracks) {
         val bannedModifiers = listOf("loop", "extended", "1 hour", "slowed", "reverb", "cover", "8d", "nightcore", "mashup", "bass boosted")
         val bannedArtists = listOf("local artist", "device storage", "downloaded in seitharol", "<unknown>", "unknown artist", "unknown", "various artists")
         val splitRegex = Regex("[,/;&]|\\s+(?:feat\\.?|ft\\.?|&|x)\\s+", RegexOption.IGNORE_CASE)
-        (searchResults + historyTracks + allTracksList)
+        val sourceTracks = if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
+            downloadedTracks
+        } else {
+            searchResults + historyTracks + allTracksList
+        }
+        sourceTracks
             .flatMap { track ->
                 track.artist.split(splitRegex).map { it.trim() }
             }
@@ -189,19 +195,16 @@ fun SearchScreen(
                 ) {
                     IconButton(
                         onClick = {
-                            if (query.isEmpty()) {
-                                focusManager.clearFocus()
-                                keyboardController?.hide()
-                                onNavigateToHome()
-                            } else {
-                                viewModel.searchQuery.value = ""
-                            }
+                            focusManager.clearFocus()
+                            keyboardController?.hide()
+                            viewModel.searchQuery.value = ""
+                            onNavigateToHome()
                         },
                         modifier = Modifier.size(32.dp)
                     ) {
                         Icon(
-                            imageVector = if (query.isEmpty()) Icons.AutoMirrored.Filled.ArrowBack else Icons.Default.Close,
-                            contentDescription = if (query.isEmpty()) "Back" else "Clear search",
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(20.dp)
                         )
@@ -250,6 +253,20 @@ fun SearchScreen(
                             innerTextField()
                         }
                     )
+                    if (query.isNotEmpty()) {
+                        IconButton(
+                            onClick = { viewModel.searchQuery.value = "" },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Clear search",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
                     if (isSearchingOnline) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
@@ -333,7 +350,7 @@ fun SearchScreen(
         }
 
         // Top 4 Recent Searches (Shown on top of search screen when idle or present)
-        if (recentSearches.isNotEmpty() && query.isBlank()) {
+        if (recentSearches.isNotEmpty() && query.isBlank() && currentProvider != com.example.ui.ProviderFilter.LOCAL) {
             item {
                 Row(
                     modifier = Modifier
@@ -419,7 +436,7 @@ fun SearchScreen(
         }
 
         // Quick Search Chips (when query is empty)
-        if (query.isBlank()) {
+        if (query.isBlank() && currentProvider != com.example.ui.ProviderFilter.LOCAL) {
             item {
                 Text(
                     text = "Trending Searches",
@@ -474,7 +491,7 @@ fun SearchScreen(
         }
 
         // Typeahead suggestions (when query is entered and suggestions are available)
-        if (query.isNotBlank() && searchSuggestions.isNotEmpty()) {
+        if (query.isNotBlank() && searchSuggestions.isNotEmpty() && currentProvider != com.example.ui.ProviderFilter.LOCAL) {
             item {
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 20.dp),

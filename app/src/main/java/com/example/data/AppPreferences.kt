@@ -25,15 +25,38 @@ data class UserSettings(
     val stopImmediatelyOnNewTrack: Boolean = true
 )
 
-class AppPreferences(private val context: Context) {
+class AppPreferences private constructor(context: Context) {
+    private val appContext = context.applicationContext
     private val prefs: SharedPreferences =
-        context.getSharedPreferences("seitharol_prefs", Context.MODE_PRIVATE)
+        appContext.getSharedPreferences("seitharol_prefs", Context.MODE_PRIVATE)
 
     private val _settings = MutableStateFlow(loadSettings())
     val settings: StateFlow<UserSettings> = _settings.asStateFlow()
 
     private val _recentSearches = MutableStateFlow(loadRecentSearches())
     val recentSearches: StateFlow<List<String>> = _recentSearches.asStateFlow()
+
+    private val prefChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        _settings.value = loadSettings()
+        _recentSearches.value = loadRecentSearches()
+    }
+
+    init {
+        prefs.registerOnSharedPreferenceChangeListener(prefChangeListener)
+    }
+
+    companion object {
+        @Volatile
+        private var INSTANCE: AppPreferences? = null
+
+        fun getInstance(context: Context): AppPreferences {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: AppPreferences(context.applicationContext).also { INSTANCE = it }
+            }
+        }
+
+        operator fun invoke(context: Context): AppPreferences = getInstance(context)
+    }
 
     private fun loadSettings(): UserSettings {
         val bands = (0 until 5).map { idx ->
@@ -93,9 +116,15 @@ class AppPreferences(private val context: Context) {
         _recentSearches.value = emptyList()
     }
 
-    fun setThemeMode(mode: String) {
+    internal fun setThemeModeDirect(mode: String) {
         val current = prefs.getString("theme_mode", "SYSTEM") ?: "SYSTEM"
-        if (current.equals(mode, ignoreCase = true)) return
+        if (!current.equals(mode, ignoreCase = true)) {
+            prefs.edit().putString("theme_mode", mode).apply()
+            _settings.value = loadSettings()
+        }
+    }
+
+    fun setThemeMode(mode: String) {
         prefs.edit().putString("theme_mode", mode).apply()
         _settings.value = loadSettings()
         runCatching {
@@ -104,7 +133,7 @@ class AppPreferences(private val context: Context) {
                 "DARK" -> com.seitharol.data.preferences.ThemeMode.DARK
                 else -> com.seitharol.data.preferences.ThemeMode.SYSTEM
             }
-            com.seitharol.data.preferences.AppSettingsManager.getInstance(context).setThemeMode(tm)
+            com.seitharol.data.preferences.AppSettingsManager.getInstance(appContext).setThemeModeFromExternal(tm)
         }
     }
 
@@ -119,7 +148,7 @@ class AppPreferences(private val context: Context) {
                 "HIGH" -> com.seitharol.data.resolver.AudioQuality.HIGH
                 else -> com.seitharol.data.resolver.AudioQuality.LOW
             }
-            com.seitharol.data.preferences.AppSettingsManager.getInstance(context).setStreamingQuality(aq)
+            com.seitharol.data.preferences.AppSettingsManager.getInstance(appContext).setStreamingQuality(aq)
         }
     }
 
@@ -134,7 +163,7 @@ class AppPreferences(private val context: Context) {
                 "HIGH" -> com.seitharol.data.resolver.AudioQuality.HIGH
                 else -> com.seitharol.data.resolver.AudioQuality.LOW
             }
-            com.seitharol.data.preferences.AppSettingsManager.getInstance(context).setDownloadQuality(aq)
+            com.seitharol.data.preferences.AppSettingsManager.getInstance(appContext).setDownloadQuality(aq)
         }
     }
 

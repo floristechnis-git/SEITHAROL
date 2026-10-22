@@ -220,7 +220,7 @@ fun HomeScreen(
     }
 
     // Prepare Spotify-Style 2-Column "Speed Dial / Quick Picks" Bento Items (2x3 grid = 6 items)
-    // Suggests genuine playable songs similar to what has been listened to or searched recently
+    // Prioritizes genuine playable songs similar to what has been listened to or searched recently
     val quickDialItems = remember(personalizedTracks, activeHistory, trendingItems, recentSearches, excludedHeroIds) {
         fun isAuthenticCleanSong(item: HomeMediaItem): Boolean {
             val a = item.subtitle.lowercase().trim()
@@ -236,9 +236,8 @@ fun HomeScreen(
 
         val items = mutableListOf<HomeMediaItem>()
 
-        // 1. Genuine songs from active listening history
-        activeHistory
-            .distinctBy { it.id }
+        // 1. Genuine songs similar to recent listening & searches (from personalized recommendations)
+        personalizedTracks
             .filterNot { it.id in excludedHeroIds }
             .map { it.toHomeMediaItem() }
             .filter(::isAuthenticCleanSong)
@@ -246,17 +245,20 @@ fun HomeScreen(
             .take(6)
             .forEach { items.add(it) }
 
-        // 2. Songs similar to recent listening & searches (from personalized recommendations)
-        personalizedTracks
-            .filterNot { it.id in excludedHeroIds }
-            .map { it.toHomeMediaItem() }
-            .filter(::isAuthenticCleanSong)
-            .distinctBy { "${it.title.lowercase().trim()}|${it.subtitle.lowercase().trim()}" }
-            .forEach { recItem ->
-                if (items.size < 6 && !items.any { it.id == recItem.id || (it.title.equals(recItem.title, true) && it.subtitle.equals(recItem.subtitle, true)) }) {
-                    items.add(recItem)
+        // 2. Fallback to clean active history tracks if personalized recommendations have fewer than 6
+        if (items.size < 6) {
+            activeHistory
+                .distinctBy { it.id }
+                .filterNot { it.id in excludedHeroIds }
+                .map { it.toHomeMediaItem() }
+                .filter(::isAuthenticCleanSong)
+                .distinctBy { "${it.title.lowercase().trim()}|${it.subtitle.lowercase().trim()}" }
+                .forEach { histItem ->
+                    if (items.size < 6 && !items.any { it.id == histItem.id || (it.title.equals(histItem.title, true) && it.subtitle.equals(histItem.subtitle, true)) }) {
+                        items.add(histItem)
+                    }
                 }
-            }
+        }
 
         // 3. Fallback to trending hits to guarantee 6 clean playable tracks
         if (items.size < 6) {
@@ -726,7 +728,7 @@ fun HomeScreen(
                 item {
                     MediaCarouselShelf(
                         title = "Mixed for You",
-                        subtitle = "Non-stop YouTube Music radio & personalized blend",
+                        subtitle = "Continuous personalized listening based on your taste",
                         items = youtubeMixes,
                         badgeText = "MIX",
                         onItemClick = { item ->

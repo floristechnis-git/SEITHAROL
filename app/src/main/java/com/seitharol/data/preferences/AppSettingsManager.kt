@@ -79,6 +79,14 @@ class AppSettingsManager(context: Context) {
     fun setThemeMode(mode: ThemeMode) {
         prefs.edit().putString(KEY_THEME_MODE, mode.name).apply()
         _state.value = _state.value.copy(themeMode = mode)
+        runCatching {
+            com.example.data.AppPreferences.getInstance(context).setThemeModeDirect(mode.name)
+        }
+    }
+
+    internal fun setThemeModeFromExternal(mode: ThemeMode) {
+        prefs.edit().putString(KEY_THEME_MODE, mode.name).apply()
+        _state.value = _state.value.copy(themeMode = mode)
     }
 
     fun setStreamingQuality(quality: AudioQuality) {

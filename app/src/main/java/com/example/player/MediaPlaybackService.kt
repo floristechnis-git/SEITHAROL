@@ -40,6 +40,7 @@ class MediaPlaybackService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var currentArtBitmap: Bitmap? = null
     private var lastLoadedArtUrl: String? = null
+    @Volatile private var isTerminating = false
 
     companion object {
         private const val TAG = "MediaPlaybackService"
@@ -187,9 +188,11 @@ class MediaPlaybackService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun loadArtAndNotify(track: Track, isPlaying: Boolean) {
+        if (isTerminating) return
         if (track.artUrl != lastLoadedArtUrl && track.artUrl.isNotBlank()) {
             lastLoadedArtUrl = track.artUrl
             serviceScope.launch(Dispatchers.IO) {
+                if (isTerminating) return@launch
                 try {
                     val loader = ImageLoader(this@MediaPlaybackService)
                     val request = ImageRequest.Builder(this@MediaPlaybackService)
@@ -211,6 +214,7 @@ class MediaPlaybackService : Service() {
     }
 
     private fun updateNotification(track: Track, isPlaying: Boolean) {
+        if (isTerminating) return
         try {
             val openAppIntent = Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -298,7 +302,8 @@ class MediaPlaybackService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        super.onTaskRemoved(rootIntent)
+        isTerminating = true
+        serviceScope.cancel()
         runCatching {
             playerManager?.stopPlayback()
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -310,10 +315,12 @@ class MediaPlaybackService : Service() {
             }
         }
         stopSelf()
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
-        super.onDestroy()
+        isTerminating = true
+        serviceScope.cancel()
         runCatching {
             playerManager?.stopPlayback()
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -324,6 +331,6 @@ class MediaPlaybackService : Service() {
                 wakeLock?.release()
             }
         }
-        serviceScope.cancel()
+        super.onDestroy()
     }
 }

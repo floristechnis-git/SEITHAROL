@@ -89,6 +89,7 @@ fun SearchScreen(
     var textFieldValue by remember {
         mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(query, androidx.compose.ui.text.TextRange(query.length)))
     }
+    var forceCursorToEndForText by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(query) {
         if (query != textFieldValue.text) {
@@ -247,9 +248,15 @@ fun SearchScreen(
                     Spacer(modifier = Modifier.width(8.dp))
                     BasicTextField(
                         value = textFieldValue,
-                        onValueChange = {
-                            textFieldValue = it
-                            viewModel.searchQuery.value = it.text
+                        onValueChange = { incoming ->
+                            if (incoming.text == forceCursorToEndForText) {
+                                textFieldValue = incoming.copy(selection = androidx.compose.ui.text.TextRange(incoming.text.length))
+                                viewModel.searchQuery.value = incoming.text
+                            } else {
+                                forceCursorToEndForText = null
+                                textFieldValue = incoming
+                                viewModel.searchQuery.value = incoming.text
+                            }
                         },
                         modifier = Modifier
                             .weight(1f)
@@ -294,8 +301,10 @@ fun SearchScreen(
                     if (query.isNotEmpty()) {
                         IconButton(
                             onClick = {
+                                forceCursorToEndForText = null
                                 textFieldValue = androidx.compose.ui.text.input.TextFieldValue("", androidx.compose.ui.text.TextRange.Zero)
                                 viewModel.searchQuery.value = ""
+                                focusRequester.requestFocus()
                             },
                             modifier = Modifier.size(24.dp)
                         ) {
@@ -440,9 +449,11 @@ fun SearchScreen(
                                 .clip(RoundedCornerShape(17.dp))
                                 .clickable {
                                     val newText = recentQuery
+                                    forceCursorToEndForText = newText
                                     textFieldValue = androidx.compose.ui.text.input.TextFieldValue(newText, androidx.compose.ui.text.TextRange(newText.length))
                                     viewModel.setQueryImmediately(newText)
                                     appPreferences.addRecentSearch(newText)
+                                    focusRequester.requestFocus()
                                 },
                             shape = RoundedCornerShape(17.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant
@@ -502,9 +513,11 @@ fun SearchScreen(
                                 .clip(RoundedCornerShape(17.dp))
                                 .clickable { 
                                     val newText = quickQuery
+                                    forceCursorToEndForText = newText
                                     textFieldValue = androidx.compose.ui.text.input.TextFieldValue(newText, androidx.compose.ui.text.TextRange(newText.length))
                                     viewModel.setQueryImmediately(newText)
                                     appPreferences.addRecentSearch(newText)
+                                    focusRequester.requestFocus()
                                 },
                             shape = RoundedCornerShape(17.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant
@@ -550,9 +563,11 @@ fun SearchScreen(
                                 .clip(RoundedCornerShape(16.dp))
                                 .clickable { 
                                     val newText = suggestion
+                                    forceCursorToEndForText = newText
                                     textFieldValue = androidx.compose.ui.text.input.TextFieldValue(newText, androidx.compose.ui.text.TextRange(newText.length))
                                     viewModel.setQueryImmediately(newText)
                                     appPreferences.addRecentSearch(newText)
+                                    focusRequester.requestFocus()
                                 },
                             shape = RoundedCornerShape(16.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant

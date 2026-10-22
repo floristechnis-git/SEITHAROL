@@ -24,6 +24,7 @@ import com.seitharol.data.resolver.InnerTubeStreamExtractor
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -646,6 +647,8 @@ class CascadeViewModel(
             musicRepository.insertTrack(track)
             musicRepository.recordPlayHistory(track)
             if (!isOffline && track.id.length == 11) {
+                // Delay background Automix fetch by 1.5s so it never competes with primary audio stream extraction
+                delay(1500L)
                 runCatching {
                     val automix = InnerTubeStreamExtractor.fetchAutomixQueue(track.id, limit = 30)
                     if (automix.isNotEmpty() && playerState.value.currentTrack?.id == track.id) {
@@ -862,8 +865,6 @@ class CascadeViewModel(
     }
 
     fun togglePlaylistLike(playlist: Playlist) {
-        // MusicRepository.togglePlaylistLike(playlistId, current) negates `current` internally,
-        // so pass `playlist.isLiked` directly (fixing the double-negation bug).
         viewModelScope.launch { musicRepository.togglePlaylistLike(playlist.id, playlist.isLiked) }
     }
 

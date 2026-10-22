@@ -23,6 +23,9 @@ object OuterTuneResolvingDataSource {
     const val VR_QUEST2_USER_AGENT =
         "com.google.android.apps.youtube.vr.oculus/1.56.21 (Linux; U; Android 12L; Quest 2 Build/SQ3A.220605.009.A1) gzip"
 
+    const val VR_143_USER_AGENT =
+        "com.google.android.apps.youtube.vr.oculus/1.43.32 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
+
     const val ANDROID_TESTSUITE_USER_AGENT =
         "com.google.android.youtube/1.9 (Linux; U; Android 12L; US) gzip"
 
@@ -82,9 +85,12 @@ object OuterTuneResolvingDataSource {
     }
 
     /**
-     * Inspects the signed `c=` client parameter on googlevideo.com stream URLs and returns
-     * the exact matching User-Agent and Origin/Referer headers required by GoogleVideo CDN
-     * to prevent HTTP 403 Forbidden and mid-stream connection drops.
+     * Inspects the signed `c=` and `cver=` parameters on googlevideo.com stream URLs and returns
+     * the exact matching headers required by GoogleVideo CDN.
+     *
+     * CRITICAL: Native mobile/VR clients (`ANDROID_VR`, `IOS`, `ANDROID_TESTSUITE`, `ANDROID_MUSIC`)
+     * must NEVER send browser `Origin` or `Referer` headers to `googlevideo.com`, or the CDN
+     * flags the request as spoofed and returns HTTP 403 Forbidden.
      */
     fun resolveClientHeadersForUrl(streamUrl: String): Map<String, String> {
         val lower = streamUrl.lowercase()
@@ -95,41 +101,43 @@ object OuterTuneResolvingDataSource {
         }
 
         val clientParam = Regex("[?&]c=([^&]+)").find(streamUrl)?.groupValues?.get(1)?.uppercase().orEmpty()
+        val clientVer = Regex("[?&]cver=([^&]+)").find(streamUrl)?.groupValues?.get(1).orEmpty()
+
         return when {
-            clientParam.contains("ANDROID_VR") -> mapOf(
-                "User-Agent" to VR_USER_AGENT,
-                "Origin" to "https://www.youtube.com",
-                "Referer" to "https://www.youtube.com/"
-            )
+            clientParam.contains("ANDROID_VR") -> {
+                val vrUa = when {
+                    clientVer.startsWith("1.56") -> VR_QUEST2_USER_AGENT
+                    clientVer.startsWith("1.43") -> VR_143_USER_AGENT
+                    else -> VR_USER_AGENT
+                }
+                mapOf("User-Agent" to vrUa)
+            }
             clientParam.contains("ANDROID_TESTSUITE") -> mapOf(
-                "User-Agent" to ANDROID_TESTSUITE_USER_AGENT,
-                "Origin" to "https://www.youtube.com",
-                "Referer" to "https://www.youtube.com/"
+                "User-Agent" to ANDROID_TESTSUITE_USER_AGENT
             )
             clientParam.contains("ANDROID_MUSIC") || clientParam == "ANDROID" -> mapOf(
-                "User-Agent" to ANDROID_MUSIC_USER_AGENT,
-                "Origin" to "https://music.youtube.com",
-                "Referer" to "https://music.youtube.com/"
+                "User-Agent" to ANDROID_MUSIC_USER_AGENT
             )
             clientParam.contains("IOS") -> mapOf(
-                "User-Agent" to IOS_USER_AGENT,
-                "Origin" to "https://www.youtube.com",
-                "Referer" to "https://www.youtube.com/"
+                "User-Agent" to IOS_USER_AGENT
             )
             clientParam.contains("TVHTML5") -> mapOf(
                 "User-Agent" to TV_EMBED_USER_AGENT,
                 "Origin" to "https://www.youtube.com",
                 "Referer" to "https://www.youtube.com/"
             )
-            clientParam.contains("WEB_REMIX") || clientParam.contains("WEB") -> mapOf(
+            clientParam.contains("WEB_REMIX") -> mapOf(
                 "User-Agent" to WEB_REMIX_USER_AGENT,
                 "Origin" to "https://music.youtube.com",
                 "Referer" to "https://music.youtube.com/"
             )
-            else -> mapOf(
-                "User-Agent" to VR_USER_AGENT,
+            clientParam.contains("WEB") -> mapOf(
+                "User-Agent" to WEB_REMIX_USER_AGENT,
                 "Origin" to "https://www.youtube.com",
                 "Referer" to "https://www.youtube.com/"
+            )
+            else -> mapOf(
+                "User-Agent" to VR_USER_AGENT
             )
         }
     }
@@ -139,7 +147,7 @@ object OuterTuneResolvingDataSource {
     ): DataSource.Factory {
         val baseHttpFactory = DefaultHttpDataSource.Factory()
             .setUserAgent(VR_USER_AGENT)
-            .setConnectTimeoutMs(8_000)
+            .setConnectTimeoutMs(10_000)
             .setReadTimeoutMs(15_000)
             .setAllowCrossProtocolRedirects(true)
 
@@ -152,7 +160,7 @@ object OuterTuneResolvingDataSource {
             }
 
             // Already-resolved HTTP(S) CDN URLs (e.g. googlevideo.com or saavncdn.com):
-            // Attach exact client-matching User-Agent & headers so GoogleVideo CDN never returns 403!
+            // Attach exact client-matching User-Agent & headers (without Origin/Referer on native clients)
             if (rawUri.startsWith("http") &&
                 !rawUri.contains("youtube.com/watch") &&
                 !rawUri.contains("music.youtube.com/watch") &&
@@ -160,14 +168,17 @@ object OuterTuneResolvingDataSource {
             ) {
                 val extraHeaders = resolveClientHeadersForUrl(rawUri)
                 val mergedHeaders = HashMap<String, String>(dataSpec.httpRequestHeaders)
+                mergedHeaders.remove("Origin")
+                mergedHeaders.remove("Referer")
                 mergedHeaders.putAll(extraHeaders)
                 return@Factory dataSpec.withAdditionalHeaders(mergedHeaders)
             }
 
             val targetQuality = qualityProvider()
+            val forceRefresh = rawUri.contains("refresh=1")
 
             if (rawUri.startsWith("saavn_clip:")) {
-                val saavnId = rawUri.removePrefix("saavn_clip:").trim()
+                val saavnId = rawUri.removePrefix("saavn_clip:").substringBefore("?").trim()
                 val resolvedSaavn = runBlocking {
                     StreamResolver.resolveExactStreamUrl(
                         TrackMetadata(id = saavnId, title = "", artist = ""),
@@ -181,21 +192,27 @@ object OuterTuneResolvingDataSource {
             }
 
             val cleanYtId = when {
-                rawUri.startsWith("ytm_clip:") -> rawUri.removePrefix("ytm_clip:").trim()
-                rawUri.startsWith("youtube://") -> rawUri.removePrefix("youtube://").trim()
-                rawUri.startsWith("resolver://track/") -> rawUri.removePrefix("resolver://track/").trim()
+                rawUri.startsWith("ytm_clip:") -> rawUri.removePrefix("ytm_clip:").substringBefore("?").trim()
+                rawUri.startsWith("ytm://") -> rawUri.removePrefix("ytm://").substringBefore("?").trim()
+                rawUri.startsWith("youtube://") -> rawUri.removePrefix("youtube://").substringBefore("?").trim()
+                rawUri.startsWith("resolver://track/") -> rawUri.removePrefix("resolver://track/").substringBefore("?").trim()
                 else -> InnerTubeStreamExtractor.extractVideoId(rawUri)
             }
 
             if (!cleanYtId.isNullOrBlank()) {
-                val cached = getCachedUrl(cleanYtId, targetQuality)
+                val cached = if (forceRefresh) null else getCachedUrl(cleanYtId, targetQuality)
                 val resolvedUrl = cached ?: runBlocking {
-                    InnerTubeStreamExtractor.resolveExactYoutubeStreamById(cleanYtId, targetQuality)
-                        .getOrNull()
+                    InnerTubeStreamExtractor.resolveExactYoutubeStreamById(
+                        cleanYtId,
+                        targetQuality,
+                        forceRefresh = forceRefresh
+                    ).getOrNull()
                 } ?: throw IllegalStateException("Unable to resolve YouTube stream for $cleanYtId")
 
                 val headers = resolveClientHeadersForUrl(resolvedUrl)
                 val mergedHeaders = HashMap<String, String>(dataSpec.httpRequestHeaders)
+                mergedHeaders.remove("Origin")
+                mergedHeaders.remove("Referer")
                 mergedHeaders.putAll(headers)
 
                 return@Factory dataSpec

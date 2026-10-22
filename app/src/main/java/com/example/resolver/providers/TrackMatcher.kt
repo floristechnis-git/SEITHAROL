@@ -8,14 +8,8 @@ import kotlin.math.abs
 
 /**
  * Cross-Source Audio Matcher.
- * Matches metadata-only tracks (such as Spotify imports or tracks with isPlayableNatively = false)
- * to real on-device playable audio streams from YouTubeInnerTubeProvider or JioSaavnProvider.
- *
- * Strictly prioritizes:
- * 1. Exact ISRC match
- * 2. Official Art Track Videos (MUSIC_VIDEO_TYPE_ATV / "- Topic" channels)
- * 3. Exact artist & title match with strict duration proximity (±5 seconds)
- * 4. Filters out loops, slowed/reverb edits, and unauthorized re-uploads
+ * Matches metadata-only or fallback tracks to verified on-device playable audio streams
+ * from YouTubeInnerTubeProvider or JioSaavnProvider.
  */
 class TrackMatcher(
     private val youtubeProvider: YouTubeInnerTubeProvider,
@@ -43,11 +37,15 @@ class TrackMatcher(
                 }
             }
 
-            // 2. Query "${track.primaryArtist} - ${track.title}" on YouTube InnerTube
             val cleanTitle = cleanTitle(track.title)
-            val cleanArtist = track.primaryArtist.replace(Regex("""\(.*?\)"""), "").trim()
+            val cleanArtist = track.primaryArtist
+                .removeSuffix(" - Topic")
+                .removeSuffix("- Topic")
+                .replace(Regex("""\(.*?\)"""), "")
+                .trim()
             val query = "$cleanArtist $cleanTitle".trim()
 
+            // 2. Query YouTube InnerTube
             try {
                 val ytCandidates = youtubeProvider.searchTracks(query, limit = 10)
                 val ranked = rankCandidates(track, ytCandidates)
@@ -62,23 +60,29 @@ class TrackMatcher(
                 Log.w(TAG, "YouTube text search match failed: ${e.message}")
             }
 
-            // 3. Fallback: Query JioSaavn Provider
-            try {
-                val saavnCandidates = jioSaavnProvider.searchTracks(query, limit = 5)
-                val rankedSaavn = rankCandidates(track, saavnCandidates)
-                for (cand in rankedSaavn) {
-                    try {
-                        return@withContext jioSaavnProvider.resolveStream(cand.sourceId, preferredKbps)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "JioSaavn candidate ${cand.sourceId} failed: ${e.message}")
+            // 3. Fallback: Query JioSaavn Provider (try artist + title, then title-only)
+            val saavnQueries = listOfNotNull(
+                query.takeIf { it.isNotBlank() },
+                cleanTitle.takeIf { it.isNotBlank() && it != query }
+            )
+            for (sq in saavnQueries) {
+                try {
+                    val saavnCandidates = jioSaavnProvider.searchTracks(sq, limit = 6)
+                    val rankedSaavn = rankCandidates(track, saavnCandidates)
+                    for (cand in rankedSaavn) {
+                        try {
+                            return@withContext jioSaavnProvider.resolveStream(cand.sourceId, preferredKbps)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "JioSaavn candidate ${cand.sourceId} failed: ${e.message}")
+                        }
                     }
+                } catch (e: Exception) {
+                    Log.w(TAG, "JioSaavn search match failed: ${e.message}")
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "JioSaavn search match failed: ${e.message}")
             }
 
-            // 4. Last resort: If candidates list was non-empty, resolve fallback candidates
-            val fallbackCandidates = youtubeProvider.searchTracks(track.title, limit = 5)
+            // 4. Last resort: title-only YouTube search
+            val fallbackCandidates = youtubeProvider.searchTracks(cleanTitle.ifBlank { track.title }, limit = 5)
             val rankedFallback = rankCandidates(track, fallbackCandidates)
             for (cand in rankedFallback) {
                 try {
@@ -107,8 +111,15 @@ class TrackMatcher(
         if (candidates.isEmpty()) return emptyList()
 
         val targetQueryLower = "${target.title} ${target.primaryArtist}".lowercase()
-        val normQueryTitle = normalizeText(target.title)
-        val normQueryArtist = normalizeText(target.primaryArtist)
+        val normQueryTitle = normalizeText(cleanTitle(target.title))
+        val normQueryArtist = normalizeText(
+            target.primaryArtist
+                .removeSuffix(" - Topic")
+                .removeSuffix("- Topic")
+                .split(",", "&", "feat.", "ft.")
+                .firstOrNull()
+                .orEmpty()
+        )
         val targetDurationSec = (target.durationMs / 1000L).toInt()
 
         return candidates
@@ -116,10 +127,11 @@ class TrackMatcher(
             .map { candidate ->
                 candidate to scoreCandidate(candidate, normQueryTitle, normQueryArtist, targetQueryLower, targetDurationSec)
             }
-            .filter { it.second > 0 } // Strictly require a genuine positive match score
+            .filter { it.second > 0 }
             .sortedWith(
-                compareByDescending<Pair<NormalizedTrack, Int>> { it.first.isArtTrack || it.first.artists.any { a -> a.contains("Topic", ignoreCase = true) } }
-                    .thenByDescending { it.second }
+                compareByDescending<Pair<NormalizedTrack, Int>> {
+                    it.first.source == SourceType.JIOSAAVN || it.first.isArtTrack || it.first.artists.any { a -> a.contains("Topic", ignoreCase = true) }
+                }.thenByDescending { it.second }
             )
             .map { it.first }
     }
@@ -133,9 +145,10 @@ class TrackMatcher(
     ): Int {
         var score = 0
         val candTitleLower = c.title.lowercase()
-        val normCandTitle = normalizeText(c.title)
-        val normCandArtist = normalizeText(c.primaryArtist)
+        val normCandTitle = normalizeText(cleanTitle(c.title))
+        val normCandArtist = normalizeText(c.artists.joinToString(" "))
         val isTopicChannel = c.artists.any { it.contains("Topic", ignoreCase = true) }
+        val isOfficialSource = c.source == SourceType.JIOSAAVN || c.isArtTrack || isTopicChannel
 
         // 1. Reject shorts / previews (<= 45 seconds)
         if (c.durationMs in 1..45_000L && targetDurationSec > 45) {
@@ -152,16 +165,16 @@ class TrackMatcher(
             }
         }
 
-        // 2. Prioritize Official Art Tracks (ATV) & "- Topic" Channels (+150, UGC: -150)
+        // 2. Prioritize Official Art Tracks / Studio Releases (JioSaavn & YouTube ATV)
         when {
-            c.isArtTrack || isTopicChannel -> score += 150
-            candTitleLower.contains("official audio") -> score += 100
-            else -> score -= 100
+            isOfficialSource -> score += 120
+            candTitleLower.contains("official audio") || candTitleLower.contains("official video") -> score += 80
+            else -> score += 20
         }
 
         // 3. Official Album Metadata Presence
         if (c.album.isNotBlank() && !c.album.equals("Single", ignoreCase = true)) {
-            score += 25
+            score += 20
         }
 
         // 4. Strict Unrequested Loop / Edit Filtering
@@ -169,37 +182,42 @@ class TrackMatcher(
             val requestedInQuery = rawQueryLower.contains(keyword)
             val presentInCandidate = candTitleLower.contains(keyword) || c.artists.any { it.contains(keyword, ignoreCase = true) }
             if (presentInCandidate && !requestedInQuery) {
-                return -1000 // Strictly reject unrequested loop/edit
+                return -1000
             }
         }
 
-        // 5. Exact Title & Artist Matching
+        // 5. Title & Artist Matching
         if (normCandTitle == normQueryTitle) {
-            score += 60
+            score += 80
         } else if (normCandTitle.contains(normQueryTitle) || normQueryTitle.contains(normCandTitle)) {
-            score += 30
-        } else {
-            score -= 40
+            score += 45
         }
 
         val cleanChannel = normalizeText(c.primaryArtist.removeSuffix("- Topic").trim())
-        if (normCandArtist == normQueryArtist || cleanChannel == normQueryArtist) {
-            score += 70
-        } else if (normCandArtist.contains(normQueryArtist) || normQueryArtist.contains(normCandArtist)) {
-            score += 35
-        } else {
-            score -= 50
+        if (normQueryArtist.isNotBlank() && !normQueryArtist.equals("unknown artist", ignoreCase = true) && !normQueryArtist.equals("various artists", ignoreCase = true)) {
+            val artistTokens = normQueryArtist.split(" ").filter { it.length >= 3 }
+            if (normCandArtist == normQueryArtist || cleanChannel == normQueryArtist) {
+                score += 70
+            } else if (
+                normCandArtist.contains(normQueryArtist) ||
+                normQueryArtist.contains(normCandArtist) ||
+                artistTokens.any { normCandArtist.contains(it) }
+            ) {
+                score += 40
+            } else if (normCandTitle != normQueryTitle) {
+                score -= 25
+            }
         }
 
-        // 6. Strict Duration Proximity Scoring (against canonical track)
-        if (targetDurationSec > 45 && c.durationMs > 0) {
+        // 6. Duration Proximity Scoring (tolerant of music-video vs studio-audio intro/outro differences)
+        if (targetDurationSec > 45 && c.durationMs > 0 && targetDurationSec != 210) {
             val candDurationSec = (c.durationMs / 1000L).toInt()
             val diff = abs(candDurationSec - targetDurationSec)
             score += when {
-                diff <= 3 -> 60
-                diff <= 7 -> 40
-                diff <= 15 -> 15
-                else -> -350 // Rejects out-of-range streams (> 15s difference)
+                diff <= 5 -> 50
+                diff <= 15 -> 30
+                diff <= 40 -> 5
+                else -> -60
             }
         }
 
@@ -208,7 +226,7 @@ class TrackMatcher(
 
     private fun normalizeText(input: String): String {
         return input.lowercase()
-            .replace(Regex("""\(.*?\)|\(.*?\)|\[.*?]"""), "")
+            .replace(Regex("""\(.*?\)|\[.*?]"""), "")
             .replace(Regex("""[^a-z0-9\s]"""), "")
             .replace(Regex("""\s+"""), " ")
             .trim()
@@ -217,6 +235,7 @@ class TrackMatcher(
     private fun cleanTitle(title: String): String {
         return title
             .replace(Regex("""(?i)\(official.*?\)|\[official.*?\]|feat\..*|ft\..*|remaster(ed)?"""), "")
+            .replace(Regex("""\(.*?\)|\[.*?]"""), "")
             .trim()
     }
 }

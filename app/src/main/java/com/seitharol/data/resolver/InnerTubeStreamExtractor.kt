@@ -31,9 +31,11 @@ data class InnerTubeClientConfig(
     val osName: String? = null,
     val osVersion: String? = null,
     val androidSdkVersion: Int? = null,
+    val params: String? = null,
     val origin: String = "https://www.youtube.com",
     val playerEndpoint: String = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-    val isEmbedded: Boolean = false
+    val isEmbedded: Boolean = false,
+    val sendOriginHeaders: Boolean = false
 )
 
 data class YtmCollectionSummary(
@@ -84,12 +86,12 @@ object InnerTubeStreamExtractor {
     private val clientRotationOffset = AtomicInteger(0)
 
     /**
-     * OuterTune-grade verified InnerTube player clients:
-     * 1. ANDROID_VR (Quest 3, 1.60.19) — No PoToken required, no JS ciphering, unthrottled Opus 251 & AAC 140.
-     * 2. ANDROID_VR (Quest 2, 1.56.21) — Secondary VR profile for maximum reliability.
-     * 3. ANDROID_TESTSUITE (1.9) — Direct unciphered audio streams without BotGuard/PoToken.
-     * 4. TVHTML5_SIMPLY_EMBEDDED_PLAYER (2.0) — Bypasses standard client restrictions on music videos.
-     * 5. IOS (20.10.4) — Fallback with adaptive & HLS support.
+     * Verified multi-client InnerTube pipeline:
+     * 1. ANDROID_VR (1.60.19, Quest 3) — Native VR client, no PoToken or JS cipher required.
+     * 2. IOS (20.10.4, iPhone16,2) — Native iOS client with M4A (140), Opus, and HLS manifest support.
+     * 3. ANDROID_VR (1.43.32, Quest 3) — Classic OuterTune VR profile.
+     * 4. ANDROID_TESTSUITE (1.9, params="CgIIAQ==") — Unciphered direct audio streams.
+     * 5. TVHTML5_SIMPLY_EMBEDDED_PLAYER (2.0) — Embedded player fallback for restricted music videos.
      */
     val VERIFIED_CLIENTS = listOf(
         InnerTubeClientConfig(
@@ -102,21 +104,30 @@ object InnerTubeStreamExtractor {
             osName = "Android",
             osVersion = "12L",
             androidSdkVersion = 32,
-            origin = "https://www.youtube.com",
-            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+            sendOriginHeaders = false
+        ),
+        InnerTubeClientConfig(
+            clientName = "IOS",
+            clientVersion = "20.10.4",
+            userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)",
+            clientId = "5",
+            deviceMake = "Apple",
+            deviceModel = "iPhone16,2",
+            osName = "iOS",
+            osVersion = "18.3.1.22D72",
+            sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
             clientName = "ANDROID_VR",
-            clientVersion = "1.56.21",
-            userAgent = "com.google.android.apps.youtube.vr.oculus/1.56.21 (Linux; U; Android 12L; Quest 2 Build/SQ3A.220605.009.A1) gzip",
+            clientVersion = "1.43.32",
+            userAgent = "com.google.android.apps.youtube.vr.oculus/1.43.32 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
             clientId = "28",
             deviceMake = "Oculus",
-            deviceModel = "Quest 2",
+            deviceModel = "Quest 3",
             osName = "Android",
             osVersion = "12L",
             androidSdkVersion = 32,
-            origin = "https://www.youtube.com",
-            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+            sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
             clientName = "ANDROID_TESTSUITE",
@@ -128,29 +139,16 @@ object InnerTubeStreamExtractor {
             osName = "Android",
             osVersion = "12L",
             androidSdkVersion = 32,
-            origin = "https://www.youtube.com",
-            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+            params = "CgIIAQ==",
+            sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
             clientName = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
             clientVersion = "2.0",
             userAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/11.50) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.0 Safari/605.1.15",
             clientId = "85",
-            origin = "https://www.youtube.com",
-            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-            isEmbedded = true
-        ),
-        InnerTubeClientConfig(
-            clientName = "IOS",
-            clientVersion = "20.10.4",
-            userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)",
-            clientId = "5",
-            deviceMake = "Apple",
-            deviceModel = "iPhone16,2",
-            osName = "iOS",
-            osVersion = "18.3.1.22D72",
-            origin = "https://www.youtube.com",
-            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+            isEmbedded = true,
+            sendOriginHeaders = true
         )
     )
 
@@ -158,7 +156,6 @@ object InnerTubeStreamExtractor {
     private var cachedVisitorData: String? = null
 
     init {
-        // Warm up visitorData asynchronously in background so it never blocks stream extraction
         bgScope.launch { ensureVisitorData(forceFresh = true) }
     }
 
@@ -169,19 +166,52 @@ object InnerTubeStreamExtractor {
         return fetchVisitorDataSync()
     }
 
+    /**
+     * Fetches a clean YouTube visitorData token matching the US/EN player context
+     * (first from sw.js_data like NewPipe/OuterTune/Metrolist, then fallback to visitor_id).
+     */
     private fun fetchVisitorDataSync(): String? {
+        runCatching {
+            val conn = (URL("https://www.youtube.com/sw.js_data").openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 2500
+                readTimeout = 2500
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+                setRequestProperty("Accept-Language", "en-US,en;q=0.9")
+            }
+            if (conn.responseCode == 200) {
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val match = Regex("\"([A-Za-z0-9_-]{16,}%3D%3D)\"").find(body)
+                val token = match?.groupValues?.get(1)
+                if (!token.isNullOrBlank()) {
+                    cachedVisitorData = token
+                    return token
+                }
+            }
+        }
+
         return runCatching {
-            val conn = (URL("https://music.youtube.com/youtubei/v1/visitor_id?prettyPrint=false").openConnection() as HttpURLConnection).apply {
+            val conn = (URL("https://www.youtube.com/youtubei/v1/visitor_id?prettyPrint=false").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = 2500
                 readTimeout = 2500
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-                setRequestProperty("Origin", "https://music.youtube.com")
-                setRequestProperty("Referer", "https://music.youtube.com/")
+                setRequestProperty("User-Agent", VERIFIED_CLIENTS[0].userAgent)
+                setRequestProperty("X-YouTube-Client-Name", VERIFIED_CLIENTS[0].clientId)
+                setRequestProperty("X-YouTube-Client-Version", VERIFIED_CLIENTS[0].clientVersion)
             }
-            conn.outputStream.use { it.write(webRemixPayload().toString().toByteArray()) }
+            val reqJson = JSONObject().apply {
+                put("context", JSONObject().apply {
+                    put("client", JSONObject().apply {
+                        put("clientName", VERIFIED_CLIENTS[0].clientName)
+                        put("clientVersion", VERIFIED_CLIENTS[0].clientVersion)
+                        put("hl", "en")
+                        put("gl", "US")
+                    })
+                })
+            }
+            conn.outputStream.use { it.write(reqJson.toString().toByteArray()) }
             if (conn.responseCode == 200) {
                 val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
                 val vis = json.optJSONObject("responseContext")?.optString("visitorData")
@@ -200,18 +230,20 @@ object InnerTubeStreamExtractor {
         if (raw.isNullOrBlank()) return null
         val trimmed = raw.trim()
             .removePrefix("ytm_clip:")
+            .removePrefix("ytm://")
             .removePrefix("youtube://")
             .removePrefix("resolver://track/")
+            .substringBefore("?")
             .trim()
         if (VALID_VIDEO_ID_REGEX.matches(trimmed)) return trimmed
 
-        val paramMatch = Regex("[?&](?:v|id)=([a-zA-Z0-9_-]{11})").find(trimmed)
+        val paramMatch = Regex("[?&](?:v|id)=([a-zA-Z0-9_-]{11})").find(raw)
         if (paramMatch != null) return paramMatch.groupValues[1]
 
-        val watchMatch = Regex("(?:^|/|\\?)watch\\?(?:.*&)?(?:v|id)=([a-zA-Z0-9_-]{11})").find(trimmed)
+        val watchMatch = Regex("(?:^|/|\\?)watch\\?(?:.*&)?(?:v|id)=([a-zA-Z0-9_-]{11})").find(raw)
         if (watchMatch != null) return watchMatch.groupValues[1]
 
-        val pathMatch = Regex("(?:youtu\\.be/|/(?:embed|v|shorts|live)/)([a-zA-Z0-9_-]{11})").find(trimmed)
+        val pathMatch = Regex("(?:youtu\\.be/|/(?:embed|v|shorts|live)/)([a-zA-Z0-9_-]{11})").find(raw)
         if (pathMatch != null) return pathMatch.groupValues[1]
 
         return null
@@ -225,6 +257,45 @@ object InnerTubeStreamExtractor {
         return (1..16).map { alphabet.random() }.joinToString("")
     }
 
+    /**
+     * Performs a lightweight HTTP byte-range probe (`Range: bytes=0-1023`) with the exact
+     * client-matched headers to verify that `googlevideo.com` actually serves audio bytes (HTTP 200/206)
+     * and does NOT reject the stream with HTTP 403 Forbidden.
+     */
+    fun verifyStreamPlayable(streamUrl: String): String? {
+        if (streamUrl.isBlank()) return null
+        if (streamUrl.contains(".m3u8")) return streamUrl
+        return runCatching {
+            val headers = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(streamUrl)
+            var currentUrl = streamUrl
+            for (redirect in 0..3) {
+                val conn = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 2500
+                    readTimeout = 2500
+                    instanceFollowRedirects = false
+                    headers.forEach { (k, v) -> setRequestProperty(k, v) }
+                    setRequestProperty("Range", "bytes=0-1023")
+                }
+                val code = conn.responseCode
+                if (code in 300..399) {
+                    val loc = conn.getHeaderField("Location")
+                    conn.disconnect()
+                    if (loc.isNullOrBlank()) return@runCatching null
+                    currentUrl = URL(URL(currentUrl), loc).toString()
+                    continue
+                }
+                val isOk = code in 200..299
+                if (isOk) {
+                    conn.inputStream.use { it.read() }
+                }
+                conn.disconnect()
+                return@runCatching if (isOk) currentUrl else null
+            }
+            null
+        }.getOrNull()
+    }
+
     private fun extractStreamWithConfig(
         videoId: String,
         client: InnerTubeClientConfig,
@@ -232,6 +303,7 @@ object InnerTubeStreamExtractor {
         cpn: String
     ): String? {
         return runCatching {
+            val visData = cachedVisitorData?.takeIf { it.isNotBlank() }
             val endpoint = URL(client.playerEndpoint)
             val conn = (endpoint.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -242,11 +314,13 @@ object InnerTubeStreamExtractor {
                 setRequestProperty("User-Agent", client.userAgent)
                 setRequestProperty("X-YouTube-Client-Name", client.clientId)
                 setRequestProperty("X-YouTube-Client-Version", client.clientVersion)
-                setRequestProperty("Origin", client.origin)
-                setRequestProperty("Referer", "${client.origin}/")
                 setRequestProperty("X-Goog-Api-Format-Version", "2")
-                cachedVisitorData?.takeIf { it.isNotBlank() }?.let {
-                    setRequestProperty("X-Goog-Visitor-Id", it)
+                if (client.sendOriginHeaders) {
+                    setRequestProperty("Origin", client.origin)
+                    setRequestProperty("Referer", "${client.origin}/")
+                }
+                if (visData != null) {
+                    setRequestProperty("X-Goog-Visitor-Id", visData)
                 }
             }
 
@@ -255,12 +329,15 @@ object InnerTubeStreamExtractor {
                 put("cpn", cpn)
                 put("contentCheckOk", true)
                 put("racyCheckOk", true)
-                put("playbackContext", JSONObject().apply {
-                    put("contentPlaybackContext", JSONObject().apply {
-                        put("html5Preference", "HTML5_PREF_WANTS")
-                        put("signatureTimestamp", 20745)
+                client.params?.let { put("params", it) }
+                if (client.isEmbedded) {
+                    put("playbackContext", JSONObject().apply {
+                        put("contentPlaybackContext", JSONObject().apply {
+                            put("html5Preference", "HTML5_PREF_WANTS")
+                            put("signatureTimestamp", 20073)
+                        })
                     })
-                })
+                }
                 put("context", JSONObject().apply {
                     put("client", JSONObject().apply {
                         put("clientName", client.clientName)
@@ -272,6 +349,9 @@ object InnerTubeStreamExtractor {
                         client.osName?.let { put("osName", it) }
                         client.osVersion?.let { put("osVersion", it) }
                         client.androidSdkVersion?.let { put("androidSdkVersion", it) }
+                        if (visData != null) {
+                            put("visitorData", visData)
+                        }
                         put("timeZone", "UTC")
                         put("utcOffsetMinutes", 0)
                     })
@@ -288,7 +368,6 @@ object InnerTubeStreamExtractor {
 
             val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
 
-            // Capture visitorData from responseContext if present
             json.optJSONObject("responseContext")?.optString("visitorData")
                 ?.takeIf { it.isNotBlank() }
                 ?.let { cachedVisitorData = it }
@@ -308,6 +387,8 @@ object InnerTubeStreamExtractor {
             data class AudioStreamCandidate(
                 val itag: Int,
                 val kbps: Int,
+                val isAacMp4: Boolean,
+                val isProgressiveMp4: Boolean,
                 val isOpus: Boolean,
                 val url: String
             )
@@ -329,13 +410,13 @@ object InnerTubeStreamExtractor {
                 return if (sig.isNullOrBlank()) baseUrl else "$baseUrl&$sp=$sig"
             }
 
-            fun collectStreams(arr: JSONArray?) {
+            fun collectStreams(arr: JSONArray?, isLegacy: Boolean) {
                 if (arr == null) return
                 for (i in 0 until arr.length()) {
                     val fmt = arr.optJSONObject(i) ?: continue
                     val mime = fmt.optString("mimeType", "")
                     val itag = fmt.optInt("itag", 0)
-                    val isAudio = mime.startsWith("audio/") || itag in listOf(140, 251, 250, 249, 139, 18)
+                    val isAudio = mime.startsWith("audio/") || itag in listOf(140, 141, 139, 251, 250, 249, 18)
                     if (!isAudio) continue
 
                     var rawUrl = fmt.optString("url", "")
@@ -355,27 +436,54 @@ object InnerTubeStreamExtractor {
                     }
 
                     val kbps = fmt.optInt("bitrate", 128000) / 1000
+                    val isAacMp4 = mime.contains("mp4a", ignoreCase = true) || itag in listOf(140, 141, 139)
+                    val isProgressiveMp4 = isLegacy || itag == 18
                     val isOpus = mime.contains("opus", ignoreCase = true) || itag in listOf(249, 250, 251)
-                    audioStreams.add(AudioStreamCandidate(itag, kbps, isOpus, finalUrl))
+                    audioStreams.add(
+                        AudioStreamCandidate(
+                            itag = itag,
+                            kbps = kbps,
+                            isAacMp4 = isAacMp4,
+                            isProgressiveMp4 = isProgressiveMp4,
+                            isOpus = isOpus,
+                            url = finalUrl
+                        )
+                    )
                 }
             }
 
-            collectStreams(adaptiveFormats)
-            if (audioStreams.isEmpty()) {
-                collectStreams(legacyFormats)
+            collectStreams(adaptiveFormats, isLegacy = false)
+            collectStreams(legacyFormats, isLegacy = true)
+
+            // Prioritize M4A AAC (itag 140) first for universal Android MediaCodec hardware compatibility
+            // (eliminating "wrong config length" Opus decoder failures), then Opus (251/250), then progressive MP4 (18).
+            val sortedCandidates = audioStreams.sortedWith(
+                compareByDescending<AudioStreamCandidate> { it.itag == 140 || it.isAacMp4 }
+                    .thenBy { kotlin.math.abs(it.kbps - preferredQuality.maxBitrateKbps) }
+            )
+
+            // Probe top distinct candidates (e.g. best AAC and best Opus/Progressive) to guarantee HTTP 200/206
+            val candidatesToProbe = buildList {
+                sortedCandidates.firstOrNull { it.isAacMp4 }?.let { add(it) }
+                sortedCandidates.firstOrNull { it.isOpus }?.let { add(it) }
+                sortedCandidates.firstOrNull { it.isProgressiveMp4 }?.let { add(it) }
+                sortedCandidates.firstOrNull()?.let { add(it) }
+            }.distinctBy { it.itag }
+
+            for (candidate in candidatesToProbe) {
+                val verifiedUrl = verifyStreamPlayable(candidate.url)
+                if (!verifiedUrl.isNullOrBlank()) {
+                    return@runCatching verifiedUrl
+                }
             }
 
-            if (audioStreams.isEmpty()) {
-                val hlsUrl = streamingData.optString("hlsManifestUrl", "")
-                if (hlsUrl.isNotBlank()) return@runCatching hlsUrl
-                return@runCatching null
+            // Fallback to HLS manifest if present (e.g. on iOS client)
+            val hlsUrl = streamingData.optString("hlsManifestUrl", "")
+            if (hlsUrl.isNotBlank()) {
+                return@runCatching hlsUrl
             }
 
-            // Prefer Opus streams (itag 249/250/251) or AAC 140 matching quality preference
-            val opusPool = audioStreams.filter { it.isOpus }.ifEmpty { audioStreams }
-            val withinCap = opusPool.filter { it.kbps <= preferredQuality.maxBitrateKbps + 32 }
-            val pool = withinCap.ifEmpty { opusPool }
-            pool.minByOrNull { kotlin.math.abs(it.kbps - preferredQuality.maxBitrateKbps) }?.url
+            null
         }.getOrNull()
     }
 
@@ -397,7 +505,6 @@ object InnerTubeStreamExtractor {
             }
         }
 
-        // Ensure visitorData is available without blocking if already cached
         if (cachedVisitorData.isNullOrBlank()) {
             ensureVisitorData(forceFresh = false)
         }
@@ -419,15 +526,17 @@ object InnerTubeStreamExtractor {
             }
         }
 
-        // Refresh visitorData once and retry primary ANDROID_VR client if all initial attempts failed
+        // Refresh visitorData once and retry primary ANDROID_VR & IOS clients if initial pass failed
         ensureVisitorData(forceFresh = true)
-        val retryUrl = extractStreamWithConfig(cleanVideoId, VERIFIED_CLIENTS[0], preferredQuality, generateCpn())
-        if (!retryUrl.isNullOrBlank()) {
-            com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, retryUrl)
-            return@withContext Result.success(retryUrl)
+        for (client in VERIFIED_CLIENTS.take(2)) {
+            val retryUrl = extractStreamWithConfig(cleanVideoId, client, preferredQuality, generateCpn())
+            if (!retryUrl.isNullOrBlank()) {
+                com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, retryUrl)
+                return@withContext Result.success(retryUrl)
+            }
         }
 
-        Result.failure(IllegalStateException("Failed to resolve stream for videoId=$cleanVideoId"))
+        Result.failure(IllegalStateException("Failed to resolve verified YouTube stream for videoId=$cleanVideoId"))
     }
 
     suspend fun resolveWorkingStreamUrl(

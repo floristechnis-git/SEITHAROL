@@ -89,14 +89,15 @@ class JioSaavnProvider : AudioStreamProvider {
 
     override suspend fun resolveStream(sourceId: String, preferredKbps: Int): ResolvedStream =
         withContext(Dispatchers.IO) {
-            var info = getTrackInfo(sourceId)
-                ?: throw IllegalStateException("Failed to fetch JioSaavn details for id $sourceId")
+            val cleanId = sourceId.removePrefix("saavn_").trim()
+            var info = getTrackInfo(cleanId)
+                ?: throw IllegalStateException("Failed to fetch JioSaavn details for id $cleanId")
 
             // If encryptedMediaUrl is missing from search cache, force fetch full details from API
             if (info.encryptedMediaUrl.isBlank()) {
-                fetchSongDetails(sourceId)?.let { detailed ->
+                fetchSongDetails(cleanId)?.let { detailed ->
                     info = detailed
-                    trackCache[sourceId] = detailed
+                    trackCache[cleanId] = detailed
                 }
             }
 
@@ -114,13 +115,13 @@ class JioSaavnProvider : AudioStreamProvider {
                         .replace("_96_p.mp4", targetSuffix)
                         .replace("http://", "https://")
                 }
-                else -> throw IllegalStateException("No encrypted_media_url or previewUrl for JioSaavn id $sourceId")
+                else -> throw IllegalStateException("No encrypted_media_url or previewUrl for JioSaavn id $cleanId")
             }
 
             val kbps = if (decryptedUrl.contains("_320.mp4")) 320 else 160
 
             ResolvedStream(
-                videoId = sourceId,
+                videoId = cleanId,
                 streamUrl = decryptedUrl,
                 itag = 140,
                 codec = if (kbps == 320) "AAC 320k" else "AAC 160k",
@@ -145,7 +146,7 @@ class JioSaavnProvider : AudioStreamProvider {
             url = if (allow320) {
                 url.replace("_96.mp4", "_320.mp4").replace("_160.mp4", "_320.mp4")
             } else {
-                url.replace("_96.mp4", "_160.mp4")
+                url.replace("_96.mp4", "_160.mp4").replace("_320.mp4", "_160.mp4")
             }
 
             if (url.startsWith("http://")) {
@@ -204,7 +205,8 @@ class JioSaavnProvider : AudioStreamProvider {
                         album = info.album,
                         durationMs = info.durationMs,
                         artUrl = info.artUrl,
-                        isPlayableNatively = true
+                        isPlayableNatively = true,
+                        isArtTrack = true
                     )
                 )
             }
@@ -231,7 +233,11 @@ class JioSaavnProvider : AudioStreamProvider {
             val primaryArtistsArr = moreInfo?.optJSONObject("artistMap")?.optJSONArray("primary_artists")
                 ?: moreInfo?.optJSONObject("artistMap")?.optJSONArray("artists")
             if (primaryArtistsArr != null && primaryArtistsArr.length() > 0) {
-                rawArtist = primaryArtistsArr.optJSONObject(0)?.optString("name") ?: ""
+                val names = mutableListOf<String>()
+                for ( idx in 0 until primaryArtistsArr.length().coerceAtMost(3)) {
+                    primaryArtistsArr.optJSONObject(idx)?.optString("name")?.takeIf { it.isNotBlank() }?.let { names.add(it) }
+                }
+                rawArtist = names.joinToString(", ")
             }
         }
         if (rawArtist.isBlank()) {

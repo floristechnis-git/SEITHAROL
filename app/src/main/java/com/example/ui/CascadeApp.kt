@@ -309,38 +309,42 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                         }
                         is SubScreen.Discover -> {
                             val feedTracks by viewModel.discoverTracks.collectAsState()
-                            if (seitharolPlayerManager != null) {
-                                com.seitharol.ui.discover.DiscoverScreen(
-                                    feedTracks = feedTracks,
-                                    audioPlayerManager = seitharolPlayerManager,
-                                    downloadService = downloadService,
-                                    onSearchPreviewTracks = { query -> viewModel.searchDiscoverPreviews(query) },
-                                    onToggleLike = { track ->
-                                        viewModel.toggleLike(
-                                            Track(
-                                                id = track.sourceId,
-                                                title = track.title,
-                                                artist = track.artists.firstOrNull() ?: "",
-                                                album = track.album ?: "",
-                                                durationMs = track.durationMs,
-                                                artUrl = track.artUrl,
-                                                isLiked = track.isLiked
-                                            )
+                            com.seitharol.ui.discover.DiscoverScreen(
+                                feedTracks = feedTracks,
+                                audioPlayerManager = seitharolPlayerManager,
+                                downloadService = downloadService,
+                                onSearchPreviewTracks = { query -> viewModel.searchDiscoverPreviews(query) },
+                                onToggleLike = { track ->
+                                    viewModel.toggleLike(
+                                        Track(
+                                            id = track.sourceId,
+                                            title = track.title,
+                                            artist = track.artists.firstOrNull() ?: "",
+                                            album = track.album ?: "",
+                                            durationMs = track.durationMs,
+                                            artUrl = track.artUrl,
+                                            isLiked = track.isLiked
                                         )
-                                    },
-                                    onVisitArtist = { name, _ ->
-                                        currentSubScreen = SubScreen.Artist(name)
-                                    },
-                                    onOpenFullSongMaximized = { resolvedTrack ->
-                                        viewModel.playNormalizedTrackFull(resolvedTrack)
-                                        isPlayerExpanded = true
-                                    },
-                                    onTrackDownloadedLocally = { localNormalizedTrack ->
-                                        viewModel.registerLocallyDownloadedTrack(localNormalizedTrack)
-                                    },
-                                    onNavigateBack = { currentSubScreen = SubScreen.None }
-                                )
-                            }
+                                    )
+                                },
+                                onVisitArtist = { name, _ ->
+                                    seitharolPlayerManager.stopPreviewAndClear()
+                                    currentSubScreen = SubScreen.Artist(name)
+                                },
+                                onOpenFullSongMaximized = { resolvedTrack ->
+                                    seitharolPlayerManager.stopPreviewAndClear()
+                                    currentSubScreen = SubScreen.None
+                                    viewModel.playNormalizedTrackFull(resolvedTrack)
+                                    isPlayerExpanded = true
+                                },
+                                onTrackDownloadedLocally = { localNormalizedTrack ->
+                                    viewModel.registerLocallyDownloadedTrack(localNormalizedTrack)
+                                },
+                                onNavigateBack = {
+                                    seitharolPlayerManager.stopPreviewAndClear()
+                                    currentSubScreen = SubScreen.None
+                                }
+                            )
                         }
                         is SubScreen.None -> when (currentDestination) {
                             AppDestination.HOME -> HomeScreen(
@@ -570,40 +574,47 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                         )
                     }
                     is SubScreen.Discover -> {
-                        BackHandler { currentSubScreen = SubScreen.None }
-                        val feedTracks by viewModel.discoverTracks.collectAsState()
-                        if (seitharolPlayerManager != null) {
-                            com.seitharol.ui.discover.DiscoverScreen(
-                                feedTracks = feedTracks,
-                                audioPlayerManager = seitharolPlayerManager,
-                                downloadService = downloadService,
-                                onSearchPreviewTracks = { query -> viewModel.searchDiscoverPreviews(query) },
-                                onToggleLike = { track ->
-                                    viewModel.toggleLike(
-                                        Track(
-                                            id = track.sourceId,
-                                            title = track.title,
-                                            artist = track.artists.firstOrNull() ?: "",
-                                            album = track.album ?: "",
-                                            durationMs = track.durationMs,
-                                            artUrl = track.artUrl,
-                                            isLiked = track.isLiked
-                                        )
-                                    )
-                                },
-                                onVisitArtist = { name, _ ->
-                                    currentSubScreen = SubScreen.Artist(name)
-                                },
-                                onOpenFullSongMaximized = { resolvedTrack ->
-                                    viewModel.playNormalizedTrackFull(resolvedTrack)
-                                    isPlayerExpanded = true
-                                },
-                                onTrackDownloadedLocally = { localNormalizedTrack ->
-                                    viewModel.registerLocallyDownloadedTrack(localNormalizedTrack)
-                                },
-                                onNavigateBack = { currentSubScreen = SubScreen.None }
-                            )
+                        BackHandler {
+                            seitharolPlayerManager.stopPreviewAndClear()
+                            currentSubScreen = SubScreen.None
                         }
+                        val feedTracks by viewModel.discoverTracks.collectAsState()
+                        com.seitharol.ui.discover.DiscoverScreen(
+                            feedTracks = feedTracks,
+                            audioPlayerManager = seitharolPlayerManager,
+                            downloadService = downloadService,
+                            onSearchPreviewTracks = { query -> viewModel.searchDiscoverPreviews(query) },
+                            onToggleLike = { track ->
+                                viewModel.toggleLike(
+                                    Track(
+                                        id = track.sourceId,
+                                        title = track.title,
+                                        artist = track.artists.firstOrNull() ?: "",
+                                        album = track.album ?: "",
+                                        durationMs = track.durationMs,
+                                        artUrl = track.artUrl,
+                                        isLiked = track.isLiked
+                                    )
+                                )
+                            },
+                            onVisitArtist = { name, _ ->
+                                seitharolPlayerManager.stopPreviewAndClear()
+                                currentSubScreen = SubScreen.Artist(name)
+                            },
+                            onOpenFullSongMaximized = { resolvedTrack ->
+                                seitharolPlayerManager.stopPreviewAndClear()
+                                currentSubScreen = SubScreen.None
+                                viewModel.playNormalizedTrackFull(resolvedTrack)
+                                isPlayerExpanded = true
+                            },
+                            onTrackDownloadedLocally = { localNormalizedTrack ->
+                                viewModel.registerLocallyDownloadedTrack(localNormalizedTrack)
+                            },
+                            onNavigateBack = {
+                                seitharolPlayerManager.stopPreviewAndClear()
+                                currentSubScreen = SubScreen.None
+                            }
+                        )
                     }
                     is SubScreen.None -> {
                         when (currentDestination) {

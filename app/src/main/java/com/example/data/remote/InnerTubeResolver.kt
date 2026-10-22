@@ -26,7 +26,7 @@ object InnerTubeResolver {
 
     /**
      * Resolves a playable audio stream URL for any track.
-     * Uses ANDROID_VR primary extraction first, then falls back to Piped if needed.
+     * Uses verified multi-client InnerTube extraction first, then Piped, then JioSaavn fallback.
      */
     suspend fun resolveStreamUrl(
         videoId: String?,
@@ -35,20 +35,36 @@ object InnerTubeResolver {
     ): String? = withContext(Dispatchers.IO) {
         val validVideoId = com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(videoId)
             ?: searchFirstVideoId("$title $artist")
-            ?: return@withContext null
 
-        // 1. Direct fast InnerTube extraction (ANDROID_VR / ANDROID_TESTSUITE / Embedded / iOS)
-        val directStream = com.seitharol.data.resolver.InnerTubeStreamExtractor
-            .resolveWorkingStreamUrl(validVideoId)
-            .getOrNull()
-        if (!directStream.isNullOrBlank()) return@withContext directStream
+        if (!validVideoId.isNullOrBlank()) {
+            // 1. Verified multi-client InnerTube extraction (ANDROID_VR / IOS / ANDROID_TESTSUITE / Embedded)
+            val directStream = com.seitharol.data.resolver.InnerTubeStreamExtractor
+                .resolveWorkingStreamUrl(validVideoId)
+                .getOrNull()
+            if (!directStream.isNullOrBlank()) return@withContext directStream
 
-        // 2. Direct ANDROID_VR player endpoint fallback
-        val vrStream = fetchAudioUrlFromPlayer(validVideoId, clientName = "ANDROID_VR", clientVersion = "1.60.19")
-        if (!vrStream.isNullOrBlank()) return@withContext vrStream
+            // 2. Direct ANDROID_VR player endpoint fallback
+            val vrStream = fetchAudioUrlFromPlayer(validVideoId, clientName = "ANDROID_VR", clientVersion = "1.60.19")
+            if (!vrStream.isNullOrBlank()) return@withContext vrStream
 
-        // 3. Piped instance fallback
-        fetchAudioUrlFromPiped(validVideoId)
+            // 3. Piped instance fallback
+            val pipedStream = fetchAudioUrlFromPiped(validVideoId)
+            if (!pipedStream.isNullOrBlank()) return@withContext pipedStream
+        }
+
+        // 4. JioSaavn exact title + artist fallback
+        if (title.isNotBlank()) {
+            com.seitharol.data.resolver.StreamResolver.resolveExactStreamUrl(
+                com.seitharol.data.resolver.TrackMetadata(
+                    id = validVideoId.orEmpty(),
+                    title = title,
+                    artist = artist,
+                    source = "JIOSAAVN_ONLY"
+                )
+            )?.let { return@withContext it }
+        }
+
+        null
     }
 
     private fun fetchAudioUrlFromPlayer(
@@ -59,6 +75,7 @@ object InnerTubeResolver {
         return try {
             val isVr = clientName == "ANDROID_VR"
             val isIos = clientName == "IOS"
+            val visData = com.seitharol.data.resolver.InnerTubeStreamExtractor.ensureVisitorData()
             val cpn = (1..16).map { "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_".random() }.joinToString("")
             val body = JSONObject().apply {
                 put("videoId", videoId)
@@ -71,6 +88,9 @@ object InnerTubeResolver {
                         put("clientVersion", clientVersion)
                         put("hl", "en")
                         put("gl", "US")
+                        if (!visData.isNullOrBlank()) {
+                            put("visitorData", visData)
+                        }
                         if (isVr) {
                             put("deviceMake", "Oculus")
                             put("deviceModel", "Quest 3")
@@ -92,7 +112,7 @@ object InnerTubeResolver {
                 isIos -> com.seitharol.player.OuterTuneResolvingDataSource.IOS_USER_AGENT
                 else -> com.seitharol.player.OuterTuneResolvingDataSource.WEB_REMIX_USER_AGENT
             }
-            val response = postJson(endpoint, body, userAgent)
+            val response = postJson(endpoint, body, userAgent, sendOrigin = !(isVr || isIos))
             val playability = response.optJSONObject("playabilityStatus")
             if (playability?.optString("status") != "OK") {
                 Log.w(TAG, "Playability=${playability?.optString("status")} for $videoId on $clientName")
@@ -101,21 +121,30 @@ object InnerTubeResolver {
             val streamingData = response.optJSONObject("streamingData") ?: return null
             val adaptiveFormats = streamingData.optJSONArray("adaptiveFormats") ?: return null
 
-            var bestUrl: String? = null
+            var bestAacUrl: String? = null
+            var bestAudioUrl: String? = null
             var bestBitrate = -1
 
             for (i in 0 until adaptiveFormats.length()) {
                 val fmt = adaptiveFormats.getJSONObject(i)
                 val mimeType = fmt.optString("mimeType", "")
+                val itag = fmt.optInt("itag", 0)
                 val url = fmt.optString("url", "")
                 val bitrate = fmt.optInt("bitrate", 0)
-                if (mimeType.startsWith("audio/") && url.isNotEmpty() && bitrate > bestBitrate) {
-                    bestBitrate = bitrate
+                if (mimeType.startsWith("audio/") && url.isNotEmpty()) {
                     val sep = if (url.contains("?")) "&" else "?"
-                    bestUrl = if (url.contains("cpn=")) url else "$url${sep}cpn=$cpn"
+                    val signedUrl = if (url.contains("cpn=")) url else "$url${sep}cpn=$cpn"
+                    if (itag == 140 || mimeType.contains("mp4a")) {
+                        bestAacUrl = signedUrl
+                    }
+                    if (bitrate > bestBitrate) {
+                        bestBitrate = bitrate
+                        bestAudioUrl = signedUrl
+                    }
                 }
             }
-            bestUrl
+            val chosen = bestAacUrl ?: bestAudioUrl ?: return null
+            com.seitharol.data.resolver.InnerTubeStreamExtractor.verifyStreamPlayable(chosen)
         } catch (e: Exception) {
             Log.w(TAG, "Player endpoint failed for $videoId with client $clientName: ${e.message}")
             null
@@ -142,18 +171,26 @@ object InnerTubeResolver {
                     val json = JSONObject(text)
                     val audioStreams = json.optJSONArray("audioStreams")
                     if (audioStreams != null && audioStreams.length() > 0) {
+                        var bestAacUrl: String? = null
                         var bestUrl: String? = null
                         var bestBitrate = -1
                         for (i in 0 until audioStreams.length()) {
                             val stream = audioStreams.getJSONObject(i)
                             val url = stream.optString("url")
+                            val mime = stream.optString("mimeType", "")
                             val bitrate = stream.optInt("bitrate", 0)
-                            if (url.isNotBlank() && bitrate > bestBitrate) {
-                                bestBitrate = bitrate
-                                bestUrl = url
+                            if (url.isNotBlank()) {
+                                if (mime.contains("mp4") || mime.contains("m4a")) {
+                                    bestAacUrl = url
+                                }
+                                if (bitrate > bestBitrate) {
+                                    bestBitrate = bitrate
+                                    bestUrl = url
+                                }
                             }
                         }
-                        if (!bestUrl.isNullOrBlank()) return bestUrl
+                        val candidate = bestAacUrl ?: bestUrl
+                        if (!candidate.isNullOrBlank()) return candidate
                     }
                 }
             } catch (e: Exception) {
@@ -426,7 +463,8 @@ object InnerTubeResolver {
     private fun postJson(
         endpoint: String,
         payload: JSONObject,
-        userAgent: String = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        userAgent: String = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        sendOrigin: Boolean = true
     ): JSONObject {
         val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
@@ -435,7 +473,9 @@ object InnerTubeResolver {
             readTimeout = 8_000
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("User-Agent", userAgent)
-            setRequestProperty("Origin", "https://music.youtube.com")
+            if (sendOrigin) {
+                setRequestProperty("Origin", "https://music.youtube.com")
+            }
             setRequestProperty("X-Goog-Api-Format-Version", "1")
         }
         conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }

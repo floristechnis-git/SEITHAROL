@@ -25,7 +25,12 @@ class StudioMasterResolver : Resolver {
 
     override suspend fun resolve(req: ResolveRequest): ResolveResult = withContext(Dispatchers.IO) {
         val cleanTitle = req.title?.replace(Regex("\\(.*?\\)|\\[.*?]"), "")?.trim().orEmpty()
-        val cleanArtist = req.artist?.replace(Regex("\\(.*?\\)|\\[.*?]"), "")?.trim().orEmpty()
+        val cleanArtist = req.artist
+            ?.removeSuffix(" - Topic")
+            ?.removeSuffix("- Topic")
+            ?.replace(Regex("\\(.*?\\)|\\[.*?]"), "")
+            ?.trim()
+            .orEmpty()
         val query = if (cleanTitle.isNotBlank()) {
             "$cleanTitle $cleanArtist".trim()
         } else {
@@ -33,13 +38,15 @@ class StudioMasterResolver : Resolver {
         }
 
         // 1. Try Verified JioSaavn Full Track Match & Decryption (320kbps / 160kbps FULL SONG)
+        // Pass source = "JIOSAAVN_ONLY" so StreamResolver never loops back into YouTube extraction when req.videoId is an 11-char YT ID!
         if (cleanTitle.isNotBlank()) {
             try {
                 val exactSaavnUrl = StreamResolver.resolveExactStreamUrl(
                     TrackMetadata(
                         id = req.videoId,
                         title = cleanTitle,
-                        artist = cleanArtist
+                        artist = cleanArtist,
+                        source = "JIOSAAVN_ONLY"
                     ),
                     AudioQuality.HIGH
                 )
@@ -91,9 +98,9 @@ class StudioMasterResolver : Resolver {
                 ).getOrNull()
                 if (!ytmStreamUrl.isNullOrBlank()) {
                     val format = FormatItem(
-                        id = "251",
-                        codec = "opus",
-                        container = "webm",
+                        id = "140",
+                        codec = if (ytmStreamUrl.contains("opus")) "opus" else "aac",
+                        container = if (ytmStreamUrl.contains("opus")) "webm" else "m4a",
                         bitrate = 160000,
                         url = ytmStreamUrl
                     )

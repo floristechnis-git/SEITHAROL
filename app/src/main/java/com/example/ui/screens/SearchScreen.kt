@@ -98,7 +98,7 @@ fun SearchScreen(
     // Split collaboration artist strings into distinct individual artists
     val allArtists = remember(allTracksList, historyTracks, searchResults, currentProvider, downloadedTracks) {
         val bannedModifiers = listOf("loop", "extended", "1 hour", "slowed", "reverb", "cover", "8d", "nightcore", "mashup", "bass boosted")
-        val bannedArtists = listOf("local artist", "device storage", "downloaded in seitharol", "<unknown>", "unknown artist", "unknown", "various artists")
+        val bannedArtists = listOf("local artist", "device storage", "downloaded in seitharol", "<unknown>", "unknown artist", "unknown", "various artists", "various", "download", "seitharol")
         val splitRegex = Regex("[,/;&]|\\s+(?:feat\\.?|ft\\.?|&|x)\\s+", RegexOption.IGNORE_CASE)
         val sourceTracks = if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
             downloadedTracks
@@ -114,6 +114,12 @@ fun SearchScreen(
                 artist.length >= 2 &&
                 !artist.contains(",") &&
                 !artist.contains("&") &&
+                !artist.contains("http", ignoreCase = true) &&
+                !artist.contains("www.", ignoreCase = true) &&
+                !artist.contains(".com", ignoreCase = true) &&
+                !artist.contains(".net", ignoreCase = true) &&
+                !artist.contains(".org", ignoreCase = true) &&
+                !artist.contains("blog", ignoreCase = true) &&
                 bannedArtists.none { banned -> artist.equals(banned, ignoreCase = true) } &&
                 bannedModifiers.none { mod -> artist.contains(mod, ignoreCase = true) }
             }
@@ -123,21 +129,38 @@ fun SearchScreen(
     val filteredTracks = searchResults
 
     // Strictly limit matching artists to distinct individual artists matching query
-    val filteredArtists = remember(query, allArtists) {
+    val filteredArtists = remember(query, allArtists, currentProvider) {
         val cleanQuery = query.trim()
-        if (cleanQuery.isBlank()) {
-            allArtists.take(5)
+        if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
+            if (cleanQuery.isBlank()) {
+                emptyList()
+            } else {
+                allArtists
+                    .filter { it.contains(cleanQuery, ignoreCase = true) }
+                    .sortedWith(compareBy<String> {
+                        when {
+                            it.equals(cleanQuery, ignoreCase = true) -> 0
+                            it.startsWith(cleanQuery, ignoreCase = true) -> 1
+                            else -> 2
+                        }
+                    }.thenBy { it.length })
+                    .take(5)
+            }
         } else {
-            allArtists
-                .filter { it.contains(cleanQuery, ignoreCase = true) }
-                .sortedWith(compareBy<String> {
-                    when {
-                        it.equals(cleanQuery, ignoreCase = true) -> 0
-                        it.startsWith(cleanQuery, ignoreCase = true) -> 1
-                        else -> 2
-                    }
-                }.thenBy { it.length })
-                .take(5)
+            if (cleanQuery.isBlank()) {
+                allArtists.take(5)
+            } else {
+                allArtists
+                    .filter { it.contains(cleanQuery, ignoreCase = true) }
+                    .sortedWith(compareBy<String> {
+                        when {
+                            it.equals(cleanQuery, ignoreCase = true) -> 0
+                            it.startsWith(cleanQuery, ignoreCase = true) -> 1
+                            else -> 2
+                        }
+                    }.thenBy { it.length })
+                    .take(5)
+            }
         }
     }
 
@@ -200,13 +223,15 @@ fun SearchScreen(
                             viewModel.searchQuery.value = ""
                             onNavigateToHome()
                         },
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier
+                            .size(44.dp)
+                            .testTag("search_back_button")
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(8.dp))
@@ -561,19 +586,25 @@ fun SearchScreen(
             }
         }
 
-        // Discover Entry Card (Placed directly above the "Artists" section)
-        item {
-            com.seitharol.ui.search.DiscoverEntryCard(
-                onOpenDiscover = onOpenDiscover
-            )
+        // Discover Entry Card (Placed directly above the "Artists" section; hidden for Downloaded filter)
+        if (currentProvider != com.example.ui.ProviderFilter.LOCAL) {
+            item {
+                com.seitharol.ui.search.DiscoverEntryCard(
+                    onOpenDiscover = onOpenDiscover
+                )
+            }
         }
 
-        // Matching Artists (shown if TOP, ARTISTS, or query matches - strictly max 5)
-        if (selectedTab == SearchTab.TOP || selectedTab == SearchTab.ARTISTS) {
-            if (filteredArtists.isNotEmpty()) {
-                item {
-                    Text(
-                        text = "Artists",
+        // Matching Artists (shown if TOP or ARTISTS, but for LOCAL strictly only if ARTISTS tab is explicitly chosen)
+        val shouldShowArtists = if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
+            selectedTab == SearchTab.ARTISTS && filteredArtists.isNotEmpty()
+        } else {
+            (selectedTab == SearchTab.TOP || selectedTab == SearchTab.ARTISTS) && filteredArtists.isNotEmpty()
+        }
+        if (shouldShowArtists) {
+            item {
+                Text(
+                    text = "Artists",
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 16.sp,

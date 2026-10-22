@@ -263,6 +263,42 @@ class DownloadPreferencesAndService(private val context: Context) {
                 localPath = savedUri.toString()
             )
             persistCompletedDownload(localMusicTrack)
+
+            // Immediately register into CascadeDatabase Room DAOs so search & library see it synchronously
+            runCatching {
+                val db = com.example.data.local.CascadeDatabase.getInstance(context)
+                val trackDao = db.trackDao()
+                val downloadDao = db.downloadDao()
+                val existing = trackDao.getTrackById(track.sourceId)
+                if (existing == null) {
+                    trackDao.insertTrack(
+                        com.example.data.local.TrackEntity(
+                            id = track.sourceId,
+                            title = track.title,
+                            artist = primaryArtist,
+                            album = track.album ?: "Discover Downloads",
+                            durationMs = track.durationMs,
+                            artUrl = track.artUrl.orEmpty(),
+                            isDownloaded = true,
+                            localPath = savedUri.toString()
+                        )
+                    )
+                } else {
+                    trackDao.setDownloaded(track.sourceId, true, savedUri.toString())
+                }
+                downloadDao.insertDownload(
+                    com.example.data.local.DownloadEntity(
+                        trackId = track.sourceId,
+                        tier = format.name.replaceFirstChar { it.uppercase() },
+                        state = "COMPLETED",
+                        localPath = savedUri.toString(),
+                        progress = 1.0f,
+                        bytesDownloaded = totalBytes,
+                        totalBytes = totalBytes
+                    )
+                )
+            }
+
             withContext(Dispatchers.Main) {
                 onTrackSavedAsLocalMusic(localMusicTrack)
             }

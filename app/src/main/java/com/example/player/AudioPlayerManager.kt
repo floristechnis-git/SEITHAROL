@@ -390,7 +390,7 @@ class AudioPlayerManager(
         loadTrackJob?.cancel()
         retryJob?.cancel()
         val validIndex = startIndex.coerceIn(0, tracks.lastIndex)
-        val isOfflineQueue = tracks.isNotEmpty() && tracks.all { it.isDownloaded || !it.localPath.isNullOrBlank() }
+        val isOfflineQueue = tracks.isNotEmpty() && (tracks.any { it.isDownloaded || !it.localPath.isNullOrBlank() } || tracks[validIndex].isDownloaded || !tracks[validIndex].localPath.isNullOrBlank())
         if (isOfflineQueue) {
             isAutoplayEnabled = false
         }
@@ -616,43 +616,64 @@ class AudioPlayerManager(
                 // Verify local file if marked as downloaded, or search local internal storage
                 val downloadDir = File(context.filesDir, "downloads")
                 val safeId = current.id.replace(Regex("[^A-Za-z0-9_]"), "_")
+                val cleanYtId = com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(current.id)
                 val isContentUri = current.localPath?.startsWith("content://") == true
                 val isContentReadable = if (isContentUri) {
                     runCatching {
-                        context.contentResolver.openAssetFileDescriptor(Uri.parse(current.localPath), "r")?.use { afd ->
-                            afd.length != 0L
-                        } ?: false
+                        context.contentResolver.openAssetFileDescriptor(Uri.parse(current.localPath), "r")?.use { true } ?: false
                     }.getOrDefault(false)
                 } else false
 
                 val safeTrack = if (isContentReadable) {
                     current.copy(isDownloaded = true, localPath = current.localPath)
                 } else {
-                    val dbTrack = runCatching { musicRepository.getTrackById(current.id) }.getOrNull()
+                    val dbTrack = runCatching {
+                        musicRepository.getTrackById(current.id) ?: cleanYtId?.let { musicRepository.getTrackById(it) }
+                    }.getOrNull()
                     val dbPath = dbTrack?.takeIf { it.isDownloaded }?.localPath
                     val discoverDownloadPath = runCatching {
                         com.seitharol.data.download.DownloadPreferencesAndService.getInstance(context)
-                            .completedDownloads.value.firstOrNull { it.sourceId == current.id }?.localPath
+                            .completedDownloads.value.firstOrNull {
+                                it.sourceId == current.id ||
+                                (cleanYtId != null && com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(it.sourceId) == cleanYtId) ||
+                                (it.title.equals(current.title, ignoreCase = true) && (current.artist.isBlank() || it.artists.any { a -> current.artist.contains(a, ignoreCase = true) }))
+                            }?.localPath
                     }.getOrNull()
                     val discoverDir = File(
                         android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC),
                         "Seitharol"
                     )
 
-                    val localCandidates = listOfNotNull(
-                        current.localPath?.takeIf { !it.startsWith("content://") }?.let { File(it.removePrefix("file://")) },
-                        dbPath?.takeIf { !it.startsWith("content://") }?.let { File(it.removePrefix("file://")) },
-                        discoverDownloadPath?.takeIf { !it.startsWith("content://") }?.let { File(it.removePrefix("file://")) },
-                        File(downloadDir, "$safeId.audio"),
-                        File(downloadDir, "${current.id}.audio"),
-                        File(downloadDir, "${current.id}_high.opus"),
-                        File(downloadDir, "${current.id}_high.m4a"),
-                        File(downloadDir, "${current.id}_original.opus"),
-                        File(downloadDir, "${current.id}_original.m4a"),
-                        File(downloadDir, "${current.id}_standard.opus"),
-                        File(downloadDir, "${current.id}_standard.m4a"),
-                        File(downloadDir, "${current.id}_data saver.m4a")
-                    )
+                    val localCandidates = mutableListOf<File>()
+                    current.localPath?.takeIf { !it.startsWith("content://") }?.let { localCandidates.add(File(it.removePrefix("file://"))) }
+                    dbPath?.takeIf { !it.startsWith("content://") }?.let { localCandidates.add(File(it.removePrefix("file://"))) }
+                    discoverDownloadPath?.takeIf { !it.startsWith("content://") }?.let { localCandidates.add(File(it.removePrefix("file://"))) }
+                    localCandidates.add(File(downloadDir, "$safeId.audio"))
+                    localCandidates.add(File(downloadDir, "${current.id}.audio"))
+                    localCandidates.add(File(downloadDir, "${current.id}_high.opus"))
+                    localCandidates.add(File(downloadDir, "${current.id}_high.m4a"))
+                    localCandidates.add(File(downloadDir, "${current.id}_original.opus"))
+                    localCandidates.add(File(downloadDir, "${current.id}_original.m4a"))
+                    localCandidates.add(File(downloadDir, "${current.id}_standard.opus"))
+                    localCandidates.add(File(downloadDir, "${current.id}_standard.m4a"))
+                    localCandidates.add(File(downloadDir, "${current.id}_data saver.m4a"))
+                    if (cleanYtId != null) {
+                        localCandidates.add(File(downloadDir, "${cleanYtId}.audio"))
+                        localCandidates.add(File(downloadDir, "${cleanYtId}_high.opus"))
+                        localCandidates.add(File(downloadDir, "${cleanYtId}_standard.opus"))
+                    }
+                    if (discoverDir.exists() && discoverDir.isDirectory) {
+                        discoverDir.listFiles()?.forEach { f ->
+                            if (f.isFile && f.length() > 10_240L && !f.name.endsWith(".tmp")) {
+                                if ((cleanYtId != null && f.name.contains(cleanYtId)) ||
+                                    (current.title.isNotBlank() && f.nameWithoutExtension.contains(current.title, ignoreCase = true))
+                                ) {
+                                    localCandidates.add(f)
+                                }
+                            }
+                        }
+                    }
+
                     val foundLocal = localCandidates.firstOrNull { it.exists() && it.length() > 0L }
                     if (foundLocal != null) {
                         current.copy(isDownloaded = true, localPath = foundLocal.absolutePath)
@@ -904,7 +925,7 @@ class AudioPlayerManager(
                 RepeatMode.OFF -> {
                     val isLast = _state.value.currentIndex >= _state.value.queue.lastIndex
                     val current = _state.value.currentTrack
-                    val isCurrentOffline = current?.isDownloaded == true || !current?.localPath.isNullOrBlank()
+                    val isCurrentOffline = current?.isDownloaded == true || !current?.localPath.isNullOrBlank() || _state.value.queue.any { it.isDownloaded || !it.localPath.isNullOrBlank() }
                     if (isLast) {
                         if (isAutoplayEnabled && !isCurrentOffline) {
                             triggerAutoplayNext()
@@ -924,7 +945,7 @@ class AudioPlayerManager(
     private fun prefetchAutoplayRecommendation() {
         if (isFetchingAutoplay) return
         val current = _state.value.currentTrack ?: return
-        val isOffline = current.isDownloaded || !current.localPath.isNullOrBlank() || _state.value.queue.all { it.isDownloaded || !it.localPath.isNullOrBlank() }
+        val isOffline = current.isDownloaded || !current.localPath.isNullOrBlank() || _state.value.queue.any { it.isDownloaded || !it.localPath.isNullOrBlank() }
         if (isOffline || !isAutoplayEnabled) return
         isFetchingAutoplay = true
         coroutineScope.launch(Dispatchers.IO) {
@@ -982,7 +1003,7 @@ class AudioPlayerManager(
             _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
             return
         }
-        val isOffline = current.isDownloaded || !current.localPath.isNullOrBlank() || _state.value.queue.all { it.isDownloaded || !it.localPath.isNullOrBlank() }
+        val isOffline = current.isDownloaded || !current.localPath.isNullOrBlank() || _state.value.queue.any { it.isDownloaded || !it.localPath.isNullOrBlank() }
         if (isOffline || !isAutoplayEnabled) {
             _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
             return

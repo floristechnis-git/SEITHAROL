@@ -15,6 +15,7 @@ import java.io.File
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
+import android.os.Environment
 import androidx.core.app.NotificationCompat
 import com.example.R
 import java.io.FileOutputStream
@@ -412,10 +413,22 @@ class DownloadRepository(
             }
 
             // 3. Real HTTP byte-streaming using OkHttpClient
+            val isYouTubeStream = streamUrl.contains("googlevideo.com") || streamUrl.contains("youtube.com")
+            val userAgent = if (isYouTubeStream) {
+                com.seitharol.player.OuterTuneResolvingDataSource.VR_USER_AGENT
+            } else {
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
             val request = Request.Builder()
                 .url(streamUrl)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                .header("Referer", "https://music.youtube.com/")
+                .header("User-Agent", userAgent)
+                .apply {
+                    if (isYouTubeStream) {
+                        header("Origin", "https://www.youtube.com")
+                    } else {
+                        header("Referer", "https://music.youtube.com/")
+                    }
+                }
                 .build()
 
             NetworkClients.okHttpClient.newCall(request).execute().use { response ->

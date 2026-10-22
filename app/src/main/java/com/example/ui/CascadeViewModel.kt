@@ -57,8 +57,34 @@ class CascadeViewModel(
         .map { tracks -> tracks.map { it.id }.toSet() }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 
-    val downloadedTracks: StateFlow<List<Track>> = musicRepository.getDownloadedTracks()
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val downloadedTracks: StateFlow<List<Track>> = combine(
+        musicRepository.getDownloadedTracks(),
+        com.seitharol.data.download.DownloadPreferencesAndService.getInstance(com.example.CascadeApplication.instance).completedDownloads
+    ) { dbTracks, discoverDownloads ->
+        val trackMap = LinkedHashMap<String, Track>()
+        dbTracks.forEach { trackMap[it.id] = it }
+        discoverDownloads.forEach { norm ->
+            if (!norm.localPath.isNullOrBlank()) {
+                val existing = trackMap[norm.sourceId]
+                if (existing == null) {
+                    trackMap[norm.sourceId] = Track(
+                        id = norm.sourceId,
+                        title = norm.title,
+                        artist = norm.artists.firstOrNull() ?: "Unknown Artist",
+                        album = norm.album ?: "Discover Downloads",
+                        durationMs = norm.durationMs,
+                        artUrl = norm.artUrl,
+                        genre = "Downloaded",
+                        isDownloaded = true,
+                        localPath = norm.localPath
+                    )
+                } else if (!existing.isDownloaded || existing.localPath.isNullOrBlank()) {
+                    trackMap[norm.sourceId] = existing.copy(isDownloaded = true, localPath = norm.localPath)
+                }
+            }
+        }
+        trackMap.values.toList()
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val activeHistory: StateFlow<List<Track>> = musicRepository.getActiveHistory()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -494,11 +520,16 @@ class CascadeViewModel(
             playPlaylistOrMix(track.id)
             return
         }
+        val isOffline = track.isDownloaded || !track.localPath.isNullOrBlank()
+        if (isOffline) {
+            autoSuggestManager.setAutoSuggestEnabled(false)
+            playerManager.isAutoplayEnabled = false
+        }
         playerManager.playTrack(track)
         viewModelScope.launch {
             musicRepository.insertTrack(track)
             musicRepository.recordPlayHistory(track)
-            if (track.id.length == 11) {
+            if (!isOffline && track.id.length == 11) {
                 runCatching {
                     val automix = InnerTubeStreamExtractor.fetchAutomixQueue(track.id, limit = 30)
                     if (automix.isNotEmpty()) {
@@ -512,6 +543,11 @@ class CascadeViewModel(
     }
 
     fun playQueue(tracks: List<Track>, startIndex: Int = 0, isPlaylist: Boolean = true) {
+        val hasOffline = tracks.any { it.isDownloaded || !it.localPath.isNullOrBlank() }
+        if (hasOffline) {
+            autoSuggestManager.setAutoSuggestEnabled(false)
+            playerManager.isAutoplayEnabled = false
+        }
         viewModelScope.launch { tracks.forEach { musicRepository.insertTrack(it) } }
         playerManager.playQueue(tracks, startIndex, isPlaylist = isPlaylist)
     }

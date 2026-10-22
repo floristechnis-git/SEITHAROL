@@ -85,6 +85,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
     var currentDestination by remember { mutableStateOf(AppDestination.HOME) }
     var previousDestination by remember { mutableStateOf(AppDestination.HOME) }
     var currentSubScreen by remember { mutableStateOf<SubScreen>(SubScreen.None) }
+    var previousSubScreen by remember { mutableStateOf<SubScreen>(SubScreen.None) }
     var isPlayerExpanded by remember { mutableStateOf(false) }
 
     // Modals state
@@ -163,6 +164,9 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                         NavigationRailItem(
                             selected = isSelected,
                             onClick = {
+                                if (dest == AppDestination.SEARCH) {
+                                    previousSubScreen = currentSubScreen
+                                }
                                 currentSubScreen = SubScreen.None
                                 if (currentDestination != dest) {
                                     previousDestination = currentDestination
@@ -340,6 +344,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                 viewModel = viewModel,
                                 playerState = playerState,
                                 onNavigateToSearch = {
+                                    previousSubScreen = currentSubScreen
                                     if (currentDestination != AppDestination.SEARCH) {
                                         previousDestination = currentDestination
                                         currentDestination = AppDestination.SEARCH
@@ -364,7 +369,12 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                 onNavigateToArtist = { currentSubScreen = SubScreen.Artist(it) },
                                 onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) },
                                 onNavigateToHome = {
-                                    currentDestination = if (previousDestination != AppDestination.SEARCH) previousDestination else AppDestination.HOME
+                                    if (previousSubScreen !is SubScreen.None) {
+                                        currentSubScreen = previousSubScreen
+                                        previousSubScreen = SubScreen.None
+                                    } else {
+                                        currentDestination = if (previousDestination != AppDestination.SEARCH) previousDestination else AppDestination.HOME
+                                    }
                                 },
                                 onOpenDiscover = { currentSubScreen = SubScreen.Discover },
                                 onPlayTrackAndMaximize = { track ->
@@ -595,6 +605,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                 viewModel = viewModel,
                                 playerState = playerState,
                                 onNavigateToSearch = {
+                                    previousSubScreen = currentSubScreen
                                     if (currentDestination != AppDestination.SEARCH) {
                                         previousDestination = currentDestination
                                         currentDestination = AppDestination.SEARCH
@@ -618,7 +629,12 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                     if (viewModel.searchQuery.value.isNotEmpty()) {
                                         viewModel.searchQuery.value = ""
                                     } else {
-                                        currentDestination = if (previousDestination != AppDestination.SEARCH) previousDestination else AppDestination.HOME
+                                        if (previousSubScreen !is SubScreen.None) {
+                                            currentSubScreen = previousSubScreen
+                                            previousSubScreen = SubScreen.None
+                                        } else {
+                                            currentDestination = if (previousDestination != AppDestination.SEARCH) previousDestination else AppDestination.HOME
+                                        }
                                     }
                                 }
                                 SearchScreen(
@@ -627,7 +643,12 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                     onNavigateToArtist = { currentSubScreen = SubScreen.Artist(it) },
                                     onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) },
                                     onNavigateToHome = {
-                                        currentDestination = if (previousDestination != AppDestination.SEARCH) previousDestination else AppDestination.HOME
+                                        if (previousSubScreen !is SubScreen.None) {
+                                            currentSubScreen = previousSubScreen
+                                            previousSubScreen = SubScreen.None
+                                        } else {
+                                            currentDestination = if (previousDestination != AppDestination.SEARCH) previousDestination else AppDestination.HOME
+                                        }
                                     },
                                     onOpenDiscover = { currentSubScreen = SubScreen.Discover },
                                     onPlayTrackAndMaximize = { track ->
@@ -713,6 +734,9 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                                         shape = CircleShape,
                                         color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent,
                                         onClick = {
+                                            if (dest == AppDestination.SEARCH) {
+                                                previousSubScreen = currentSubScreen
+                                            }
                                             currentSubScreen = SubScreen.None
                                             if (currentDestination != dest) {
                                                 previousDestination = currentDestination

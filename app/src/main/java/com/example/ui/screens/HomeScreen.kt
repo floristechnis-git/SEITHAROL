@@ -1202,7 +1202,7 @@ fun QuickDialBentoSection(
         items(columns.size) { colIdx ->
             val colItems = columns[colIdx]
             Column(
-                modifier = Modifier.width(260.dp),
+                modifier = Modifier.width(320.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 colItems.forEach { item ->
@@ -1211,7 +1211,7 @@ fun QuickDialBentoSection(
                         color = MaterialTheme.colorScheme.surfaceVariant,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(58.dp)
+                            .height(62.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .clickable { onItemClick(item) }
                     ) {
@@ -1220,20 +1220,34 @@ fun QuickDialBentoSection(
                                 model = upgradeThumbnail(item.thumbnailUrl),
                                 contentDescription = item.title,
                                 contentScale = ContentScale.Crop,
-                                modifier = Modifier.size(58.dp)
+                                modifier = Modifier.size(62.dp)
                             )
-                            Text(
-                                text = item.title,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 13.sp,
-                                fontFamily = SyneFontFamily,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
+                            Column(
                                 modifier = Modifier
-                                    .padding(horizontal = 12.dp)
-                                    .weight(1f)
-                            )
+                                    .padding(horizontal = 12.dp, vertical = 4.dp)
+                                    .weight(1f),
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Text(
+                                    text = item.title,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 13.sp,
+                                    fontFamily = SyneFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (item.subtitle.isNotBlank() && !item.subtitle.equals(item.title, ignoreCase = true)) {
+                                    Text(
+                                        text = item.subtitle,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                        fontSize = 11.sp,
+                                        fontFamily = OutfitFontFamily,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         }
                     }
                 }

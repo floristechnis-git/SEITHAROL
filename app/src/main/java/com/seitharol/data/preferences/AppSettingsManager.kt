@@ -34,8 +34,9 @@ data class PersistedSettingsState(
 )
 
 class AppSettingsManager(context: Context) {
+    private val appContext: Context = context.applicationContext
     private val prefs: SharedPreferences =
-        context.applicationContext.getSharedPreferences("seitharol_prefs", Context.MODE_PRIVATE)
+        appContext.getSharedPreferences("seitharol_prefs", Context.MODE_PRIVATE)
 
     private val _state = MutableStateFlow(loadFromPrefs())
     val state: StateFlow<PersistedSettingsState> = _state.asStateFlow()
@@ -80,7 +81,7 @@ class AppSettingsManager(context: Context) {
         prefs.edit().putString(KEY_THEME_MODE, mode.name).apply()
         _state.value = _state.value.copy(themeMode = mode)
         runCatching {
-            com.example.data.AppPreferences.getInstance(context).setThemeModeDirect(mode.name)
+            com.example.data.AppPreferences.getInstance(appContext).setThemeModeDirect(mode.name)
         }
     }
 

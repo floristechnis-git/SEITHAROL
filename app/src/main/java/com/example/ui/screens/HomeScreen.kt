@@ -831,6 +831,9 @@ fun AestheticMusicHomeScreen(
 ) {
     val moods = listOf("All", "Energize", "Chill", "Workout", "Focus", "Mixes", "New Releases")
     var selectedMood by remember { mutableStateOf("All") }
+    val cleanBentoItems = remember(trendingSongs) {
+        trendingSongs.filter { !it.isMix && !it.isAlbumOrPlaylist && !it.title.contains("SuperMix", true) && !it.title.contains("Radio", true) }
+    }
 
     LazyColumn(
         modifier = modifier
@@ -866,9 +869,6 @@ fun AestheticMusicHomeScreen(
         }
 
         // 2. Spotify-Style 2-Column Quick Dial Bento Grid
-        val cleanBentoItems = remember(trendingSongs) {
-            trendingSongs.filter { !it.isMix && !it.isAlbumOrPlaylist && !it.title.contains("SuperMix", true) && !it.title.contains("Radio", true) }
-        }
         if (cleanBentoItems.size >= 4) {
             item {
                 QuickDialBentoSection(

@@ -285,24 +285,6 @@ class AudioPlayerManager(
     }
 
 
-    fun stopPlayback() {
-        try {
-            exoPlayer?.stop()
-            exoPlayer?.clearMediaItems()
-        } catch (_: Throwable) {}
-        _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
-        try {
-            MediaPlaybackService.stopService(context)
-        } catch (_: Throwable) {}
-    }
-
-    fun release() {
-        stopPlayback()
-        try {
-            exoPlayer?.release()
-            exoPlayer = null
-        } catch (_: Throwable) {}
-    }
 
     private fun setupAndPlaySource(sourceUrl: String, track: Track) {
         try {
@@ -567,6 +549,9 @@ class AudioPlayerManager(
             queue = emptyList(),
             currentIndex = 0
         )
+        try {
+            MediaPlaybackService.stopService(context)
+        } catch (_: Throwable) {}
     }
 
     fun addToQueue(track: Track) {
@@ -1180,6 +1165,7 @@ class AudioPlayerManager(
     }
 
     fun release() {
+        stopPlayback()
         positionJob?.cancel()
         sleepTimerJob?.cancel()
         equalizer?.release()

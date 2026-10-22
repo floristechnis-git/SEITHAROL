@@ -809,7 +809,6 @@ class CascadeViewModel(
     fun removeFromQueue(index: Int) = playerManager.removeFromQueue(index)
     fun moveTrack(fromIndex: Int, toIndex: Int) = playerManager.moveTrack(fromIndex, toIndex)
     fun clearQueue() = playerManager.clearQueue()
-    fun stopPlayback() = playerManager.stopPlayback()
     fun addToQueue(track: Track) = playerManager.addToQueue(track)
     fun playNext(track: Track) = playerManager.playNext(track)
 

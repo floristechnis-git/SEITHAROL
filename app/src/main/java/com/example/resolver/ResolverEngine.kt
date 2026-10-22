@@ -214,7 +214,6 @@ class ResolverEngine {
         val isSpotify = rawId.length == 22 && !rawId.contains("_") && !rawId.contains("-")
         val cleanSaavnId = rawId.removePrefix("saavn_")
         val isSaavn = rawId.startsWith("saavn_") ||
-            track.source == SourceType.JIOSAAVN ||
             track.audioUrl.contains("saavncdn.com") ||
             (!isYouTubeId && !isSpotify && (cleanSaavnId.all { it.isDigit() } || (cleanSaavnId.length in 6..16 && !cleanSaavnId.contains(" ") && !cleanSaavnId.contains("-")))) ||
             track.genre.contains("Indian", ignoreCase = true) ||

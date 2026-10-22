@@ -225,7 +225,13 @@ fun PlayerScreen(
                 SvgChevronIcon(isExpanded = true, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { showAudioAdjustSheet = true }
+                    .padding(horizontal = 8.dp, vertical = 2.dp)
+            ) {
                 Text(
                     text = "PLAYING FROM SEITHAROL",
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
@@ -234,13 +240,30 @@ fun PlayerScreen(
                     fontWeight = FontWeight.SemiBold,
                     letterSpacing = 1.sp
                 )
-                Text(
-                    text = if (track.isDownloaded) "Offline Opus • Direct Audio" else "Online Pure Stream",
-                    color = MaterialTheme.colorScheme.onBackground,
-                    fontSize = 12.sp,
-                    fontFamily = OutfitFontFamily,
-                    fontWeight = FontWeight.Medium
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    val currentTempQuality = viewModel.getTemporaryTrackQuality()
+                    val qualityText = when {
+                        track.isDownloaded -> "Offline Opus • Direct Audio"
+                        currentTempQuality != null -> "Quality: ${currentTempQuality.label} (Temp)"
+                        else -> "Online Pure Stream"
+                    }
+                    Text(
+                        text = qualityText,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        fontSize = 12.sp,
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Icon(
+                        imageVector = Icons.Default.Tune,
+                        contentDescription = "Adjust Quality",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(13.dp)
+                    )
+                }
             }
 
             IconButton(

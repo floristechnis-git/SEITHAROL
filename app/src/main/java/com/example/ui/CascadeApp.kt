@@ -59,7 +59,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
     val playlists by viewModel.playlists.collectAsState()
     val context = LocalContext.current
 
-    val downloadService = remember { com.seitharol.data.download.DownloadPreferencesAndService(context) }
+    val downloadService = remember { com.seitharol.data.download.DownloadPreferencesAndService.getInstance(context) }
     val previewExoPlayer = remember {
         androidx.media3.exoplayer.ExoPlayer.Builder(context)
             .setMediaSourceFactory(

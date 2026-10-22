@@ -228,6 +228,7 @@ fun HomeScreen(
             val id = item.id.lowercase().trim()
             if (item.isMix || item.isAlbumOrPlaylist) return false
             if (t.contains("supermix") || t.contains("radio") || t.contains("mix")) return false
+            if (a.contains("supermix") || a.contains("radio") || a.contains("mix")) return false
             if (id.startsWith("rdamvm") || id.startsWith("vl") || id.startsWith("pl") || id.startsWith("mpreb_") || id.startsWith("olak5uy_")) return false
             if (bannedKeywords.any { b -> a.contains(b) || t.contains(b) }) return false
             return true
@@ -235,8 +236,9 @@ fun HomeScreen(
 
         val items = mutableListOf<HomeMediaItem>()
 
-        // 1. Songs similar to recent listening & searches (from personalized recommendations)
-        personalizedTracks
+        // 1. Genuine songs from active listening history
+        activeHistory
+            .distinctBy { it.id }
             .filterNot { it.id in excludedHeroIds }
             .map { it.toHomeMediaItem() }
             .filter(::isAuthenticCleanSong)
@@ -244,29 +246,26 @@ fun HomeScreen(
             .take(6)
             .forEach { items.add(it) }
 
-        // 2. Real songs from recent listening history
-        activeHistory
-            .distinctBy { it.id }
+        // 2. Songs similar to recent listening & searches (from personalized recommendations)
+        personalizedTracks
             .filterNot { it.id in excludedHeroIds }
             .map { it.toHomeMediaItem() }
             .filter(::isAuthenticCleanSong)
             .distinctBy { "${it.title.lowercase().trim()}|${it.subtitle.lowercase().trim()}" }
-            .take(4)
-            .forEach { histItem ->
-                if (!items.any { it.id == histItem.id || (it.title.equals(histItem.title, true) && it.subtitle.equals(histItem.subtitle, true)) }) {
-                    items.add(histItem)
+            .forEach { recItem ->
+                if (items.size < 6 && !items.any { it.id == recItem.id || (it.title.equals(recItem.title, true) && it.subtitle.equals(recItem.subtitle, true)) }) {
+                    items.add(recItem)
                 }
             }
 
-        // 3. Fallback to trending hits as fill to guarantee at least 6 clean playable tracks
+        // 3. Fallback to trending hits to guarantee 6 clean playable tracks
         if (items.size < 6) {
             trendingItems
                 .filterNot { it.id in excludedHeroIds }
                 .filter(::isAuthenticCleanSong)
                 .distinctBy { "${it.title.lowercase().trim()}|${it.subtitle.lowercase().trim()}" }
-                .take(6 - items.size)
                 .forEach { trendItem ->
-                    if (!items.any { it.id == trendItem.id || (it.title.equals(trendItem.title, true) && it.subtitle.equals(trendItem.subtitle, true)) }) {
+                    if (items.size < 6 && !items.any { it.id == trendItem.id || (it.title.equals(trendItem.title, true) && it.subtitle.equals(trendItem.subtitle, true)) }) {
                         items.add(trendItem)
                     }
                 }
@@ -1248,7 +1247,7 @@ fun QuickDialBentoSection(
         items(columns.size) { colIdx ->
             val colItems = columns[colIdx]
             Column(
-                modifier = Modifier.width(320.dp),
+                modifier = Modifier.width(380.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 colItems.forEach { item ->

@@ -86,6 +86,16 @@ fun SearchScreen(
         )
     }
 
+    var textFieldValue by remember {
+        mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(query, androidx.compose.ui.text.TextRange(query.length)))
+    }
+
+    LaunchedEffect(query) {
+        if (query != textFieldValue.text) {
+            textFieldValue = androidx.compose.ui.text.input.TextFieldValue(query, androidx.compose.ui.text.TextRange(query.length))
+        }
+    }
+
     androidx.activity.compose.BackHandler(onBack = onNavigateToHome)
     val downloadedTracks by viewModel.downloadedTracks.collectAsState()
     val allTracksList by viewModel.allTracks.collectAsState()
@@ -98,7 +108,7 @@ fun SearchScreen(
     // Split collaboration artist strings into distinct individual artists
     val allArtists = remember(allTracksList, historyTracks, searchResults, currentProvider, downloadedTracks) {
         val bannedModifiers = listOf("loop", "extended", "1 hour", "slowed", "reverb", "cover", "8d", "nightcore", "mashup", "bass boosted")
-        val bannedArtists = listOf("local artist", "device storage", "downloaded in seitharol", "<unknown>", "unknown artist", "unknown", "various artists", "various", "download", "seitharol")
+        val bannedArtists = listOf("local artist", "device storage", "downloaded in seitharol", "<unknown>", "unknown artist", "unknown", "various artists", "various", "download", "seitharol", "blog", "blogger", "blogspot", ".com", ".net", ".org")
         val splitRegex = Regex("[,/;&]|\\s+(?:feat\\.?|ft\\.?|&|x)\\s+", RegexOption.IGNORE_CASE)
         val sourceTracks = if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
             downloadedTracks
@@ -120,7 +130,7 @@ fun SearchScreen(
                 !artist.contains(".net", ignoreCase = true) &&
                 !artist.contains(".org", ignoreCase = true) &&
                 !artist.contains("blog", ignoreCase = true) &&
-                bannedArtists.none { banned -> artist.equals(banned, ignoreCase = true) } &&
+                bannedArtists.none { banned -> artist.contains(banned, ignoreCase = true) } &&
                 bannedModifiers.none { mod -> artist.contains(mod, ignoreCase = true) }
             }
             .distinctBy { it.lowercase() }
@@ -236,8 +246,11 @@ fun SearchScreen(
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     BasicTextField(
-                        value = query,
-                        onValueChange = { viewModel.searchQuery.value = it },
+                        value = textFieldValue,
+                        onValueChange = {
+                            textFieldValue = it
+                            viewModel.searchQuery.value = it.text
+                        },
                         modifier = Modifier
                             .weight(1f)
                             .focusRequester(focusRequester)
@@ -280,7 +293,10 @@ fun SearchScreen(
                     )
                     if (query.isNotEmpty()) {
                         IconButton(
-                            onClick = { viewModel.searchQuery.value = "" },
+                            onClick = {
+                                textFieldValue = androidx.compose.ui.text.input.TextFieldValue("", androidx.compose.ui.text.TextRange.Zero)
+                                viewModel.searchQuery.value = ""
+                            },
                             modifier = Modifier.size(24.dp)
                         ) {
                             Icon(
@@ -423,8 +439,10 @@ fun SearchScreen(
                                 .height(34.dp)
                                 .clip(RoundedCornerShape(17.dp))
                                 .clickable {
-                                    viewModel.setQueryImmediately(recentQuery)
-                                    appPreferences.addRecentSearch(recentQuery)
+                                    val newText = recentQuery
+                                    textFieldValue = androidx.compose.ui.text.input.TextFieldValue(newText, androidx.compose.ui.text.TextRange(newText.length))
+                                    viewModel.setQueryImmediately(newText)
+                                    appPreferences.addRecentSearch(newText)
                                 },
                             shape = RoundedCornerShape(17.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant
@@ -483,8 +501,10 @@ fun SearchScreen(
                                 .height(34.dp)
                                 .clip(RoundedCornerShape(17.dp))
                                 .clickable { 
-                                    viewModel.setQueryImmediately(quickQuery)
-                                    appPreferences.addRecentSearch(quickQuery)
+                                    val newText = quickQuery
+                                    textFieldValue = androidx.compose.ui.text.input.TextFieldValue(newText, androidx.compose.ui.text.TextRange(newText.length))
+                                    viewModel.setQueryImmediately(newText)
+                                    appPreferences.addRecentSearch(newText)
                                 },
                             shape = RoundedCornerShape(17.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant
@@ -529,8 +549,10 @@ fun SearchScreen(
                                 .height(32.dp)
                                 .clip(RoundedCornerShape(16.dp))
                                 .clickable { 
-                                    viewModel.setQueryImmediately(suggestion)
-                                    appPreferences.addRecentSearch(suggestion)
+                                    val newText = suggestion
+                                    textFieldValue = androidx.compose.ui.text.input.TextFieldValue(newText, androidx.compose.ui.text.TextRange(newText.length))
+                                    viewModel.setQueryImmediately(newText)
+                                    appPreferences.addRecentSearch(newText)
                                 },
                             shape = RoundedCornerShape(16.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant
@@ -597,7 +619,7 @@ fun SearchScreen(
 
         // Matching Artists (shown if TOP or ARTISTS, but for LOCAL strictly only if ARTISTS tab is explicitly chosen)
         val shouldShowArtists = if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
-            selectedTab == SearchTab.ARTISTS && filteredArtists.isNotEmpty()
+            false // Downloaded search filter strictly shows downloaded songs, never external web or blog artist cards
         } else {
             (selectedTab == SearchTab.TOP || selectedTab == SearchTab.ARTISTS) && filteredArtists.isNotEmpty()
         }

@@ -283,7 +283,7 @@ private suspend fun scanDeviceAudioFiles(context: Context): List<CandidateStream
                 val id = cursor.getLong(idCol)
                 val contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id).toString()
                 val title = cursor.getString(titleCol).orEmpty().ifBlank { "Unknown Track" }
-                val artist = cursor.getString(artistCol).orEmpty().replace("<unknown>", "Local Artist")
+                val artist = cursor.getString(artistCol).orEmpty().replace("<unknown>", "").trim().ifBlank { "Unknown Artist" }
                 val album = cursor.getString(albumCol).orEmpty()
                 val durationSec = (cursor.getLong(durCol) / 1000L).toInt()
                 list.add(

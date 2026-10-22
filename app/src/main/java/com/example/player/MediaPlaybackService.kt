@@ -116,6 +116,8 @@ class MediaPlaybackService : Service() {
                 } else {
                     try {
                         ServiceCompat.stopForeground(this@MediaPlaybackService, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                        nm?.cancel(NOTIFICATION_ID)
                     } catch (t: Throwable) {
                         // Ignored
                     }
@@ -301,7 +303,11 @@ class MediaPlaybackService : Service() {
             playerManager?.stopPlayback()
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            nm?.cancel(NOTIFICATION_ID)
             nm?.cancelAll()
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
         }
         stopSelf()
     }
@@ -312,6 +318,7 @@ class MediaPlaybackService : Service() {
             playerManager?.stopPlayback()
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            nm?.cancel(NOTIFICATION_ID)
             nm?.cancelAll()
             if (wakeLock?.isHeld == true) {
                 wakeLock?.release()

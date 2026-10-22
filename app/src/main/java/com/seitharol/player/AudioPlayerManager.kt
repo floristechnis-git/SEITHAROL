@@ -1,4 +1,4 @@
-﻿package com.seitharol.player
+package com.seitharol.player
 
 import android.app.NotificationManager
 import android.content.Context
@@ -152,6 +152,24 @@ class AudioPlayerManager(
                 )
                 streamUrl = StreamResolver.resolveExactStreamUrl(meta, AudioQuality.LOW)
                 startOffsetMs = 25_000L
+            }
+
+            // Robust fallback: if streamUrl is still null, search YouTube Music for title + artist
+            if (streamUrl.isNullOrBlank()) {
+                runCatching {
+                    val query = "${track.title} ${track.artists.firstOrNull().orEmpty()}".trim()
+                    if (query.isNotBlank()) {
+                        val candidates = InnerTubeStreamExtractor.searchOfficialYtmSongs(query, limit = 5)
+                        for (candidate in candidates) {
+                            val candidateUrl = InnerTubeStreamExtractor.resolveExactYoutubeStreamById(candidate.videoId, AudioQuality.LOW).getOrNull()
+                            if (!candidateUrl.isNullOrBlank()) {
+                                streamUrl = candidateUrl
+                                startOffsetMs = if (candidate.durationSeconds > 60) 30_000L else 0L
+                                break
+                            }
+                        }
+                    }
+                }
             }
 
             withContext(Dispatchers.Main) {

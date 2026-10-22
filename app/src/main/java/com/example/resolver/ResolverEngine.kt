@@ -182,25 +182,29 @@ class ResolverEngine {
             return resolved
         }
 
-        // 4. Exact YouTube ID direct resolution (Strictly no fallback to text/title searches)
+        // 4. Exact YouTube ID direct resolution
         val cleanYtId = com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(rawId)
         if (!cleanYtId.isNullOrBlank()) {
-            val url = com.seitharol.data.resolver.InnerTubeStreamExtractor
+            val directResult = com.seitharol.data.resolver.InnerTubeStreamExtractor
                 .resolveExactYoutubeStreamById(cleanYtId, preferredQuality)
-                .getOrThrow() // Do NOT fall back to title/artist search on failure
-            val resolved = ResolvedStream(
-                videoId = cleanYtId,
-                streamUrl = url,
-                itag = track.itag,
-                codec = if (url.contains("opus") || url.contains("webm")) "Opus" else "AAC",
-                bitrate = "${preferredQuality.maxBitrateKbps} kbps",
-                expiresAtMs = now + (6 * 3600 * 1000L),
-                isLocal = false,
-                resolvedBy = "YouTube Music InnerTube Direct",
-                latencyMs = 10
-            )
-            streamCache[cacheKey] = resolved
-            return resolved
+            if (directResult.isSuccess) {
+                val url = directResult.getOrThrow()
+                val resolved = ResolvedStream(
+                    videoId = cleanYtId,
+                    streamUrl = url,
+                    itag = track.itag,
+                    codec = if (url.contains("opus") || url.contains("webm")) "Opus" else "AAC",
+                    bitrate = "${preferredQuality.maxBitrateKbps} kbps",
+                    expiresAtMs = now + (6 * 3600 * 1000L),
+                    isLocal = false,
+                    resolvedBy = "YouTube Music InnerTube Direct",
+                    latencyMs = 10
+                )
+                streamCache[cacheKey] = resolved
+                return resolved
+            } else {
+                Log.w(TAG, "Direct YouTube extraction for $cleanYtId failed: ${directResult.exceptionOrNull()?.message}, falling back to alternative resolvers")
+            }
         }
 
         var effectiveTitle = track.title.trim()

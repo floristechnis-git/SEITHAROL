@@ -379,6 +379,24 @@ fun HomeScreen(
                         Surface(
                             modifier = Modifier
                                 .size(40.dp)
+                                .testTag("home_notification_btn"),
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            onClick = onOpenNotifications
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Notifications,
+                                    contentDescription = "Notifications",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+
+                        Surface(
+                            modifier = Modifier
+                                .size(40.dp)
                                 .testTag("home_profile_avatar_btn"),
                             shape = CircleShape,
                             color = MaterialTheme.colorScheme.surfaceVariant,

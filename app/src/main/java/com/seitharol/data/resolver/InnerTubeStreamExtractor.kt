@@ -1,4 +1,4 @@
-﻿package com.seitharol.data.resolver
+package com.seitharol.data.resolver
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -79,12 +79,12 @@ object InnerTubeStreamExtractor {
 
     private val bgScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    // Strictly ANDROID_VR clients (no poToken required, 100% compatible with VR_USER_AGENT in ExoPlayer)
+    // Strictly ANDROID_VR clients with verified playbackContext & visitor data
     val VERIFIED_CLIENTS = listOf(
         InnerTubeClientConfig(
             clientName = "ANDROID_VR",
-            clientVersion = "1.60.19",
-            userAgent = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+            clientVersion = "1.65.10",
+            userAgent = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
             clientId = "28",
             deviceMake = "Oculus",
             deviceModel = "Quest 3",
@@ -96,8 +96,8 @@ object InnerTubeStreamExtractor {
         ),
         InnerTubeClientConfig(
             clientName = "ANDROID_VR",
-            clientVersion = "1.56.21",
-            userAgent = "com.google.android.apps.youtube.vr.oculus/1.56.21 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+            clientVersion = "1.65.10",
+            userAgent = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
             clientId = "28",
             deviceMake = "Oculus",
             deviceModel = "Quest 2",
@@ -114,27 +114,37 @@ object InnerTubeStreamExtractor {
 
     init {
         // Warm up visitorData asynchronously in background so it never blocks stream extraction
-        bgScope.launch { refreshVisitorDataAsync() }
+        bgScope.launch { ensureVisitorData(forceFresh = true) }
     }
 
-    private fun refreshVisitorDataAsync(): String? {
+    fun ensureVisitorData(forceFresh: Boolean = false): String? {
+        if (!forceFresh && !cachedVisitorData.isNullOrBlank()) {
+            return cachedVisitorData
+        }
+        return fetchVisitorDataSync()
+    }
+
+    private fun fetchVisitorDataSync(): String? {
         return runCatching {
             val conn = (URL("https://music.youtube.com/youtubei/v1/visitor_id?prettyPrint=false").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 2000
-                readTimeout = 2000
+                connectTimeout = 3000
+                readTimeout = 3000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("User-Agent", com.seitharol.player.OuterTuneResolvingDataSource.VR_USER_AGENT)
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
                 setRequestProperty("Origin", "https://music.youtube.com")
                 setRequestProperty("Referer", "https://music.youtube.com/")
             }
             conn.outputStream.use { it.write(webRemixPayload().toString().toByteArray()) }
             if (conn.responseCode == 200) {
                 val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-                json.optJSONObject("responseContext")?.optString("visitorData")
+                val vis = json.optJSONObject("responseContext")?.optString("visitorData")
                     ?.takeIf { it.isNotBlank() }
-                    ?.also { cachedVisitorData = it }
+                if (vis != null) {
+                    cachedVisitorData = vis
+                }
+                vis
             } else null
         }.getOrNull()
     }
@@ -183,11 +193,19 @@ object InnerTubeStreamExtractor {
                 setRequestProperty("X-YouTube-Client-Version", client.clientVersion)
                 setRequestProperty("Origin", client.origin)
                 setRequestProperty("Referer", "${client.origin}/")
+                ensureVisitorData()?.let {
+                    setRequestProperty("X-Goog-Visitor-Id", it)
+                }
             }
 
             val payload = JSONObject().apply {
                 put("videoId", videoId)
-                put("cpn", cpn)
+                put("playbackContext", JSONObject().apply {
+                    put("contentPlaybackContext", JSONObject().apply {
+                        put("html5Preference", "HTML5_PREF_WANTS")
+                        put("signatureTimestamp", 20745)
+                    })
+                })
                 put("contentCheckOk", true)
                 put("racyCheckOk", true)
                 put("context", JSONObject().apply {
@@ -201,8 +219,8 @@ object InnerTubeStreamExtractor {
                         client.osName?.let { put("osName", it) }
                         client.osVersion?.let { put("osVersion", it) }
                         client.androidSdkVersion?.let { put("androidSdkVersion", it) }
-                        // Never block on network here; use cachedVisitorData if available
-                        cachedVisitorData?.let { put("visitorData", it) }
+                        put("timeZone", "UTC")
+                        put("utcOffsetMinutes", 0)
                     })
                 })
             }
@@ -217,7 +235,13 @@ object InnerTubeStreamExtractor {
                 ?.takeIf { it.isNotBlank() }
                 ?.let { cachedVisitorData = it }
 
-            if (json.optJSONObject("playabilityStatus")?.optString("status") != "OK") return@runCatching null
+            val playability = json.optJSONObject("playabilityStatus")
+            val status = playability?.optString("status")
+            if (status == "LOGIN_REQUIRED") {
+                ensureVisitorData(forceFresh = true)
+                return@runCatching null
+            }
+            if (status != "OK") return@runCatching null
             val returnedVideoId = json.optJSONObject("videoDetails")?.optString("videoId")
             if (returnedVideoId != null && returnedVideoId != videoId) return@runCatching null
 
@@ -261,7 +285,7 @@ object InnerTubeStreamExtractor {
             return@withContext Result.success(cached)
         }
 
-        // 2. Primary client extraction (ANDROID_VR 1.60.19)
+        // 2. Primary client extraction (ANDROID_VR Quest 3)
         val cpn = (1..16).map { "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"[(0..63).random()] }.joinToString("")
         val primaryUrl = extractStreamWithConfig(cleanVideoId, VERIFIED_CLIENTS[0], preferredQuality, cpn)
         if (!primaryUrl.isNullOrBlank()) {
@@ -269,8 +293,8 @@ object InnerTubeStreamExtractor {
             return@withContext Result.success(primaryUrl)
         }
 
-        // 3. Fallback client extraction (ANDROID_VR 1.56.21 with refreshed visitorData)
-        refreshVisitorDataAsync()
+        // 3. Fallback client extraction (Quest 2 with fresh visitorData)
+        ensureVisitorData(forceFresh = true)
         val fallbackUrl = extractStreamWithConfig(cleanVideoId, VERIFIED_CLIENTS[1], preferredQuality, cpn)
         if (!fallbackUrl.isNullOrBlank()) {
             com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, fallbackUrl)

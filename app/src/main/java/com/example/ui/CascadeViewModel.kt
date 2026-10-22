@@ -379,32 +379,52 @@ class CascadeViewModel(
         val clean = query.trim()
         if (clean.isBlank()) return emptyList()
         val results = mutableListOf<com.seitharol.domain.model.NormalizedTrack>()
+
+        // 1. YouTube Music official songs FIRST
         runCatching {
-            val previewTracks = spotifyProviderInstance.searchTracksWithPreviews(clean, limit = 20)
+            val ytmTracks = com.seitharol.data.resolver.InnerTubeStreamExtractor.searchOfficialYtmSongs(clean, limit = 25)
+            val mapped = ytmTracks.map { yt ->
+                com.seitharol.domain.model.NormalizedTrack(
+                    source = com.seitharol.domain.model.TrackSource.YOUTUBE,
+                    sourceId = yt.videoId,
+                    title = yt.title,
+                    artists = listOf(yt.artist),
+                    primaryArtistBrowseId = yt.artistBrowseId,
+                    artistAvatarUrl = yt.thumbnailUrl,
+                    album = yt.albumName ?: "Single",
+                    durationMs = yt.durationSeconds * 1000L,
+                    artUrl = yt.thumbnailUrl,
+                    isPlayableNatively = true,
+                    previewUrl = "ytm_clip:${yt.videoId}"
+                )
+            }
+            results.addAll(mapped)
+        }
+
+        // 2. Supplementary Spotify preview tracks as fallback
+        runCatching {
+            val previewTracks = spotifyProviderInstance.searchTracksWithPreviews(clean, limit = 15)
             results.addAll(previewTracks)
         }
-        if (results.isEmpty()) {
-            runCatching {
-                val ytmTracks = com.seitharol.data.resolver.InnerTubeStreamExtractor.searchOfficialYtmSongs(clean, limit = 20)
-                val mapped = ytmTracks.map { yt ->
-                    com.seitharol.domain.model.NormalizedTrack(
-                        source = com.seitharol.domain.model.TrackSource.YOUTUBE,
-                        sourceId = yt.videoId,
-                        title = yt.title,
-                        artists = listOf(yt.artist),
-                        primaryArtistBrowseId = yt.artistBrowseId,
-                        artistAvatarUrl = yt.thumbnailUrl,
-                        album = yt.albumName ?: "Single",
-                        durationMs = yt.durationSeconds * 1000L,
-                        artUrl = yt.thumbnailUrl,
-                        isPlayableNatively = true,
-                        previewUrl = "ytm_clip:${yt.videoId}"
-                    )
+
+        val cleanLower = clean.lowercase()
+        // Rank results so the actual original track matching query and title is strictly at position 0
+        return results.distinctBy { it.sourceId }.sortedWith(
+            compareByDescending<com.seitharol.domain.model.NormalizedTrack> { track ->
+                val titleLower = track.title.lowercase().trim()
+                val artistLower = track.artists.firstOrNull().orEmpty().lowercase().trim()
+                when {
+                    titleLower == cleanLower -> 100
+                    titleLower.startsWith(cleanLower) -> 80
+                    "$titleLower $artistLower".contains(cleanLower) -> 60
+                    titleLower.contains(cleanLower) -> 50
+                    artistLower.contains(cleanLower) -> 30
+                    else -> 10
                 }
-                results.addAll(mapped)
+            }.thenByDescending {
+                if (it.previewUrl?.startsWith("ytm_clip:") == true) 10 else 0
             }
-        }
-        return results.distinctBy { it.sourceId }
+        )
     }
 
     fun playNormalizedTrackFull(track: com.seitharol.domain.model.NormalizedTrack) {

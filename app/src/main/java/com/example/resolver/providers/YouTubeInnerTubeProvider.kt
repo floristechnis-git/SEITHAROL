@@ -32,13 +32,13 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
     private val CLIENT_PROFILES = listOf(
         ClientProfile(
             name = "ANDROID_VR",
-            version = "1.60.19",
+            version = "1.65.10",
             clientId = "28",
-            userAgent = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+            userAgent = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
             playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
             clientJson = JSONObject().apply {
                 put("clientName", "ANDROID_VR")
-                put("clientVersion", "1.60.19")
+                put("clientVersion", "1.65.10")
                 put("deviceMake", "Oculus")
                 put("deviceModel", "Quest 3")
                 put("osName", "Android")
@@ -46,6 +46,8 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                 put("androidSdkVersion", 32)
                 put("hl", "en")
                 put("gl", "US")
+                put("timeZone", "UTC")
+                put("utcOffsetMinutes", 0)
             }
         ),
         ClientProfile(
@@ -261,6 +263,12 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
         }
 
     private fun resolveWithClient(videoId: String, profile: ClientProfile, preferredKbps: Int): ResolvedStream? {
+        val playbackContext = JSONObject().apply {
+            put("contentPlaybackContext", JSONObject().apply {
+                put("html5Preference", "HTML5_PREF_WANTS")
+                put("signatureTimestamp", 20745)
+            })
+        }
         val payload = JSONObject().apply {
             put("context", JSONObject().apply {
                 put("client", profile.clientJson)
@@ -268,6 +276,7 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                     put("thirdParty", JSONObject().apply { put("embedUrl", "https://www.youtube.com") })
                 }
             })
+            put("playbackContext", playbackContext)
             put("videoId", videoId)
             put("contentCheckOk", true)
             put("racyCheckOk", true)
@@ -279,7 +288,8 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             "https://www.youtube.com"
         }
 
-        val request = Request.Builder()
+        val visitorData = com.seitharol.data.resolver.InnerTubeStreamExtractor.ensureVisitorData()
+        val requestBuilder = Request.Builder()
             .url(profile.playerEndpoint)
             .post(payload.toString().toRequestBody(jsonMediaType))
             .header("User-Agent", profile.userAgent)
@@ -287,7 +297,10 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             .header("X-YouTube-Client-Version", profile.version)
             .header("Origin", origin)
             .header("Referer", "$origin/")
-            .build()
+        if (!visitorData.isNullOrBlank()) {
+            requestBuilder.header("X-Goog-Visitor-Id", visitorData)
+        }
+        val request = requestBuilder.build()
 
         NetworkClients.okHttpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
@@ -298,6 +311,11 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
 
             val playability = json.optJSONObject("playabilityStatus")
             val status = playability?.optString("status") ?: "UNKNOWN"
+            if (status == "LOGIN_REQUIRED") {
+                com.seitharol.data.resolver.InnerTubeStreamExtractor.ensureVisitorData(forceFresh = true)
+                val reason = playability?.optString("reason") ?: "Sign in required"
+                throw IllegalStateException("$status ($reason)")
+            }
             if (status != "OK") {
                 val reason = playability?.optString("reason") ?: ""
                 throw IllegalStateException("$status ($reason)")

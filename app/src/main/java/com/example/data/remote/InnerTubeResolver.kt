@@ -44,8 +44,8 @@ object InnerTubeResolver {
         if (!directStream.isNullOrBlank()) return@withContext directStream
 
         // 2. Direct player endpoint fallback
-        val androidVrStream = fetchAudioUrlFromPlayer(validVideoId, clientName = "ANDROID_VR", clientVersion = "1.60.19")
-        if (!androidVrStream.isNullOrBlank()) return@withContext androidVrStream
+        val iosStream = fetchAudioUrlFromPlayer(validVideoId, clientName = "IOS", clientVersion = "20.10.4")
+        if (!iosStream.isNullOrBlank()) return@withContext iosStream
 
         null
     }
@@ -56,7 +56,7 @@ object InnerTubeResolver {
         clientVersion: String
     ): String? {
         return try {
-            val isAndroidVr = clientName == "ANDROID_VR"
+            val isIos = clientName == "IOS"
             val body = JSONObject().apply {
                 put("videoId", videoId)
                 put("contentCheckOk", true)
@@ -67,24 +67,18 @@ object InnerTubeResolver {
                         put("clientVersion", clientVersion)
                         put("hl", "en")
                         put("gl", "US")
-                        if (isAndroidVr) {
-                            put("deviceMake", "Oculus")
-                            put("deviceModel", "Quest 3")
-                            put("osName", "Android")
-                            put("osVersion", "12")
-                            put("androidSdkVersion", 32)
+                        if (isIos) {
+                            put("deviceMake", "Apple")
+                            put("deviceModel", "iPhone16,2")
+                            put("osName", "iOS")
+                            put("osVersion", "18.3.1.22D72")
                         }
                     })
                 })
             }
-            // ANDROID_VR uses www.youtube.com
-            val endpoint = if (isAndroidVr)
-                "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
-            else
-                "https://music.youtube.com/youtubei/v1/player?prettyPrint=false"
-
+            val endpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
             val userAgent = when {
-                isAndroidVr -> "com.google.android.apps.youtube.vr.oculus/$clientVersion (Linux; U; Android 12; Quest 3 Build/SQ3A.220705.003.A1) gzip"
+                isIos -> "com.google.ios.youtube/$clientVersion (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)"
                 else -> "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
             val response = postJson(endpoint, body, userAgent)

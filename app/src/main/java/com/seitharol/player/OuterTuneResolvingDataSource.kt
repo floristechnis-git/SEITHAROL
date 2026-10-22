@@ -17,8 +17,10 @@ import java.util.concurrent.ConcurrentHashMap
 @OptIn(UnstableApi::class)
 object OuterTuneResolvingDataSource {
 
-    const val VR_USER_AGENT =
-        "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
+    const val MEDIA_HTTP_USER_AGENT =
+        "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+
+    const val VR_USER_AGENT = MEDIA_HTTP_USER_AGENT
 
     private const val STREAM_TTL_MS = 3 * 60 * 60 * 1000L // 3 hours
 
@@ -58,7 +60,7 @@ object OuterTuneResolvingDataSource {
         qualityProvider: () -> AudioQuality = { AudioQuality.LOW }
     ): DataSource.Factory {
         val baseHttpFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent(VR_USER_AGENT)
+            .setUserAgent(MEDIA_HTTP_USER_AGENT)
             .setConnectTimeoutMs(6_000)
             .setReadTimeoutMs(12_000)
             .setAllowCrossProtocolRedirects(true)

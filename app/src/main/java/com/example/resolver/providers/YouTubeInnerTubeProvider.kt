@@ -31,19 +31,37 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
 
     private val CLIENT_PROFILES = listOf(
         ClientProfile(
-            name = "ANDROID_VR",
-            version = "1.65.10",
-            clientId = "28",
-            userAgent = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+            name = "IOS",
+            version = "20.10.4",
+            clientId = "5",
+            userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)",
             playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
             clientJson = JSONObject().apply {
-                put("clientName", "ANDROID_VR")
-                put("clientVersion", "1.65.10")
-                put("deviceMake", "Oculus")
-                put("deviceModel", "Quest 3")
-                put("osName", "Android")
-                put("osVersion", "12L")
-                put("androidSdkVersion", 32)
+                put("clientName", "IOS")
+                put("clientVersion", "20.10.4")
+                put("deviceMake", "Apple")
+                put("deviceModel", "iPhone16,2")
+                put("osName", "iOS")
+                put("osVersion", "18.3.1.22D72")
+                put("hl", "en")
+                put("gl", "US")
+                put("timeZone", "UTC")
+                put("utcOffsetMinutes", 0)
+            }
+        ),
+        ClientProfile(
+            name = "IOS_FALLBACK",
+            version = "20.25.1",
+            clientId = "5",
+            userAgent = "com.google.ios.youtube/20.25.1 (iPhone16,2; U; CPU iOS 18_5 like Mac OS X; en_US)",
+            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+            clientJson = JSONObject().apply {
+                put("clientName", "IOS")
+                put("clientVersion", "20.25.1")
+                put("deviceMake", "Apple")
+                put("deviceModel", "iPhone16,2")
+                put("osName", "iOS")
+                put("osVersion", "18.5.0")
                 put("hl", "en")
                 put("gl", "US")
                 put("timeZone", "UTC")

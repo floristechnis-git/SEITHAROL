@@ -212,9 +212,13 @@ class ResolverEngine {
         val isYouTubeId = !cleanYtId.isNullOrBlank()
         val targetVideoId = cleanYtId ?: rawId
         val isSpotify = rawId.length == 22 && !rawId.contains("_") && !rawId.contains("-")
-        val isSaavn = ((rawId.isNotBlank() && rawId.all { it.isDigit() }) ||
+        val cleanSaavnId = rawId.removePrefix("saavn_")
+        val isSaavn = rawId.startsWith("saavn_") ||
+            track.source == SourceType.JIOSAAVN ||
+            track.audioUrl.contains("saavncdn.com") ||
+            (!isYouTubeId && !isSpotify && (cleanSaavnId.all { it.isDigit() } || (cleanSaavnId.length in 6..16 && !cleanSaavnId.contains(" ") && !cleanSaavnId.contains("-")))) ||
             track.genre.contains("Indian", ignoreCase = true) ||
-            track.genre.contains("Bollywood", ignoreCase = true))
+            track.genre.contains("Bollywood", ignoreCase = true)
 
         // 4. Auto-hydrate blank title/artist from ID so search fallbacks are never skipped
         if (effectiveTitle.isBlank() && effectiveArtist.isBlank() && rawId.isNotBlank()) {
@@ -283,12 +287,12 @@ class ResolverEngine {
         }
 
         // 6. Direct JioSaavn ID resolution
-        if (resolvedStream == null && isSaavn && rawId.isNotBlank() && !isSpotify && !isYouTubeId) {
+        if (resolvedStream == null && isSaavn && cleanSaavnId.isNotBlank() && !isSpotify && !isYouTubeId) {
             try {
-                resolvedStream = jioSaavnProvider.resolveStream(rawId, preferredKbps = targetKbps)
+                resolvedStream = jioSaavnProvider.resolveStream(cleanSaavnId, preferredKbps = targetKbps)
             } catch (e: Exception) {
                 failures.add("JioSaavnDirect: ${e.message}")
-                Log.w(TAG, "JioSaavn resolution failed for $rawId: ${e.message}")
+                Log.w(TAG, "JioSaavn resolution failed for $cleanSaavnId: ${e.message}")
             }
         }
 
@@ -403,8 +407,8 @@ class ResolverEngine {
             }
         }
 
-        // 10. Fallback 3: On-Device YouTube Music text search + ranked stream extraction
-        if (resolvedStream == null && searchQuery.isNotBlank()) {
+        // 10. Fallback 3: On-Device YouTube Music text search + ranked stream extraction (only for search/metadata queries, never for direct YouTube IDs)
+        if (resolvedStream == null && !isYouTubeId && searchQuery.isNotBlank()) {
             try {
                 val ytResults = youtubeInnerTubeProvider.searchTracks(searchQuery, limit = 10)
                 val targetTrack = NormalizedTrack(
@@ -432,7 +436,7 @@ class ResolverEngine {
         }
 
         // 11. Fallback 4: On-Device JioSaavn search + 160kbps AAC DES decryption for verified match only
-        if (resolvedStream == null && searchQuery.isNotBlank()) {
+        if (resolvedStream == null && !isYouTubeId && searchQuery.isNotBlank()) {
             try {
                 val results = jioSaavnProvider.searchTracks(searchQuery, limit = 5)
                 val targetTrack = NormalizedTrack(

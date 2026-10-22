@@ -127,10 +127,12 @@ object StreamResolver {
             }
 
             if (bestSongId != null && bestScore >= 40) {
-                val detailUrl = "https://www.jiosaavn.com/api.php?__call=song.getDetails&cc=in&_marker=0%3F_marker%3D0&_format=json&pids=$bestSongId"
+                val detailUrl = "https://www.jiosaavn.com/api.php?__call=song.getDetails&cc=in&_marker=0&_format=json&ctx=android&pids=$bestSongId"
                 val detailJson = httpGet(detailUrl) ?: return null
                 val detailObj = JSONObject(detailJson).optJSONObject(bestSongId) ?: return null
-                val encryptedUrl = detailObj.optString("encrypted_media_url")
+                val encryptedUrl = detailObj.optString("encrypted_media_url").ifBlank {
+                    detailObj.optJSONObject("more_info")?.optString("encrypted_media_url").orEmpty()
+                }
                 if (encryptedUrl.isNotBlank()) {
                     return decryptJioSaavnUrl(encryptedUrl, quality)
                 }

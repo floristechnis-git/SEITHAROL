@@ -249,14 +249,13 @@ fun SearchScreen(
                     BasicTextField(
                         value = textFieldValue,
                         onValueChange = { incoming ->
-                            if (incoming.text == forceCursorToEndForText) {
+                            if (forceCursorToEndForText != null && incoming.text == forceCursorToEndForText) {
                                 textFieldValue = incoming.copy(selection = androidx.compose.ui.text.TextRange(incoming.text.length))
-                                viewModel.searchQuery.value = incoming.text
                             } else {
                                 forceCursorToEndForText = null
                                 textFieldValue = incoming
-                                viewModel.searchQuery.value = incoming.text
                             }
+                            viewModel.searchQuery.value = incoming.text
                         },
                         modifier = Modifier
                             .weight(1f)

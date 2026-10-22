@@ -71,7 +71,7 @@ fun InDiscoverSearchSurface(
     }
 
     Surface(
-        color = Color(0xFF0B0C0E).copy(alpha = 0.97f),
+        color = MaterialTheme.colorScheme.background,
         modifier = Modifier.fillMaxSize()
     ) {
         Column(
@@ -113,7 +113,7 @@ fun InDiscoverSearchSurface(
                         softWrap = false,
                         overflow = TextOverflow.Ellipsis,
                         fontSize = 14.sp,
-                        color = Color.White.copy(alpha = 0.5f)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     )
                 },
                 singleLine = true,
@@ -126,22 +126,22 @@ fun InDiscoverSearchSurface(
                             onClose()
                         }
                     ) {
-                        BackArrowSvgIcon(tint = Color.White, modifier = Modifier.size(20.dp))
+                        BackArrowSvgIcon(tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
                     }
                 },
                 trailingIcon = {
                     if (query.isNotEmpty()) {
                         IconButton(onClick = { query = ""; results = emptyList() }) {
-                            CloseCrossSvgIcon(tint = Color.White, modifier = Modifier.size(16.dp))
+                            CloseCrossSvgIcon(tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
                         }
                     }
                 },
                 colors = TextFieldDefaults.colors(
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White,
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
                     cursorColor = MaterialTheme.colorScheme.primary,
-                    focusedContainerColor = Color(0xFF1A1C22),
-                    unfocusedContainerColor = Color(0xFF1A1C22),
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
                     focusedIndicatorColor = Color.Transparent,
                     unfocusedIndicatorColor = Color.Transparent
                 ),
@@ -181,13 +181,13 @@ fun InDiscoverSearchSurface(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         SearchMagnifierSvgIcon(
-                            tint = Color.White.copy(alpha = 0.35f),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                             modifier = Modifier.size(36.dp)
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
                             text = "No songs found for \"$query\"",
-                            color = Color.White.copy(alpha = 0.6f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 14.sp
                         )
                     }
@@ -221,12 +221,12 @@ fun InDiscoverSearchSurface(
 
                     Surface(
                         shape = RoundedCornerShape(20.dp),
-                        color = if (isThisPlaying) Color(0xFF1E222B) else Color(0xFF15171E),
+                        color = if (isThisPlaying) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
                         modifier = Modifier
                             .fillMaxWidth()
                             .border(
                                 width = 1.dp,
-                                color = if (isThisPlaying) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.07f),
+                                color = if (isThisPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                                 shape = RoundedCornerShape(20.dp)
                             )
                             .clickable {
@@ -278,14 +278,14 @@ fun InDiscoverSearchSurface(
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Surface(
                                             color = if (isThisPlaying) Color(0xFF1DB954).copy(alpha = 0.2f)
-                                            else Color.White.copy(alpha = 0.1f),
+                                            else MaterialTheme.colorScheme.surfaceVariant,
                                             shape = RoundedCornerShape(50)
                                         ) {
                                             Text(
                                                 text = if (isThisPlaying) "PLAYING" else "TRACK",
                                                 fontSize = 9.sp,
                                                 fontWeight = FontWeight.ExtraBold,
-                                                color = if (isThisPlaying) Color(0xFF1DB954) else Color.White.copy(alpha = 0.7f),
+                                                color = if (isThisPlaying) Color(0xFF1DB954) else MaterialTheme.colorScheme.onSurfaceVariant,
                                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                                             )
                                         }
@@ -293,7 +293,7 @@ fun InDiscoverSearchSurface(
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = item.title,
-                                        color = Color.White,
+                                        color = MaterialTheme.colorScheme.onSurface,
                                         fontSize = 16.sp,
                                         fontWeight = FontWeight.Bold,
                                         maxLines = 1,
@@ -318,7 +318,7 @@ fun InDiscoverSearchSurface(
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
                                             text = item.artists.joinToString(", "),
-                                            color = Color.White.copy(alpha = 0.75f),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             fontSize = 12.sp,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
@@ -341,10 +341,10 @@ fun InDiscoverSearchSurface(
                                     contentPadding = PaddingValues(horizontal = 14.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = MaterialTheme.colorScheme.primary,
-                                        contentColor = Color.White
+                                        contentColor = MaterialTheme.colorScheme.onPrimary
                                     )
                                 ) {
-                                    DownloadSvgIcon(tint = Color.White, modifier = Modifier.size(15.dp))
+                                    DownloadSvgIcon(tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(15.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text("Download", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
@@ -357,13 +357,13 @@ fun InDiscoverSearchSurface(
                                     modifier = Modifier.weight(1f).height(38.dp),
                                     shape = RoundedCornerShape(50),
                                     contentPadding = PaddingValues(horizontal = 14.dp),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.25f))
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
                                 ) {
                                     Icon(
                                         painter = painterResource(id = R.drawable.ic_play),
                                         contentDescription = null,
-                                        tint = Color.White,
+                                        tint = MaterialTheme.colorScheme.onSurface,
                                         modifier = Modifier.size(14.dp)
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))

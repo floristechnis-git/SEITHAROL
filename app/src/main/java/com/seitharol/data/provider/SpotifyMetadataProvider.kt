@@ -1,4 +1,4 @@
-﻿package com.seitharol.data.provider
+package com.seitharol.data.provider
 
 import com.seitharol.data.resolver.AudioQuality
 import com.seitharol.data.resolver.InnerTubeStreamExtractor
@@ -69,7 +69,7 @@ class DefaultSpotifyMetadataProvider : SpotifyMetadataProvider {
 
     private fun searchJioSaavnTracks(query: String, limit: Int): List<NormalizedTrack> {
         val encoded = URLEncoder.encode(query, "UTF-8")
-        val url = "https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&_marker=0&cc=in&q=$encoded&n=$limit"
+        val url = "https://www.jiosaavn.com/api.php?__call=search.getResults&api_version=4&_format=json&_marker=0&ctx=android&q=$encoded&n=$limit"
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 4500
@@ -95,7 +95,9 @@ class DefaultSpotifyMetadataProvider : SpotifyMetadataProvider {
             val image = obj.optString("image").replace("150x150", "500x500")
 
             // Decrypt encrypted_media_url immediately so Discover preview starts in 0ms without re-querying!
-            val encryptedUrl = moreInfo?.optString("encrypted_media_url").orEmpty()
+            val encryptedUrl = obj.optString("encrypted_media_url").ifBlank {
+                moreInfo?.optString("encrypted_media_url").orEmpty()
+            }
             val directCdnUrl = if (encryptedUrl.isNotBlank()) {
                 StreamResolver.decryptJioSaavnUrl(encryptedUrl, AudioQuality.LOW)
             } else null

@@ -204,14 +204,14 @@ class AudioPlayerManager(
 
                         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                             Log.e(TAG, "ExoPlayer error: ${error.errorCodeName} - ${error.message}", error)
-                            _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+                            _state.value = _state.value.copy(isPlaying = false, isBuffering = true)
                             val current = _state.value.currentTrack
                             val currentId = current?.id ?: return
                             com.seitharol.player.OuterTuneResolvingDataSource.invalidate(currentId)
 
                             retryJob?.cancel()
                             retryJob = coroutineScope.launch {
-                                val title = current.title.ifBlank { "Track" }
+                                val title = current.title.trim().trim('"', '\'').ifBlank { current.artist.ifBlank { "Track" } }
 
                                 if (lastFailedTrackId != current.id) {
                                     lastFailedTrackId = current.id
@@ -228,8 +228,8 @@ class AudioPlayerManager(
                                     return@launch
                                 }
 
-                                if (trackRetryCount >= 2) {
-                                    Log.w(TAG, "Max retries reached for '$title'. Skipping to next track.")
+                                if (trackRetryCount >= 1) {
+                                    Log.w(TAG, "Single retry attempt exhausted for '$title'. Skipping to next track.")
                                     val friendlyMsg = com.example.util.ErrorFormatter.toUserFriendlyMessage(error, context, title)
                                     _skipEvent.emit(friendlyMsg)
                                     trackRetryCount = 0
@@ -248,7 +248,7 @@ class AudioPlayerManager(
                                 }
 
                                 trackRetryCount++
-                                delay(600)
+                                delay(300)
                                 if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
                                 try {
                                     resolverEngine.clearCache()
@@ -285,6 +285,25 @@ class AudioPlayerManager(
     }
 
 
+    fun stopPlayback() {
+        try {
+            exoPlayer?.stop()
+            exoPlayer?.clearMediaItems()
+        } catch (_: Throwable) {}
+        _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+        try {
+            MediaPlaybackService.stopService(context)
+        } catch (_: Throwable) {}
+    }
+
+    fun release() {
+        stopPlayback()
+        try {
+            exoPlayer?.release()
+            exoPlayer = null
+        } catch (_: Throwable) {}
+    }
+
     private fun setupAndPlaySource(sourceUrl: String, track: Track) {
         try {
             val player = exoPlayer ?: return
@@ -309,8 +328,8 @@ class AudioPlayerManager(
 
             _state.value = _state.value.copy(
                 currentTrack = track,
-                isPlaying = true,
-                isBuffering = false
+                isPlaying = false,
+                isBuffering = true
             )
             startPositionTracker()
             try {

@@ -690,6 +690,7 @@ class CascadeViewModel(
 
     fun togglePlayPause() = playerManager.togglePlayPause()
     fun pause() = playerManager.pause()
+    fun stopPlayback() = playerManager.stopPlayback()
     fun next() = playerManager.next()
     fun previous() = playerManager.previous()
     fun seekTo(posMs: Long) = playerManager.seekTo(posMs)

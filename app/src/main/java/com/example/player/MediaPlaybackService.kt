@@ -306,6 +306,8 @@ class MediaPlaybackService : Service() {
         serviceScope.cancel()
         runCatching {
             playerManager?.stopPlayback()
+        }
+        runCatching {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             nm?.cancel(NOTIFICATION_ID)
@@ -323,6 +325,8 @@ class MediaPlaybackService : Service() {
         serviceScope.cancel()
         runCatching {
             playerManager?.stopPlayback()
+        }
+        runCatching {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             nm?.cancel(NOTIFICATION_ID)

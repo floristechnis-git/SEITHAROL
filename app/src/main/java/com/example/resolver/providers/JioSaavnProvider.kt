@@ -44,7 +44,7 @@ class JioSaavnProvider : AudioStreamProvider {
             if (query.trim().isBlank()) return@withContext emptyList()
             try {
                 val encQuery = URLEncoder.encode(query.trim(), "UTF-8")
-                val url = "https://www.jiosaavn.com/api.php?__call=search.getResults&api_version=4&_format=json&_marker=0&ctx=web6dot0&q=$encQuery&n=$limit"
+                val url = "https://www.jiosaavn.com/api.php?__call=search.getResults&api_version=4&_format=json&_marker=0&ctx=android&q=$encQuery&n=$limit"
 
                 val request = Request.Builder()
                     .url(url)
@@ -66,7 +66,7 @@ class JioSaavnProvider : AudioStreamProvider {
     override suspend fun getPlaylistTracks(playlistId: String): List<NormalizedTrack> =
         withContext(Dispatchers.IO) {
             try {
-                val url = "https://www.jiosaavn.com/api.php?__call=playlist.getDetails&listid=$playlistId&api_version=4&_format=json&_marker=0&ctx=web6dot0"
+                val url = "https://www.jiosaavn.com/api.php?__call=playlist.getDetails&listid=$playlistId&api_version=4&_format=json&_marker=0&ctx=android"
                 val request = Request.Builder()
                     .url(url)
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
@@ -160,7 +160,7 @@ class JioSaavnProvider : AudioStreamProvider {
 
     private fun fetchSongDetails(songId: String): SaavnTrackInfo? {
         return try {
-            val url = "https://www.jiosaavn.com/api.php?__call=song.getDetails&pids=$songId&api_version=4&_format=json&_marker=0&ctx=web6dot0"
+            val url = "https://www.jiosaavn.com/api.php?__call=song.getDetails&pids=$songId&api_version=4&_format=json&_marker=0&ctx=android"
             val request = Request.Builder()
                 .url(url)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")

@@ -79,31 +79,29 @@ object InnerTubeStreamExtractor {
 
     private val bgScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    // Strictly ANDROID_VR clients with verified playbackContext & visitor data
+    // Strictly verified player clients (iOS 20.10.4 / 20.25.1) returning unthrottled, unencrypted direct streams
     val VERIFIED_CLIENTS = listOf(
         InnerTubeClientConfig(
-            clientName = "ANDROID_VR",
-            clientVersion = "1.65.10",
-            userAgent = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
-            clientId = "28",
-            deviceMake = "Oculus",
-            deviceModel = "Quest 3",
-            osName = "Android",
-            osVersion = "12L",
-            androidSdkVersion = 32,
+            clientName = "IOS",
+            clientVersion = "20.10.4",
+            userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)",
+            clientId = "5",
+            deviceMake = "Apple",
+            deviceModel = "iPhone16,2",
+            osName = "iOS",
+            osVersion = "17.5.1",
             origin = "https://www.youtube.com",
             playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
         ),
         InnerTubeClientConfig(
-            clientName = "ANDROID_VR",
-            clientVersion = "1.65.10",
-            userAgent = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
-            clientId = "28",
-            deviceMake = "Oculus",
-            deviceModel = "Quest 2",
-            osName = "Android",
-            osVersion = "12L",
-            androidSdkVersion = 32,
+            clientName = "IOS",
+            clientVersion = "20.25.1",
+            userAgent = "com.google.ios.youtube/20.25.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)",
+            clientId = "5",
+            deviceMake = "Apple",
+            deviceModel = "iPhone16,2",
+            osName = "iOS",
+            osVersion = "17.5.1",
             origin = "https://www.youtube.com",
             playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
         )

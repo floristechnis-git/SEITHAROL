@@ -237,6 +237,10 @@ class AudioPlayerManager(
                                     if (!_state.value.isSingleTrackPlayback && _state.value.currentIndex < _state.value.queue.lastIndex) {
                                         next()
                                     } else {
+                                        try {
+                                            exoPlayer?.stop()
+                                            exoPlayer?.clearMediaItems()
+                                        } catch (_: Throwable) {}
                                         _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
                                         MediaPlaybackService.stopService(context)
                                     }
@@ -263,6 +267,10 @@ class AudioPlayerManager(
                                     if (!_state.value.isSingleTrackPlayback && _state.value.currentIndex < _state.value.queue.lastIndex) {
                                         next()
                                     } else {
+                                        try {
+                                            exoPlayer?.stop()
+                                            exoPlayer?.clearMediaItems()
+                                        } catch (_: Throwable) {}
                                         _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
                                         MediaPlaybackService.stopService(context)
                                     }
@@ -561,16 +569,13 @@ class AudioPlayerManager(
         loadTrackJob?.cancel()
         retryJob?.cancel()
 
-        val shouldStopImmediately = appPreferences.settings.value.stopImmediatelyOnNewTrack
-        if (shouldStopImmediately) {
-            try {
-                exoPlayer?.pause()
-            } catch (_: Throwable) {}
-            _state.value = _state.value.copy(
-                isPlaying = false,
-                isBuffering = true
-            )
-        }
+        try {
+            exoPlayer?.pause()
+        } catch (_: Throwable) {}
+        _state.value = _state.value.copy(
+            isPlaying = false,
+            isBuffering = true
+        )
 
         loadTrackJob = coroutineScope.launch {
             try {
@@ -703,6 +708,10 @@ class AudioPlayerManager(
             } catch (e: Exception) {
                 if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
                 Log.e(TAG, "Error loading track: ${e.message}", e)
+                try {
+                    exoPlayer?.stop()
+                    exoPlayer?.clearMediaItems()
+                } catch (_: Throwable) {}
                 _state.value = _state.value.copy(isBuffering = false, isPlaying = false)
                 val friendlyMessage = com.example.util.ErrorFormatter.toUserFriendlyMessage(e, context, current.title)
                 _skipEvent.emit(friendlyMessage)

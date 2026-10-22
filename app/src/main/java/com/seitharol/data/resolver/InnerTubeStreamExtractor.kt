@@ -242,25 +242,32 @@ object InnerTubeStreamExtractor {
                 return@runCatching null
             }
             if (status != "OK") return@runCatching null
-            val returnedVideoId = json.optJSONObject("videoDetails")?.optString("videoId")
-            if (returnedVideoId != null && returnedVideoId != videoId) return@runCatching null
 
-            val adaptiveFormats = json.optJSONObject("streamingData")?.optJSONArray("adaptiveFormats")
-                ?: return@runCatching null
+            val streamingData = json.optJSONObject("streamingData") ?: return@runCatching null
+            val adaptiveFormats = streamingData.optJSONArray("adaptiveFormats")
+            val legacyFormats = streamingData.optJSONArray("formats")
 
             data class AudioStreamCandidate(val itag: Int, val kbps: Int, val isOpus: Boolean, val url: String)
             val audioStreams = mutableListOf<AudioStreamCandidate>()
 
-            for (i in 0 until adaptiveFormats.length()) {
-                val fmt = adaptiveFormats.getJSONObject(i)
-                val mime = fmt.optString("mimeType", "")
-                val url = fmt.optString("url", "")
-                if (mime.startsWith("audio/") && url.isNotBlank()) {
+            fun collectStreams(arr: org.json.JSONArray?) {
+                if (arr == null) return
+                for (i in 0 until arr.length()) {
+                    val fmt = arr.getJSONObject(i)
+                    val mime = fmt.optString("mimeType", "")
+                    val url = fmt.optString("url", "")
                     val itag = fmt.optInt("itag", 0)
-                    val kbps = fmt.optInt("bitrate", 128000) / 1000
-                    val isOpus = mime.contains("opus", ignoreCase = true) || itag in listOf(249, 250, 251)
-                    audioStreams.add(AudioStreamCandidate(itag, kbps, isOpus, url))
+                    if (url.isNotBlank() && (mime.startsWith("audio/") || itag in listOf(140, 251, 250, 249, 139, 18, 22))) {
+                        val kbps = fmt.optInt("bitrate", 128000) / 1000
+                        val isOpus = mime.contains("opus", ignoreCase = true) || itag in listOf(249, 250, 251)
+                        audioStreams.add(AudioStreamCandidate(itag, kbps, isOpus, url))
+                    }
                 }
+            }
+
+            collectStreams(adaptiveFormats)
+            if (audioStreams.isEmpty()) {
+                collectStreams(legacyFormats)
             }
 
             if (audioStreams.isEmpty()) return@runCatching null
@@ -398,19 +405,6 @@ object InnerTubeStreamExtractor {
         moodCategory: String = "All"
     ): List<YtmCollectionSummary> = coroutineScope {
         val collections = mutableListOf<YtmCollectionSummary>()
-        val firstSeed = seedVideoIds.firstOrNull { it.length == 11 }
-        if (firstSeed != null) {
-            collections.add(
-                YtmCollectionSummary(
-                    browseId = "RDAMVM$firstSeed",
-                    playlistId = "RDAMVM$firstSeed",
-                    title = "My Supermix Radio",
-                    subtitle = "Personalized YouTube Mix • Updates daily",
-                    thumbnailUrl = "https://i.ytimg.com/vi/$firstSeed/hqdefault.jpg",
-                    type = "MIX"
-                )
-            )
-        }
 
         val query = when {
             moodCategory.equals("Manipuri Song", true) -> "Manipuri Hits"

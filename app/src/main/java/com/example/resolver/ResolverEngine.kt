@@ -209,8 +209,8 @@ class ResolverEngine {
 
         var effectiveTitle = track.title.trim()
         var effectiveArtist = track.artist.trim()
-        val isYouTubeId = false
-        val targetVideoId = rawId
+        val isYouTubeId = !cleanYtId.isNullOrBlank()
+        val targetVideoId = cleanYtId ?: rawId
         val isSpotify = rawId.length == 22 && !rawId.contains("_") && !rawId.contains("-")
         val isSaavn = ((rawId.isNotBlank() && rawId.all { it.isDigit() }) ||
             track.genre.contains("Indian", ignoreCase = true) ||
@@ -404,7 +404,7 @@ class ResolverEngine {
         }
 
         // 10. Fallback 3: On-Device YouTube Music text search + ranked stream extraction
-        if (resolvedStream == null && !isYouTubeId && !isSaavn && searchQuery.isNotBlank()) {
+        if (resolvedStream == null && searchQuery.isNotBlank()) {
             try {
                 val ytResults = youtubeInnerTubeProvider.searchTracks(searchQuery, limit = 10)
                 val targetTrack = NormalizedTrack(
@@ -419,7 +419,7 @@ class ResolverEngine {
                 )
                 val ranked = trackMatcher.rankCandidates(targetTrack, ytResults)
                 for (candidate in ranked) {
-                    if (candidate.sourceId.isBlank()) continue
+                    if (candidate.sourceId.isBlank() || candidate.sourceId == targetVideoId) continue
                     try {
                         resolvedStream = youtubeInnerTubeProvider.resolveStream(candidate.sourceId, preferredKbps = targetKbps)
                         if (resolvedStream != null) break
@@ -432,7 +432,7 @@ class ResolverEngine {
         }
 
         // 11. Fallback 4: On-Device JioSaavn search + 160kbps AAC DES decryption for verified match only
-        if (resolvedStream == null && !isYouTubeId && searchQuery.isNotBlank()) {
+        if (resolvedStream == null && searchQuery.isNotBlank()) {
             try {
                 val results = jioSaavnProvider.searchTracks(searchQuery, limit = 5)
                 val targetTrack = NormalizedTrack(

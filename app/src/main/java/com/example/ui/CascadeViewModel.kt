@@ -286,29 +286,52 @@ class CascadeViewModel(
             try {
                 val realHistory = musicRepository.getActiveHistory().firstOrNull().orEmpty()
                 val realLiked = musicRepository.getLikedTracks().firstOrNull().orEmpty()
+                val recentSearches = try {
+                    com.example.data.AppPreferences(com.example.CascadeApplication.instance).recentSearches.value
+                } catch (e: Exception) {
+                    emptyList()
+                }
 
-                val seedIds = (realHistory.take(4).map { it.id } + realLiked.take(3).map { it.id })
+                val bannedKeywords = setOf(
+                    "unknown artist", "unknown", "local artist", "device storage",
+                    "downloaded in seitharol", "<unknown>", "various artists", "various", "download", "seitharol"
+                )
+
+                val seedIds = (realHistory.take(5).map { it.id } + realLiked.take(3).map { it.id })
                     .filter { it.length == 11 }
                     .distinct()
 
-                val topArtists = (realHistory + realLiked)
+                val historyArtists = (realHistory + realLiked)
                     .map { it.artist.trim() }
-                    .filter { it.isNotBlank() && !it.equals("Unknown Artist", true) && !it.equals("Unknown", true) }
+                    .filter { it.isNotBlank() && !bannedKeywords.contains(it.lowercase()) && !bannedKeywords.any { b -> it.lowercase().contains(b) } }
+
+                val searchArtists = recentSearches
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() && !bannedKeywords.contains(it.lowercase()) && !bannedKeywords.any { b -> it.lowercase().contains(b) } }
+
+                val topArtists = (searchArtists + historyArtists)
                     .groupingBy { it }
                     .eachCount()
                     .entries
                     .sortedByDescending { it.value }
                     .map { it.key }
-                    .take(4)
+                    .take(5)
 
-                // 1. Personalized Quick Picks / For You feed via YouTube Music RDAMVM Automix + Top Artists
+                // 1. Personalized Quick Picks / For You feed via YouTube Music RDAMVM Automix + Top Artists / Searches
                 val personalizedCandidates = InnerTubeStreamExtractor.buildPersonalizedHomeFeed(
                     seedVideoIds = seedIds,
                     favoriteArtists = topArtists,
                     moodCategory = selectedMood.value
                 )
                 if (personalizedCandidates.isNotEmpty()) {
-                    val mapped = personalizedCandidates.map { it.toTrack() }
+                    val mapped = personalizedCandidates
+                        .filterNot { candidate ->
+                            val a = candidate.artist.lowercase().trim()
+                            val t = candidate.title.lowercase().trim()
+                            bannedKeywords.any { b -> a.contains(b) || t.contains(b) } ||
+                            t.contains("supermix") || t.contains("radio")
+                        }
+                        .map { it.toTrack() }
                     personalizedTracks.value = mapped
                     trendingHits.value = mapped.take(12)
                 }
@@ -319,7 +342,13 @@ class CascadeViewModel(
                     limit = 12
                 )
                 if (freshCandidates.isNotEmpty()) {
-                    freshReleases.value = freshCandidates.map { it.toTrack() }
+                    freshReleases.value = freshCandidates
+                        .filterNot { candidate ->
+                            val a = candidate.artist.lowercase().trim()
+                            val t = candidate.title.lowercase().trim()
+                            bannedKeywords.any { b -> a.contains(b) || t.contains(b) }
+                        }
+                        .map { it.toTrack() }
                 }
             } catch (e: Exception) {
                 Log.w("CascadeViewModel", "Home load error: ${e.message}")
@@ -574,6 +603,18 @@ class CascadeViewModel(
 
     fun playPlaylistOrMix(playlistId: String) {
         viewModelScope.launch {
+            if (playlistId == "liked_songs" || playlistId == "pl_liked_songs") {
+                val liked = likedTracks.value
+                if (liked.isNotEmpty()) {
+                    playQueue(liked, 0, isPlaylist = true)
+                }
+                return@launch
+            }
+            val localTracks = _userPlaylists.value[playlistId] ?: musicRepository.getTracksForPlaylist(playlistId).firstOrNull()
+            if (!localTracks.isNullOrEmpty()) {
+                playQueue(localTracks, 0, isPlaylist = true)
+                return@launch
+            }
             runCatching {
                 val details = InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(playlistId)
                 val tracks = details.tracks.map { it.toTrack() }

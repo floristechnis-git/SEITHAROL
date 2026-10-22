@@ -145,6 +145,7 @@ fun HomeScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     val appPreferences = remember { com.example.data.AppPreferences(context) }
     val userSettings by appPreferences.settings.collectAsState()
+    val recentSearches by appPreferences.recentSearches.collectAsState()
 
     // Deduplicate pools to ensure no duplicate songs appear
     val deduplicatedAllTracks = remember(allTracks) {
@@ -173,42 +174,13 @@ fun HomeScreen(
         pool.filterNot { it.id in excludedHeroIds }.take(12).map { it.toHomeMediaItem() }
     }
 
-    // Prepare YouTube Mixes Shelf (real continuous mixes with genuine mix identities)
-    val youtubeMixes = remember(personalizedTracks, activeHistory) {
-        val mixes = mutableListOf<HomeMediaItem>()
-        // Authentic RD mixes from YouTube Music
-        personalizedTracks.filter { it.id.startsWith("RD") }
-            .forEach { mixes.add(it.toHomeMediaItem(isMix = true)) }
-
-        val seedTracks = activeHistory.distinctBy { it.id }.take(3)
-        if (seedTracks.isNotEmpty()) {
-            val primarySeed = seedTracks.first()
-            mixes.add(
-                0,
-                HomeMediaItem(
-                    id = "RDAMVM${primarySeed.id}",
-                    title = "My SuperMix",
-                    subtitle = "Continuous blend of ${primarySeed.artist} and more",
-                    thumbnailUrl = primarySeed.artUrl,
-                    isMix = true,
-                    originalTrack = primarySeed
-                )
-            )
-            if (seedTracks.size > 1) {
-                val secondSeed = seedTracks[1]
-                mixes.add(
-                    HomeMediaItem(
-                        id = "RDAMVM${secondSeed.id}",
-                        title = "${secondSeed.artist} Radio",
-                        subtitle = "Endless mix inspired by ${secondSeed.artist}",
-                        thumbnailUrl = secondSeed.artUrl,
-                        isMix = true,
-                        originalTrack = secondSeed
-                    )
-                )
-            }
-        }
-        mixes.distinctBy { it.id }.take(6)
+    // Prepare YouTube Mixes Shelf (only authentic continuous mixes from YouTube Music, no synthetic mocks)
+    val youtubeMixes = remember(personalizedTracks) {
+        personalizedTracks
+            .filter { it.id.startsWith("RD") }
+            .map { it.toHomeMediaItem(isMix = true) }
+            .distinctBy { it.id }
+            .take(6)
     }
 
     // Prepare Featured Albums & Playlists (Liked Songs once on far left, non-empty playlists only)
@@ -240,30 +212,77 @@ fun HomeScreen(
         list
     }
 
-    // Prepare Spotify-Style 2-Column "Speed Dial / Quick Picks" Bento Items (2x3 grid = 6 items)
-    val quickDialItems = remember(youtubeMixes, activeHistory, trendingItems, excludedHeroIds) {
-        val items = mutableListOf<HomeMediaItem>()
-        items.addAll(youtubeMixes.filterNot { it.id in excludedHeroIds }.take(2))
-        activeHistory.distinctBy { it.id }.filterNot { it.id in excludedHeroIds }.take(4).forEach { items.add(it.toHomeMediaItem()) }
-        if (items.size < 6) {
-            trendingItems.filterNot { it.id in excludedHeroIds }.take(6 - items.size).forEach { items.add(it) }
-        }
-        items.take(6)
+    val bannedKeywords = remember {
+        setOf(
+            "local artist", "device storage", "downloaded in seitharol",
+            "<unknown>", "unknown artist", "unknown", "various artists", "various", "download", "seitharol"
+        )
     }
 
-    // Dynamic suggested artists strictly personalized from user's listening history and liked songs (strictly max 4)
-    val dynamicArtists = remember(activeHistory, likedTracks, trendingHits) {
+    // Prepare Spotify-Style 2-Column "Speed Dial / Quick Picks" Bento Items (2x3 grid = 6 items)
+    // Suggests genuine playable songs similar to what has been listened to or searched recently
+    val quickDialItems = remember(personalizedTracks, activeHistory, trendingItems, recentSearches, excludedHeroIds) {
+        fun isAuthenticCleanSong(item: HomeMediaItem): Boolean {
+            val a = item.subtitle.lowercase().trim()
+            val t = item.title.lowercase().trim()
+            val id = item.id.lowercase().trim()
+            if (item.isMix || item.isAlbumOrPlaylist) return false
+            if (t.contains("supermix") || t.contains("radio") || t.contains("mix")) return false
+            if (id.startsWith("rdamvm") || id.startsWith("vl") || id.startsWith("pl") || id.startsWith("mpreb_") || id.startsWith("olak5uy_")) return false
+            if (bannedKeywords.any { b -> a.contains(b) || t.contains(b) }) return false
+            return true
+        }
+
+        val items = mutableListOf<HomeMediaItem>()
+
+        // 1. Songs similar to recent listening & searches (from personalized recommendations)
+        personalizedTracks
+            .filterNot { it.id in excludedHeroIds }
+            .map { it.toHomeMediaItem() }
+            .filter(::isAuthenticCleanSong)
+            .distinctBy { "${it.title.lowercase().trim()}|${it.subtitle.lowercase().trim()}" }
+            .take(6)
+            .forEach { items.add(it) }
+
+        // 2. Real songs from recent listening history
+        activeHistory
+            .distinctBy { it.id }
+            .filterNot { it.id in excludedHeroIds }
+            .map { it.toHomeMediaItem() }
+            .filter(::isAuthenticCleanSong)
+            .distinctBy { "${it.title.lowercase().trim()}|${it.subtitle.lowercase().trim()}" }
+            .take(4)
+            .forEach { histItem ->
+                if (!items.any { it.id == histItem.id || (it.title.equals(histItem.title, true) && it.subtitle.equals(histItem.subtitle, true)) }) {
+                    items.add(histItem)
+                }
+            }
+
+        // 3. Fallback to trending hits as fill to guarantee at least 6 clean playable tracks
+        if (items.size < 6) {
+            trendingItems
+                .filterNot { it.id in excludedHeroIds }
+                .filter(::isAuthenticCleanSong)
+                .distinctBy { "${it.title.lowercase().trim()}|${it.subtitle.lowercase().trim()}" }
+                .take(6 - items.size)
+                .forEach { trendItem ->
+                    if (!items.any { it.id == trendItem.id || (it.title.equals(trendItem.title, true) && it.subtitle.equals(trendItem.subtitle, true)) }) {
+                        items.add(trendItem)
+                    }
+                }
+        }
+
+        items.distinctBy { it.id }.take(6)
+    }
+
+    // Dynamic suggested artists strictly personalized from user's listening history, liked songs, and recent searches (strictly max 4)
+    val dynamicArtists = remember(activeHistory, likedTracks, recentSearches, trendingHits) {
         val artistScores = mutableMapOf<String, Int>()
         fun isValidArtist(a: String): Boolean {
             val lower = a.lowercase().trim()
-            return lower.isNotBlank() &&
-                   lower != "unknown artist" &&
-                   lower != "unknown" &&
-                   lower != "local artist" &&
-                   lower != "device storage" &&
-                   lower != "downloaded in seitharol"
+            return lower.isNotBlank() && !bannedKeywords.any { lower.contains(it) }
         }
-        // Strictly score based on listening frequency (weight 2) and user likes (weight 3)
+        // Strictly score based on listening frequency (weight 2), user likes (weight 3), and searches (weight 2)
         activeHistory.forEach { track ->
             val a = track.artist.trim()
             if (isValidArtist(a)) {
@@ -276,12 +295,18 @@ fun HomeScreen(
                 artistScores[a] = (artistScores[a] ?: 0) + 3
             }
         }
+        recentSearches.forEach { query ->
+            val q = query.trim()
+            if (isValidArtist(q)) {
+                artistScores[q] = (artistScores[q] ?: 0) + 2
+            }
+        }
 
         val personalized = artistScores.entries
             .sortedByDescending { it.value }
             .map { it.key }
 
-        // If user has listened/liked artists, show ONLY their top personalized artists (strictly max 4)
+        // If user has listened/liked/searched artists, show ONLY their top personalized artists (strictly max 4)
         if (personalized.isNotEmpty()) {
             personalized.take(4)
         } else {
@@ -840,10 +865,13 @@ fun AestheticMusicHomeScreen(
         }
 
         // 2. Spotify-Style 2-Column Quick Dial Bento Grid
-        if (trendingSongs.size >= 4) {
+        val cleanBentoItems = remember(trendingSongs) {
+            trendingSongs.filter { !it.isMix && !it.isAlbumOrPlaylist && !it.title.contains("SuperMix", true) && !it.title.contains("Radio", true) }
+        }
+        if (cleanBentoItems.size >= 4) {
             item {
                 QuickDialBentoSection(
-                    items = (youtubeMixes.take(2) + trendingSongs.take(4)).take(6),
+                    items = cleanBentoItems.take(6),
                     onItemClick = { item ->
                         if (item.isMix || item.isAlbumOrPlaylist) onMixOrPlaylistClick(item)
                         else onTrackClick(item)

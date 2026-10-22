@@ -1,6 +1,8 @@
 // seitharol/data/download/DownloadPreferencesAndService.kt
 package com.seitharol.data.download
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.ContentValues
 import android.content.Context
 import android.media.MediaScannerConnection
@@ -8,8 +10,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.seitharol.data.preferences.AppSettingsManager
@@ -183,23 +183,18 @@ class DownloadPreferencesAndService(private val context: Context) {
             val streamUrl = resolveDirectDownloadUrl(track, primaryArtist, provider, preferredQuality)
                 ?: throw IllegalStateException("Could not resolve downloadable stream for ${track.title}")
 
-            val isYt = streamUrl.contains("googlevideo.com") || streamUrl.contains("youtube.com")
+            val headers = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(streamUrl)
             val conn = (URL(streamUrl).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 connectTimeout = 20_000
                 readTimeout = 60_000
-                if (isYt) {
-                    setRequestProperty("User-Agent", com.seitharol.player.OuterTuneResolvingDataSource.VR_USER_AGENT)
-                    setRequestProperty("Range", "bytes=0-")
-                } else {
-                    setRequestProperty("User-Agent", "Mozilla/5.0 (Android 14; Mobile)")
-                }
+                headers.forEach { (k, v) -> setRequestProperty(k, v) }
+                setRequestProperty("Range", "bytes=0-")
             }
             if (conn.responseCode !in 200..299) {
                 throw IllegalStateException("Audio server returned HTTP ${conn.responseCode}")
             }
 
-            // Fallback estimated size if Content-Length is missing (-1)
             val fallbackEstimatedBytes = ((track.durationMs / 1000L).coerceAtLeast(180L)) * 20_000L
             val totalBytes = conn.contentLengthLong.takeIf { it > 1000L } ?: fallbackEstimatedBytes
             val safeFileName = sanitizeFileName("$primaryArtist - ${track.title}.${format.ext}")
@@ -264,7 +259,6 @@ class DownloadPreferencesAndService(private val context: Context) {
             )
             persistCompletedDownload(localMusicTrack)
 
-            // Immediately register into CascadeDatabase Room DAOs so search & library see it synchronously
             runCatching {
                 val db = com.example.data.local.CascadeDatabase.getInstance(context)
                 val trackDao = db.trackDao()
@@ -333,7 +327,7 @@ class DownloadPreferencesAndService(private val context: Context) {
             val buffer = ByteArray(16 * 1024)
             var bytesRead: Int
             while (input.read(buffer).also { bytesRead = it } != -1) {
-                coroutineContext.ensureActive() // Enables immediate cancellation
+                coroutineContext.ensureActive()
                 output.write(buffer, 0, bytesRead)
                 downloadedBytes += bytesRead
                 val progress = ((downloadedBytes * 100L) / totalBytes.coerceAtLeast(1L)).toInt().coerceIn(1, 99)
@@ -371,8 +365,9 @@ class DownloadPreferencesAndService(private val context: Context) {
             durationSeconds = (track.durationMs / 1000L).toInt(),
             thumbnailUrl = track.artUrl
         )
-        if (track.source == TrackSource.YOUTUBE && track.sourceId.length == 11) {
-            InnerTubeStreamExtractor.resolveWorkingStreamUrl(track.sourceId, preferredQuality)
+        val cleanYtId = InnerTubeStreamExtractor.extractVideoId(track.sourceId)
+        if (!cleanYtId.isNullOrBlank() && provider != DownloadProvider.JIOSAAVN) {
+            InnerTubeStreamExtractor.resolveWorkingStreamUrl(cleanYtId, preferredQuality)
                 .getOrNull()?.let { return it }
         }
         if (provider == DownloadProvider.JIOSAAVN) {

@@ -2,6 +2,7 @@ package com.example.resolver.providers
 
 import android.util.Log
 import com.example.network.NetworkClients
+import com.example.resolver.KotlinJsInterp
 import com.example.resolver.ResolvedStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -31,6 +32,76 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
 
     private val CLIENT_PROFILES = listOf(
         ClientProfile(
+            name = "ANDROID_VR",
+            version = "1.60.19",
+            clientId = "28",
+            userAgent = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+            clientJson = JSONObject().apply {
+                put("clientName", "ANDROID_VR")
+                put("clientVersion", "1.60.19")
+                put("deviceMake", "Oculus")
+                put("deviceModel", "Quest 3")
+                put("androidSdkVersion", 32)
+                put("osName", "Android")
+                put("osVersion", "12L")
+                put("hl", "en")
+                put("gl", "US")
+                put("timeZone", "UTC")
+                put("utcOffsetMinutes", 0)
+            }
+        ),
+        ClientProfile(
+            name = "ANDROID_VR_FALLBACK",
+            version = "1.56.21",
+            clientId = "28",
+            userAgent = "com.google.android.apps.youtube.vr.oculus/1.56.21 (Linux; U; Android 12L; Quest 2 Build/SQ3A.220605.009.A1) gzip",
+            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+            clientJson = JSONObject().apply {
+                put("clientName", "ANDROID_VR")
+                put("clientVersion", "1.56.21")
+                put("deviceMake", "Oculus")
+                put("deviceModel", "Quest 2")
+                put("androidSdkVersion", 32)
+                put("osName", "Android")
+                put("osVersion", "12L")
+                put("hl", "en")
+                put("gl", "US")
+                put("timeZone", "UTC")
+                put("utcOffsetMinutes", 0)
+            }
+        ),
+        ClientProfile(
+            name = "ANDROID_TESTSUITE",
+            version = "1.9",
+            clientId = "30",
+            userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 12L; US) gzip",
+            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+            clientJson = JSONObject().apply {
+                put("clientName", "ANDROID_TESTSUITE")
+                put("clientVersion", "1.9")
+                put("androidSdkVersion", 32)
+                put("osName", "Android")
+                put("osVersion", "12L")
+                put("hl", "en")
+                put("gl", "US")
+            }
+        ),
+        ClientProfile(
+            name = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+            version = "2.0",
+            clientId = "85",
+            userAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/11.50) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.0 Safari/605.1.15",
+            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+            isEmbedded = true,
+            clientJson = JSONObject().apply {
+                put("clientName", "TVHTML5_SIMPLY_EMBEDDED_PLAYER")
+                put("clientVersion", "2.0")
+                put("hl", "en")
+                put("gl", "US")
+            }
+        ),
+        ClientProfile(
             name = "IOS",
             version = "20.10.4",
             clientId = "5",
@@ -50,63 +121,14 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             }
         ),
         ClientProfile(
-            name = "IOS_FALLBACK",
-            version = "20.25.1",
-            clientId = "5",
-            userAgent = "com.google.ios.youtube/20.25.1 (iPhone16,2; U; CPU iOS 18_5 like Mac OS X; en_US)",
-            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-            clientJson = JSONObject().apply {
-                put("clientName", "IOS")
-                put("clientVersion", "20.25.1")
-                put("deviceMake", "Apple")
-                put("deviceModel", "iPhone16,2")
-                put("osName", "iOS")
-                put("osVersion", "18.5.0")
-                put("hl", "en")
-                put("gl", "US")
-                put("timeZone", "UTC")
-                put("utcOffsetMinutes", 0)
-            }
-        ),
-        ClientProfile(
-            name = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
-            version = "2.0",
-            clientId = "85",
-            userAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/11.50) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.0 Safari/605.1.15",
-            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-            isEmbedded = true,
-            clientJson = JSONObject().apply {
-                put("clientName", "TVHTML5_SIMPLY_EMBEDDED_PLAYER")
-                put("clientVersion", "2.0")
-                put("hl", "en")
-                put("gl", "US")
-            }
-        ),
-        ClientProfile(
             name = "WEB_REMIX",
-            version = "1.20250101.01.00",
+            version = "1.20250310.01.00",
             clientId = "67",
             userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             playerEndpoint = "https://music.youtube.com/youtubei/v1/player?prettyPrint=false",
             clientJson = JSONObject().apply {
                 put("clientName", "WEB_REMIX")
-                put("clientVersion", "1.20250101.01.00")
-                put("hl", "en")
-                put("gl", "US")
-            }
-        ),
-        ClientProfile(
-            name = "ANDROID_TESTSUITE",
-            version = "1.9",
-            clientId = "30",
-            userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 12; US) gzip",
-            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-            clientJson = JSONObject().apply {
-                put("clientName", "ANDROID_TESTSUITE")
-                put("clientVersion", "1.9")
-                put("androidSdkVersion", 32)
-                put("osName", "Android")
-                put("osVersion", "12")
+                put("clientVersion", "1.20250310.01.00")
                 put("hl", "en")
                 put("gl", "US")
             }
@@ -116,9 +138,6 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
     private val CLIENT_WEB_REMIX = CLIENT_PROFILES.first { it.name == "WEB_REMIX" }.clientJson
     private val SEARCH_PARAMS_SONGS = "EgWKAQIIAWoKEAkQBRAKEAMQBA=="
 
-    /**
-     * Resolves title and artist for a YouTube videoId when Track metadata is blank.
-     */
     suspend fun fetchMetadataById(videoId: String): Pair<String, String>? = withContext(Dispatchers.IO) {
         val cleanId = extractVideoId(videoId) ?: videoId.trim()
         if (cleanId.isBlank()) return@withContext null
@@ -147,14 +166,8 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             val cleanQuery = query.trim()
             if (cleanQuery.isBlank()) return@withContext emptyList()
             try {
-                // 1. Try official YouTube Music "Songs" filter (EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D)
                 var songs = executeSearch(cleanQuery, SEARCH_PARAMS_SONGS, limit)
-                if (songs.isEmpty()) {
-                    songs = executeSearch(cleanQuery, "EgWKAQIIAWoKEAkQBRAKEAMQBA==", limit)
-                }
                 if (songs.isNotEmpty()) return@withContext songs
-
-                // 2. Fallback to unfiltered YouTube Music search
                 executeSearch(cleanQuery, null, limit)
             } catch (e: Exception) {
                 Log.e(TAG, "searchTracks failed: ${e.message}", e)
@@ -175,7 +188,7 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             .post(payload.toString().toRequestBody(jsonMediaType))
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
             .header("X-YouTube-Client-Name", "67")
-            .header("X-YouTube-Client-Version", "1.20250101.01.00")
+            .header("X-YouTube-Client-Version", "1.20250310.01.00")
             .header("Origin", "https://music.youtube.com")
             .header("Referer", "https://music.youtube.com/")
             .build()
@@ -202,7 +215,7 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                     .post(payload.toString().toRequestBody(jsonMediaType))
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
                     .header("X-YouTube-Client-Name", "67")
-                    .header("X-YouTube-Client-Version", "1.20250101.01.00")
+                    .header("X-YouTube-Client-Version", "1.20250310.01.00")
                     .header("Referer", "https://music.youtube.com/")
                     .build()
 
@@ -217,20 +230,25 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             }
         }
 
-        companion object {
-            private val VALID_VIDEO_ID_REGEX = Regex("^[a-zA-Z0-9_-]{11}$")
-            fun extractVideoId(id: String?): String? =
-                com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(id)
-            fun isValidYoutubeVideoId(id: String?): Boolean =
-                extractVideoId(id) != null
-        }
+    companion object {
+        fun extractVideoId(id: String?): String? =
+            com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(id)
+
+        fun isValidYoutubeVideoId(id: String?): Boolean =
+            extractVideoId(id) != null
+    }
 
     suspend fun resolveExactYoutubeStreamById(
         videoId: String,
-        preferredQuality: com.seitharol.data.resolver.AudioQuality = com.seitharol.data.resolver.AudioQuality.HIGH
+        preferredQuality: com.seitharol.data.resolver.AudioQuality = com.seitharol.data.resolver.AudioQuality.NORMAL,
+        forceRefresh: Boolean = false
     ): Result<String> {
         val cleanId = extractVideoId(videoId) ?: videoId
-        return com.seitharol.data.resolver.InnerTubeStreamExtractor.resolveExactYoutubeStreamById(cleanId, preferredQuality)
+        return com.seitharol.data.resolver.InnerTubeStreamExtractor.resolveExactYoutubeStreamById(
+            cleanId,
+            preferredQuality,
+            forceRefresh
+        )
     }
 
     override suspend fun resolveStream(sourceId: String, preferredKbps: Int): ResolvedStream =
@@ -259,28 +277,30 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                         bitrate = bitrateLabel,
                         expiresAtMs = now + (6 * 3600 * 1000L),
                         isLocal = false,
-                        resolvedBy = "YouTube InnerTube Direct",
-                        latencyMs = 15
+                        resolvedBy = "YouTube InnerTube Direct (ANDROID_VR)",
+                        latencyMs = 12
                     )
                 }
             }
 
             val errors = mutableListOf<String>()
+            val targetId = cleanId ?: sourceId.trim()
 
             for (profile in CLIENT_PROFILES) {
                 try {
-                    val stream = resolveWithClient(sourceId, profile, preferredKbps)
+                    val stream = resolveWithClient(targetId, profile, preferredKbps)
                     if (stream != null) return@withContext stream
                 } catch (e: Exception) {
                     errors.add("${profile.name}: ${e.message}")
-                    Log.w(TAG, "Client ${profile.name} failed for $sourceId: ${e.message}")
+                    Log.w(TAG, "Client ${profile.name} failed for $targetId: ${e.message}")
                 }
             }
 
-            throw IllegalStateException("YouTube ($sourceId) failed [${errors.joinToString("; ")}]")
+            throw IllegalStateException("YouTube ($targetId) failed [${errors.joinToString("; ")}]")
         }
 
     private fun resolveWithClient(videoId: String, profile: ClientProfile, preferredKbps: Int): ResolvedStream? {
+        val cpn = (1..16).map { "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_".random() }.joinToString("")
         val playbackContext = JSONObject().apply {
             put("contentPlaybackContext", JSONObject().apply {
                 put("html5Preference", "HTML5_PREF_WANTS")
@@ -291,11 +311,12 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             put("context", JSONObject().apply {
                 put("client", profile.clientJson)
                 if (profile.isEmbedded) {
-                    put("thirdParty", JSONObject().apply { put("embedUrl", "https://www.youtube.com") })
+                    put("thirdParty", JSONObject().apply { put("embedUrl", "https://www.youtube.com/") })
                 }
             })
             put("playbackContext", playbackContext)
             put("videoId", videoId)
+            put("cpn", cpn)
             put("contentCheckOk", true)
             put("racyCheckOk", true)
         }
@@ -315,6 +336,7 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             .header("X-YouTube-Client-Version", profile.version)
             .header("Origin", origin)
             .header("Referer", "$origin/")
+            .header("X-Goog-Api-Format-Version", "2")
         if (!visitorData.isNullOrBlank()) {
             requestBuilder.header("X-Goog-Visitor-Id", visitorData)
         }
@@ -358,7 +380,6 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                     val isAudio = mime.startsWith("audio/") || f.optInt("itag") in listOf(140, 251, 250, 249, 139, 18)
                     if (!isAudio) continue
 
-                    // Check direct unencrypted URL or signatureCipher / cipher
                     var streamUrl = f.optString("url", "")
                     if (streamUrl.isBlank()) {
                         val cipherStr = f.optString("signatureCipher").ifBlank { f.optString("cipher") }
@@ -367,6 +388,19 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                         }
                     }
                     if (streamUrl.isBlank()) continue
+
+                    if (streamUrl.contains("&n=")) {
+                        val nMatch = Regex("&n=([^&]+)").find(streamUrl)
+                        if (nMatch != null) {
+                            val origN = nMatch.groupValues[1]
+                            val transN = KotlinJsInterp.transformNParam(origN)
+                            streamUrl = streamUrl.replace("&n=$origN", "&n=$transN")
+                        }
+                    }
+                    if (!streamUrl.contains("cpn=")) {
+                        val sep = if (streamUrl.contains("?")) "&" else "?"
+                        streamUrl = "$streamUrl${sep}cpn=$cpn"
+                    }
 
                     val itag = f.optInt("itag", 251)
                     val bitrate = f.optInt("bitrate", 128000)
@@ -401,6 +435,11 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             }
 
             val resolvedUrl = bestUrl ?: throw IllegalStateException("No direct audio URL in formats")
+            com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(
+                videoId,
+                com.seitharol.data.resolver.AudioQuality.NORMAL,
+                resolvedUrl
+            )
             return ResolvedStream(
                 videoId = videoId,
                 streamUrl = resolvedUrl,
@@ -435,17 +474,13 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                 return rawUrl
             }
 
-            val decipheredSig = decipherSignature(sig)
+            val decipheredSig = KotlinJsInterp.decipherSignature(sig, emptyList())
             val separator = if (rawUrl.contains("?")) "&" else "?"
             "$rawUrl$separator$sigParam=$decipheredSig"
         } catch (e: Exception) {
             Log.w(TAG, "extractAndDecipherSignatureCipher failed: ${e.message}")
             null
         }
-    }
-
-    private fun decipherSignature(sig: String): String {
-        return sig
     }
 
     private fun parseSearchResponse(json: JSONObject, limit: Int): List<NormalizedTrack> {
@@ -549,7 +584,6 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             }
 
             if (durationMs in 1..45_000L) {
-                // Reject shorts, ringtones, and previews <= 45 seconds
                 continue
             }
 

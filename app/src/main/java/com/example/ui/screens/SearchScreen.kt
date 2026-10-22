@@ -276,7 +276,7 @@ fun SearchScreen(
                             }
                         ),
                         textStyle = TextStyle(
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.onSurface,
                             fontSize = 15.sp,
                             fontFamily = OutfitFontFamily,
                             fontWeight = FontWeight.Normal
@@ -603,7 +603,7 @@ fun SearchScreen(
                             .clip(RoundedCornerShape(18.dp))
                             .clickable { selectedTab = tab },
                         shape = RoundedCornerShape(18.dp),
-                        color = if (isSelected) SeitharolPillBg else SeitharolWhite
+                        color = if (isSelected) SeitharolPillBg else MaterialTheme.colorScheme.surfaceVariant
                     ) {
                         Box(
                             contentAlignment = Alignment.Center,
@@ -734,7 +734,7 @@ fun SearchScreen(
                                 modifier = Modifier
                                     .size(44.dp)
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(Color(0xFFE0E0E0)),
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
                                 contentAlignment = Alignment.Center
                             ) {
                                 AsyncImage(
@@ -861,7 +861,7 @@ fun SearchScreen(
             track = track,
             playlists = playlists,
             onSelectPlaylist = { pId ->
-                viewModel.addTrackToPlaylist(pId, track.id)
+                viewModel.addTrackToPlaylist(pId, track)
                 trackToAddToPlaylist = null
             },
             onCreateNewPlaylist = {

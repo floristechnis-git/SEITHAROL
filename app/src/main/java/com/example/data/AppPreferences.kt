@@ -145,8 +145,9 @@ class AppPreferences private constructor(context: Context) {
         runCatching {
             val aq = when (quality.uppercase()) {
                 "LOW" -> com.seitharol.data.resolver.AudioQuality.LOW
+                "NORMAL" -> com.seitharol.data.resolver.AudioQuality.NORMAL
                 "HIGH" -> com.seitharol.data.resolver.AudioQuality.HIGH
-                else -> com.seitharol.data.resolver.AudioQuality.LOW
+                else -> com.seitharol.data.resolver.AudioQuality.NORMAL
             }
             com.seitharol.data.preferences.AppSettingsManager.getInstance(appContext).setStreamingQuality(aq)
         }
@@ -160,8 +161,9 @@ class AppPreferences private constructor(context: Context) {
         runCatching {
             val aq = when (quality.uppercase()) {
                 "LOW" -> com.seitharol.data.resolver.AudioQuality.LOW
+                "NORMAL" -> com.seitharol.data.resolver.AudioQuality.NORMAL
                 "HIGH" -> com.seitharol.data.resolver.AudioQuality.HIGH
-                else -> com.seitharol.data.resolver.AudioQuality.LOW
+                else -> com.seitharol.data.resolver.AudioQuality.NORMAL
             }
             com.seitharol.data.preferences.AppSettingsManager.getInstance(appContext).setDownloadQuality(aq)
         }
@@ -171,6 +173,9 @@ class AppPreferences private constructor(context: Context) {
         val clamped = gainDb.coerceIn(-12f, 12f)
         prefs.edit().putFloat("eq_band_$bandIndex", clamped).apply()
         _settings.value = loadSettings()
+        runCatching {
+            com.seitharol.data.preferences.AppSettingsManager.getInstance(appContext).setEqBand(bandIndex, clamped)
+        }
     }
 
     fun resetEqualizer() {
@@ -180,21 +185,33 @@ class AppPreferences private constructor(context: Context) {
         }
         editor.apply()
         _settings.value = loadSettings()
+        runCatching {
+            com.seitharol.data.preferences.AppSettingsManager.getInstance(appContext).resetEqualizer()
+        }
     }
 
     fun setEqEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("eq_enabled", enabled).apply()
         _settings.value = loadSettings()
+        runCatching {
+            com.seitharol.data.preferences.AppSettingsManager.getInstance(appContext).setEqEnabled(enabled)
+        }
     }
 
     fun setGaplessPlayback(enabled: Boolean) {
         prefs.edit().putBoolean("gapless_playback", enabled).apply()
         _settings.value = loadSettings()
+        runCatching {
+            com.seitharol.data.preferences.AppSettingsManager.getInstance(appContext).setGaplessPlayback(enabled)
+        }
     }
 
     fun setAudioNormalization(enabled: Boolean) {
         prefs.edit().putBoolean("audio_normalization", enabled).apply()
         _settings.value = loadSettings()
+        runCatching {
+            com.seitharol.data.preferences.AppSettingsManager.getInstance(appContext).setAudioNormalization(enabled)
+        }
     }
 
     fun saveOnboarding(name: String, age: String) {
@@ -234,5 +251,8 @@ class AppPreferences private constructor(context: Context) {
             .putInt("sleep_timer_min", minutes)
             .apply()
         _settings.value = loadSettings()
+        runCatching {
+            com.seitharol.data.preferences.AppSettingsManager.getInstance(appContext).setSleepTimer(minutes)
+        }
     }
 }

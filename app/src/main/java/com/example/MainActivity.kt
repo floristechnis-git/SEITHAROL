@@ -1,7 +1,5 @@
 package com.example
 
-import android.app.NotificationManager
-import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -45,6 +43,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Ensure singleton ExoPlayer is initialized if the Activity was recreated after process/activity reclamation
+        (application as? CascadeApplication)?.audioPlayerManager?.ensurePlayerInitialized()
+
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
@@ -60,11 +61,15 @@ class MainActivity : ComponentActivity() {
             val persistedSettings by settingsManager.state.collectAsState()
             val systemDark = isSystemInDarkTheme()
 
-            // Single reactive source of truth for Theme Mode across the entire app
-            val effectiveDark = when {
-                userSettings.themeMode.equals("LIGHT", ignoreCase = true) || persistedSettings.themeMode == ThemeMode.LIGHT -> false
-                userSettings.themeMode.equals("DARK", ignoreCase = true) || persistedSettings.themeMode == ThemeMode.DARK -> true
-                else -> systemDark
+            // Deterministic single source of truth for Theme Mode across the entire app
+            val effectiveDark = when (persistedSettings.themeMode) {
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+                ThemeMode.SYSTEM -> when (userSettings.themeMode.uppercase()) {
+                    "LIGHT" -> false
+                    "DARK" -> true
+                    else -> systemDark
+                }
             }
 
             var isSplashFinished by remember { mutableStateOf(hasShownSplashThisProcess) }
@@ -91,14 +96,9 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        if (!isChangingConfigurations) {
-            runCatching {
-                viewModel.stopPlayback()
-                (application as? CascadeApplication)?.audioPlayerManager?.release()
-                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-                nm?.cancelAll()
-            }
-        }
+        // Do NOT call audioPlayerManager.release() or stopPlayback() when Android reclaims MainActivity
+        // in the background while music is playing; MediaPlaybackService owns background playback lifecycle
+        // and stops playback in onTaskRemoved() only when the user swipes the app away from Recents.
         super.onDestroy()
     }
 }

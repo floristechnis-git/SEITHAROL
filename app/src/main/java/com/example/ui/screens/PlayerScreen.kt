@@ -1382,7 +1382,7 @@ fun PlayerAudioAdjustmentSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("5-Band Studio Equalizer", fontWeight = FontWeight.SemiBold)
+                Text("5-Band Studio Equalizer", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                 Switch(
                     checked = state.eqEnabled,
                     onCheckedChange = { settingsManager.setEqEnabled(it) },
@@ -1397,8 +1397,8 @@ fun PlayerAudioAdjustmentSheet(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(freq, style = MaterialTheme.typography.labelMedium)
-                        Text("${"%.1f".format(gain)} dB", style = MaterialTheme.typography.labelMedium)
+                        Text(freq, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
+                        Text("${"%.1f".format(gain)} dB", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Slider(
                         value = gain,
@@ -1417,7 +1417,7 @@ fun PlayerAudioAdjustmentSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Normalize Volume", fontWeight = FontWeight.Medium)
+                Text("Normalize Volume", fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
                 Switch(
                     checked = state.audioNormalization,
                     onCheckedChange = { settingsManager.setAudioNormalization(it) },
@@ -1429,7 +1429,7 @@ fun PlayerAudioAdjustmentSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Gapless Playback", fontWeight = FontWeight.Medium)
+                Text("Gapless Playback", fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
                 Switch(
                     checked = state.gaplessPlayback,
                     onCheckedChange = { settingsManager.setGaplessPlayback(it) },

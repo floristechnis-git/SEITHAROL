@@ -173,7 +173,7 @@ fun ArtistScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = page.name,
-                                    color = MaterialTheme.colorScheme.onBackground,
+                                    color = Color.White,
                                     fontSize = 26.sp,
                                     fontWeight = FontWeight.ExtraBold,
                                     maxLines = 1,
@@ -346,6 +346,7 @@ fun ArtistScreen(
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
                                         text = release.title,
+                                        color = MaterialTheme.colorScheme.onBackground,
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 14.sp,
                                         maxLines = 1,
@@ -414,6 +415,7 @@ fun ArtistScreen(
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
                                         text = pl.title,
+                                        color = MaterialTheme.colorScheme.onBackground,
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 14.sp,
                                         maxLines = 1,
@@ -490,6 +492,7 @@ fun ArtistScreen(
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
                                         text = sim.name,
+                                        color = MaterialTheme.colorScheme.onBackground,
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 13.sp,
                                         maxLines = 1,

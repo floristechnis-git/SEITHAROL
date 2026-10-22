@@ -388,7 +388,10 @@ private fun SingleChoiceSettingsDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title, fontWeight = FontWeight.Bold) },
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        textContentColor = MaterialTheme.colorScheme.onSurface,
+        title = { Text(title, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) },
         text = {
             Column {
                 options.forEachIndexed { idx, label ->
@@ -405,13 +408,13 @@ private fun SingleChoiceSettingsDialog(
                             onClick = { onSelect(idx) }
                         )
                         Spacer(modifier = Modifier.width(10.dp))
-                        Text(label, style = MaterialTheme.typography.bodyMedium)
+                        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
                     }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
+            TextButton(onClick = onDismiss) { Text("Close", color = MaterialTheme.colorScheme.primary) }
         }
     )
 }

@@ -235,17 +235,20 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                         is SubScreen.History -> HistoryScreen(
                             viewModel = viewModel,
                             playerState = playerState,
-                            onBack = { currentSubScreen = SubScreen.None }
+                            onBack = { currentSubScreen = SubScreen.None },
+                            onAddToPlaylist = { trackToAddToPlaylist = it }
                         )
                         is SubScreen.Downloads -> DownloadsScreen(
                             viewModel = viewModel,
                             playerState = playerState,
-                            onBack = { currentSubScreen = SubScreen.None }
+                            onBack = { currentSubScreen = SubScreen.None },
+                            onAddToPlaylist = { trackToAddToPlaylist = it }
                         )
                         is SubScreen.LikedSongs -> LikedSongsScreen(
                             viewModel = viewModel,
                             playerState = playerState,
-                            onBack = { currentSubScreen = SubScreen.None }
+                            onBack = { currentSubScreen = SubScreen.None },
+                            onAddToPlaylist = { trackToAddToPlaylist = it }
                         )
                         is SubScreen.InfoDetail -> InfoDetailScreen(
                             pageType = sub.pageType,
@@ -480,7 +483,8 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                         HistoryScreen(
                             viewModel = viewModel,
                             playerState = playerState,
-                            onBack = { currentSubScreen = SubScreen.None }
+                            onBack = { currentSubScreen = SubScreen.None },
+                            onAddToPlaylist = { trackToAddToPlaylist = it }
                         )
                     }
                     is SubScreen.Downloads -> {
@@ -488,7 +492,8 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                         DownloadsScreen(
                             viewModel = viewModel,
                             playerState = playerState,
-                            onBack = { currentSubScreen = SubScreen.None }
+                            onBack = { currentSubScreen = SubScreen.None },
+                            onAddToPlaylist = { trackToAddToPlaylist = it }
                         )
                     }
                     is SubScreen.LikedSongs -> {
@@ -496,7 +501,8 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                         LikedSongsScreen(
                             viewModel = viewModel,
                             playerState = playerState,
-                            onBack = { currentSubScreen = SubScreen.None }
+                            onBack = { currentSubScreen = SubScreen.None },
+                            onAddToPlaylist = { trackToAddToPlaylist = it }
                         )
                     }
                     is SubScreen.InfoDetail -> {
@@ -826,7 +832,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                 track = track,
                 playlists = playlists,
                 onSelectPlaylist = { plId ->
-                    viewModel.addTrackToPlaylist(plId, track.id)
+                    viewModel.addTrackToPlaylist(plId, track)
                     trackToAddToPlaylist = null
                 },
                 onCreateNewPlaylist = {

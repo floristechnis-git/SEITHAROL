@@ -5,7 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.graphics.Color
 
-// Semantic Theme Tokens (Theme-Adaptive & Contrast Guaranteed)
+// Semantic Theme Tokens (Theme-Adaptive & Contrast Guaranteed across Light & Dark Modes)
 val SeitharolBg: Color
     @Composable
     @ReadOnlyComposable
@@ -21,6 +21,12 @@ val SeitharolDark: Color
     @Composable
     @ReadOnlyComposable
     get() = MaterialTheme.colorScheme.onSurface
+
+// Inverse foreground color when SeitharolDark is used as a filled container background
+val SeitharolOnDark: Color
+    @Composable
+    @ReadOnlyComposable
+    get() = MaterialTheme.colorScheme.surface
 
 val SeitharolDarkCard: Color
     @Composable
@@ -81,15 +87,15 @@ val SeitharolTextSecondary: Color
 val SeitharolTextTertiary: Color
     @Composable
     @ReadOnlyComposable
-    get() = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+    get() = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
 
 val SeitharolTextMuted: Color
     @Composable
     @ReadOnlyComposable
-    get() = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+    get() = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
 
 val SeitharolTextLight: Color = Color(0xFFFFFFFF)
-val SeitharolTextLightMuted: Color = Color(0xFFD0D0D0)
+val SeitharolTextLightMuted: Color = Color(0xFFE0E0E0)
 
 val SeitharolBorder: Color
     @Composable
@@ -104,19 +110,19 @@ val SeitharolDivider: Color
 val SeitharolGlassDark: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0x33FFFFFF) else Color(0x1F000000)
+    get() = if (LocalIsDarkTheme.current) Color(0x33FFFFFF) else Color(0x14000000)
 
 val SeitharolGlassDarkActive: Color
     @Composable
     @ReadOnlyComposable
-    get() = if (LocalIsDarkTheme.current) Color(0x4DFFFFFF) else Color(0x33000000)
+    get() = if (LocalIsDarkTheme.current) Color(0x4DFFFFFF) else Color(0x26000000)
 
 val SeitharolModalScrim: Color = Color(0x8C000000)
 
 val SeitharolHandleBar: Color
     @Composable
     @ReadOnlyComposable
-    get() = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+    get() = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
 
 // Accent highlight
 val SeitharolAccent: Color
@@ -125,4 +131,4 @@ val SeitharolAccent: Color
     get() = MaterialTheme.colorScheme.primary
 
 val SeitharolRedHeart: Color = Color(0xFFFF3B56)
-val SeitharolGreen: Color = Color(0xFF00E676)
+val SeitharolGreen: Color = Color(0xFF00C853)

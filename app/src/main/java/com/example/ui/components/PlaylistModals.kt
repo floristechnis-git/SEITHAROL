@@ -16,7 +16,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -134,7 +133,7 @@ fun AddToPlaylistModal(
                                 modifier = Modifier
                                     .size(44.dp)
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(Color(0xFFE0E0E0)),
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (pl.coverUrl != null) {
@@ -170,13 +169,13 @@ fun AddToPlaylistModal(
                                 Surface(
                                     modifier = Modifier.size(28.dp),
                                     shape = CircleShape,
-                                    color = SeitharolDark
+                                    color = MaterialTheme.colorScheme.primary
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         Icon(
                                             imageVector = Icons.Default.Check,
                                             contentDescription = "Added",
-                                            tint = Color.White,
+                                            tint = MaterialTheme.colorScheme.onPrimary,
                                             modifier = Modifier.size(16.dp)
                                         )
                                     }
@@ -235,10 +234,11 @@ fun CreatePlaylistDialog(
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = SeitharolDark,
-                        unfocusedBorderColor = Color(0xFFD0D0D0),
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
                         focusedTextColor = SeitharolDark,
-                        unfocusedTextColor = SeitharolDark
+                        unfocusedTextColor = SeitharolDark,
+                        cursorColor = MaterialTheme.colorScheme.primary
                     ),
                     modifier = Modifier
                         .fillMaxWidth()

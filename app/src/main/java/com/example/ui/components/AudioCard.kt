@@ -59,7 +59,7 @@ fun TrackCard(
             .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onTrackClick)
             .testTag("track_card_${track.id}"),
-        color = if (isPlaying) SeitharolWhite else Color.Transparent,
+        color = if (isPlaying) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f) else Color.Transparent,
         shape = RoundedCornerShape(16.dp)
     ) {
         Row(
@@ -85,7 +85,7 @@ fun TrackCard(
                 modifier = Modifier
                     .size(44.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFFE0E0E0)),
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
                 AsyncImage(
@@ -294,7 +294,7 @@ fun HitCard(
                     .fillMaxWidth()
                     .height(120.dp)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFFE8E8E8)),
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
                 AsyncImage(
@@ -466,7 +466,7 @@ fun FreshMusicCard(
                 Icon(
                     imageVector = Icons.Default.PlayArrow,
                     contentDescription = "Play $title",
-                    tint = SeitharolDark,
+                    tint = Color(0xFF121212),
                     modifier = Modifier.size(18.dp)
                 )
             }

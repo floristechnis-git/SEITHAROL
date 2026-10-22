@@ -534,7 +534,7 @@ fun PlaylistScreen(
             track = track,
             playlists = playlists,
             onSelectPlaylist = { pId ->
-                viewModel.addTrackToPlaylist(pId, track.id)
+                viewModel.addTrackToPlaylist(pId, track)
                 trackToAddToPlaylist = null
             },
             onCreateNewPlaylist = {

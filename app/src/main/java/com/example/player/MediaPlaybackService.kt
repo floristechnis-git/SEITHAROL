@@ -1,7 +1,6 @@
 package com.example.player
 
 import android.app.Notification
-import android.net.Uri
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -22,21 +21,24 @@ import coil.request.ImageRequest
 import com.example.MainActivity
 import com.example.R
 import com.example.data.model.Track
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
  * Foreground Service for background audio playback with rich media notification.
- * Fully compliant with Android 14+ (API 34-36) foreground service requirements.
- * Calls ServiceCompat.startForeground synchronously with FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
- * to eliminate ForegroundServiceDidNotStartInTimeException / SecurityException.
+ * Fully compliant with Android 12–15 (API 31–36) foreground service lifecycle rules so
+ * the OS never kills playback mid-song or throws ForegroundServiceDidNotStartInTimeException.
  */
 class MediaPlaybackService : Service() {
 
-    private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Log.e(TAG, "Uncaught coroutine exception in MediaPlaybackService: ${throwable.message}", throwable)
+    }
+    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob() + exceptionHandler)
     private var wakeLock: PowerManager.WakeLock? = null
     private var currentArtBitmap: Bitmap? = null
     private var lastLoadedArtUrl: String? = null
@@ -62,7 +64,7 @@ class MediaPlaybackService : Service() {
                 } else {
                     context.startService(intent)
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.w(TAG, "startForegroundService exception: ${e.message}")
             }
         }
@@ -71,7 +73,7 @@ class MediaPlaybackService : Service() {
             val intent = Intent(context, MediaPlaybackService::class.java)
             try {
                 context.stopService(intent)
-            } catch (e: Exception) {
+            } catch (_: Throwable) {
                 // Ignore
             }
         }
@@ -90,63 +92,53 @@ class MediaPlaybackService : Service() {
             null
         }
 
-        // Android 14 (API 34+) requires immediate synchronous startForeground
         startForegroundSynchronously()
 
-        // Start listening to PlayerState changes
         serviceScope.launch {
             playerManager?.state?.collect { state ->
                 val track = state.currentTrack
+                val activePlayback = state.isPlaying || state.isBuffering
                 if (track != null) {
-                    if (state.isPlaying) {
+                    if (activePlayback) {
                         try {
                             if (wakeLock?.isHeld != true) {
-                                wakeLock?.acquire(3 * 60 * 60 * 1000L) // 3 hours max
+                                wakeLock?.acquire(3 * 60 * 60 * 1000L)
                             }
-                        } catch (e: Throwable) {
-                            // Ignored
-                        }
+                        } catch (_: Throwable) {}
                     } else {
                         try {
                             if (wakeLock?.isHeld == true) wakeLock?.release()
-                        } catch (e: Throwable) {
-                            // Ignored
-                        }
+                        } catch (_: Throwable) {}
                     }
-                    loadArtAndNotify(track, state.isPlaying)
+                    loadArtAndNotify(track, state.isPlaying, state.isBuffering)
                 } else {
                     try {
                         ServiceCompat.stopForeground(this@MediaPlaybackService, ServiceCompat.STOP_FOREGROUND_REMOVE)
                         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
                         nm?.cancel(NOTIFICATION_ID)
-                    } catch (t: Throwable) {
-                        // Ignored
-                    }
+                    } catch (_: Throwable) {}
                 }
             }
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Guarantee startForeground is executed within the 5s window
         createNotificationChannel()
+        // Always satisfy Android's 5-second startForegroundService contract immediately
+        startForegroundSynchronously()
 
         when (intent?.action) {
             ACTION_PLAY_PAUSE -> playerManager?.togglePlayPause()
             ACTION_PREV -> playerManager?.previous()
             ACTION_NEXT -> playerManager?.next()
             ACTION_STOP -> {
-                playerManager?.togglePlayPause()
+                playerManager?.pause()
                 ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return START_NOT_STICKY
             }
-            else -> {
-                // Ensure foreground notification is active
-                startForegroundSynchronously()
-            }
         }
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     private fun startForegroundSynchronously() {
@@ -161,16 +153,17 @@ class MediaPlaybackService : Service() {
 
             val currentTrack = playerManager?.state?.value?.currentTrack
             val isPlaying = playerManager?.state?.value?.isPlaying ?: false
+            val isBuffering = playerManager?.state?.value?.isBuffering ?: false
 
             val title = currentTrack?.title ?: "Seitharol"
-            val text = currentTrack?.artist ?: "Ready to play"
+            val text = currentTrack?.artist ?: if (isBuffering) "Loading track..." else "Ready to play"
 
             val notification = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_music_note)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setContentIntent(openPendingIntent)
-                .setOngoing(isPlaying)
+                .setOngoing(isPlaying || isBuffering)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .build()
 
@@ -187,7 +180,7 @@ class MediaPlaybackService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun loadArtAndNotify(track: Track, isPlaying: Boolean) {
+    private fun loadArtAndNotify(track: Track, isPlaying: Boolean, isBuffering: Boolean) {
         if (isTerminating) return
         if (track.artUrl != lastLoadedArtUrl && track.artUrl.isNotBlank()) {
             lastLoadedArtUrl = track.artUrl
@@ -206,14 +199,14 @@ class MediaPlaybackService : Service() {
                 } catch (e: Exception) {
                     currentArtBitmap = null
                 }
-                updateNotification(track, isPlaying)
+                updateNotification(track, isPlaying, isBuffering)
             }
         } else {
-            updateNotification(track, isPlaying)
+            updateNotification(track, isPlaying, isBuffering)
         }
     }
 
-    private fun updateNotification(track: Track, isPlaying: Boolean) {
+    private fun updateNotification(track: Track, isPlaying: Boolean, isBuffering: Boolean) {
         if (isTerminating) return
         try {
             val openAppIntent = Intent(this, MainActivity::class.java).apply {
@@ -244,14 +237,15 @@ class MediaPlaybackService : Service() {
 
             val playPauseIcon = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
             val playPauseTitle = if (isPlaying) "Pause" else "Play"
+            val keepForeground = isPlaying || isBuffering
 
             val builder = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_music_note)
                 .setContentTitle(track.title)
                 .setContentText(track.artist)
-                .setSubText(if (track.isDownloaded) "Offline" else "Streaming")
+                .setSubText(if (track.isDownloaded) "Offline" else if (isBuffering) "Buffering..." else "Streaming")
                 .setContentIntent(openPendingIntent)
-                .setOngoing(isPlaying)
+                .setOngoing(keepForeground)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .addAction(R.drawable.ic_skip_previous, "Previous", prevPending)
@@ -267,7 +261,7 @@ class MediaPlaybackService : Service() {
             }
 
             val notification = builder.build()
-            if (isPlaying) {
+            if (keepForeground) {
                 ServiceCompat.startForeground(
                     this,
                     NOTIFICATION_ID,
@@ -275,11 +269,11 @@ class MediaPlaybackService : Service() {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
                 )
             } else {
-                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
+                // Keep notification updated without killing active playback if paused
                 val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
                 manager?.notify(NOTIFICATION_ID, notification)
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "updateNotification failed: ${e.message}", e)
         }
     }
@@ -298,7 +292,6 @@ class MediaPlaybackService : Service() {
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
         }
-
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -324,13 +317,8 @@ class MediaPlaybackService : Service() {
         isTerminating = true
         serviceScope.cancel()
         runCatching {
-            playerManager?.stopPlayback()
-        }
-        runCatching {
-            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-            nm?.cancel(NOTIFICATION_ID)
-            nm?.cancelAll()
+            // Only release WakeLock in onDestroy(); do NOT call playerManager?.stopPlayback() if the OS
+            // recycles the service while music is still playing or buffering!
             if (wakeLock?.isHeld == true) {
                 wakeLock?.release()
             }

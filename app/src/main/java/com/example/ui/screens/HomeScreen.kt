@@ -567,19 +567,19 @@ fun HomeScreen(
                             Icon(
                                 imageVector = Icons.Default.CloudOff,
                                 contentDescription = null,
-                                tint = Color(0xFF4A4A4A),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(48.dp)
                             )
                             Text(
                                 text = "No content loaded yet",
-                                color = Color(0xFFB0B0B0),
+                                color = MaterialTheme.colorScheme.onBackground,
                                 fontFamily = SyneFontFamily,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 17.sp
                             )
                             Text(
                                 text = "Check your internet connection\nand tap Retry to load music.",
-                                color = Color(0xFF757575),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontFamily = OutfitFontFamily,
                                 fontSize = 14.sp,
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -789,7 +789,7 @@ fun HomeScreen(
             track = track,
             playlists = playlists,
             onSelectPlaylist = { playlistId ->
-                viewModel.addTrackToPlaylist(playlistId, track.id)
+                viewModel.addTrackToPlaylist(playlistId, track)
                 trackToAddToPlaylist = null
             },
             onCreateNewPlaylist = {
@@ -838,7 +838,7 @@ fun AestheticMusicHomeScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF1B1C1C)),
+            .background(MaterialTheme.colorScheme.background),
         contentPadding = PaddingValues(bottom = 110.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp)
     ) {
@@ -1277,7 +1277,7 @@ fun QuickDialBentoSection(
                             ) {
                                 Text(
                                     text = item.title,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    color = MaterialTheme.colorScheme.onSurface,
                                     fontSize = 13.sp,
                                     fontFamily = SyneFontFamily,
                                     fontWeight = FontWeight.SemiBold,

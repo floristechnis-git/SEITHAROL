@@ -75,6 +75,9 @@ interface PlaylistDao {
     @Query("DELETE FROM playlists WHERE id = :id")
     suspend fun deletePlaylist(id: String)
 
+    @Query("DELETE FROM playlist_items WHERE playlistId = :id")
+    suspend fun deleteAllItemsForPlaylist(id: String)
+
     @Query("""
         SELECT t.* FROM tracks t
         INNER JOIN playlist_items pi ON t.id = pi.trackId
@@ -82,6 +85,15 @@ interface PlaylistDao {
         ORDER BY pi.position ASC
     """)
     fun getTracksForPlaylist(playlistId: String): Flow<List<TrackEntity>>
+
+    @Query("SELECT COUNT(*) FROM playlist_items WHERE playlistId = :playlistId")
+    suspend fun getPlaylistTrackCount(playlistId: String): Int
+
+    @Query("SELECT COALESCE(MAX(position), -1) FROM playlist_items WHERE playlistId = :playlistId")
+    suspend fun getMaxPositionForPlaylist(playlistId: String): Int
+
+    @Query("SELECT COUNT(*) FROM playlist_items WHERE playlistId = :playlistId AND trackId = :trackId")
+    suspend fun isTrackInPlaylist(playlistId: String, trackId: String): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPlaylistItems(items: List<PlaylistItemEntity>)
@@ -140,7 +152,6 @@ interface HistoryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertHistory(item: PlayHistoryEntity)
 
-    /** Returns the most-recent history row for [trackId] played after [sinceTimestamp], or null. */
     @Query("SELECT * FROM play_history WHERE trackId = :trackId AND playedAt >= :sinceTimestamp ORDER BY playedAt DESC LIMIT 1")
     suspend fun getRecentHistoryForTrack(trackId: String, sinceTimestamp: Long): PlayHistoryEntity?
 

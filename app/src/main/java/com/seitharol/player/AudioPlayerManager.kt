@@ -137,8 +137,11 @@ class AudioPlayerManager(
             var startOffsetMs = 0L
 
             if (!ytId.isNullOrBlank()) {
-                if (forceFresh) OuterTuneResolvingDataSource.invalidate(ytId)
-                streamUrl = InnerTubeStreamExtractor.resolveExactYoutubeStreamById(ytId, AudioQuality.LOW).getOrNull()
+                streamUrl = InnerTubeStreamExtractor.resolveExactYoutubeStreamById(
+                    ytId,
+                    AudioQuality.LOW,
+                    forceRefresh = forceFresh
+                ).getOrNull()
                 startOffsetMs = if (track.durationMs > 60_000L) 30_000L else 0L
             } else if (track.source == TrackSource.JIOSAAVN || (rawPreview != null && rawPreview.startsWith("saavn_clip:"))) {
                 val saavnId = rawPreview?.removePrefix("saavn_clip:") ?: track.sourceId
@@ -161,7 +164,11 @@ class AudioPlayerManager(
                     if (query.isNotBlank()) {
                         val candidates = InnerTubeStreamExtractor.searchOfficialYtmSongs(query, limit = 5)
                         for (candidate in candidates) {
-                            val candidateUrl = InnerTubeStreamExtractor.resolveExactYoutubeStreamById(candidate.videoId, AudioQuality.LOW).getOrNull()
+                            val candidateUrl = InnerTubeStreamExtractor.resolveExactYoutubeStreamById(
+                                candidate.videoId,
+                                AudioQuality.LOW,
+                                forceRefresh = forceFresh
+                            ).getOrNull()
                             if (!candidateUrl.isNullOrBlank()) {
                                 streamUrl = candidateUrl
                                 startOffsetMs = if (candidate.durationSeconds > 60) 30_000L else 0L
@@ -232,7 +239,6 @@ class AudioPlayerManager(
         onMaximizePlayer: (NormalizedTrack) -> Unit
     ): Result<Unit> {
         stopPreviewAndClear()
-        // If the track already has an 11-char YouTube ID or JioSaavn ID, pass it straight through without re-matching!
         val validYtId = InnerTubeStreamExtractor.extractVideoId(track.sourceId)
         if (!validYtId.isNullOrBlank()) {
             val directTrack = track.copy(

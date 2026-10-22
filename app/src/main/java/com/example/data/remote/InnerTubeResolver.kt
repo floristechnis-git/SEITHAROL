@@ -26,7 +26,7 @@ object InnerTubeResolver {
 
     /**
      * Resolves a playable audio stream URL for any track.
-     * Works even if videoId is missing/fake by searching "title artist" first.
+     * Uses ANDROID_VR primary extraction first, then falls back to Piped if needed.
      */
     suspend fun resolveStreamUrl(
         videoId: String?,
@@ -37,17 +37,18 @@ object InnerTubeResolver {
             ?: searchFirstVideoId("$title $artist")
             ?: return@withContext null
 
-        // 1. Direct fast concurrent InnerTube extraction
+        // 1. Direct fast InnerTube extraction (ANDROID_VR / ANDROID_TESTSUITE / Embedded / iOS)
         val directStream = com.seitharol.data.resolver.InnerTubeStreamExtractor
             .resolveWorkingStreamUrl(validVideoId)
             .getOrNull()
         if (!directStream.isNullOrBlank()) return@withContext directStream
 
-        // 2. Direct player endpoint fallback
-        val iosStream = fetchAudioUrlFromPlayer(validVideoId, clientName = "IOS", clientVersion = "20.10.4")
-        if (!iosStream.isNullOrBlank()) return@withContext iosStream
+        // 2. Direct ANDROID_VR player endpoint fallback
+        val vrStream = fetchAudioUrlFromPlayer(validVideoId, clientName = "ANDROID_VR", clientVersion = "1.60.19")
+        if (!vrStream.isNullOrBlank()) return@withContext vrStream
 
-        null
+        // 3. Piped instance fallback
+        fetchAudioUrlFromPiped(validVideoId)
     }
 
     private fun fetchAudioUrlFromPlayer(
@@ -56,9 +57,12 @@ object InnerTubeResolver {
         clientVersion: String
     ): String? {
         return try {
+            val isVr = clientName == "ANDROID_VR"
             val isIos = clientName == "IOS"
+            val cpn = (1..16).map { "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_".random() }.joinToString("")
             val body = JSONObject().apply {
                 put("videoId", videoId)
+                put("cpn", cpn)
                 put("contentCheckOk", true)
                 put("racyCheckOk", true)
                 put("context", JSONObject().apply {
@@ -67,7 +71,13 @@ object InnerTubeResolver {
                         put("clientVersion", clientVersion)
                         put("hl", "en")
                         put("gl", "US")
-                        if (isIos) {
+                        if (isVr) {
+                            put("deviceMake", "Oculus")
+                            put("deviceModel", "Quest 3")
+                            put("osName", "Android")
+                            put("osVersion", "12L")
+                            put("androidSdkVersion", 32)
+                        } else if (isIos) {
                             put("deviceMake", "Apple")
                             put("deviceModel", "iPhone16,2")
                             put("osName", "iOS")
@@ -78,8 +88,9 @@ object InnerTubeResolver {
             }
             val endpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
             val userAgent = when {
-                isIos -> "com.google.ios.youtube/$clientVersion (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)"
-                else -> "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                isVr -> com.seitharol.player.OuterTuneResolvingDataSource.VR_USER_AGENT
+                isIos -> com.seitharol.player.OuterTuneResolvingDataSource.IOS_USER_AGENT
+                else -> com.seitharol.player.OuterTuneResolvingDataSource.WEB_REMIX_USER_AGENT
             }
             val response = postJson(endpoint, body, userAgent)
             val playability = response.optJSONObject("playabilityStatus")
@@ -100,7 +111,8 @@ object InnerTubeResolver {
                 val bitrate = fmt.optInt("bitrate", 0)
                 if (mimeType.startsWith("audio/") && url.isNotEmpty() && bitrate > bestBitrate) {
                     bestBitrate = bitrate
-                    bestUrl = url
+                    val sep = if (url.contains("?")) "&" else "?"
+                    bestUrl = if (url.contains("cpn=")) url else "$url${sep}cpn=$cpn"
                 }
             }
             bestUrl
@@ -113,11 +125,8 @@ object InnerTubeResolver {
     private fun fetchAudioUrlFromPiped(videoId: String): String? {
         val instances = listOf(
             "https://pipedapi.kavin.rocks",
-            "https://api.piped.privacydev.net",
-            "https://piped-api.lunar.icu",
-            "https://pipedapi.adminforge.de",
-            "https://piped-api.garudalinux.org",
-            "https://piped.yt/api"
+            "https://api.piped.yt",
+            "https://pipedapi.tokhmi.xyz"
         )
         for (instance in instances) {
             try {
@@ -154,14 +163,10 @@ object InnerTubeResolver {
         return null
     }
 
-    /**
-     * Finds the exact 11-char YouTube videoId when a track only has title + artist.
-     */
     suspend fun searchFirstVideoId(query: String): String? = withContext(Dispatchers.IO) {
         try {
             val body = webRemixContext().apply {
                 put("query", query)
-                // Songs filter param in YouTube Music
                 put("params", "EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D")
             }
             val res = postJson("https://music.youtube.com/youtubei/v1/search?prettyPrint=false", body)
@@ -174,9 +179,6 @@ object InnerTubeResolver {
         }
     }
 
-    /**
-     * Fetches REAL songs, albums, and playlists for an Artist (replaces fake song generator).
-     */
     suspend fun fetchRealArtistCatalog(artistName: String, browseId: String? = null): JSONObject =
         withContext(Dispatchers.IO) {
             if (!browseId.isNullOrBlank() && browseId.startsWith("UC")) {
@@ -189,22 +191,18 @@ object InnerTubeResolver {
                     Log.w(TAG, "Browse artist failed for $browseId: ${e.message}")
                 }
             }
-            // Fetch exact Songs by this artist from YT Music search
             val songsBody = webRemixContext().apply {
                 put("query", artistName)
-                put("params", "EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D") // Songs filter
+                put("params", "EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D")
             }
             postJson("https://music.youtube.com/youtubei/v1/search?prettyPrint=false", songsBody)
         }
 
-    /**
-     * Fetches real albums for an Artist from YouTube Music search.
-     */
     suspend fun fetchRealArtistAlbums(artistName: String): List<Album> = withContext(Dispatchers.IO) {
         try {
             val albumsBody = webRemixContext().apply {
                 put("query", artistName)
-                put("params", "EgWKAQIYAWoKEAkQBRAKEAMQBA%3D%3D") // Albums filter
+                put("params", "EgWKAQIYAWoKEAkQBRAKEAMQBA%3D%3D")
             }
             val res = postJson("https://music.youtube.com/youtubei/v1/search?prettyPrint=false", albumsBody)
             parseAlbumsFromResponse(res)
@@ -214,14 +212,10 @@ object InnerTubeResolver {
         }
     }
 
-    /**
-     * Fetches tracks inside a YouTube Mix (RD...), Playlist (VL.../PL...), or Album (MPREb_...).
-     */
     suspend fun fetchPlaylistOrMixTracks(playlistId: String): JSONObject =
         withContext(Dispatchers.IO) {
             val cleanId = playlistId.removePrefix("VL")
             if (cleanId.startsWith("MPREb_") || cleanId.startsWith("OLAK5uy_")) {
-                // Album browse endpoint
                 val browseBody = webRemixContext().apply {
                     put("browseId", cleanId)
                 }
@@ -233,9 +227,6 @@ object InnerTubeResolver {
             postJson("https://music.youtube.com/youtubei/v1/next?prettyPrint=false", body)
         }
 
-    /**
-     * Fetches and parses tracks into concrete domain Track objects.
-     */
     suspend fun fetchAndParsePlaylistOrMixTracks(playlistId: String): List<Track> = withContext(Dispatchers.IO) {
         try {
             val json = fetchPlaylistOrMixTracks(playlistId)
@@ -266,7 +257,6 @@ object InnerTubeResolver {
             var album = "Single"
             var durationMs = 210000L
 
-            // Try playlistPanelVideoRenderer format
             val titleRuns = item.optJSONObject("title")?.optJSONArray("runs")
             if (titleRuns != null && titleRuns.length() > 0) {
                 title = titleRuns.getJSONObject(0).optString("text", "Unknown Track")
@@ -284,7 +274,6 @@ object InnerTubeResolver {
                 if (bylineTexts.size > 1) album = bylineTexts[1]
             }
 
-            // Try flexColumns format (musicResponsiveListItemRenderer)
             val flexCols = item.optJSONArray("flexColumns")
             if (flexCols != null && flexCols.length() > 0) {
                 val col0Runs = flexCols.getJSONObject(0)
@@ -427,7 +416,7 @@ object InnerTubeResolver {
         put("context", JSONObject().apply {
             put("client", JSONObject().apply {
                 put("clientName", "WEB_REMIX")
-                put("clientVersion", "1.20260101.01.00")
+                put("clientVersion", "1.20250310.01.00")
                 put("hl", "en")
                 put("gl", "IN")
             })
@@ -442,8 +431,8 @@ object InnerTubeResolver {
         val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             doOutput = true
-            connectTimeout = 12_000
-            readTimeout = 12_000
+            connectTimeout = 8_000
+            readTimeout = 8_000
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("User-Agent", userAgent)
             setRequestProperty("Origin", "https://music.youtube.com")

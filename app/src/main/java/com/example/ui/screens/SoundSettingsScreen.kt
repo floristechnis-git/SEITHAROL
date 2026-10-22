@@ -375,8 +375,9 @@ fun SoundSettingsScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("+12 dB", fontSize = 11.sp, color = SeitharolTextSecondary, fontFamily = OutfitFontFamily)
                         Text("-12 dB", fontSize = 11.sp, color = SeitharolTextSecondary, fontFamily = OutfitFontFamily)
+                        Text("0 dB", fontSize = 11.sp, color = SeitharolTextSecondary, fontFamily = OutfitFontFamily)
+                        Text("+12 dB", fontSize = 11.sp, color = SeitharolTextSecondary, fontFamily = OutfitFontFamily)
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))

@@ -26,7 +26,7 @@ fun SleepTimerModal(
     val modalSheetState = rememberModalBottomSheetState()
     var selectedMinutes by remember { mutableIntStateOf(if (currentMinutesLeft > 0) currentMinutesLeft else 25) }
 
-    val options = listOf(10, 15, 20, 25, 30, 35, 45, 60)
+    val options = listOf(0, 10, 15, 20, 25, 30, 45, 60)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -75,13 +75,17 @@ fun SleepTimerModal(
                             .clip(RoundedCornerShape(19.dp))
                             .clickable { selectedMinutes = mins },
                         shape = RoundedCornerShape(19.dp),
-                        color = if (isSelected) SeitharolWhite else Color.Transparent
+                        color = if (isSelected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Text(
-                                text = if (isSelected) "$mins minutes" else "$mins",
-                                color = if (isSelected) SeitharolDark else Color(0xFF8A8A8A),
-                                fontSize = if (isSelected) 18.sp else 15.sp,
+                                text = when {
+                                    mins == 0 -> "Off (Don't stop)"
+                                    isSelected -> "$mins minutes"
+                                    else -> "$mins min"
+                                },
+                                color = if (isSelected) SeitharolDark else SeitharolTextSecondary,
+                                fontSize = if (isSelected) 17.sp else 15.sp,
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
                             )
@@ -92,7 +96,7 @@ fun SleepTimerModal(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Start Button
+            // Start / Turn Off Button (uses primary accent so text is never white-on-white in Dark Mode)
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -104,15 +108,15 @@ fun SleepTimerModal(
                     }
                     .testTag("sleep_timer_start_btn"),
                 shape = RoundedCornerShape(24.dp),
-                color = SeitharolDark
+                color = SeitharolPillBg
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Text(
-                        text = if (currentMinutesLeft > 0 && selectedMinutes == 0) "Turn Off" else "Start",
-                        color = Color.White,
+                        text = if (selectedMinutes == 0) "Turn Off Timer" else "Start Timer",
+                        color = SeitharolPillText,
                         fontSize = 15.sp,
                         fontFamily = OutfitFontFamily,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }

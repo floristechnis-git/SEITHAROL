@@ -1,7 +1,13 @@
 package com.example.data.repository
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
+import android.os.Build
+import android.os.Environment
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import com.example.R
 import com.example.data.local.*
 import com.example.data.model.*
 import com.example.network.NetworkClients
@@ -12,12 +18,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import java.io.File
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.os.Build
-import android.os.Environment
-import androidx.core.app.NotificationCompat
-import com.example.R
 import java.io.FileOutputStream
 
 class MusicRepository(
@@ -62,28 +62,33 @@ class MusicRepository(
     }
 
     suspend fun recordPlayHistory(track: Track) = withContext(Dispatchers.IO) {
-        // Skip duplicate: same track played within the last 5 minutes counts as one play
         val fiveMinutesAgo = System.currentTimeMillis() - 5 * 60 * 1000L
         val existing = historyDao.getRecentHistoryForTrack(track.id, fiveMinutesAgo)
         if (existing != null) return@withContext
 
-        // Cache track metadata in Room for offline access
-        trackDao.insertTrack(track.toEntity())
+        // Preserve existing isLiked / isDownloaded flags if already in Room
+        val existingTrack = trackDao.getTrackById(track.id)
+        val mergedTrack = track.copy(
+            isLiked = existingTrack?.isLiked ?: track.isLiked,
+            isDownloaded = existingTrack?.isDownloaded ?: track.isDownloaded,
+            localPath = existingTrack?.localPath ?: track.localPath
+        )
+        trackDao.insertTrack(mergedTrack.toEntity())
         historyDao.insertHistory(
             PlayHistoryEntity(
-                trackId = track.id,
-                title = track.title,
-                artist = track.artist,
-                album = track.album,
-                durationMs = track.durationMs,
-                artUrl = track.artUrl,
-                genre = track.genre,
-                isLiked = track.isLiked,
+                trackId = mergedTrack.id,
+                title = mergedTrack.title,
+                artist = mergedTrack.artist,
+                album = mergedTrack.album,
+                durationMs = mergedTrack.durationMs,
+                artUrl = mergedTrack.artUrl,
+                genre = mergedTrack.genre,
+                isLiked = mergedTrack.isLiked,
                 playedAt = System.currentTimeMillis()
             )
         )
     }
- 
+
     suspend fun deleteTrackFromHistory(trackId: String) = withContext(Dispatchers.IO) {
         historyDao.deleteHistoryByTrackId(trackId)
     }
@@ -121,14 +126,34 @@ class MusicRepository(
 
     fun getPlaylists(): Flow<List<Playlist>> = playlistDao.getAllPlaylists().map { list ->
         list.map {
+            val count = runCatching { playlistDao.getPlaylistTrackCount(it.id) }.getOrDefault(0)
             Playlist(
                 id = it.id,
                 title = it.title,
                 description = it.description,
                 isLocal = it.isLocal,
+                trackCount = count,
                 coverUrl = it.coverUrl,
                 isLiked = it.isLiked
             )
+        }
+    }
+
+    suspend fun togglePlaylistLike(playlist: Playlist) = withContext(Dispatchers.IO) {
+        val existing = playlistDao.getPlaylistById(playlist.id)
+        if (existing == null) {
+            playlistDao.insertPlaylist(
+                PlaylistEntity(
+                    id = playlist.id,
+                    title = playlist.title,
+                    description = playlist.description,
+                    isLocal = playlist.isLocal,
+                    coverUrl = playlist.coverUrl,
+                    isLiked = true
+                )
+            )
+        } else {
+            playlistDao.setPlaylistLiked(playlist.id, !existing.isLiked)
         }
     }
 
@@ -155,26 +180,37 @@ class MusicRepository(
             id
         }
 
-    suspend fun addTrackToPlaylist(playlistId: String, trackId: String, position: Int = 0) =
+    suspend fun addTrackToPlaylist(playlistId: String, trackId: String, position: Int? = null) =
         withContext(Dispatchers.IO) {
-            playlistDao.insertPlaylistItems(
-                listOf(PlaylistItemEntity(playlistId = playlistId, position = position, trackId = trackId))
-            )
+            if (playlistDao.isTrackInPlaylist(playlistId, trackId) == 0) {
+                val nextPos = position ?: (playlistDao.getMaxPositionForPlaylist(playlistId) + 1)
+                playlistDao.insertPlaylistItems(
+                    listOf(PlaylistItemEntity(playlistId = playlistId, position = nextPos, trackId = trackId))
+                )
+            }
             val track = trackDao.getTrackById(trackId)
-            if (track != null && track.artUrl.isNotBlank()) {
-                val pl = playlistDao.getPlaylistById(playlistId)
-                if (pl != null && pl.coverUrl.isNullOrBlank()) {
-                    playlistDao.insertPlaylist(pl.copy(coverUrl = track.artUrl))
+            val pl = playlistDao.getPlaylistById(playlistId)
+            if (pl != null) {
+                val updatedCover = if (pl.coverUrl.isNullOrBlank() && track != null && track.artUrl.isNotBlank()) {
+                    track.artUrl
+                } else {
+                    pl.coverUrl
                 }
+                // Touch playlist entity so Room's getAllPlaylists() Flow emits immediately with updated trackCount!
+                playlistDao.insertPlaylist(pl.copy(coverUrl = updatedCover))
             }
         }
 
     suspend fun deletePlaylist(playlistId: String) = withContext(Dispatchers.IO) {
+        playlistDao.deleteAllItemsForPlaylist(playlistId)
         playlistDao.deletePlaylist(playlistId)
     }
 
     suspend fun removeTrackFromPlaylist(playlistId: String, trackId: String) = withContext(Dispatchers.IO) {
         playlistDao.removeTrackFromPlaylist(playlistId, trackId)
+        playlistDao.getPlaylistById(playlistId)?.let { pl ->
+            playlistDao.insertPlaylist(pl)
+        }
     }
 
     suspend fun getSponsorSegments(videoId: String): List<SponsorSegment> = withContext(Dispatchers.IO) {
@@ -226,13 +262,22 @@ class MusicRepository(
     }
 
     suspend fun insertTrack(track: Track) = withContext(Dispatchers.IO) {
-        trackDao.insertTrack(track.toEntity())
+        val existing = trackDao.getTrackById(track.id)
+        val merged = if (existing != null) {
+            track.copy(
+                isLiked = existing.isLiked || track.isLiked,
+                isDownloaded = existing.isDownloaded || track.isDownloaded,
+                localPath = track.localPath ?: existing.localPath
+            )
+        } else {
+            track
+        }
+        trackDao.insertTrack(merged.toEntity())
     }
 
     suspend fun insertTracks(tracks: List<Track>) = withContext(Dispatchers.IO) {
-        tracks.forEach { trackDao.insertTrack(it.toEntity()) }
+        tracks.forEach { insertTrack(it) }
     }
-
 }
 
 fun TrackEntity.toDomain() = Track(
@@ -318,10 +363,8 @@ class DownloadRepository(
         try {
             val notifId = title.hashCode()
             if (isCompleted || isFailed) {
-                // 1. Cancel the stuck ongoing progress notification first
                 notificationManager?.cancel(notifId)
 
-                // 2. Post a dismissible completion/failure notification with progress cleared
                 val completedNotification = NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
                     .setSmallIcon(R.drawable.ic_stat_music_note)
                     .setContentTitle(if (isFailed) "Download Failed" else "Download Completed")
@@ -329,7 +372,7 @@ class DownloadRepository(
                     .setPriority(NotificationCompat.PRIORITY_LOW)
                     .setOngoing(false)
                     .setAutoCancel(true)
-                    .setProgress(0, 0, false) // Clears the ongoing progress bar completely
+                    .setProgress(0, 0, false)
                     .build()
 
                 notificationManager?.notify(notifId + 10_000, completedNotification)
@@ -390,8 +433,14 @@ class DownloadRepository(
         val tempFile = File(downloadDir, "${track.id}_${tier.name.lowercase()}.tmp")
 
         try {
-            // 1. Initial State in DB & Cache Track in Room
-            trackDao.insertTrack(track.copy(isDownloaded = false, localPath = destFile.absolutePath).toEntity())
+            val existing = trackDao.getTrackById(track.id)
+            trackDao.insertTrack(
+                track.copy(
+                    isLiked = existing?.isLiked ?: track.isLiked,
+                    isDownloaded = false,
+                    localPath = destFile.absolutePath
+                ).toEntity()
+            )
             downloadDao.insertDownload(
                 DownloadEntity(
                     trackId = track.id,
@@ -404,7 +453,6 @@ class DownloadRepository(
                 )
             )
 
-            // 2. Resolve stream URL
             val resolvedStream = resolverEngine.resolveTrack(track)
             val streamUrl = resolvedStream.streamUrl
 
@@ -412,24 +460,11 @@ class DownloadRepository(
                 throw IllegalStateException("Empty stream URL resolved for ${track.title}")
             }
 
-            // 3. Real HTTP byte-streaming using OkHttpClient
-            val isYouTubeStream = streamUrl.contains("googlevideo.com") || streamUrl.contains("youtube.com")
-            val userAgent = if (isYouTubeStream) {
-                com.seitharol.player.OuterTuneResolvingDataSource.VR_USER_AGENT
-            } else {
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            }
-            val request = Request.Builder()
-                .url(streamUrl)
-                .header("User-Agent", userAgent)
-                .apply {
-                    if (isYouTubeStream) {
-                        header("Origin", "https://www.youtube.com")
-                    } else {
-                        header("Referer", "https://music.youtube.com/")
-                    }
-                }
-                .build()
+            // Use client-matched headers so GoogleVideo CDN never rejects download with HTTP 403
+            val clientHeaders = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(streamUrl)
+            val requestBuilder = Request.Builder().url(streamUrl)
+            clientHeaders.forEach { (k, v) -> requestBuilder.header(k, v) }
+            val request = requestBuilder.build()
 
             NetworkClients.okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
@@ -471,7 +506,6 @@ class DownloadRepository(
                     }
                 }
 
-                // Verify binary audio stream (> 10KB to avoid broken file stubs)
                 if (tempFile.exists() && tempFile.length() > 10_240L) {
                     if (destFile.exists()) destFile.delete()
                     val renamed = tempFile.renameTo(destFile)
@@ -488,7 +522,12 @@ class DownloadRepository(
                             totalBytes = finalFile.length()
                         )
                     )
-                    val completedTrack = track.copy(isDownloaded = true, localPath = finalFile.absolutePath)
+                    val currentDb = trackDao.getTrackById(track.id)
+                    val completedTrack = track.copy(
+                        isLiked = currentDb?.isLiked ?: track.isLiked,
+                        isDownloaded = true,
+                        localPath = finalFile.absolutePath
+                    )
                     trackDao.insertTrack(completedTrack.toEntity())
                     trackDao.setDownloaded(track.id, true, finalFile.absolutePath)
                     updateDownloadNotification(track.title, 100, isCompleted = true)
@@ -557,10 +596,6 @@ class DownloadRepository(
         trackDao.setDownloaded(trackId, false, null)
     }
 
-    /**
-     * Rescans the local downloads directory to detect, reconcile, and register
-     * all existing and old downloaded tracks into Room database.
-     */
     suspend fun rescanLocalDownloads() = withContext(Dispatchers.IO) {
         try {
             val downloadDir = File(context.filesDir, "downloads")
@@ -618,7 +653,6 @@ class DownloadRepository(
                 }
             }
 
-            // Also sync Discover persisted downloads into TrackDao and DownloadDao
             val discoverService = runCatching {
                 com.seitharol.data.download.DownloadPreferencesAndService.getInstance(context)
             }.getOrNull()

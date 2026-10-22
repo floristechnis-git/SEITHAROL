@@ -4,8 +4,8 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,7 +19,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -34,10 +33,9 @@ import com.example.ui.theme.*
 
 /**
  * YouTube / YouTube Music Floating MiniPlayer Pill:
- * - Height: 60.dp, pill rounded 30.dp, surface: #232526 / #1F2020, primary text: #E3E4E2.
- * - Tap anywhere expands the Full Player screen.
- * - YouTube App Gesture: Holding and throwing/flinging downward (or dragging down past 45% height)
- *   smoothly dismisses and closes playback completely.
+ * - Height: 60.dp, pill rounded 30.dp, adaptive surfaceVariant container with crisp contrast in Light & Dark themes.
+ * - Tapping the artwork/title area expands the Full Player screen (without intercepting Play/Pause/Skip buttons).
+ * - Dragging downward past 45% height dismisses and stops playback cleanly, resetting state whenever track.id changes.
  */
 @Composable
 fun MiniPlayer(
@@ -59,8 +57,9 @@ fun MiniPlayer(
     val miniHeight = 60.dp
     val miniHeightPx = with(density) { miniHeight.toPx() }
 
-    var dragOffsetY by remember { mutableFloatStateOf(0f) }
-    var isDismissed by remember { mutableStateOf(false) }
+    // Keyed by track.id so dismissing a track and starting a new song always resets the MiniPlayer visibility
+    var dragOffsetY by remember(track.id) { mutableFloatStateOf(0f) }
+    var isDismissed by remember(track.id) { mutableStateOf(false) }
 
     val animatedOffsetY by animateFloatAsState(
         targetValue = if (isDismissed) miniHeightPx * 2.5f else dragOffsetY,
@@ -82,43 +81,26 @@ fun MiniPlayer(
             }
             .clip(RoundedCornerShape(30.dp))
             .pointerInput(track.id) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    var totalDragY = 0f
-                    var hasDragged = false
-                    val velocityTracker = VelocityTracker()
-                    velocityTracker.addPosition(down.uptimeMillis, down.position)
-
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull() ?: break
-                        if (!change.pressed) {
-                            // Pointer released
-                            val velocityY = velocityTracker.calculateVelocity().y
-                            if (totalDragY >= miniHeightPx * 0.45f || velocityY > 750f) {
-                                isDismissed = true
-                                onDismissPlayback()
-                            } else {
-                                dragOffsetY = 0f
-                            }
-                            break
+                detectVerticalDragGestures(
+                    onDragEnd = {
+                        if (dragOffsetY >= miniHeightPx * 0.45f) {
+                            isDismissed = true
+                            onDismissPlayback()
+                        } else {
+                            dragOffsetY = 0f
                         }
-
-                        velocityTracker.addPosition(change.uptimeMillis, change.position)
-                        val deltaY = change.position.y - down.position.y
-                        if (deltaY > 8f) {
-                            hasDragged = true
+                    },
+                    onDragCancel = {
+                        dragOffsetY = 0f
+                    },
+                    onVerticalDrag = { change, dragAmount ->
+                        val nextOffset = (dragOffsetY + dragAmount).coerceAtLeast(0f)
+                        if (nextOffset > 0f) {
                             change.consume()
-                            totalDragY = deltaY
-                            dragOffsetY = deltaY.coerceAtLeast(0f)
+                            dragOffsetY = nextOffset
                         }
                     }
-
-                    // If user tapped without dragging downwards past threshold, trigger expand
-                    if (!hasDragged && !isDismissed) {
-                        onExpand()
-                    }
-                }
+                )
             }
             .testTag("mini_player_bar"),
         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -132,45 +114,53 @@ fun MiniPlayer(
                     .padding(start = 8.dp, end = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 44dp circular artwork thumbnail loaded via Coil
-                Box(
+                // Clickable Artwork + Title/Artist area to expand Full Player without stealing IconButton taps
+                Row(
                     modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surface),
-                    contentAlignment = Alignment.Center
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clickable(onClick = onExpand),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    AsyncImage(
-                        model = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
-                        contentDescription = "Cover for ${track.title}",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surface),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AsyncImage(
+                            model = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
+                            contentDescription = "Cover for ${track.title}",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
 
-                Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
 
-                // Title and Artist
-                Column(
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        text = track.title,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 14.sp,
-                        fontFamily = OutfitFontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = track.artist,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp,
-                        fontFamily = OutfitFontFamily,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = track.title,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 14.sp,
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = track.artist,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 11.sp,
+                            fontFamily = OutfitFontFamily,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
 
                 // Previous

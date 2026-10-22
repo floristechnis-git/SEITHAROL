@@ -165,7 +165,7 @@ fun LibraryScreen(
                     Text(
                         text = "See all",
                         style = MaterialTheme.typography.labelMedium,
-                        color = Color(0xFF9EA1A1)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
@@ -533,7 +533,7 @@ fun ClampedSwipeToDeleteRow(
                     )
                 },
             shape = RoundedCornerShape(14.dp),
-            color = SeitharolWhite
+            color = SeitharolBg
         ) {
             content()
         }
@@ -547,7 +547,8 @@ fun ClampedSwipeToDeleteRow(
 fun HistoryScreen(
     viewModel: CascadeViewModel,
     playerState: PlayerState,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onAddToPlaylist: (com.example.data.model.Track) -> Unit = {}
 ) {
     BackHandler(onBack = onBack)
     val activeHistory by viewModel.activeHistory.collectAsState()
@@ -650,7 +651,7 @@ fun HistoryScreen(
                             onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
                             onPlayNextClick = { viewModel.playNext(track) },
                             onAddToQueueClick = { viewModel.addToQueue(track) },
-                            onAddToPlaylistClick = { },
+                            onAddToPlaylistClick = { onAddToPlaylist(track) },
                             onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                         )
@@ -668,7 +669,8 @@ fun HistoryScreen(
 fun DownloadsScreen(
     viewModel: CascadeViewModel,
     playerState: PlayerState,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onAddToPlaylist: (com.example.data.model.Track) -> Unit = {}
 ) {
     BackHandler(onBack = onBack)
     val downloadedTracks by viewModel.downloadedTracks.collectAsState()
@@ -752,7 +754,7 @@ fun DownloadsScreen(
                             onDownloadClick = { },
                             onPlayNextClick = { viewModel.playNext(track) },
                             onAddToQueueClick = { viewModel.addToQueue(track) },
-                            onAddToPlaylistClick = { },
+                            onAddToPlaylistClick = { onAddToPlaylist(track) },
                             onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                         )
@@ -776,7 +778,8 @@ fun DownloadsScreen(
 fun LikedSongsScreen(
     viewModel: CascadeViewModel,
     playerState: PlayerState,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onAddToPlaylist: (com.example.data.model.Track) -> Unit = {}
 ) {
     BackHandler(onBack = onBack)
     val likedTracks by viewModel.likedTracks.collectAsState()
@@ -855,7 +858,7 @@ fun LikedSongsScreen(
                             onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
                             onPlayNextClick = { viewModel.playNext(track) },
                             onAddToQueueClick = { viewModel.addToQueue(track) },
-                            onAddToPlaylistClick = { },
+                            onAddToPlaylistClick = { onAddToPlaylist(track) },
                             onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                         )

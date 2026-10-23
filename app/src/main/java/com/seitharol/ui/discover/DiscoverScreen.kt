@@ -165,12 +165,19 @@ fun DiscoverScreen(
                         onVisitArtist(primaryArtist, track.primaryArtistBrowseId)
                     },
                     onShareClick = {
+                        val shareMsg = com.example.ui.components.SeitharolDeepLinkHelper.buildTrackShareMessage(
+                            com.example.data.model.Track(
+                                id = track.sourceId,
+                                title = track.title,
+                                artist = track.artists.joinToString(", "),
+                                album = track.album.orEmpty(),
+                                durationMs = track.durationMs,
+                                artUrl = track.artUrl
+                            )
+                        )
                         val shareIntent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
-                            putExtra(
-                                Intent.EXTRA_TEXT,
-                                "Listen to \"${track.title}\" by ${track.artists.joinToString(", ")} on SEITHAROL!"
-                            )
+                            putExtra(Intent.EXTRA_TEXT, shareMsg)
                         }
                         context.startActivity(Intent.createChooser(shareIntent, "Share Track"))
                     },

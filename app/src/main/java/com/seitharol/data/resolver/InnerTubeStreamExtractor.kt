@@ -1115,13 +1115,25 @@ object InnerTubeStreamExtractor {
                         ?.optJSONObject("browseEndpoint")
                         ?.optString("browseId").orEmpty()
 
-                    val watchPlaylistId = twoRow.optJSONObject("thumbnailOverlay")
+                    val playNavEndpoint = twoRow.optJSONObject("thumbnailOverlay")
                         ?.optJSONObject("musicItemThumbnailOverlayRenderer")
                         ?.optJSONObject("content")
                         ?.optJSONObject("musicPlayButtonRenderer")
                         ?.optJSONObject("playNavigationEndpoint")
-                        ?.optJSONObject("watchPlaylistEndpoint")
-                        ?.optString("playlistId")
+
+                    val directWatchVideoId = playNavEndpoint
+                        ?.optJSONObject("watchEndpoint")
+                        ?.optString("videoId")
+                        ?.takeIf { it.isNotBlank() }
+                        ?: twoRow.optJSONObject("navigationEndpoint")
+                            ?.optJSONObject("watchEndpoint")
+                            ?.optString("videoId")
+                            ?.takeIf { it.isNotBlank() }
+
+                    val watchPlaylistId = directWatchVideoId
+                        ?: playNavEndpoint
+                            ?.optJSONObject("watchPlaylistEndpoint")
+                            ?.optString("playlistId")
 
                     when {
                         // Ignore music videos shelf so videos are never dumped into Playlists

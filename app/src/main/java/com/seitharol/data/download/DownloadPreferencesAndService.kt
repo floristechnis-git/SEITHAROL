@@ -259,15 +259,16 @@ class DownloadPreferencesAndService(private val context: Context) {
             )
             persistCompletedDownload(localMusicTrack)
 
+            val canonicalId = canonicalTrackId(track.sourceId)
             runCatching {
                 val db = com.example.data.local.CascadeDatabase.getInstance(context)
                 val trackDao = db.trackDao()
                 val downloadDao = db.downloadDao()
-                val existing = trackDao.getTrackById(track.sourceId)
+                val existing = trackDao.getTrackById(canonicalId) ?: trackDao.getTrackById(track.sourceId)
                 if (existing == null) {
                     trackDao.insertTrack(
                         com.example.data.local.TrackEntity(
-                            id = track.sourceId,
+                            id = canonicalId,
                             title = track.title,
                             artist = primaryArtist,
                             album = track.album ?: "Discover Downloads",
@@ -278,11 +279,11 @@ class DownloadPreferencesAndService(private val context: Context) {
                         )
                     )
                 } else {
-                    trackDao.setDownloaded(track.sourceId, true, savedUri.toString())
+                    trackDao.setDownloaded(canonicalId, true, savedUri.toString())
                 }
                 downloadDao.insertDownload(
                     com.example.data.local.DownloadEntity(
-                        trackId = track.sourceId,
+                        trackId = canonicalId,
                         tier = format.name.replaceFirstChar { it.uppercase() },
                         state = "COMPLETED",
                         localPath = savedUri.toString(),
@@ -363,7 +364,7 @@ class DownloadPreferencesAndService(private val context: Context) {
             return InnerTubeStreamExtractor.resolveWorkingStreamUrl(cleanYtId, preferredQuality).getOrNull()
         }
         val metadata = TrackMetadata(
-            id = track.sourceId,
+            id = canonicalId,
             title = track.title,
             artist = primaryArtist,
             album = track.album.orEmpty(),
@@ -373,11 +374,50 @@ class DownloadPreferencesAndService(private val context: Context) {
         return StreamResolver.resolveExactStreamUrl(metadata, preferredQuality)
     }
 
+    fun canonicalTrackId(rawId: String): String {
+        return InnerTubeStreamExtractor.extractVideoId(rawId)
+            ?: rawId.removePrefix("ytm_clip:").removePrefix("saavn_clip:").removePrefix("local_").trim()
+    }
+
     private fun persistCompletedDownload(track: NormalizedTrack) {
-        val updated = (_completedDownloads.value.filterNot { it.sourceId == track.sourceId } + track).reversed()
+        val canonicalId = canonicalTrackId(track.sourceId)
+        val normalizedTrack = track.copy(sourceId = canonicalId)
+        val updated = (_completedDownloads.value.filterNot {
+            canonicalTrackId(it.sourceId) == canonicalId ||
+                (it.title.equals(normalizedTrack.title, ignoreCase = true) &&
+                    it.artists.firstOrNull().orEmpty().equals(normalizedTrack.artists.firstOrNull().orEmpty(), ignoreCase = true))
+        } + normalizedTrack).reversed()
         _completedDownloads.value = updated
+        saveCompletedListToPrefs(updated)
+    }
+
+    fun removeCompletedDownload(trackId: String, title: String? = null) {
+        val targetCanonical = canonicalTrackId(trackId)
+        val toRemove = _completedDownloads.value.filter {
+            it.sourceId == trackId ||
+                canonicalTrackId(it.sourceId) == targetCanonical ||
+                (!title.isNullOrBlank() && it.title.equals(title, ignoreCase = true))
+        }
+        toRemove.forEach { item ->
+            val path = item.localPath.orEmpty()
+            if (path.startsWith("content://")) {
+                runCatching { context.contentResolver.delete(Uri.parse(path), null, null) }
+            } else if (path.isNotBlank()) {
+                runCatching { File(path.removePrefix("file://")).takeIf { it.exists() }?.delete() }
+            }
+        }
+        val remaining = _completedDownloads.value.filterNot {
+            it.sourceId == trackId ||
+                canonicalTrackId(it.sourceId) == targetCanonical ||
+                (!title.isNullOrBlank() && it.title.equals(title, ignoreCase = true))
+        }
+        _completedDownloads.value = remaining
+        saveCompletedListToPrefs(remaining)
+    }
+
+    private fun saveCompletedListToPrefs(list: List<NormalizedTrack>) {
         val arr = JSONArray()
-        updated.forEach { t ->
+        list.forEach { t ->
             arr.put(JSONObject().apply {
                 put("sourceId", t.sourceId)
                 put("title", t.title)

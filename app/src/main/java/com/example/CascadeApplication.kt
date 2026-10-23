@@ -31,6 +31,22 @@ class CascadeApplication : Application() {
         audioPlayerManager = AudioPlayerManager(this, resolverEngine, musicRepository)
     }
 
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // On low-RAM devices (especially during lock/unlock transitions), trim Coil image memory caches
+        // so Android Low Memory Killer (LMKD) never terminates background audio playback!
+        runCatching {
+            coil.Coil.imageLoader(this).memoryCache?.clear()
+        }
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        runCatching {
+            coil.Coil.imageLoader(this).memoryCache?.clear()
+        }
+    }
+
     override fun onTerminate() {
         super.onTerminate()
         audioPlayerManager.release()

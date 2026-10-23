@@ -299,13 +299,18 @@ fun ArtistScreen(
                     }
                 }
 
-                // 4. Albums & Singles Carousel
-                val allReleases = page.albums + page.singles
-                if (allReleases.isNotEmpty()) {
+                // 4A. Official Multi-Track Albums Carousel (Never contains 1-track fake single folders)
+                val pureAlbums = page.albums.filterNot {
+                    it.type.equals("SINGLE", true) ||
+                        it.subtitle.contains("Single", true) ||
+                        it.subtitle.contains("1 song", true) ||
+                        it.subtitle.contains("1 track", true)
+                }
+                if (pureAlbums.isNotEmpty()) {
                     item {
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "Albums & Singles",
+                            text = "Albums",
                             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onBackground,
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
@@ -314,23 +319,11 @@ fun ArtistScreen(
                             contentPadding = PaddingValues(horizontal = 20.dp),
                             horizontalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
-                            items(allReleases.distinctBy { it.browseId }, key = { "rel_${it.browseId}" }) { release ->
-                                val isSingle = release.type.equals("SINGLE", true) ||
-                                    release.subtitle.contains("Single", true) ||
-                                    release.subtitle.contains("1 song", true) ||
-                                    release.subtitle.contains("1 track", true) ||
-                                    page.singles.any { it.browseId == release.browseId }
-
+                            items(pureAlbums.distinctBy { it.browseId }, key = { "alb_${it.browseId}" }) { release ->
                                 Column(
                                     modifier = Modifier
                                         .width(142.dp)
-                                        .clickable {
-                                            if (isSingle) {
-                                                viewModel.playSingleRelease(release, page.name)
-                                            } else {
-                                                onNavigateToPlaylist(release.browseId)
-                                            }
-                                        }
+                                        .clickable { onNavigateToPlaylist(release.browseId) }
                                 ) {
                                     Box(modifier = Modifier.size(142.dp)) {
                                         AsyncImage(
@@ -342,7 +335,6 @@ fun ArtistScreen(
                                                 .clip(RoundedCornerShape(14.dp))
                                                 .background(MaterialTheme.colorScheme.surfaceVariant)
                                         )
-                                        val tag = if (isSingle) "SINGLE" else "ALBUM"
                                         Surface(
                                             color = Color(0xFF1B1C1C).copy(alpha = 0.85f),
                                             shape = RoundedCornerShape(6.dp),
@@ -351,7 +343,7 @@ fun ArtistScreen(
                                                 .padding(6.dp)
                                         ) {
                                             Text(
-                                                text = tag,
+                                                text = "ALBUM",
                                                 color = Color.White,
                                                 fontSize = 9.sp,
                                                 fontWeight = FontWeight.ExtraBold,
@@ -378,6 +370,68 @@ fun ArtistScreen(
                                 }
                             }
                         }
+                    }
+                }
+
+                // 4B. Singles (Rendered as Direct Playable Song Tracks — NEVER fake playlist folders!)
+                if (page.singles.isNotEmpty()) {
+                    item {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Singles",
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                        )
+                    }
+                    items(page.singles.distinctBy { it.title.lowercase().trim() }.take(10), key = { "single_song_${it.browseId}_${it.title}" }) { singleItem ->
+                        ListItem(
+                            colors = ListItemDefaults.colors(
+                                containerColor = Color.Transparent,
+                                headlineColor = MaterialTheme.colorScheme.onBackground,
+                                supportingColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            ),
+                            headlineContent = {
+                                Text(
+                                    text = singleItem.title,
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            supportingContent = {
+                                Text(
+                                    text = "${page.name} • Single Track",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            leadingContent = {
+                                AsyncImage(
+                                    model = singleItem.thumbnailUrl,
+                                    contentDescription = singleItem.title,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(50.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                                )
+                            },
+                            trailingContent = {
+                                IconButton(onClick = { viewModel.playSingleRelease(singleItem, page.name) }) {
+                                    Icon(
+                                        imageVector = Icons.Default.PlayArrow,
+                                        contentDescription = "Play Single",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            },
+                            modifier = Modifier.clickable {
+                                viewModel.playSingleRelease(singleItem, page.name)
+                            }
+                        )
                     }
                 }
 

@@ -1,12 +1,20 @@
 package com.example.player
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.audiofx.Equalizer
 import android.media.audiofx.LoudnessEnhancer
 import android.net.Uri
+import android.os.Build
+import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.session.MediaSession
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultDataSource
@@ -107,6 +115,120 @@ class AudioPlayerManager(
     private val settingsManager = AppSettingsManager.getInstance(context)
     private var lastUserSeekTimestamp: Long = 0L
 
+    private var mediaSession: MediaSession? = null
+    private var audioFocusRequest: AudioFocusRequest? = null
+    private var wasPlayingBeforeCall: Boolean = false
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+
+    private val telephonyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val state = intent?.getStringExtra(TelephonyManager.EXTRA_STATE)
+            if (state == TelephonyManager.EXTRA_STATE_RINGING || state == TelephonyManager.EXTRA_STATE_OFFHOOK) {
+                if (exoPlayer?.isPlaying == true || _state.value.isPlaying) {
+                    wasPlayingBeforeCall = true
+                    exoPlayer?.pause()
+                    _state.value = _state.value.copy(isPlaying = false)
+                }
+            } else if (state == TelephonyManager.EXTRA_STATE_IDLE) {
+                if (wasPlayingBeforeCall) {
+                    wasPlayingBeforeCall = false
+                    exoPlayer?.play()
+                }
+            }
+        }
+    }
+
+    private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+        when (focusChange) {
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                exoPlayer?.volume = 1.0f
+                if (wasPlayingBeforeCall) {
+                    wasPlayingBeforeCall = false
+                    exoPlayer?.play()
+                }
+            }
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                // Permanent focus loss -> another media player took over (media overwrite)
+                wasPlayingBeforeCall = false
+                exoPlayer?.pause()
+                _state.value = _state.value.copy(isPlaying = false)
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                // Transient loss: check if it's an incoming or ongoing phone call
+                if (isPhoneCallActive()) {
+                    if (exoPlayer?.isPlaying == true || _state.value.isPlaying) {
+                        wasPlayingBeforeCall = true
+                        exoPlayer?.pause()
+                        _state.value = _state.value.copy(isPlaying = false)
+                    }
+                } else {
+                    // It's a game, another app opening, or system settings!
+                    // Do NOT pause! Duck volume slightly so game sound effects and music can coexist smoothly.
+                    exoPlayer?.volume = 0.5f
+                }
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                // Notifications, assistant prompts, or games: duck volume, NEVER pause
+                exoPlayer?.volume = 0.4f
+            }
+        }
+    }
+
+    private fun isPhoneCallActive(): Boolean {
+        val am = audioManager ?: return false
+        return am.mode == AudioManager.MODE_IN_CALL ||
+               am.mode == AudioManager.MODE_IN_COMMUNICATION ||
+               am.mode == AudioManager.MODE_RINGTONE
+    }
+
+    private fun requestAudioFocus(): Boolean {
+        val am = audioManager ?: return true
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val playbackAttributes = android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build()
+            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(playbackAttributes)
+                .setAcceptsDelayedFocusGain(true)
+                .setOnAudioFocusChangeListener(audioFocusChangeListener)
+                .build()
+            audioFocusRequest = request
+            am.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        } else {
+            @Suppress("DEPRECATION")
+            am.requestAudioFocus(
+                audioFocusChangeListener,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN
+            ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        }
+    }
+
+    private fun abandonAudioFocus() {
+        val am = audioManager ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
+            audioFocusRequest = null
+        } else {
+            @Suppress("DEPRECATION")
+            am.abandonAudioFocus(audioFocusChangeListener)
+        }
+    }
+
+    private fun registerTelephonyReceiver() {
+        try {
+            val filter = IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(telephonyReceiver, filter, Context.RECEIVER_EXPORTED)
+            } else {
+                context.registerReceiver(telephonyReceiver, filter)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "Telephony receiver registration skipped: ${t.message}")
+        }
+    }
+
     val playerInstance: ExoPlayer?
         get() = exoPlayer
 
@@ -140,6 +262,7 @@ class AudioPlayerManager(
         initExoPlayer()
         startPositionTracker()
         observeAudioSettings()
+        registerTelephonyReceiver()
     }
 
     private fun observeAudioSettings() {
@@ -236,12 +359,13 @@ class AudioPlayerManager(
 
             val loadControl = DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
-                    /* minBufferMs = */ 15_000,
-                    /* maxBufferMs = */ 50_000,
+                    /* minBufferMs = */ 12_000,
+                    /* maxBufferMs = */ 32_000,
                     /* bufferForPlaybackMs = */ 1_000,
                     /* bufferForPlaybackAfterRebufferMs = */ 2_000
                 )
-                .setBackBuffer(/* backBufferDurationMs = */ 30_000, /* retainBackBufferFromKeyframe = */ true)
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .setBackBuffer(/* backBufferDurationMs = */ 15_000, /* retainBackBufferFromKeyframe = */ true)
                 .build()
 
             val builder = ExoPlayer.Builder(context)
@@ -252,17 +376,23 @@ class AudioPlayerManager(
                         .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                         .setUsage(C.USAGE_MEDIA)
                         .build(),
-                    /* handleAudioFocus = */ true
+                    /* handleAudioFocus = */ false
                 )
                 .setHandleAudioBecomingNoisy(true)
 
             try {
-                builder.setWakeMode(C.WAKE_MODE_LOCAL)
+                builder.setWakeMode(C.WAKE_MODE_NETWORK)
             } catch (t: Throwable) {
                 // Ignore wake mode error if restricted in environment
             }
 
             exoPlayer = builder.build().apply {
+                try {
+                    mediaSession?.release()
+                    mediaSession = MediaSession.Builder(context, this).build()
+                } catch (t: Throwable) {
+                    Log.w(TAG, "MediaSession init non-fatal: ${t.message}")
+                }
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         when (playbackState) {
@@ -483,6 +613,7 @@ class AudioPlayerManager(
                 isBuffering = true
             )
 
+            requestAudioFocus()
             if (startPositionMs > 0L) {
                 player.setMediaItem(mediaItem, startPositionMs)
             } else {
@@ -712,6 +843,7 @@ class AudioPlayerManager(
         positionJob?.cancel()
         loadTrackJob?.cancel()
         retryJob?.cancel()
+        abandonAudioFocus()
         try {
             exoPlayer?.stop()
             exoPlayer?.clearMediaItems()
@@ -992,6 +1124,7 @@ class AudioPlayerManager(
         player.playWhenReady = false
         player.pause()
         _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+        abandonAudioFocus()
     }
 
     fun togglePlayPause() {
@@ -1003,6 +1136,7 @@ class AudioPlayerManager(
                 if (player.playbackState == Player.STATE_IDLE || player.mediaItemCount == 0) {
                     loadAndPlayCurrent()
                 } else {
+                    requestAudioFocus()
                     player.playWhenReady = true
                     player.play()
                     _state.value = _state.value.copy(isPlaying = true)
@@ -1396,6 +1530,14 @@ class AudioPlayerManager(
         equalizer?.release()
         equalizer = null
         boundAudioSessionId = -1
+        try {
+            context.unregisterReceiver(telephonyReceiver)
+        } catch (_: Throwable) {}
+        try {
+            mediaSession?.release()
+            mediaSession = null
+        } catch (_: Throwable) {}
+        abandonAudioFocus()
         exoPlayer?.release()
         exoPlayer = null
         coroutineScope.cancel()

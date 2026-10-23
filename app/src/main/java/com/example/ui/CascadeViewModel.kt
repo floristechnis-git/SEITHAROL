@@ -58,41 +58,66 @@ class CascadeViewModel(
         .map { tracks -> tracks.map { it.id }.toSet() }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 
+    private fun isLocalUriOrFileReadable(path: String?): Boolean {
+        if (path.isNullOrBlank()) return false
+        return if (path.startsWith("content://")) {
+            runCatching {
+                com.example.CascadeApplication.instance.contentResolver
+                    .openAssetFileDescriptor(android.net.Uri.parse(path), "r")?.use { true } ?: false
+            }.getOrDefault(false)
+        } else {
+            val f = java.io.File(path.removePrefix("file://"))
+            f.exists() && f.length() > 0L
+        }
+    }
+
     val downloadedTracks: StateFlow<List<Track>> = combine(
         musicRepository.getDownloadedTracks(),
         com.seitharol.data.download.DownloadPreferencesAndService.getInstance(com.example.CascadeApplication.instance).completedDownloads,
         likedTrackIds
     ) { dbTracks, discoverDownloads, likedIds ->
+        val dlService = com.seitharol.data.download.DownloadPreferencesAndService.getInstance(com.example.CascadeApplication.instance)
         val trackMap = LinkedHashMap<String, Track>()
         dbTracks.forEach { track ->
-            trackMap[track.id] = track.copy(isLiked = track.isLiked || likedIds.contains(track.id))
+            // Skip any corrupted "Artist - Title" filename-scanned entries or entries whose local file was deleted
+            val isFakeScannedId = track.id.contains(" - ") && track.artist == "Downloaded Music"
+            if (!isFakeScannedId && isLocalUriOrFileReadable(track.localPath)) {
+                val canonId = dlService.canonicalTrackId(track.id)
+                trackMap[canonId] = track.copy(
+                    id = canonId,
+                    isLiked = track.isLiked || likedIds.contains(canonId) || likedIds.contains(track.id)
+                )
+            }
         }
         discoverDownloads.forEach { norm ->
-            if (!norm.localPath.isNullOrBlank()) {
-                val existing = trackMap[norm.sourceId]
+            val canonId = dlService.canonicalTrackId(norm.sourceId)
+            if (isLocalUriOrFileReadable(norm.localPath)) {
+                val existing = trackMap[canonId] ?: trackMap.values.firstOrNull {
+                    it.title.equals(norm.title, ignoreCase = true)
+                }
                 if (existing == null) {
-                    trackMap[norm.sourceId] = Track(
-                        id = norm.sourceId,
+                    trackMap[canonId] = Track(
+                        id = canonId,
                         title = norm.title,
                         artist = norm.artists.firstOrNull() ?: "Unknown Artist",
                         album = norm.album ?: "Discover Downloads",
                         durationMs = norm.durationMs,
                         artUrl = norm.artUrl,
                         genre = "Downloaded",
-                        isLiked = likedIds.contains(norm.sourceId) || norm.isLiked,
+                        isLiked = likedIds.contains(canonId) || norm.isLiked,
                         isDownloaded = true,
                         localPath = norm.localPath
                     )
                 } else if (!existing.isDownloaded || existing.localPath.isNullOrBlank()) {
-                    trackMap[norm.sourceId] = existing.copy(
+                    trackMap[existing.id] = existing.copy(
                         isDownloaded = true,
                         localPath = norm.localPath,
-                        isLiked = existing.isLiked || likedIds.contains(norm.sourceId)
+                        isLiked = existing.isLiked || likedIds.contains(canonId)
                     )
                 }
             }
         }
-        trackMap.values.toList()
+        trackMap.values.distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val downloadedTracksById: StateFlow<Map<String, Track>> = downloadedTracks
@@ -143,8 +168,74 @@ class CascadeViewModel(
     private val _artistNavigationEvent = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val artistNavigationEvent: SharedFlow<String> = _artistNavigationEvent.asSharedFlow()
 
+    private val _playerExpandEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val playerExpandEvent: SharedFlow<Unit> = _playerExpandEvent.asSharedFlow()
+
     fun navigateToArtist(artistName: String) {
         viewModelScope.launch { _artistNavigationEvent.emit(artistName) }
+    }
+
+    fun openSharedTrackById(
+        trackId: String,
+        fallbackTitle: String = "",
+        fallbackArtist: String = "",
+        fallbackArtUrl: String = ""
+    ) {
+        viewModelScope.launch {
+            val cleanId = InnerTubeStreamExtractor.extractVideoId(trackId) ?: trackId.trim()
+            val existing = musicRepository.getTrackById(cleanId)
+            val trackToPlay = when {
+                existing != null -> existing
+                fallbackTitle.isNotBlank() -> Track(
+                    id = cleanId,
+                    title = fallbackTitle,
+                    artist = fallbackArtist.ifBlank { "Artist" },
+                    album = "Shared Track",
+                    durationMs = 210_000L,
+                    artUrl = fallbackArtUrl.ifBlank {
+                        if (cleanId.length == 11) "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg" else ""
+                    }
+                )
+                else -> {
+                    val oembed = resolverEngine.youtubeInnerTubeProvider.fetchMetadataById(cleanId)
+                    Track(
+                        id = cleanId,
+                        title = oembed?.first ?: "Shared Track",
+                        artist = oembed?.second ?: "Artist",
+                        album = "Single",
+                        durationMs = 210_000L,
+                        artUrl = if (cleanId.length == 11) "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg" else ""
+                    )
+                }
+            }
+            playTrack(trackToPlay)
+            _playerExpandEvent.emit(Unit)
+        }
+    }
+
+    fun playExternalAudioUri(
+        uri: android.net.Uri,
+        title: String,
+        artist: String,
+        durationMs: Long = 0L,
+        album: String = "Local Audio"
+    ) {
+        viewModelScope.launch {
+            val trackId = "file_${uri.hashCode()}"
+            val track = Track(
+                id = trackId,
+                title = title.ifBlank { "Audio File" },
+                artist = artist.ifBlank { "Local Audio" },
+                album = album.ifBlank { "Local Audio" },
+                durationMs = durationMs,
+                artUrl = "",
+                genre = "Local Audio",
+                isDownloaded = true,
+                localPath = uri.toString()
+            )
+            playTrack(track)
+            _playerExpandEvent.emit(Unit)
+        }
     }
 
     val trendingHits = MutableStateFlow<List<Track>>(emptyList())
@@ -454,8 +545,10 @@ class CascadeViewModel(
 
     fun registerLocallyDownloadedTrack(normalized: com.seitharol.domain.model.NormalizedTrack) {
         viewModelScope.launch {
+            val dlService = com.seitharol.data.download.DownloadPreferencesAndService.getInstance(com.example.CascadeApplication.instance)
+            val canonId = dlService.canonicalTrackId(normalized.sourceId)
             val localTrack = Track(
-                id = normalized.sourceId,
+                id = canonId,
                 title = normalized.title,
                 artist = normalized.artists.firstOrNull() ?: "Unknown Artist",
                 album = normalized.album ?: "Single",
@@ -467,7 +560,6 @@ class CascadeViewModel(
                 isLiked = normalized.isLiked
             )
             musicRepository.insertTrack(localTrack)
-            downloadRepository.rescanLocalDownloads()
         }
     }
 
@@ -715,10 +807,25 @@ class CascadeViewModel(
 
     fun playSingleRelease(collection: com.seitharol.data.resolver.YtmCollectionSummary, artistName: String) {
         viewModelScope.launch {
+            val directVid = InnerTubeStreamExtractor.extractVideoId(collection.playlistId)
+                ?: InnerTubeStreamExtractor.extractVideoId(collection.browseId)
+            if (directVid != null) {
+                val directTrack = Track(
+                    id = directVid,
+                    title = collection.title,
+                    artist = artistName,
+                    album = "Single",
+                    durationMs = 210_000L,
+                    artUrl = collection.thumbnailUrl
+                )
+                playTrack(enrichTrackStatus(directTrack, likedTrackIds.value, downloadedTracksById.value))
+                return@launch
+            }
+
             val candidate = runCatching {
-                InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(collection.browseId).tracks.firstOrNull()
-            }.getOrNull() ?: runCatching {
                 InnerTubeStreamExtractor.searchOfficialYtmSongs("${collection.title} $artistName", limit = 1).firstOrNull()
+            }.getOrNull() ?: runCatching {
+                InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(collection.browseId).tracks.firstOrNull()
             }.getOrNull()
 
             if (candidate != null) {

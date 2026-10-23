@@ -13,6 +13,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -52,7 +55,7 @@ fun HomeNavSvgIcon(
 }
 
 /**
- * Professional Fullscreen / Expand SVG icon (replaces `<>` on Lyrics card).
+ * Upgraded Sleek 4-Corner Outward Expand SVG icon for Fullscreen Lyrics.
  */
 @Composable
 fun FullscreenExpandSvgIcon(
@@ -62,20 +65,80 @@ fun FullscreenExpandSvgIcon(
     Canvas(modifier = modifier) {
         val sx = size.width / 24f
         val sy = size.height / 24f
-        val stroke = Stroke(width = 2f * sx, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        val stroke = Stroke(width = 2.1f * sx, cap = StrokeCap.Round, join = StrokeJoin.Round)
         val path = Path().apply {
-            // Top-right arrow
-            moveTo(15f * sx, 3f * sy)
-            lineTo(21f * sx, 3f * sy)
-            lineTo(21f * sx, 9f * sy)
-            moveTo(21f * sx, 3f * sy)
-            lineTo(14f * sx, 10f * sy)
-            // Bottom-left arrow
-            moveTo(9f * sx, 21f * sy)
-            lineTo(3f * sx, 21f * sy)
-            lineTo(3f * sx, 15f * sy)
-            moveTo(3f * sx, 21f * sy)
-            lineTo(10f * sx, 14f * sy)
+            // Top-Left corner bracket + diagonal ray
+            moveTo(3.5f * sx, 9f * sy)
+            lineTo(3.5f * sx, 3.5f * sy)
+            lineTo(9f * sx, 3.5f * sy)
+            moveTo(3.5f * sx, 3.5f * sy)
+            lineTo(9.5f * sx, 9.5f * sy)
+
+            // Top-Right corner bracket + diagonal ray
+            moveTo(15f * sx, 3.5f * sy)
+            lineTo(20.5f * sx, 3.5f * sy)
+            lineTo(20.5f * sx, 9f * sy)
+            moveTo(20.5f * sx, 3.5f * sy)
+            lineTo(14.5f * sx, 9.5f * sy)
+
+            // Bottom-Left corner bracket + diagonal ray
+            moveTo(3.5f * sx, 15f * sy)
+            lineTo(3.5f * sx, 20.5f * sy)
+            lineTo(9f * sx, 20.5f * sy)
+            moveTo(3.5f * sx, 20.5f * sy)
+            lineTo(9.5f * sx, 14.5f * sy)
+
+            // Bottom-Right corner bracket + diagonal ray
+            moveTo(15f * sx, 20.5f * sy)
+            lineTo(20.5f * sx, 20.5f * sy)
+            lineTo(20.5f * sx, 15f * sy)
+            moveTo(20.5f * sx, 20.5f * sy)
+            lineTo(14.5f * sx, 14.5f * sy)
+        }
+        drawPath(path = path, color = tint, style = stroke)
+    }
+}
+
+/**
+ * Upgraded Sleek 4-Corner Inward Minimize / Collapse Fullscreen SVG icon.
+ */
+@Composable
+fun FullscreenMinimizeSvgIcon(
+    tint: Color = Color.White,
+    modifier: Modifier = Modifier.size(20.dp)
+) {
+    Canvas(modifier = modifier) {
+        val sx = size.width / 24f
+        val sy = size.height / 24f
+        val stroke = Stroke(width = 2.1f * sx, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        val path = Path().apply {
+            // Top-Left inward arrow
+            moveTo(4f * sx, 9.5f * sy)
+            lineTo(9.5f * sx, 9.5f * sy)
+            lineTo(9.5f * sx, 4f * sy)
+            moveTo(3.5f * sx, 3.5f * sy)
+            lineTo(9.5f * sx, 9.5f * sy)
+
+            // Top-Right inward arrow
+            moveTo(14.5f * sx, 4f * sy)
+            lineTo(14.5f * sx, 9.5f * sy)
+            lineTo(20f * sx, 9.5f * sy)
+            moveTo(20.5f * sx, 3.5f * sy)
+            lineTo(14.5f * sx, 9.5f * sy)
+
+            // Bottom-Left inward arrow
+            moveTo(4f * sx, 14.5f * sy)
+            lineTo(9.5f * sx, 14.5f * sy)
+            lineTo(9.5f * sx, 20f * sy)
+            moveTo(3.5f * sx, 20.5f * sy)
+            lineTo(9.5f * sx, 14.5f * sy)
+
+            // Bottom-Right inward arrow
+            moveTo(20f * sx, 14.5f * sy)
+            lineTo(14.5f * sx, 14.5f * sy)
+            lineTo(14.5f * sx, 20f * sy)
+            moveTo(20.5f * sx, 20.5f * sy)
+            lineTo(14.5f * sx, 14.5f * sy)
         }
         drawPath(path = path, color = tint, style = stroke)
     }
@@ -115,8 +178,8 @@ fun InstrumentalGapMusicNoteIndicator(
                 lineTo(21f * sx, 16f * sy)
             }
             drawPath(path, color = tint, style = Stroke(width = 2f * sx, cap = StrokeCap.Round, join = StrokeJoin.Round))
-            drawCircle(color = tint, radius = 3f * sx, center = androidx.compose.ui.geometry.Offset(6f * sx, 18f * sy))
-            drawCircle(color = tint, radius = 3f * sx, center = androidx.compose.ui.geometry.Offset(18f * sx, 16f * sy))
+            drawCircle(color = tint, radius = 3f * sx, center = Offset(6f * sx, 18f * sy))
+            drawCircle(color = tint, radius = 3f * sx, center = Offset(18f * sx, 16f * sy))
         }
     }
 }
@@ -172,9 +235,9 @@ fun PlaylistThumbnailWithBadge(
                 val sx = this.size.width / 24f
                 val sy = this.size.height / 24f
                 val stroke = Stroke(width = 2f * sx, cap = StrokeCap.Round)
-                drawLine(Color.White, androidx.compose.ui.geometry.Offset(3f * sx, 6f * sy), androidx.compose.ui.geometry.Offset(15f * sx, 6f * sy), strokeWidth = stroke.width)
-                drawLine(Color.White, androidx.compose.ui.geometry.Offset(3f * sx, 12f * sy), androidx.compose.ui.geometry.Offset(15f * sx, 12f * sy), strokeWidth = stroke.width)
-                drawLine(Color.White, androidx.compose.ui.geometry.Offset(3f * sx, 18f * sy), androidx.compose.ui.geometry.Offset(11f * sx, 18f * sy), strokeWidth = stroke.width)
+                drawLine(Color.White, Offset(3f * sx, 6f * sy), Offset(15f * sx, 6f * sy), strokeWidth = stroke.width)
+                drawLine(Color.White, Offset(3f * sx, 12f * sy), Offset(15f * sx, 12f * sy), strokeWidth = stroke.width)
+                drawLine(Color.White, Offset(3f * sx, 18f * sy), Offset(11f * sx, 18f * sy), strokeWidth = stroke.width)
                 val playPath = Path().apply {
                     moveTo(16f * sx, 13f * sy)
                     lineTo(22f * sx, 17f * sy)

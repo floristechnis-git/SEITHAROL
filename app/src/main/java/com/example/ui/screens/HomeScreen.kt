@@ -357,7 +357,7 @@ fun HomeScreen(
             .testTag("home_screen")
     ) {
         LazyColumn(
-            contentPadding = PaddingValues(bottom = 130.dp),
+            contentPadding = PaddingValues(bottom = 195.dp),
             verticalArrangement = Arrangement.spacedBy(26.dp)
         ) {
             // ────────────────────────────────────────────────────────────
@@ -756,25 +756,43 @@ fun HomeScreen(
             }
 
             // ────────────────────────────────────────────────────────────
-            // 7. "Suggested Artists"
+            // 7. "Suggested Artists" + Kangla Gate Aesthetic Footer Image
             // ────────────────────────────────────────────────────────────
-            if (dynamicArtists.isNotEmpty()) {
-                item {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        SectionHeader(
-                            title = "Suggested Artists",
-                            subtitle = "Based on your music taste & trending charts"
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        LazyRow(
-                            contentPadding = PaddingValues(horizontal = 16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp)
+                ) {
+                    // Kangla Gate Aesthetic Footer Image (supports slight overlap behind Suggested Artists)
+                    HomeScreenKanglaFooterImage(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.BottomCenter)
+                            .padding(top = if (dynamicArtists.isNotEmpty()) 96.dp else 0.dp)
+                    )
+
+                    if (dynamicArtists.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 110.dp)
                         ) {
-                            items(dynamicArtists) { artistName ->
-                                SuggestedArtistItem(
-                                    name = artistName,
-                                    onClick = { onNavigateToArtist(artistName) }
-                                )
+                            SectionHeader(
+                                title = "Suggested Artists",
+                                subtitle = "Based on your music taste & trending charts"
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                items(dynamicArtists) { artistName ->
+                                    SuggestedArtistItem(
+                                        name = artistName,
+                                        onClick = { onNavigateToArtist(artistName) }
+                                    )
+                                }
                             }
                         }
                     }
@@ -1241,17 +1259,20 @@ fun QuickDialBentoSection(
 ) {
     val topItems = items.take(12)
     val columns = topItems.chunked(2)
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        items(columns.size) { colIdx ->
-            val colItems = columns[colIdx]
-            Column(
-                modifier = Modifier.width(380.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        // Responsive card column width: fits 2 columns side-by-side within device width without overflowing
+        val cardWidth = ((maxWidth - 42.dp) / 2f).coerceIn(148.dp, 210.dp)
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            items(columns.size) { colIdx ->
+                val colItems = columns[colIdx]
+                Column(
+                    modifier = Modifier.width(cardWidth),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                 colItems.forEach { item ->
                     Surface(
                         shape = RoundedCornerShape(8.dp),
@@ -1301,6 +1322,7 @@ fun QuickDialBentoSection(
             }
         }
     }
+}
 }
 
 /**
@@ -1399,5 +1421,53 @@ private fun SectionHeader(title: String, subtitle: String) {
             fontFamily = OutfitFontFamily,
             fontSize = 12.sp
         )
+    }
+}
+
+
+/**
+ * Renders the Kangla Gate aesthetic footer image (`app/src/main/res/drawable/HomeScreen-footer.png`
+ * or normalized `homescreen_footer`) with transparent background at the bottom of HomeScreen,
+ * allowing subtle overlap behind the Suggested Artists section.
+ */
+@Composable
+fun HomeScreenKanglaFooterImage(modifier: Modifier = Modifier) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val drawableResId = remember(context) {
+        val directRes = runCatching {
+            com.example.R.drawable.homescreen_footer
+        }.getOrDefault(0)
+        if (directRes != 0) return@remember directRes
+
+        val pkg = context.packageName
+        val candidates = listOf("homescreen_footer", "home_screen_footer", "HomeScreen_footer", "kangla_gate")
+        candidates.firstNotNullOfOrNull { name ->
+            context.resources.getIdentifier(name, "drawable", pkg).takeIf { it != 0 }
+        } ?: 0
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(165.dp),
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        if (drawableResId != 0) {
+            androidx.compose.foundation.Image(
+                painter = androidx.compose.ui.res.painterResource(id = drawableResId),
+                contentDescription = "Kangla Gate Footer",
+                contentScale = ContentScale.FillWidth,
+                alpha = 0.88f,
+                modifier = Modifier.fillMaxWidth()
+            )
+        } else {
+            AsyncImage(
+                model = "file:///android_asset/homescreen_footer.png",
+                contentDescription = "Kangla Gate Footer",
+                contentScale = ContentScale.FillWidth,
+                alpha = 0.88f,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
     }
 }

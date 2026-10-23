@@ -587,26 +587,56 @@ class DownloadRepository(
     }
 
     suspend fun deleteDownload(trackId: String) = withContext(Dispatchers.IO) {
-        val dl = downloadDao.getDownload(trackId)
-        if (dl?.localPath != null) {
-            val file = File(dl.localPath)
-            if (file.exists()) file.delete()
+        val discoverService = runCatching {
+            com.seitharol.data.download.DownloadPreferencesAndService.getInstance(context)
+        }.getOrNull()
+        val canonicalId = discoverService?.canonicalTrackId(trackId) ?: trackId
+        val trackObj = trackDao.getTrackById(trackId) ?: trackDao.getTrackById(canonicalId)
+        val dl = downloadDao.getDownload(trackId) ?: downloadDao.getDownload(canonicalId)
+
+        listOfNotNull(dl?.localPath, trackObj?.localPath).distinct().forEach { path ->
+            if (path.startsWith("content://")) {
+                runCatching { context.contentResolver.delete(android.net.Uri.parse(path), null, null) }
+            } else {
+                val file = File(path.removePrefix("file://"))
+                if (file.exists()) file.delete()
+            }
         }
+
+        // Also delete any matching public Seitharol file for this track title so rescan never recreates it
+        val publicDir = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+            "Seitharol"
+        )
+        if (publicDir.exists() && trackObj != null && trackObj.title.isNotBlank()) {
+            publicDir.listFiles()?.forEach { f ->
+                if (f.isFile && (f.name.contains(trackObj.title, ignoreCase = true) || f.name.contains(canonicalId, ignoreCase = true))) {
+                    runCatching { f.delete() }
+                }
+            }
+        }
+
         downloadDao.deleteDownload(trackId)
+        downloadDao.deleteDownload(canonicalId)
         trackDao.setDownloaded(trackId, false, null)
+        trackDao.setDownloaded(canonicalId, false, null)
+
+        // Remove from Discover & Download preferences service so ghost items never remain in UI
+        discoverService?.removeCompletedDownload(trackId, trackObj?.title)
+        if (canonicalId != trackId) {
+            discoverService?.removeCompletedDownload(canonicalId, trackObj?.title)
+        }
     }
 
     suspend fun rescanLocalDownloads() = withContext(Dispatchers.IO) {
         try {
             val downloadDir = File(context.filesDir, "downloads")
-            val publicDir = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
-                "Seitharol"
-            )
 
+            // Only scan internal app download directory by filename; public Seitharol directory is
+            // already tracked with canonical IDs in DownloadPreferencesAndService.completedDownloads
+            // (scanning publicDir by "Artist - Title.m4a" created fake duplicate TrackEntities!).
             val directoriesToScan = listOfNotNull(
-                downloadDir.takeIf { it.exists() },
-                publicDir.takeIf { it.exists() }
+                downloadDir.takeIf { it.exists() }
             )
 
             for (dir in directoriesToScan) {

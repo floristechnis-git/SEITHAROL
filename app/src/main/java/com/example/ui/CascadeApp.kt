@@ -105,11 +105,19 @@ fun CascadeApp(viewModel: CascadeViewModel) {
         }
     }
 
-    // Collect artist navigation events from PlayerScreen artist name clicks
+    // Collect artist navigation events from PlayerScreen artist name clicks & deep links
     LaunchedEffect(Unit) {
         viewModel.artistNavigationEvent.collectLatest { artistName ->
             isPlayerExpanded = false
             currentSubScreen = SubScreen.Artist(artistName)
+        }
+    }
+
+    // Auto-expand PlayerScreen when opening a shared track via seitharol:// or /share/track/[id]
+    LaunchedEffect(Unit) {
+        viewModel.playerExpandEvent.collectLatest {
+            currentSubScreen = SubScreen.None
+            isPlayerExpanded = true
         }
     }
 
@@ -804,9 +812,12 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                         },
                         onOpenSleepTimer = { showSleepTimer = true },
                         onShareTrack = { title ->
+                            val shareMsg = playerState.currentTrack?.let {
+                                SeitharolDeepLinkHelper.buildTrackShareMessage(it)
+                            } ?: "Listen to $title on Seitharol!"
                             val sendIntent = Intent().apply {
                                 action = Intent.ACTION_SEND
-                                putExtra(Intent.EXTRA_TEXT, "Listen to $title on Seitharol!")
+                                putExtra(Intent.EXTRA_TEXT, shareMsg)
                                 type = "text/plain"
                             }
                             context.startActivity(Intent.createChooser(sendIntent, "Share Track"))

@@ -45,7 +45,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.animateScrollBy
 import com.seitharol.ui.components.FullscreenExpandSvgIcon
+import com.seitharol.ui.components.FullscreenMinimizeSvgIcon
 import com.seitharol.ui.components.InstrumentalGapMusicNoteIndicator
 import coil.compose.AsyncImage
 import com.example.data.remote.InnerTubeResolver
@@ -145,8 +147,26 @@ fun PlayerScreen(
 
     LaunchedEffect(playerState.activeLyricIndex, showLyrics, isUserScrollingInlineLyrics) {
         if (showLyrics && !isUserScrollingInlineLyrics && playerState.activeLyricIndex in 0 until playerState.lyricLines.size) {
-            val target = (playerState.activeLyricIndex - 2).coerceAtLeast(0)
-            inlineLyricListState.animateScrollToItem(target)
+            val activeIdx = playerState.activeLyricIndex
+            val layoutInfo = inlineLyricListState.layoutInfo
+            val viewportHeight = layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset
+            val visibleItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == activeIdx }
+            if (visibleItem != null && viewportHeight > 0) {
+                val itemCenter = visibleItem.offset + (visibleItem.size / 2f)
+                val viewportCenter = viewportHeight / 2f
+                val delta = itemCenter - viewportCenter
+                inlineLyricListState.animateScrollBy(
+                    value = delta,
+                    animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing)
+                )
+            } else if (viewportHeight > 0) {
+                inlineLyricListState.animateScrollToItem(
+                    index = activeIdx,
+                    scrollOffset = -(viewportHeight / 2) + 40
+                )
+            } else {
+                inlineLyricListState.animateScrollToItem((activeIdx - 2).coerceAtLeast(0))
+            }
         }
     }
 
@@ -227,10 +247,7 @@ fun PlayerScreen(
 
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { showAudioAdjustSheet = true }
-                    .padding(horizontal = 8.dp, vertical = 2.dp)
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
             ) {
                 Text(
                     text = "PLAYING FROM SEITHAROL",
@@ -240,30 +257,19 @@ fun PlayerScreen(
                     fontWeight = FontWeight.SemiBold,
                     letterSpacing = 1.sp
                 )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    val currentTempQuality = viewModel.getTemporaryTrackQuality()
-                    val qualityText = when {
-                        track.isDownloaded -> "Offline Opus • Direct Audio"
-                        currentTempQuality != null -> "Quality: ${currentTempQuality.label} (Temp)"
-                        else -> "Online Pure Stream"
-                    }
-                    Text(
-                        text = qualityText,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        fontSize = 12.sp,
-                        fontFamily = OutfitFontFamily,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Icon(
-                        imageVector = Icons.Default.Tune,
-                        contentDescription = "Adjust Quality",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(13.dp)
-                    )
+                val currentTempQuality = viewModel.getTemporaryTrackQuality()
+                val qualityText = when {
+                    track.isDownloaded -> "Offline Opus • Direct Audio"
+                    currentTempQuality != null -> "Quality: ${currentTempQuality.label} (Temp)"
+                    else -> "Online Pure Stream"
                 }
+                Text(
+                    text = qualityText,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontSize = 12.sp,
+                    fontFamily = OutfitFontFamily,
+                    fontWeight = FontWeight.Medium
+                )
             }
 
             IconButton(
@@ -374,7 +380,7 @@ fun PlayerScreen(
                         LazyColumn(
                             state = inlineLyricListState,
                             modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(top = 28.dp, bottom = 48.dp)
+                            contentPadding = PaddingValues(top = 130.dp, bottom = 130.dp)
                         ) {
                             itemsIndexed(playerState.lyricLines) { index, line ->
                                 val isCurrent = index == playerState.activeLyricIndex
@@ -501,12 +507,17 @@ fun PlayerScreen(
         }
 
         // ────────────────────────────────────────────────────────────
-        // Track Title & Artist Details (Isolated Touch Targets: Title has NO click action)
+        // Track Title & Artist Details (Isolated Touch Targets: consumes stray taps so they never hit Slider/Queue)
         // ────────────────────────────────────────────────────────────
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 6.dp)
+                .pointerInput(track.id) {
+                    awaitPointerEventScope {
+                        // Consume stray background taps in the title/artist block so they never leak to adjacent controls
+                    }
+                }
+                .padding(horizontal = 24.dp, vertical = 8.dp)
         ) {
             Text(
                 text = track.title,
@@ -989,8 +1000,26 @@ fun ExpandedLyricsModal(
 
     LaunchedEffect(playerState.activeLyricIndex, isUserScrollingExpandedLyrics) {
         if (!isUserScrollingExpandedLyrics && playerState.activeLyricIndex in 0 until playerState.lyricLines.size) {
-            val target = (playerState.activeLyricIndex - 3).coerceAtLeast(0)
-            lyricListState.animateScrollToItem(target)
+            val activeIdx = playerState.activeLyricIndex
+            val layoutInfo = lyricListState.layoutInfo
+            val viewportHeight = layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset
+            val visibleItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == activeIdx }
+            if (visibleItem != null && viewportHeight > 0) {
+                val itemCenter = visibleItem.offset + (visibleItem.size / 2f)
+                val viewportCenter = viewportHeight / 2f
+                val delta = itemCenter - viewportCenter
+                lyricListState.animateScrollBy(
+                    value = delta,
+                    animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing)
+                )
+            } else if (viewportHeight > 0) {
+                lyricListState.animateScrollToItem(
+                    index = activeIdx,
+                    scrollOffset = -(viewportHeight / 2) + 48
+                )
+            } else {
+                lyricListState.animateScrollToItem((activeIdx - 2).coerceAtLeast(0))
+            }
         }
     }
 
@@ -1060,23 +1089,30 @@ fun ExpandedLyricsModal(
                         }
                     }
 
-                    // Minimize Button (CloseFullscreen)
+                    // Upgraded Minimize SVG Button (FullscreenMinimizeSvgIcon)
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant,
                         modifier = Modifier
                             .clip(RoundedCornerShape(16.dp))
                             .clickable(onClick = onDismiss)
+                            .testTag("minimize_lyrics_btn")
                     ) {
-                        Box(
-                            contentAlignment = Alignment.Center,
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.CloseFullscreen,
-                                contentDescription = "Minimize Lyrics",
+                            FullscreenMinimizeSvgIcon(
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Minimize",
+                                fontFamily = SyneFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -1104,7 +1140,7 @@ fun ExpandedLyricsModal(
                         LazyColumn(
                             state = lyricListState,
                             modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(top = 40.dp, bottom = 80.dp)
+                            contentPadding = PaddingValues(top = 180.dp, bottom = 180.dp)
                         ) {
                             itemsIndexed(playerState.lyricLines) { index, line ->
                                 val isCurrent = index == playerState.activeLyricIndex

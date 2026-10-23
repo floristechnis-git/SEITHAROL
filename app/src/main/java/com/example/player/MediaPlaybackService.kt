@@ -12,6 +12,7 @@ import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
 import android.os.Build
 import android.os.IBinder
+import android.net.wifi.WifiManager
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -40,6 +41,7 @@ class MediaPlaybackService : Service() {
     }
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob() + exceptionHandler)
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
     private var currentArtBitmap: Bitmap? = null
     private var lastLoadedArtUrl: String? = null
     @Volatile private var isTerminating = false
@@ -83,9 +85,23 @@ class MediaPlaybackService : Service() {
         super.onCreate()
         createNotificationChannel()
 
+        if (playerManager == null) {
+            playerManager = (application as? com.example.CascadeApplication)?.audioPlayerManager
+        }
+
         val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
         wakeLock = try {
             powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Seitharol::PlaybackWakeLock")?.apply {
+                setReferenceCounted(false)
+            }
+        } catch (t: Throwable) {
+            null
+        }
+
+        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        wifiLock = try {
+            @Suppress("DEPRECATION")
+            wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Seitharol::PlaybackWifiLock")?.apply {
                 setReferenceCounted(false)
             }
         } catch (t: Throwable) {
@@ -104,10 +120,14 @@ class MediaPlaybackService : Service() {
                             if (wakeLock?.isHeld != true) {
                                 wakeLock?.acquire(3 * 60 * 60 * 1000L)
                             }
+                            if (wifiLock?.isHeld != true) {
+                                wifiLock?.acquire()
+                            }
                         } catch (_: Throwable) {}
                     } else {
                         try {
                             if (wakeLock?.isHeld == true) wakeLock?.release()
+                            if (wifiLock?.isHeld == true) wifiLock?.release()
                         } catch (_: Throwable) {}
                     }
                     loadArtAndNotify(track, state.isPlaying, state.isBuffering)
@@ -190,6 +210,7 @@ class MediaPlaybackService : Service() {
                     val loader = ImageLoader(this@MediaPlaybackService)
                     val request = ImageRequest.Builder(this@MediaPlaybackService)
                         .data(track.artUrl)
+                        .size(256, 256)
                         .allowHardware(false)
                         .build()
                     val result = loader.execute(request).drawable
@@ -295,21 +316,27 @@ class MediaPlaybackService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        isTerminating = true
-        serviceScope.cancel()
-        runCatching {
-            playerManager?.stopPlayback()
-        }
-        runCatching {
-            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-            nm?.cancel(NOTIFICATION_ID)
-            nm?.cancelAll()
-            if (wakeLock?.isHeld == true) {
-                wakeLock?.release()
+        val isActivelyPlaying = playerManager?.state?.value?.let { it.isPlaying || it.isBuffering } == true
+        if (!isActivelyPlaying) {
+            isTerminating = true
+            serviceScope.cancel()
+            runCatching {
+                playerManager?.stopPlayback()
             }
+            runCatching {
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                nm?.cancel(NOTIFICATION_ID)
+                nm?.cancelAll()
+                if (wakeLock?.isHeld == true) {
+                    wakeLock?.release()
+                }
+                if (wifiLock?.isHeld == true) {
+                    wifiLock?.release()
+                }
+            }
+            stopSelf()
         }
-        stopSelf()
         super.onTaskRemoved(rootIntent)
     }
 
@@ -317,10 +344,11 @@ class MediaPlaybackService : Service() {
         isTerminating = true
         serviceScope.cancel()
         runCatching {
-            // Only release WakeLock in onDestroy(); do NOT call playerManager?.stopPlayback() if the OS
-            // recycles the service while music is still playing or buffering!
             if (wakeLock?.isHeld == true) {
                 wakeLock?.release()
+            }
+            if (wifiLock?.isHeld == true) {
+                wifiLock?.release()
             }
         }
         super.onDestroy()

@@ -40,7 +40,7 @@ fun DownloadsScreen(
     val isOfflineMode by viewModel.isOfflineMode.collectAsState()
     val isRefreshingLibrary by viewModel.isRefreshingLibrary.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
-    val downloadService = remember { com.seitharol.data.download.DownloadPreferencesAndService(context) }
+    val downloadService = remember { com.seitharol.data.download.DownloadPreferencesAndService.getInstance(context) }
     val standaloneDownloads by downloadService.completedDownloads.collectAsState()
 
     val totalMb = totalBytes / (1024 * 1024)
@@ -174,6 +174,18 @@ fun DownloadsScreen(
             }
         }
 
+        val standaloneIds = remember(standaloneDownloads) {
+            standaloneDownloads.map { downloadService.canonicalTrackId(it.sourceId) }.toSet()
+        }
+        val deduplicatedQueueDownloads = remember(downloads, standaloneIds, standaloneDownloads) {
+            downloads.filterNot { item ->
+                val canon = downloadService.canonicalTrackId(item.trackId)
+                canon in standaloneIds || standaloneDownloads.any { s ->
+                    s.title.equals(item.title, ignoreCase = true)
+                }
+            }
+        }
+
         // Standalone Discover / Public Downloads (Distinct card color from cache downloads)
         if (standaloneDownloads.isNotEmpty()) {
             item {
@@ -216,7 +228,8 @@ fun DownloadsScreen(
                                 localPath = track.localPath
                             )
                         )
-                    }
+                    },
+                    onDelete = { viewModel.deleteDownload(track.sourceId) }
                 )
             }
         }
@@ -224,7 +237,7 @@ fun DownloadsScreen(
         item {
             Spacer(modifier = Modifier.height(20.dp))
             Text(
-                text = "Track Download Queue (${downloads.size})",
+                text = "Track Download Queue (${deduplicatedQueueDownloads.size})",
                 fontFamily = SyneFontFamily,
                 fontWeight = FontWeight.Medium,
                 fontSize = 16.sp,
@@ -233,7 +246,7 @@ fun DownloadsScreen(
             Spacer(modifier = Modifier.height(8.dp))
         }
 
-        if (downloads.isEmpty()) {
+        if (deduplicatedQueueDownloads.isEmpty()) {
             item {
                 Box(
                     modifier = Modifier
@@ -259,7 +272,7 @@ fun DownloadsScreen(
                 }
             }
         } else {
-            items(downloads) { item ->
+            items(deduplicatedQueueDownloads) { item ->
                 DownloadItemRow(
                     item = item,
                     onClick = {
@@ -452,7 +465,8 @@ fun DownloadItemRow(
 @Composable
 fun StandaloneDownloadItemRow(
     track: com.seitharol.domain.model.NormalizedTrack,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onDelete: () -> Unit = {}
 ) {
     Surface(
         modifier = Modifier
@@ -532,6 +546,18 @@ fun StandaloneDownloadItemRow(
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(28.dp)
             )
+            Spacer(modifier = Modifier.width(4.dp))
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.DeleteOutline,
+                    contentDescription = "Delete download",
+                    tint = SeitharolTextSecondary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
     }
 }

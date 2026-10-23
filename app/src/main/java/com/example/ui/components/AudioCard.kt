@@ -1,5 +1,8 @@
 package com.example.ui.components
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -13,26 +16,158 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
-import androidx.compose.foundation.Image
-import androidx.compose.ui.res.painterResource
 import com.example.R
 import com.example.data.model.DownloadTier
 import com.example.data.model.Track
 import com.example.ui.theme.*
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
+/**
+ * Universal Swipe-Down Pull-to-Refresh container for Home, Search, and Library pages.
+ * Uses standard Compose NestedScrollConnection for 100% compatibility across all Compose versions.
+ */
+@Composable
+fun SeitharolPullToRefreshBox(
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit
+) {
+    val density = LocalDensity.current
+    val triggerThresholdPx = with(density) { 76.dp.toPx() }
+    val maxPullPx = with(density) { 128.dp.toPx() }
+    var pullDistancePx by remember { mutableFloatStateOf(0f) }
+    var localRefreshing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(isRefreshing) {
+        if (!isRefreshing && localRefreshing) {
+            delay(350L)
+            localRefreshing = false
+            pullDistancePx = 0f
+        }
+    }
+
+    val effectiveRefreshing = isRefreshing || localRefreshing
+
+    val nestedScrollConnection = remember(effectiveRefreshing, triggerThresholdPx, maxPullPx) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.Drag && available.y < 0f && pullDistancePx > 0f) {
+                    val consumedY = available.y.coerceAtLeast(-pullDistancePx)
+                    pullDistancePx = (pullDistancePx + consumedY).coerceAtLeast(0f)
+                    return Offset(0f, consumedY)
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                if (!effectiveRefreshing && source == NestedScrollSource.Drag && available.y > 0f && consumed.y == 0f) {
+                    pullDistancePx = (pullDistancePx + available.y * 0.52f).coerceIn(0f, maxPullPx)
+                    return Offset(0f, available.y)
+                }
+                return Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (!effectiveRefreshing && pullDistancePx >= triggerThresholdPx) {
+                    localRefreshing = true
+                    pullDistancePx = triggerThresholdPx * 0.75f
+                    onRefresh()
+                    scope.launch {
+                        delay(1200L)
+                        if (!isRefreshing) {
+                            localRefreshing = false
+                            pullDistancePx = 0f
+                        }
+                    }
+                } else if (!effectiveRefreshing) {
+                    pullDistancePx = 0f
+                }
+                return Velocity.Zero
+            }
+        }
+    }
+
+    val animatedOffsetPx by animateFloatAsState(
+        targetValue = if (effectiveRefreshing) triggerThresholdPx * 0.65f else pullDistancePx,
+        animationSpec = spring(),
+        label = "pull_refresh_offset"
+    )
+
+    Box(
+        modifier = modifier.nestedScroll(nestedScrollConnection)
+    ) {
+        content()
+
+        if (animatedOffsetPx > 6f || effectiveRefreshing) {
+            val progressFraction = (animatedOffsetPx / triggerThresholdPx).coerceIn(0f, 1f)
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 12.dp)
+                    .graphicsLayer {
+                        translationY = (animatedOffsetPx - 24f).coerceAtLeast(0f)
+                        alpha = if (effectiveRefreshing) 1f else progressFraction
+                        scaleX = if (effectiveRefreshing) 1f else (0.7f + 0.3f * progressFraction)
+                        scaleY = if (effectiveRefreshing) 1f else (0.7f + 0.3f * progressFraction)
+                    }
+                    .size(40.dp)
+                    .zIndex(10f),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shadowElevation = 6.dp
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    if (effectiveRefreshing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.2.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Pull to refresh",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .size(20.dp)
+                                .graphicsLayer { rotationZ = progressFraction * 220f }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 /**
  * Standard Track Row from SEITHAROL design:
- * Clean 56dp height row with rank/thumbnail, track title, artist / play count, and options.
+ * Clean 56dp height row with rank/thumbnail, track title, artist / play count, direct download icon, like, and options.
  */
 @Composable
 fun TrackCard(
@@ -52,6 +187,7 @@ fun TrackCard(
     onRemoveDownloadClick: (() -> Unit)? = null
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    var hasRequestedDownload by remember(track.id, track.isDownloaded) { mutableStateOf(false) }
 
     Surface(
         modifier = modifier
@@ -68,7 +204,6 @@ fun TrackCard(
                 .fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Optional Rank Number
             if (rankNumber != null) {
                 Text(
                     text = rankNumber.toString(),
@@ -80,7 +215,6 @@ fun TrackCard(
                 )
             }
 
-            // Real Thumbnail with Coil
             Box(
                 modifier = Modifier
                     .size(44.dp)
@@ -113,7 +247,6 @@ fun TrackCard(
 
             Spacer(modifier = Modifier.width(12.dp))
 
-            // Metadata
             Column(
                 modifier = Modifier.weight(1f)
             ) {
@@ -127,28 +260,79 @@ fun TrackCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = subtitleText ?: "${track.artist} • ${track.durationFormatted}",
-                    color = SeitharolTextSecondary,
-                    fontSize = 12.sp,
-                    fontFamily = OutfitFontFamily,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (track.isDownloaded) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = "Downloaded",
+                            tint = Color(0xFF00C853),
+                            modifier = Modifier
+                                .size(13.dp)
+                                .padding(end = 3.dp)
+                        )
+                    }
+                    Text(
+                        text = subtitleText ?: "${track.artist} • ${track.durationFormatted}",
+                        color = SeitharolTextSecondary,
+                        fontSize = 12.sp,
+                        fontFamily = OutfitFontFamily,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            // Direct 1-Tap Download Button
+            IconButton(
+                onClick = {
+                    if (track.isDownloaded) {
+                        onRemoveDownloadClick?.invoke()
+                    } else if (!hasRequestedDownload) {
+                        hasRequestedDownload = true
+                        onDownloadClick(DownloadTier.STANDARD)
+                    }
+                },
+                modifier = Modifier.size(36.dp)
+            ) {
+                when {
+                    track.isDownloaded -> {
+                        Icon(
+                            imageVector = Icons.Default.DownloadDone,
+                            contentDescription = "Downloaded",
+                            tint = Color(0xFF00C853),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    hasRequestedDownload -> {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    else -> {
+                        Icon(
+                            imageVector = Icons.Outlined.Download,
+                            contentDescription = "Download",
+                            tint = SeitharolTextSecondary,
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
+                }
             }
 
             // Like action
             IconButton(
                 onClick = onLikeClick,
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(36.dp)
                     .testTag("track_like_btn_${track.id}")
             ) {
                 Icon(
                     imageVector = if (track.isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
                     contentDescription = if (track.isLiked) "Unlike" else "Like",
                     tint = if (track.isLiked) SeitharolRedHeart else SeitharolTextSecondary,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(19.dp)
                 )
             }
 
@@ -158,7 +342,7 @@ fun TrackCard(
                     onClick = {
                         if (onOptionsClick != null) onOptionsClick() else showMenu = true
                     },
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.size(34.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.MoreHoriz,
@@ -234,30 +418,47 @@ fun TrackCard(
                         )
                     } else {
                         DropdownMenuItem(
-                            text = { Text("Download (Good 128k)", color = SeitharolTextPrimary) },
+                            text = { Text("Download High Quality", color = SeitharolTextPrimary) },
                             leadingIcon = {
                                 Image(
                                     painter = painterResource(id = R.drawable.ic_mp3),
-                                    contentDescription = "MP3",
+                                    contentDescription = "Download",
                                     modifier = Modifier.size(20.dp)
                                 )
                             },
                             onClick = {
                                 showMenu = false
+                                hasRequestedDownload = true
+                                onDownloadClick(DownloadTier.HIGH)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Download Standard (160k)", color = SeitharolTextPrimary) },
+                            leadingIcon = {
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_mp3),
+                                    contentDescription = "Download",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                hasRequestedDownload = true
                                 onDownloadClick(DownloadTier.STANDARD)
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Download Data Saver (64k)", color = SeitharolTextPrimary) },
+                            text = { Text("Download Data Saver (96k)", color = SeitharolTextPrimary) },
                             leadingIcon = {
                                 Image(
                                     painter = painterResource(id = R.drawable.ic_mp3),
-                                    contentDescription = "MP3",
+                                    contentDescription = "Download",
                                     modifier = Modifier.size(20.dp)
                                 )
                             },
                             onClick = {
                                 showMenu = false
+                                hasRequestedDownload = true
                                 onDownloadClick(DownloadTier.DATA_SAVER)
                             }
                         )
@@ -268,10 +469,6 @@ fun TrackCard(
     }
 }
 
-/**
- * Today's Biggest Hits Card (from Home board):
- * White background, radius 20dp, padding 8dp, compact vertical portrait card (136dp width with 120dp square art).
- */
 @Composable
 fun HitCard(
     track: Track,
@@ -347,11 +544,6 @@ fun HitCard(
     }
 }
 
-/**
- * Fresh New Music Banner Card (from Home board):
- * Width 280dp, height 160dp, border-radius 22dp, gradient background or image,
- * bottom-right circular play button (44x44, white with black icon).
- */
 @Composable
 fun FreshNewMusicCard(
     track: Track,
@@ -364,7 +556,6 @@ fun FreshNewMusicCard(
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
     ) {
-        // High-res rectangular/rounded artwork — NO circular div/clip inside
         AsyncImage(
             model = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
             contentDescription = track.title,
@@ -418,7 +609,6 @@ fun FreshMusicCard(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
-            // Gradient Overlay
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -430,7 +620,6 @@ fun FreshMusicCard(
             )
         }
 
-        // Card Content
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
@@ -452,7 +641,6 @@ fun FreshMusicCard(
             )
         }
 
-        // Subtle play indicator on bottom-right (Rounded shape, not obstructing artwork)
         Surface(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
@@ -482,11 +670,6 @@ object ArtistAvatarCache {
     }
 }
 
-/**
- * Suggested Artist Circular Avatar (from Home board):
- * 104dp width, 104dp circular photo avatar, artist name centered below in 12sp.
- * Uses official artist channel avatar or stylish monogram, never a song thumbnail.
- */
 @Composable
 fun SuggestedArtistItem(
     name: String,

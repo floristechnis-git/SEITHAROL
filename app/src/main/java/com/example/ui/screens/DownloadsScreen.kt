@@ -28,6 +28,7 @@ import com.example.R
 import com.example.data.model.DownloadItem
 import com.example.data.model.DownloadState
 import com.example.ui.CascadeViewModel
+import com.example.ui.components.SeitharolPullToRefreshBox
 import com.example.ui.theme.*
 import com.seitharol.data.download.DownloadTaskState
 
@@ -40,6 +41,7 @@ fun DownloadsScreen(
     val downloads by viewModel.activeDownloads.collectAsState()
     val totalBytes by viewModel.totalDownloadedBytes.collectAsState()
     val isOfflineMode by viewModel.isOfflineMode.collectAsState()
+    val isRefreshingLibrary by viewModel.isRefreshingLibrary.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
     val downloadService = remember { com.seitharol.data.download.DownloadPreferencesAndService.getInstance(context) }
     val standaloneDownloads by downloadService.completedDownloads.collectAsState()
@@ -62,7 +64,9 @@ fun DownloadsScreen(
 
     val activeDiscoverDownloading = discoverTaskState as? DownloadTaskState.Downloading
 
-    Box(
+    SeitharolPullToRefreshBox(
+        isRefreshing = isRefreshingLibrary,
+        onRefresh = { viewModel.refreshLibrary() },
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)

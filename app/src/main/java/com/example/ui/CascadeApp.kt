@@ -720,6 +720,86 @@ fun CascadeApp(
                         .navigationBarsPadding(),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    if (playerState.isVideoMode && playerState.currentTrack != null && !isPlayerExpanded && currentSubScreen !is SubScreen.Discover) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp),
+                            contentAlignment = Alignment.CenterEnd
+                        ) {
+                            Surface(
+                                modifier = Modifier
+                                    .width(196.dp)
+                                    .aspectRatio(16f / 9f)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .clickable { isPlayerExpanded = true },
+                                shape = RoundedCornerShape(16.dp),
+                                color = Color.Black,
+                                shadowElevation = 14.dp,
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                                )
+                            ) {
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    androidx.compose.ui.viewinterop.AndroidView(
+                                        factory = { ctx ->
+                                            android.view.TextureView(ctx).also { tv ->
+                                                viewModel.attachVideoTextureView(tv)
+                                            }
+                                        },
+                                        update = { tv ->
+                                            viewModel.attachVideoTextureView(tv)
+                                        },
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .align(Alignment.TopEnd)
+                                            .padding(6.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = Color.Black.copy(alpha = 0.6f),
+                                            modifier = Modifier
+                                                .size(26.dp)
+                                                .clip(CircleShape)
+                                                .clickable { isPlayerExpanded = true }
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Icon(
+                                                    imageVector = Icons.Default.OpenInFull,
+                                                    contentDescription = "Expand Video",
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                            }
+                                        }
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = Color.Black.copy(alpha = 0.6f),
+                                            modifier = Modifier
+                                                .size(26.dp)
+                                                .clip(CircleShape)
+                                                .clickable { viewModel.setVideoMode(false) }
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Close,
+                                                    contentDescription = "Switch to Audio",
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     if (playerState.currentTrack != null && !isPlayerExpanded && currentSubScreen !is SubScreen.Discover) {
                         MiniPlayer(
                             playerState = playerState,

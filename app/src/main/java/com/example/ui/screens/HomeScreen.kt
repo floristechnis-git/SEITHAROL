@@ -35,6 +35,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
+import com.example.ui.components.SeitharolPullToRefreshBox
 import coil.compose.AsyncImage
 import com.example.data.model.DownloadTier
 import com.example.data.model.Track
@@ -143,6 +145,7 @@ fun HomeScreen(
     val personalizedTracks by viewModel.personalizedTracks.collectAsState()
     val selectedMood by viewModel.selectedMood.collectAsState()
     val isLoadingHome by viewModel.isLoadingHome.collectAsState()
+    val hasCompletedInitialHomeLoad by viewModel.hasCompletedInitialHomeLoad.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
     val activeHistory by viewModel.activeHistory.collectAsState()
     val likedTracks by viewModel.likedTracks.collectAsState()
@@ -385,7 +388,12 @@ fun HomeScreen(
         )
     }
 
-    Box(
+    SeitharolPullToRefreshBox(
+        isRefreshing = isLoadingHome && hasCompletedInitialHomeLoad,
+        onRefresh = {
+            viewModel.loadHomeScreenMusic()
+            viewModel.loadDiscoverFeed()
+        },
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
@@ -644,63 +652,123 @@ fun HomeScreen(
             }
 
             // ────────────────────────────────────────────────────────────
-            // First-launch empty state (when offline or loading hasn't completed yet)
+            // First-launch loading / empty state (never shows internet warning before first load finishes)
             // ────────────────────────────────────────────────────────────
-            if (!isLoadingHome && trendingItems.isEmpty() && freshItems.isEmpty() && quickDialItems.isEmpty()) {
-                item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 32.dp, vertical = 48.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+            if (trendingItems.isEmpty() && freshItems.isEmpty() && quickDialItems.isEmpty()) {
+                if (!hasCompletedInitialHomeLoad || isLoadingHome) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 32.dp, vertical = 56.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.CloudOff,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(48.dp)
-                            )
-                            Text(
-                                text = if (isOfflineMode) "No offline songs downloaded yet" else "No content loaded yet",
-                                color = MaterialTheme.colorScheme.onBackground,
-                                fontFamily = SyneFontFamily,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 17.sp
-                            )
-                            Text(
-                                text = if (isOfflineMode)
-                                    "Disable Airplane Mode Offline or download tracks first to listen offline."
-                                else
-                                    "Check your internet connection\nand tap Retry to load music.",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontFamily = OutfitFontFamily,
-                                fontSize = 14.sp,
-                                textAlign = TextAlign.Center
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Surface(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(24.dp))
-                                    .clickable {
-                                        if (isOfflineMode) viewModel.setOfflineMode(false)
-                                        else viewModel.loadHomeScreenMusic()
-                                    }
-                                    .testTag("home_retry_btn"),
-                                shape = RoundedCornerShape(24.dp),
-                                color = MaterialTheme.colorScheme.primary
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(32.dp),
+                                    strokeWidth = 2.5.dp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "Curating your music feed...",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontFamily = OutfitFontFamily,
+                                    fontSize = 14.sp
+                                )
+                            }
+                        }
+                    }
+                } else if (isOfflineMode) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 32.dp, vertical = 48.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CloudOff,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(44.dp)
+                                )
+                                Text(
+                                    text = "No offline songs downloaded yet",
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    fontFamily = SyneFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 17.sp
+                                )
+                                Text(
+                                    text = "Disable Airplane Mode Offline or download tracks first to listen offline.",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontFamily = OutfitFontFamily,
+                                    fontSize = 14.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                                Surface(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(24.dp))
+                                        .clickable { viewModel.setOfflineMode(false) }
+                                        .testTag("home_retry_btn"),
+                                    shape = RoundedCornerShape(24.dp),
+                                    color = MaterialTheme.colorScheme.primary
+                                ) {
+                                    Text(
+                                        text = "  Go Online  ",
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.Medium,
+                                        fontSize = 14.sp,
+                                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 32.dp, vertical = 48.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Text(
-                                    text = if (isOfflineMode) "  Go Online  " else "  Retry  ",
-                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    text = "Swipe down or tap below to refresh your feed",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.Medium,
                                     fontSize = 14.sp,
-                                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp)
+                                    textAlign = TextAlign.Center
                                 )
+                                Surface(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(24.dp))
+                                        .clickable { viewModel.loadHomeScreenMusic() }
+                                        .testTag("home_retry_btn"),
+                                    shape = RoundedCornerShape(24.dp),
+                                    color = MaterialTheme.colorScheme.primary
+                                ) {
+                                    Text(
+                                        text = "  Refresh Feed  ",
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.Medium,
+                                        fontSize = 14.sp,
+                                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -863,11 +931,20 @@ fun HomeScreen(
                 Box(
                     modifier = Modifier.fillMaxWidth()
                 ) {
+                    // Kangla Gate Aesthetic Footer Image placed FIRST with lower zIndex(0f) so it always sits behind foreground UI
+                    HomeScreenKanglaFooterImage(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.BottomCenter)
+                            .zIndex(0f)
+                    )
+
                     if (dynamicArtists.isNotEmpty()) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(bottom = 195.dp)
+                                .zIndex(1f)
                         ) {
                             SectionHeader(
                                 title = "Suggested Artists",
@@ -889,13 +966,6 @@ fun HomeScreen(
                     } else {
                         Spacer(modifier = Modifier.height(195.dp))
                     }
-
-                    // Kangla Gate Aesthetic Footer Image — bottom edge is strictly flush with the very bottom of HomeScreen
-                    HomeScreenKanglaFooterImage(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.BottomCenter)
-                    )
                 }
             }
         }
@@ -1554,6 +1624,7 @@ fun HomeScreenKanglaFooterImage(modifier: Modifier = Modifier) {
 
     Box(
         modifier = modifier
+            .zIndex(0f)
             .fillMaxWidth()
             .wrapContentHeight(Alignment.Bottom),
         contentAlignment = Alignment.BottomCenter

@@ -21,6 +21,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -351,6 +353,7 @@ class DownloadRepository(
     private val trackDao = db.trackDao()
     private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val activeDownloadJobs = ConcurrentHashMap<String, Job>()
+    private val downloadSemaphore = Semaphore(2)
     private val activeTrackTitles = ConcurrentHashMap<String, String>()
     private val notificationManager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
     private val DOWNLOAD_CHANNEL_ID = "seitharol_download_channel"
@@ -536,20 +539,59 @@ class DownloadRepository(
     }
 
     suspend fun startDownload(track: Track, tier: DownloadTier) = withContext(Dispatchers.IO) {
+        enqueueDownload(track, tier).join()
+    }
+
+    fun enqueueDownload(track: Track, tier: DownloadTier = DownloadTier.STANDARD): Job {
         activeDownloadJobs[track.id]?.cancel()
+        activeTrackTitles[track.id] = track.title
         val job = repoScope.launch {
-            executeDownload(track, tier)
+            val downloadDir = File(appContext.filesDir, "downloads").apply { if (!exists()) mkdirs() }
+            val ext = if (tier.codec.contains("Opus", ignoreCase = true)) "opus" else "m4a"
+            val safeFileId = track.id.replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { "track_${track.title.hashCode()}" }
+            val destFile = File(downloadDir, "${safeFileId}_${tier.name.lowercase()}.$ext")
+            runCatching {
+                val existing = trackDao.getTrackById(track.id)
+                trackDao.insertTrack(
+                    track.copy(
+                        isLiked = existing?.isLiked ?: track.isLiked,
+                        isDownloaded = existing?.isDownloaded ?: false,
+                        localPath = existing?.localPath ?: destFile.absolutePath
+                    ).toEntity()
+                )
+                downloadDao.insertDownload(
+                    DownloadEntity(
+                        trackId = track.id,
+                        tier = tier.label,
+                        state = "QUEUED",
+                        localPath = destFile.absolutePath,
+                        progress = 0.01f,
+                        bytesDownloaded = 0L,
+                        totalBytes = 4_000_000L
+                    )
+                )
+            }
+            downloadSemaphore.withPermit {
+                coroutineContext.ensureActive()
+                executeDownload(track, tier)
+            }
         }
         activeDownloadJobs[track.id] = job
-        activeTrackTitles[track.id] = track.title
-        job.join()
+        return job
+    }
+
+    fun enqueueDownloadAll(tracks: List<Track>, tier: DownloadTier = DownloadTier.STANDARD) {
+        tracks.filter { !it.isDownloaded }.forEach { track ->
+            enqueueDownload(track, tier)
+        }
     }
 
     private suspend fun executeDownload(track: Track, tier: DownloadTier) = withContext(Dispatchers.IO) {
         val downloadDir = File(appContext.filesDir, "downloads").apply { if (!exists()) mkdirs() }
         val ext = if (tier.codec.contains("Opus", ignoreCase = true)) "opus" else "m4a"
-        val destFile = File(downloadDir, "${track.id}_${tier.name.lowercase()}.$ext")
-        val tempFile = File(downloadDir, "${track.id}_${tier.name.lowercase()}.tmp")
+        val safeFileId = track.id.replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { "track_${track.title.hashCode()}" }
+        val destFile = File(downloadDir, "${safeFileId}_${tier.name.lowercase()}.$ext")
+        val tempFile = File(downloadDir, "${safeFileId}_${tier.name.lowercase()}.tmp")
 
         try {
             val existing = trackDao.getTrackById(track.id)
@@ -573,58 +615,64 @@ class DownloadRepository(
             )
             updateDownloadNotification(track.id, track.title, 5)
 
-            val resolvedStream = resolverEngine.resolveTrack(track)
-            val streamUrl = resolvedStream.streamUrl
-
-            if (streamUrl.isBlank()) {
-                throw IllegalStateException("Empty stream URL resolved for ${track.title}")
+            val quality = when (tier) {
+                DownloadTier.DATA_SAVER -> com.seitharol.data.resolver.AudioQuality.LOW
+                DownloadTier.HIGH, DownloadTier.ORIGINAL -> com.seitharol.data.resolver.AudioQuality.HIGH
+                else -> com.seitharol.data.resolver.AudioQuality.NORMAL
             }
 
-            val clientHeaders = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(streamUrl)
-            val requestBuilder = Request.Builder().url(streamUrl)
-            clientHeaders.forEach { (k, v) -> requestBuilder.header(k, v) }
-            val request = requestBuilder.build()
-
-            NetworkClients.okHttpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    throw IllegalStateException("HTTP ${response.code} downloading track stream")
-                }
-                val body = response.body ?: throw IllegalStateException("Empty response body")
-                val contentLength = body.contentLength().let { if (it > 0) it else 4_000_000L }
-
-                body.byteStream().use { input ->
-                    FileOutputStream(tempFile).use { output ->
-                        val buffer = ByteArray(8192)
-                        var bytesRead: Int
-                        var totalRead = 0L
-                        var lastProgressUpdate = System.currentTimeMillis()
-
-                        while (input.read(buffer).also { bytesRead = it } != -1) {
-                            coroutineContext.ensureActive()
-                            output.write(buffer, 0, bytesRead)
-                            totalRead += bytesRead
-
-                            val now = System.currentTimeMillis()
-                            if (now - lastProgressUpdate > 300L) {
-                                lastProgressUpdate = now
-                                val progress = (totalRead.toFloat() / contentLength.toFloat()).coerceIn(0.05f, 0.95f)
-                                downloadDao.updateDownload(
-                                    DownloadEntity(
-                                        trackId = track.id,
-                                        tier = tier.label,
-                                        state = "DOWNLOADING",
-                                        localPath = destFile.absolutePath,
-                                        progress = progress,
-                                        bytesDownloaded = totalRead,
-                                        totalBytes = contentLength
-                                    )
-                                )
-                                updateDownloadNotification(track.id, track.title, (progress * 100).toInt())
-                            }
-                        }
-                        output.flush()
+            val candidateUrls = buildList {
+                com.seitharol.data.resolver.InnerTubeStreamExtractor.resolveDownloadableStreamCandidates(
+                    videoId = track.id,
+                    title = track.title,
+                    artist = track.artist,
+                    preferredQuality = quality
+                ).forEach { add(it) }
+                runCatching {
+                    val resolved = resolverEngine.resolveTrack(track, quality, forceRefresh = isEmpty()).streamUrl
+                    if (resolved.isNotBlank() && !resolved.contains(".m3u8", true) && !contains(resolved)) {
+                        add(resolved)
                     }
                 }
+            }
+
+            if (candidateUrls.isEmpty()) {
+                throw IllegalStateException("Could not resolve downloadable stream for ${track.title}")
+            }
+
+            var downloadedOk = false
+            var lastProgressUpdate = System.currentTimeMillis()
+            for (candidateUrl in candidateUrls) {
+                coroutineContext.ensureActive()
+                val ok = com.seitharol.data.resolver.InnerTubeStreamExtractor.downloadUrlToFileReliable(
+                    streamUrl = candidateUrl,
+                    tempFile = tempFile
+                ) { totalRead, contentLength ->
+                    val now = System.currentTimeMillis()
+                    if (now - lastProgressUpdate > 300L) {
+                        lastProgressUpdate = now
+                        val progress = (totalRead.toFloat() / contentLength.coerceAtLeast(1L).toFloat()).coerceIn(0.05f, 0.95f)
+                        downloadDao.updateDownload(
+                            DownloadEntity(
+                                trackId = track.id,
+                                tier = tier.label,
+                                state = "DOWNLOADING",
+                                localPath = destFile.absolutePath,
+                                progress = progress,
+                                bytesDownloaded = totalRead,
+                                totalBytes = contentLength
+                            )
+                        )
+                        updateDownloadNotification(track.id, track.title, (progress * 100).toInt())
+                    }
+                }
+                if (ok && tempFile.exists() && tempFile.length() > 10_240L) {
+                    downloadedOk = true
+                    break
+                }
+            }
+
+            if (downloadedOk) {
 
                 if (tempFile.exists() && tempFile.length() > 10_240L) {
                     if (destFile.exists()) destFile.delete()
@@ -657,6 +705,9 @@ class DownloadRepository(
                     if (tempFile.exists()) tempFile.delete()
                     throw IllegalStateException("Downloaded file was corrupt or smaller than 10KB (${tempFile.length()} bytes)")
                 }
+            } else {
+                if (tempFile.exists()) tempFile.delete()
+                throw IllegalStateException("Unable to download audio stream for ${track.title}")
             }
         } catch (e: CancellationException) {
             activeDownloadJobs.remove(track.id)

@@ -102,18 +102,6 @@ object InnerTubeStreamExtractor {
      */
     val VERIFIED_CLIENTS = listOf(
         InnerTubeClientConfig(
-            clientName = "VISIONOS",
-            clientVersion = "0.1",
-            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
-            clientId = "101",
-            deviceMake = "Apple",
-            deviceModel = "RealityDevice14,1",
-            osName = "visionOS",
-            osVersion = "1.3.21O771",
-            glOverride = null, // Uses device/regional GL ("IN")
-            sendOriginHeaders = true
-        ),
-        InnerTubeClientConfig(
             clientName = "ANDROID_VR",
             clientVersion = "1.61.48",
             userAgent = "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
@@ -123,30 +111,6 @@ object InnerTubeStreamExtractor {
             osName = "Android",
             osVersion = "12L",
             androidSdkVersion = 32,
-            glOverride = null, // Uses device/regional GL ("IN")
-            sendOriginHeaders = false
-        ),
-        InnerTubeClientConfig(
-            clientName = "VISIONOS",
-            clientVersion = "0.1",
-            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
-            clientId = "101",
-            deviceMake = "Apple",
-            deviceModel = "RealityDevice14,1",
-            osName = "visionOS",
-            osVersion = "1.3.21O771",
-            glOverride = "US",
-            sendOriginHeaders = true
-        ),
-        InnerTubeClientConfig(
-            clientName = "IOS",
-            clientVersion = "20.10.4",
-            userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)",
-            clientId = "5",
-            deviceMake = "Apple",
-            deviceModel = "iPhone16,2",
-            osName = "iOS",
-            osVersion = "18.3.1.22D72",
             glOverride = null,
             sendOriginHeaders = false
         ),
@@ -176,6 +140,30 @@ object InnerTubeStreamExtractor {
             params = "CgIIAQ==",
             glOverride = "US",
             sendOriginHeaders = false
+        ),
+        InnerTubeClientConfig(
+            clientName = "IOS",
+            clientVersion = "20.10.4",
+            userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)",
+            clientId = "5",
+            deviceMake = "Apple",
+            deviceModel = "iPhone16,2",
+            osName = "iOS",
+            osVersion = "18.3.1.22D72",
+            glOverride = null,
+            sendOriginHeaders = false
+        ),
+        InnerTubeClientConfig(
+            clientName = "VISIONOS",
+            clientVersion = "0.1",
+            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+            clientId = "101",
+            deviceMake = "Apple",
+            deviceModel = "RealityDevice14,1",
+            osName = "visionOS",
+            osVersion = "1.3.21O771",
+            glOverride = null,
+            sendOriginHeaders = true
         ),
         InnerTubeClientConfig(
             clientName = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
@@ -311,7 +299,8 @@ object InnerTubeStreamExtractor {
         videoId: String,
         client: InnerTubeClientConfig,
         preferredQuality: AudioQuality,
-        cpn: String
+        cpn: String,
+        allowHls: Boolean = false
     ): String? {
         return runCatching {
             val visData = cachedVisitorData?.takeIf { it.isNotBlank() }
@@ -485,10 +474,12 @@ object InnerTubeStreamExtractor {
                 return@runCatching bestCandidate.url
             }
 
-            // Fallback to HLS manifest if present (e.g. on iOS client)
-            val hlsUrl = streamingData.optString("hlsManifestUrl", "")
-            if (hlsUrl.isNotBlank()) {
-                return@runCatching hlsUrl
+            // Fallback to HLS manifest only if explicitly allowed (never for file downloads!)
+            if (allowHls) {
+                val hlsUrl = streamingData.optString("hlsManifestUrl", "")
+                if (hlsUrl.isNotBlank()) {
+                    return@runCatching hlsUrl
+                }
             }
 
             null
@@ -1673,6 +1664,414 @@ object InnerTubeStreamExtractor {
             }
         }
         return CanonicalAudioResolver.deduplicateTracks(results)
+    }
+
+
+    /**
+     * Resolves a raw googlevideo.com progressive video+audio MP4 stream (itag 18 / 22) for Video Mode.
+     * Plays directly inside Seitharol custom ExoPlayer surface with ZERO YouTube logo or iframe chrome.
+     */
+    suspend fun resolveRawVideoStreamById(videoId: String): Result<String> = withContext(Dispatchers.IO) {
+        val cleanVideoId = extractVideoId(videoId) ?: videoId.trim()
+        if (!VALID_VIDEO_ID_REGEX.matches(cleanVideoId)) {
+            return@withContext Result.failure(IllegalArgumentException("Invalid YouTube videoId: $videoId"))
+        }
+        val cpn = generateCpn()
+        for (client in VERIFIED_CLIENTS) {
+            val videoUrl = runCatching {
+                val visData = cachedVisitorData?.takeIf { it.isNotBlank() }
+                val effectiveGl = client.glOverride ?: resolveDeviceGl()
+                val conn = (URL(client.playerEndpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 3500
+                    readTimeout = 4000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("User-Agent", client.userAgent)
+                    setRequestProperty("X-YouTube-Client-Name", client.clientId)
+                    setRequestProperty("X-YouTube-Client-Version", client.clientVersion)
+                    setRequestProperty("X-Goog-Api-Format-Version", "2")
+                    if (client.sendOriginHeaders) {
+                        setRequestProperty("Origin", client.origin)
+                        setRequestProperty("Referer", "${client.origin}/")
+                    }
+                    if (visData != null) setRequestProperty("X-Goog-Visitor-Id", visData)
+                }
+                val payload = JSONObject().apply {
+                    put("videoId", cleanVideoId)
+                    put("cpn", cpn)
+                    put("contentCheckOk", true)
+                    put("racyCheckOk", true)
+                    client.params?.let { put("params", it) }
+                    put("context", JSONObject().apply {
+                        put("client", JSONObject().apply {
+                            put("clientName", client.clientName)
+                            put("clientVersion", client.clientVersion)
+                            put("userAgent", client.userAgent)
+                            put("hl", "en")
+                            put("gl", effectiveGl)
+                            client.deviceMake?.let { put("deviceMake", it) }
+                            client.deviceModel?.let { put("deviceModel", it) }
+                            client.osName?.let { put("osName", it) }
+                            client.osVersion?.let { put("osVersion", it) }
+                            client.androidSdkVersion?.let { put("androidSdkVersion", it) }
+                            if (visData != null) put("visitorData", visData)
+                        })
+                    })
+                }
+                conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+                if (conn.responseCode != 200) return@runCatching null
+                val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                if (json.optJSONObject("playabilityStatus")?.optString("status") != "OK") return@runCatching null
+                val streamingData = json.optJSONObject("streamingData") ?: return@runCatching null
+                val formats = streamingData.optJSONArray("formats")
+                if (formats != null) {
+                    var bestUrl: String? = null
+                    var bestHeight = -1
+                    for (i in 0 until formats.length()) {
+                        val fmt = formats.optJSONObject(i) ?: continue
+                        val url = fmt.optString("url", "")
+                        val height = fmt.optInt("height", 360)
+                        if (url.isNotBlank()) {
+                            val withCpn = if (!url.contains("cpn=")) {
+                                val sep = if (url.contains("?")) "&" else "?"
+                                "$url${sep}cpn=$cpn"
+                            } else url
+                            if (height >= bestHeight) {
+                                bestHeight = height
+                                bestUrl = withCpn
+                            }
+                        }
+                    }
+                    if (!bestUrl.isNullOrBlank()) return@runCatching bestUrl
+                }
+                null
+            }.getOrNull()
+            if (!videoUrl.isNullOrBlank()) {
+                return@withContext Result.success(videoUrl)
+            }
+        }
+        resolveExactYoutubeStreamById(cleanVideoId, AudioQuality.HIGH, forceRefresh = false)
+    }
+
+    /**
+     * Collects all direct binary downloadable audio stream URLs (never HLS .m3u8) across
+     * ANDROID_VR, ANDROID_TESTSUITE, IOS, JioSaavn 320kbps MP4, and Piped/Invidious fallbacks.
+     */
+    suspend fun resolveDownloadableStreamCandidates(
+        videoId: String?,
+        title: String,
+        artist: String,
+        preferredQuality: AudioQuality = AudioQuality.HIGH
+    ): List<String> = withContext(Dispatchers.IO) {
+        val candidates = mutableListOf<String>()
+        fun addCandidate(url: String?) {
+            if (!url.isNullOrBlank() &&
+                url.startsWith("http") &&
+                !url.contains(".m3u8", ignoreCase = true) &&
+                !url.contains("manifest.googlevideo.com", ignoreCase = true) &&
+                !candidates.contains(url)
+            ) {
+                candidates.add(url)
+            }
+        }
+
+        var targetYtId = extractVideoId(videoId)
+        if (targetYtId.isNullOrBlank() && title.isNotBlank()) {
+            val cleanArtist = artist.takeIf { !it.equals("Unknown Artist", true) }.orEmpty()
+            val q = "$title $cleanArtist".trim()
+            val searched = runCatching { searchOfficialYtmSongs(q, limit = 3) }.getOrDefault(emptyList())
+            targetYtId = searched.firstOrNull()?.videoId
+        }
+
+        if (!targetYtId.isNullOrBlank()) {
+            // Try cached non-HLS URL first
+            addCandidate(com.seitharol.player.OuterTuneResolvingDataSource.getCachedUrl(targetYtId, preferredQuality))
+
+            // Query all verified binary clients (ANDROID_VR 1.61, ANDROID_VR 1.43, ANDROID_TESTSUITE, IOS)
+            for (client in VERIFIED_CLIENTS.take(4)) {
+                val url = extractStreamWithConfig(
+                    videoId = targetYtId,
+                    client = client,
+                    preferredQuality = preferredQuality,
+                    cpn = generateCpn(),
+                    allowHls = false
+                )
+                addCandidate(url)
+                if (candidates.size >= 3) break
+            }
+
+            // Fallback to federated Piped/Invidious binary stream if InnerTube returned nothing
+            if (candidates.isEmpty()) {
+                runCatching {
+                    com.example.network.NetworkClients.resolveStream(targetYtId).streamUrl
+                }.getOrNull()?.let { addCandidate(it) }
+            }
+        }
+
+        // Also resolve JioSaavn direct MP4 CDN URL as a rock-solid download candidate
+        if (title.isNotBlank()) {
+            val meta = TrackMetadata(
+                id = videoId.orEmpty(),
+                title = title,
+                artist = artist,
+                durationSeconds = 0
+            )
+            val saavnExact = runCatching { StreamResolver.resolveExactStreamUrl(meta, preferredQuality) }.getOrNull()
+            addCandidate(saavnExact)
+        }
+
+        candidates
+    }
+
+    /**
+     * Downloads an audio stream URL to [tempFile] with automatic 1 MB byte-range chunking for
+     * googlevideo.com adaptive streams (preventing HTTP 403 and CDN throttling) and standard
+     * streaming GET for progressive / JioSaavn streams.
+     */
+    suspend fun downloadUrlToFileReliable(
+        streamUrl: String,
+        tempFile: java.io.File,
+        onProgress: suspend (downloadedBytes: Long, totalBytes: Long) -> Unit
+    ): Boolean = withContext(Dispatchers.IO) {
+        val headers = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(streamUrl)
+        val isGoogleVideo = streamUrl.contains("googlevideo.com", ignoreCase = true)
+        val clenFromUrl = Regex("[?&]clen=(\\d+)").find(streamUrl)?.groupValues?.get(1)?.toLongOrNull() ?: -1L
+
+        // Strategy 1: If googlevideo.com URL has clen=, download in fast 1 MB &range=start-end chunks
+        if (isGoogleVideo && clenFromUrl > 10_240L && !streamUrl.contains("&range=")) {
+            val chunkedSuccess = runCatching {
+                if (tempFile.exists()) tempFile.delete()
+                java.io.FileOutputStream(tempFile).use { output ->
+                    var downloaded = 0L
+                    val chunkSize = 1024L * 1024L // 1 MB per chunk
+                    val buffer = ByteArray(16 * 1024)
+                    while (downloaded < clenFromUrl) {
+                        kotlinx.coroutines.currentCoroutineContext().let { ctx ->
+                            if (!ctx[kotlinx.coroutines.Job]!!.isActive) throw kotlinx.coroutines.CancellationException()
+                        }
+                        val endByte = (downloaded + chunkSize - 1L).coerceAtMost(clenFromUrl - 1L)
+                        val sep = if (streamUrl.contains("?")) "&" else "?"
+                        val chunkUrl = "${streamUrl}${sep}range=$downloaded-$endByte"
+                        val reqBuilder = okhttp3.Request.Builder().url(chunkUrl)
+                        headers.forEach { (k, v) -> reqBuilder.header(k, v) }
+                        com.example.network.NetworkClients.okHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
+                            if (!resp.isSuccessful) {
+                                throw IllegalStateException("HTTP ${resp.code} on chunk $downloaded-$endByte")
+                            }
+                            val body = resp.body ?: throw IllegalStateException("Empty chunk body")
+                            body.byteStream().use { input ->
+                                var read: Int
+                                var chunkRead = 0L
+                                while (input.read(buffer).also { read = it } != -1) {
+                                    output.write(buffer, 0, read)
+                                    downloaded += read
+                                    chunkRead += read
+                                    onProgress(downloaded, clenFromUrl)
+                                }
+                                if (chunkRead == 0L) {
+                                    throw IllegalStateException("Zero bytes read in chunk")
+                                }
+                            }
+                        }
+                    }
+                    output.flush()
+                }
+                tempFile.exists() && tempFile.length() > 10_240L
+            }.getOrElse { e ->
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                false
+            }
+            if (chunkedSuccess) return@withContext true
+        }
+
+        // Strategy 2: Standard streaming GET with Range header
+        runCatching {
+            if (tempFile.exists()) tempFile.delete()
+            val reqBuilder = okhttp3.Request.Builder().url(streamUrl)
+            headers.forEach { (k, v) -> reqBuilder.header(k, v) }
+            reqBuilder.header("Range", "bytes=0-")
+
+            com.example.network.NetworkClients.okHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
+                if (!resp.isSuccessful) return@runCatching false
+                val body = resp.body ?: return@runCatching false
+                val totalBytes = body.contentLength().takeIf { it > 10_240L }
+                    ?: clenFromUrl.takeIf { it > 10_240L }
+                    ?: 4_000_000L
+
+                body.byteStream().use { input ->
+                    java.io.FileOutputStream(tempFile).use { output ->
+                        val buffer = ByteArray(16 * 1024)
+                        var read: Int
+                        var totalRead = 0L
+                        while (input.read(buffer).also { read = it } != -1) {
+                            kotlinx.coroutines.currentCoroutineContext().let { ctx ->
+                                if (ctx[kotlinx.coroutines.Job]?.isActive == false) throw kotlinx.coroutines.CancellationException()
+                            }
+                            output.write(buffer, 0, read)
+                            totalRead += read
+                            onProgress(totalRead, totalBytes)
+                        }
+                        output.flush()
+                    }
+                }
+            }
+            tempFile.exists() && tempFile.length() > 10_240L
+        }.getOrElse { e ->
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            false
+        }
+    }
+
+    /**
+     * Searches the main YouTube catalog (all videos, music videos, live performances, podcasts, covers)
+     * for the "YouTube" search filter tab.
+     */
+    suspend fun searchAllYoutubeVideos(query: String, limit: Int = 25): List<CandidateStream> =
+        withContext(Dispatchers.IO) {
+            if (query.isBlank()) return@withContext emptyList()
+            val results = mutableListOf<CandidateStream>()
+
+            // 1. Query main YouTube InnerTube search endpoint (WEB client — returns all YouTube videoRenderer items)
+            runCatching {
+                val conn = (URL("https://www.youtube.com/youtubei/v1/search?prettyPrint=false").openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 4500
+                    readTimeout = 4500
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+                    setRequestProperty("X-YouTube-Client-Name", "1")
+                    setRequestProperty("X-YouTube-Client-Version", "2.20250310.01.00")
+                    setRequestProperty("Origin", "https://www.youtube.com")
+                    setRequestProperty("Referer", "https://www.youtube.com/")
+                }
+                val payload = JSONObject().apply {
+                    put("query", query.trim())
+                    put("context", JSONObject().apply {
+                        put("client", JSONObject().apply {
+                            put("clientName", "WEB")
+                            put("clientVersion", "2.20250310.01.00")
+                            put("hl", "en")
+                            put("gl", resolveDeviceGl())
+                        })
+                    })
+                }
+                conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+                if (conn.responseCode == 200) {
+                    val root = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                    val videoRenderers = mutableListOf<JSONObject>()
+                    collectVideoRenderers(root, videoRenderers)
+                    for (vr in videoRenderers) {
+                        val vid = extractVideoId(vr.optString("videoId")) ?: continue
+                        val title = vr.optJSONObject("title")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+                            ?: vr.optJSONObject("title")?.optString("simpleText")
+                            ?: continue
+                        val channel = vr.optJSONObject("ownerText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+                            ?: vr.optJSONObject("longBylineText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+                            ?: vr.optJSONObject("shortBylineText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+                            ?: "YouTube"
+                        val browseId = vr.optJSONObject("ownerText")?.optJSONArray("runs")?.optJSONObject(0)
+                            ?.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")?.optString("browseId")
+                        val lenText = vr.optJSONObject("lengthText")?.optString("simpleText")
+                            ?: vr.optJSONObject("lengthText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+                            ?: ""
+                        if (lenText.isBlank()) continue // Skip live streams without duration
+                        val durSec = parseDurationSeconds(lenText)
+                        val thumb = extractBestThumbnail(vr.optJSONObject("thumbnail")?.optJSONArray("thumbnails"))
+                            .ifBlank { "https://i.ytimg.com/vi/$vid/hqdefault.jpg" }
+                        results.add(
+                            CandidateStream(
+                                videoId = vid,
+                                title = title,
+                                artist = channel,
+                                artistBrowseId = browseId,
+                                channelName = channel,
+                                albumName = "YouTube Video",
+                                durationSeconds = durSec,
+                                videoType = "MUSIC_VIDEO_TYPE_OMV",
+                                thumbnailUrl = thumb,
+                                isVerifiedArtist = true
+                            )
+                        )
+                        if (results.size >= limit) break
+                    }
+                }
+            }
+
+            // 2. Fallback / supplement with YouTube Music Videos filter if needed
+            if (results.size < 8) {
+                runCatching {
+                    val payload = webRemixPayload().apply {
+                        put("query", query.trim())
+                        put("params", "EgWKAQIQAWoKEAkQChADEAUQBA==") // Videos filter
+                    }
+                    val root = postWebRemix("https://music.youtube.com/youtubei/v1/search?prettyPrint=false", payload)
+                    if (root != null) {
+                        val ytmVideos = parseMusicResponsiveListItems(root).map {
+                            it.copy(videoType = "MUSIC_VIDEO_TYPE_OMV", albumName = "YouTube Video")
+                        }
+                        results.addAll(ytmVideos)
+                    }
+                }
+            }
+
+            results.distinctBy { it.videoId }.take(limit)
+        }
+
+    private fun collectVideoRenderers(node: Any?, out: MutableList<JSONObject>) {
+        if (out.size >= 35) return
+        when (node) {
+            is JSONObject -> {
+                node.optJSONObject("videoRenderer")?.let { out.add(it); return }
+                val keys = node.keys()
+                while (keys.hasNext()) {
+                    collectVideoRenderers(node.opt(keys.next()), out)
+                }
+            }
+            is JSONArray -> {
+                for (i in 0 until node.length()) {
+                    collectVideoRenderers(node.opt(i), out)
+                }
+            }
+        }
+    }
+
+    /**
+     * Fetches real trending searches from YouTube / YouTube Music suggest & trending endpoints.
+     */
+    suspend fun fetchRealTrendingSearches(): List<String> = withContext(Dispatchers.IO) {
+        val trending = mutableListOf<String>()
+
+        // 1. Fetch live YouTube Music search suggestions for trending regional & music seeds
+        val seeds = listOf("manipuri new ", "latest song ", "trending ", "arijit ", "top hits ")
+        for (seed in seeds) {
+            runCatching {
+                val sugs = com.example.network.NetworkClients.getSearchSuggestions(seed)
+                sugs.forEach { s ->
+                    val clean = s.trim()
+                    if (clean.length in 3..36 && trending.none { it.equals(clean, ignoreCase = true) }) {
+                        trending.add(clean)
+                    }
+                }
+            }
+            if (trending.size >= 10) break
+        }
+
+        // 2. Supplement with live YouTube Music chart titles if needed
+        if (trending.size < 6) {
+            runCatching {
+                val topTracks = searchOfficialYtmSongs("Manipuri & Indian Trending Songs", limit = 8)
+                topTracks.forEach { t ->
+                    val cleanTitle = t.title.substringBefore("(").substringBefore("|").substringBefore("-").trim()
+                    if (cleanTitle.length in 3..32 && trending.none { it.equals(cleanTitle, ignoreCase = true) }) {
+                        trending.add(cleanTitle)
+                    }
+                }
+            }
+        }
+
+        trending.take(10)
     }
 
     private fun webRemixPayload(): JSONObject = JSONObject().apply {

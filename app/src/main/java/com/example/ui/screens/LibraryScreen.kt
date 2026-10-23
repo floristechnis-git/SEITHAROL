@@ -38,6 +38,7 @@ import com.example.data.model.Track
 import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
 import com.example.ui.components.AddToPlaylistModal
+import com.example.ui.components.SeitharolPullToRefreshBox
 import com.example.ui.components.TrackCard
 import com.example.ui.theme.*
 import com.seitharol.data.download.DownloadPreferencesAndService
@@ -71,6 +72,7 @@ fun LibraryScreen(
     val downloadedTracks by viewModel.downloadedTracks.collectAsState()
     val activeHistory by viewModel.activeHistory.collectAsState()
     val activeDownloads by viewModel.activeDownloads.collectAsState()
+    val isRefreshingLibrary by viewModel.isRefreshingLibrary.collectAsState()
     val inProgressCount = remember(activeDownloads) {
         activeDownloads.count { it.state == DownloadState.DOWNLOADING || it.state == DownloadState.FINALIZING || it.state == DownloadState.QUEUED }
     }
@@ -95,7 +97,9 @@ fun LibraryScreen(
         }
     }
 
-    Box(
+    SeitharolPullToRefreshBox(
+        isRefreshing = isRefreshingLibrary,
+        onRefresh = { viewModel.refreshLibrary() },
         modifier = modifier
             .fillMaxSize()
             .background(SeitharolBg)
@@ -544,6 +548,7 @@ fun HistoryScreen(
     BackHandler(onBack = onBack)
     val activeHistory by viewModel.activeHistory.collectAsState()
     val archivedHistory by viewModel.archivedHistory.collectAsState()
+    val isRefreshingHistory by viewModel.isRefreshingLibrary.collectAsState()
     var viewMode by remember { mutableStateOf("active") }
     var searchQuery by remember { mutableStateOf("") }
 
@@ -618,6 +623,11 @@ fun HistoryScreen(
                 .padding(horizontal = 16.dp, vertical = 6.dp)
         )
 
+        SeitharolPullToRefreshBox(
+            isRefreshing = isRefreshingHistory,
+            onRefresh = { viewModel.refreshLibrary() },
+            modifier = Modifier.fillMaxSize()
+        ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 120.dp)
@@ -647,6 +657,7 @@ fun HistoryScreen(
                 }
             }
         }
+        }
     }
 }
 
@@ -665,6 +676,8 @@ fun DownloadsScreen(
     val context = LocalContext.current
     val downloadedTracks by viewModel.downloadedTracks.collectAsState()
     val activeDownloads by viewModel.activeDownloads.collectAsState()
+    val isRefreshingDownloads by viewModel.isRefreshingLibrary.collectAsState()
+    val isRefreshingLibrary by viewModel.isRefreshingLibrary.collectAsState()
     val downloadService = remember { DownloadPreferencesAndService.getInstance(context) }
     val discoverTaskState by downloadService.downloadState.collectAsState()
 
@@ -743,6 +756,11 @@ fun DownloadsScreen(
                 .padding(horizontal = 16.dp, vertical = 6.dp)
         )
 
+        SeitharolPullToRefreshBox(
+            isRefreshing = isRefreshingDownloads,
+            onRefresh = { viewModel.refreshLibrary() },
+            modifier = Modifier.fillMaxSize()
+        ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 120.dp)
@@ -815,6 +833,7 @@ fun DownloadsScreen(
                     }
                 }
             }
+        }
         }
 
         if (showQualitySheet) {
@@ -946,6 +965,7 @@ fun LikedSongsScreen(
 ) {
     BackHandler(onBack = onBack)
     val likedTracks by viewModel.likedTracks.collectAsState()
+    val isRefreshingLiked by viewModel.isRefreshingLibrary.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
 
     val filteredTracks = remember(likedTracks, searchQuery) {
@@ -974,8 +994,16 @@ fun LikedSongsScreen(
             Text(
                 text = "Liked Songs",
                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                color = SeitharolDark
+                color = SeitharolDark,
+                modifier = Modifier.weight(1f)
             )
+            if (likedTracks.isNotEmpty()) {
+                TextButton(onClick = { viewModel.downloadAllTracks(likedTracks) }) {
+                    Icon(Icons.Default.Download, contentDescription = "Download All", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Download All")
+                }
+            }
         }
 
         OutlinedTextField(
@@ -996,6 +1024,11 @@ fun LikedSongsScreen(
                 .padding(horizontal = 16.dp, vertical = 6.dp)
         )
 
+        SeitharolPullToRefreshBox(
+            isRefreshing = isRefreshingLiked,
+            onRefresh = { viewModel.refreshLibrary() },
+            modifier = Modifier.fillMaxSize()
+        ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 120.dp)
@@ -1028,6 +1061,7 @@ fun LikedSongsScreen(
                     }
                 }
             }
+        }
         }
     }
 }

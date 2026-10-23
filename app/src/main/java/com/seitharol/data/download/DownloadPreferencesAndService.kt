@@ -253,8 +253,9 @@ class DownloadPreferencesAndService(private val context: Context) {
         updateDownloadNotification(track.title, 2)
 
         val downloadDir = File(appContext.filesDir, "downloads").apply { if (!exists()) mkdirs() }
-        val tempFile = File(downloadDir, "${canonicalId}_discover.${format.ext}.tmp")
-        val internalDestFile = File(downloadDir, "${canonicalId}_discover.${format.ext}")
+        val safeFileId = canonicalId.replace(Regex("[^a-zA-Z0-9_-]"), "_")
+        val tempFile = File(downloadDir, "${safeFileId}_discover.${format.ext}.tmp")
+        val internalDestFile = File(downloadDir, "${safeFileId}_discover.${format.ext}")
 
         runCatching {
             val db = com.example.data.local.CascadeDatabase.getInstance(appContext)
@@ -286,40 +287,68 @@ class DownloadPreferencesAndService(private val context: Context) {
                 )
             )
 
-            val streamUrl = resolveDirectDownloadUrl(track, primaryArtist, provider, preferredQuality)
-                ?: throw IllegalStateException("Could not resolve downloadable stream for ${track.title}")
+            val candidateUrls = buildList {
+                resolveDirectDownloadUrl(track, primaryArtist, provider, preferredQuality)?.let { add(it) }
+                InnerTubeStreamExtractor.resolveDownloadableStreamCandidates(
+                    videoId = track.sourceId,
+                    title = track.title,
+                    artist = primaryArtist,
+                    preferredQuality = preferredQuality
+                ).forEach { if (!contains(it)) add(it) }
+            }
+            if (candidateUrls.isEmpty()) {
+                throw IllegalStateException("Could not resolve downloadable stream for ${track.title}")
+            }
 
-            val headers = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(streamUrl)
-            val requestBuilder = Request.Builder().url(streamUrl)
-            headers.forEach { (k, v) -> requestBuilder.header(k, v) }
+            var finalTotalBytes = ((track.durationMs / 1000L).coerceAtLeast(180L)) * 20_000L
+            var downloadedOk = false
+            var lastNotifMs = 0L
 
-            val fallbackEstimatedBytes = ((track.durationMs / 1000L).coerceAtLeast(180L)) * 20_000L
-            var finalTotalBytes = fallbackEstimatedBytes
-
-            com.example.network.NetworkClients.okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) {
-                    throw IllegalStateException("Audio server returned HTTP ${response.code}")
-                }
-                val body = response.body ?: throw IllegalStateException("Empty response body from audio server")
-                val totalBytes = body.contentLength().takeIf { it > 10_000L } ?: fallbackEstimatedBytes
-                finalTotalBytes = totalBytes
-
-                body.byteStream().use { input ->
-                    FileOutputStream(tempFile).use { output ->
-                        streamWithProgress(
-                            input = input,
-                            output = output,
-                            totalBytes = totalBytes,
-                            track = track,
-                            canonicalId = canonicalId,
-                            primaryArtist = primaryArtist,
-                            provider = provider,
-                            format = format,
-                            destPath = internalDestFile.absolutePath,
-                            downloadDao = downloadDao
-                        )
+            for (candidateUrl in candidateUrls) {
+                coroutineContext.ensureActive()
+                val ok = InnerTubeStreamExtractor.downloadUrlToFileReliable(
+                    streamUrl = candidateUrl,
+                    tempFile = tempFile
+                ) { downloadedBytes, totalBytes ->
+                    finalTotalBytes = totalBytes
+                    val progress = ((downloadedBytes * 100L) / totalBytes.coerceAtLeast(1L)).toInt().coerceIn(1, 99)
+                    _downloadState.value = DownloadTaskState.Downloading(
+                        trackId = track.sourceId,
+                        trackTitle = track.title,
+                        artistName = primaryArtist,
+                        thumbnailUrl = track.artUrl,
+                        progressPercent = progress,
+                        downloadedBytes = downloadedBytes,
+                        totalBytes = totalBytes,
+                        provider = provider
+                    )
+                    val now = System.currentTimeMillis()
+                    if (now - lastNotifMs > 300L) {
+                        lastNotifMs = now
+                        updateDownloadNotification(track.title, progress)
+                        runCatching {
+                            downloadDao.updateDownload(
+                                com.example.data.local.DownloadEntity(
+                                    trackId = canonicalId,
+                                    tier = format.label,
+                                    state = "DOWNLOADING",
+                                    localPath = internalDestFile.absolutePath,
+                                    progress = (progress / 100f).coerceIn(0.02f, 0.99f),
+                                    bytesDownloaded = downloadedBytes,
+                                    totalBytes = totalBytes
+                                )
+                            )
+                        }
                     }
                 }
+                if (ok && tempFile.exists() && tempFile.length() > 8_192L) {
+                    downloadedOk = true
+                    break
+                }
+            }
+
+            if (!downloadedOk) {
+                throw IllegalStateException("All stream mirrors failed while downloading ${track.title}")
             }
 
             if (!tempFile.exists() || tempFile.length() <= 8_192L) {

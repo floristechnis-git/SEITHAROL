@@ -1,11 +1,25 @@
 package com.example.ui.screens
 
+import android.app.Activity
+import android.app.PictureInPictureParams
+import android.os.Build
+import android.util.Rational
+import android.view.TextureView
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -39,16 +53,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.gestures.animateScrollBy
-import com.seitharol.ui.components.FullscreenExpandSvgIcon
-import com.seitharol.ui.components.FullscreenMinimizeSvgIcon
-import com.seitharol.ui.components.InstrumentalGapMusicNoteIndicator
 import coil.compose.AsyncImage
 import com.example.data.remote.InnerTubeResolver
 import com.example.player.PlayerState
@@ -57,8 +64,10 @@ import com.example.ui.CascadeViewModel
 import com.example.ui.components.PlaybackQueueModal
 import com.example.ui.theme.*
 import com.seitharol.data.preferences.AppSettingsManager
+import com.seitharol.ui.components.FullscreenExpandSvgIcon
+import com.seitharol.ui.components.FullscreenMinimizeSvgIcon
+import com.seitharol.ui.components.InstrumentalGapMusicNoteIndicator
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 @Composable
@@ -107,6 +116,8 @@ fun PlayerScreen(
     var showExpandedLyrics by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
     var showAudioAdjustSheet by remember { mutableStateOf(false) }
+    var showFullscreenVideo by remember { mutableStateOf(false) }
+    var isVideoZoomCrop by remember { mutableStateOf(false) }
 
     var hasClickedQueueButton by remember(track.id, playerState.isPartOfPlaylist) {
         mutableStateOf(playerState.isPartOfPlaylist && !playerState.isSingleTrackPlayback)
@@ -178,7 +189,7 @@ fun PlayerScreen(
             .testTag("full_player_screen")
     ) {
         // ────────────────────────────────────────────────────────────
-        // Top Area with Smooth Spring Drag Gesture to Minimize
+        // Top Header with Collapse, Song | Video Switcher, and Like
         // ────────────────────────────────────────────────────────────
         Row(
             modifier = Modifier
@@ -232,28 +243,96 @@ fun PlayerScreen(
                 SvgChevronIcon(isExpanded = true, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
+            // Segmented Song | Video Switcher (like YouTube Music, powered by raw googlevideo stream)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                modifier = Modifier.padding(horizontal = 8.dp)
             ) {
-                Text(
-                    text = "PLAYING FROM SEITHAROL",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                    fontSize = 11.sp,
-                    fontFamily = OutfitFontFamily,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 1.sp
-                )
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val isVideo = playerState.isVideoMode
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = if (!isVideo) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .clickable {
+                                    if (isVideo) viewModel.setVideoMode(false)
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.MusicNote,
+                                    contentDescription = "Song mode",
+                                    tint = if (!isVideo) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = "Song",
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 12.sp,
+                                    color = if (!isVideo) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = if (isVideo) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .clickable {
+                                    showLyrics = false
+                                    if (!isVideo) viewModel.setVideoMode(true)
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayCircleOutline,
+                                    contentDescription = "Video mode",
+                                    tint = if (isVideo) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = "Video",
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 12.sp,
+                                    color = if (isVideo) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(3.dp))
                 val currentTempQuality = viewModel.getTemporaryTrackQuality()
                 val qualityText = when {
-                    track.isDownloaded -> "Offline Opus • Direct Audio"
-                    currentTempQuality != null -> "Quality: ${currentTempQuality.label} (Temp)"
+                    playerState.isVideoMode -> "Direct GoogleVideo Raw Stream"
+                    track.isDownloaded -> "Offline • Direct Audio"
+                    currentTempQuality != null -> "Quality: ${currentTempQuality.label}"
                     else -> "Online Pure Stream"
                 }
                 Text(
                     text = qualityText,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
+                    fontSize = 11.sp,
                     fontFamily = OutfitFontFamily,
                     fontWeight = FontWeight.Medium
                 )
@@ -270,14 +349,14 @@ fun PlayerScreen(
                 Icon(
                     imageVector = if (isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
                     contentDescription = "Like",
-                    tint = if (isLiked) Color(0xFFFF5252) else MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = if (isLiked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(22.dp)
                 )
             }
         }
 
         // ────────────────────────────────────────────────────────────
-        // Middle Area: Album Cover Artwork OR Inline Lyrics View
+        // Middle Area: Lyrics OR Raw GoogleVideo Player OR Album Artwork
         // ────────────────────────────────────────────────────────────
         if (showLyrics) {
             Column(
@@ -312,7 +391,7 @@ fun PlayerScreen(
                                 modifier = Modifier.size(16.dp)
                             )
                             Text(
-                                text = "Show Artwork",
+                                text = if (playerState.isVideoMode) "Show Video" else "Show Artwork",
                                 fontFamily = SyneFontFamily,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 14.sp,
@@ -444,6 +523,27 @@ fun PlayerScreen(
                     }
                 }
             }
+        } else if (playerState.isVideoMode && !showFullscreenVideo) {
+            // Custom Raw GoogleVideo Surface (zero YouTube branding/iframe, custom controls, Fullscreen & PiP)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                SeitharolRawVideoSurface(
+                    viewModel = viewModel,
+                    playerState = playerState,
+                    isZoomCrop = isVideoZoomCrop,
+                    onToggleZoomCrop = { isVideoZoomCrop = !isVideoZoomCrop },
+                    onEnterFullscreen = { showFullscreenVideo = true },
+                    onEnterPiP = {
+                        // Minimize full player into in-app floating PiP (and enter OS PiP if user leaves app)
+                        onDismiss()
+                    }
+                )
+            }
         } else {
             Box(
                 modifier = Modifier
@@ -549,7 +649,9 @@ fun PlayerScreen(
         // Secondary Actions Row (EQ, Timer, Download / Cancel, Share, Lyrics, Queue)
         // ────────────────────────────────────────────────────────────
         val downloads by viewModel.activeDownloads.collectAsState()
-        val trackDownload = downloads.firstOrNull { it.trackId == track.id }
+        val trackDownload = downloads.firstOrNull {
+            it.trackId == track.id || (it.title.equals(track.title, ignoreCase = true) && it.artist.equals(track.artist, ignoreCase = true))
+        }
         val isDownloaded = track.isDownloaded || trackDownload?.state == com.example.data.model.DownloadState.COMPLETED
         val isDownloading = trackDownload?.state == com.example.data.model.DownloadState.DOWNLOADING || trackDownload?.state == com.example.data.model.DownloadState.FINALIZING
         val rawDownloadProgress = trackDownload?.progress ?: 0f
@@ -573,7 +675,7 @@ fun PlayerScreen(
             IconButton(
                 onClick = {
                     if (isDownloading) {
-                        viewModel.cancelDownload(track.id)
+                        viewModel.cancelDownload(trackDownload?.trackId ?: track.id)
                     } else if (!isDownloaded) {
                         viewModel.startDownload(track, com.example.data.model.DownloadTier.STANDARD)
                     }
@@ -901,6 +1003,20 @@ fun PlayerScreen(
         Spacer(modifier = Modifier.height(8.dp))
     }
 
+    if (showFullscreenVideo) {
+        SeitharolFullscreenVideoModal(
+            viewModel = viewModel,
+            playerState = playerState,
+            isZoomCrop = isVideoZoomCrop,
+            onToggleZoomCrop = { isVideoZoomCrop = !isVideoZoomCrop },
+            onEnterPiP = {
+                showFullscreenVideo = false
+                onDismiss()
+            },
+            onDismiss = { showFullscreenVideo = false }
+        )
+    }
+
     if (showQueue) {
         PlaybackQueueModal(
             viewModel = viewModel,
@@ -927,6 +1043,677 @@ fun PlayerScreen(
             playerState = playerState,
             onDismiss = { showExpandedLyrics = false }
         )
+    }
+}
+
+/**
+ * Custom Raw GoogleVideo Surface — renders the direct googlevideo.com stream inside a TextureView
+ * with zero YouTube branding/iframe, custom double-tap ±10s seek, playback speed selector,
+ * Fit/Zoom toggle, Picture-in-Picture (PiP) toggle, and Fullscreen toggle.
+ */
+@Composable
+fun SeitharolRawVideoSurface(
+    viewModel: CascadeViewModel,
+    playerState: PlayerState,
+    isZoomCrop: Boolean,
+    onToggleZoomCrop: () -> Unit,
+    onEnterFullscreen: () -> Unit,
+    onEnterPiP: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val track = playerState.currentTrack
+    var showOverlayControls by remember { mutableStateOf(true) }
+    var seekFeedbackText by remember { mutableStateOf<String?>(null) }
+    val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+
+    LaunchedEffect(showOverlayControls, playerState.isPlaying) {
+        if (showOverlayControls && playerState.isPlaying) {
+            delay(3500L)
+            showOverlayControls = false
+        }
+    }
+
+    LaunchedEffect(seekFeedbackText) {
+        if (seekFeedbackText != null) {
+            delay(750L)
+            seekFeedbackText = null
+        }
+    }
+
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .aspectRatio(16f / 9f)
+            .shadow(18.dp, RoundedCornerShape(22.dp))
+            .clip(RoundedCornerShape(22.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f), RoundedCornerShape(22.dp)),
+        shape = RoundedCornerShape(22.dp),
+        color = Color.Black
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(playerState.currentPositionMs, playerState.durationMs) {
+                    detectTapGestures(
+                        onTap = {
+                            showOverlayControls = !showOverlayControls
+                        },
+                        onDoubleTap = { offset ->
+                            val isLeftHalf = offset.x < size.width / 2f
+                            val delta = if (isLeftHalf) -10_000L else 10_000L
+                            val target = (playerState.currentPositionMs + delta).coerceIn(
+                                0L,
+                                playerState.durationMs.coerceAtLeast(1000L)
+                            )
+                            viewModel.seekTo(target)
+                            seekFeedbackText = if (isLeftHalf) "⏪ -10s" else "+10s ⏩"
+                        }
+                    )
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            // Subtle blurred/dimmed artwork backdrop while buffering or before first video frame
+            if (track != null) {
+                AsyncImage(
+                    model = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { alpha = 0.22f }
+                )
+            }
+
+            // Raw googlevideo.com TextureView bound directly to ExoPlayer
+            AndroidView(
+                factory = { ctx ->
+                    TextureView(ctx).also { tv ->
+                        viewModel.attachVideoTextureView(tv)
+                    }
+                },
+                update = { tv ->
+                    viewModel.attachVideoTextureView(tv)
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        val s = if (isZoomCrop) 1.18f else 1.0f
+                        scaleX = s
+                        scaleY = s
+                    }
+            )
+
+            // Double-tap ±10s indicator pill
+            AnimatedVisibility(
+                visible = seekFeedbackText != null,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = Color.Black.copy(alpha = 0.72f)
+                ) {
+                    Text(
+                        text = seekFeedbackText ?: "",
+                        color = Color.White,
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                }
+            }
+
+            // Custom Seitharol Overlay Controls
+            AnimatedVisibility(
+                visible = showOverlayControls || playerState.isBuffering || !playerState.isPlaying,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color.Black.copy(alpha = 0.55f),
+                                    Color.Black.copy(alpha = 0.18f),
+                                    Color.Black.copy(alpha = 0.62f)
+                                )
+                            )
+                        )
+                ) {
+                    // Top Bar: Badge + Speed + Fit/Zoom + PiP + Fullscreen
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.TopCenter)
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = Color.Black.copy(alpha = 0.55f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primary)
+                                )
+                                Text(
+                                    text = "RAW VIDEO",
+                                    color = Color.White,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 10.sp,
+                                    letterSpacing = 0.8.sp
+                                )
+                            }
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            // Speed selector pill
+                            Surface(
+                                shape = RoundedCornerShape(999.dp),
+                                color = Color.Black.copy(alpha = 0.55f),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .clickable {
+                                        val nextIdx = (speeds.indexOfFirst { it == playerState.playbackSpeed } + 1) % speeds.size
+                                        viewModel.setPlaybackSpeed(speeds[nextIdx])
+                                    }
+                            ) {
+                                Text(
+                                    text = "${playerState.playbackSpeed}x",
+                                    color = Color.White,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                                )
+                            }
+
+                            // Fit / Zoom toggle pill
+                            Surface(
+                                shape = RoundedCornerShape(999.dp),
+                                color = Color.Black.copy(alpha = 0.55f),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .clickable { onToggleZoomCrop() }
+                            ) {
+                                Text(
+                                    text = if (isZoomCrop) "Zoom" else "Fit",
+                                    color = Color.White,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                                )
+                            }
+
+                            // Picture-in-Picture (PiP) button
+                            Surface(
+                                shape = CircleShape,
+                                color = Color.Black.copy(alpha = 0.55f),
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        // Trigger in-app floating PiP window (and OS PiP if supported)
+                                        runCatching {
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                                val activity = context as? Activity
+                                                activity?.enterPictureInPictureMode(
+                                                    PictureInPictureParams.Builder()
+                                                        .setAspectRatio(Rational(16, 9))
+                                                        .build()
+                                                )
+                                            }
+                                        }
+                                        onEnterPiP()
+                                    }
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.PictureInPictureAlt,
+                                        contentDescription = "Picture in Picture",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+
+                            // Fullscreen toggle button
+                            Surface(
+                                shape = CircleShape,
+                                color = Color.Black.copy(alpha = 0.55f),
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(CircleShape)
+                                    .clickable { onEnterFullscreen() }
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Fullscreen,
+                                        contentDescription = "Fullscreen Video",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Center Play/Pause + ±10s Seek Controls
+                    Row(
+                        modifier = Modifier.align(Alignment.Center),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(24.dp)
+                    ) {
+                        IconButton(
+                            onClick = {
+                                val target = (playerState.currentPositionMs - 10_000L).coerceAtLeast(0L)
+                                viewModel.seekTo(target)
+                            },
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.45f))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Replay10,
+                                contentDescription = "Rewind 10s",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.92f),
+                            modifier = Modifier
+                                .size(52.dp)
+                                .clip(CircleShape)
+                                .clickable { viewModel.togglePlayPause() }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                if (playerState.isBuffering) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(24.dp),
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        strokeWidth = 2.5.dp
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                        contentDescription = "Play/Pause",
+                                        tint = MaterialTheme.colorScheme.onPrimary,
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        IconButton(
+                            onClick = {
+                                val target = (playerState.currentPositionMs + 10_000L)
+                                    .coerceAtMost(playerState.durationMs.coerceAtLeast(1000L))
+                                viewModel.seekTo(target)
+                            },
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.45f))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Forward10,
+                                contentDescription = "Forward 10s",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+
+                    // Bottom hint bar inside video frame
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.BottomCenter)
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Double-tap left/right to seek 10s",
+                            color = Color.White.copy(alpha = 0.72f),
+                            fontFamily = OutfitFontFamily,
+                            fontSize = 11.sp
+                        )
+                        Text(
+                            text = "${formatMs(playerState.currentPositionMs)} / ${formatMs(playerState.durationMs.coerceAtLeast(1000L))}",
+                            color = Color.White.copy(alpha = 0.9f),
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Fullscreen Custom Raw Video Modal — zero YouTube UI, custom Seitharol controls,
+ * Fit/Zoom toggle, Playback Speed, Picture-in-Picture, and Scrubber.
+ */
+@Composable
+fun SeitharolFullscreenVideoModal(
+    viewModel: CascadeViewModel,
+    playerState: PlayerState,
+    isZoomCrop: Boolean,
+    onToggleZoomCrop: () -> Unit,
+    onEnterPiP: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val track = playerState.currentTrack ?: return
+    var showControls by remember { mutableStateOf(true) }
+    var isDraggingSlider by remember { mutableStateOf(false) }
+    var seekingPosition by remember { mutableStateOf<Float?>(null) }
+    val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+
+    val displayPosition = (if (isDraggingSlider) seekingPosition?.toLong() else null)
+        ?: playerState.currentPositionMs.coerceAtLeast(0L)
+    val totalDuration = playerState.durationMs.coerceAtLeast(1000L)
+    val progress = (displayPosition.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
+
+    LaunchedEffect(showControls, playerState.isPlaying) {
+        if (showControls && playerState.isPlaying && !isDraggingSlider) {
+            delay(3800L)
+            showControls = false
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black),
+            color = Color.Black
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(playerState.currentPositionMs, playerState.durationMs) {
+                        detectTapGestures(
+                            onTap = { showControls = !showControls },
+                            onDoubleTap = { offset ->
+                                val isLeft = offset.x < size.width / 2f
+                                val delta = if (isLeft) -10_000L else 10_000L
+                                viewModel.seekTo(
+                                    (playerState.currentPositionMs + delta).coerceIn(0L, totalDuration)
+                                )
+                            }
+                        )
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                AndroidView(
+                    factory = { ctx ->
+                        TextureView(ctx).also { tv ->
+                            viewModel.attachVideoTextureView(tv)
+                        }
+                    },
+                    update = { tv ->
+                        viewModel.attachVideoTextureView(tv)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(16f / 9f)
+                        .graphicsLayer {
+                            val s = if (isZoomCrop) 1.22f else 1.0f
+                            scaleX = s
+                            scaleY = s
+                        }
+                )
+
+                AnimatedVisibility(
+                    visible = showControls || playerState.isBuffering || !playerState.isPlaying,
+                    enter = fadeIn(),
+                    exit = fadeOut()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.45f))
+                            .statusBarsPadding()
+                            .navigationBarsPadding()
+                    ) {
+                        // Top bar
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .align(Alignment.TopCenter)
+                                .padding(horizontal = 20.dp, vertical = 14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = track.title,
+                                    color = Color.White,
+                                    fontFamily = SyneFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 17.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = track.artist,
+                                    color = Color.White.copy(alpha = 0.75f),
+                                    fontFamily = OutfitFontFamily,
+                                    fontSize = 13.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = Color.White.copy(alpha = 0.16f),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .clickable {
+                                            val nextIdx = (speeds.indexOfFirst { it == playerState.playbackSpeed } + 1) % speeds.size
+                                            viewModel.setPlaybackSpeed(speeds[nextIdx])
+                                        }
+                                ) {
+                                    Text(
+                                        text = "${playerState.playbackSpeed}x",
+                                        color = Color.White,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.sp,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                    )
+                                }
+
+                                Surface(
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = Color.White.copy(alpha = 0.16f),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .clickable { onToggleZoomCrop() }
+                                ) {
+                                    Text(
+                                        text = if (isZoomCrop) "Zoomed" else "Fit 16:9",
+                                        color = Color.White,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.sp,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                    )
+                                }
+
+                                IconButton(onClick = onEnterPiP) {
+                                    Icon(
+                                        imageVector = Icons.Default.PictureInPictureAlt,
+                                        contentDescription = "Picture in Picture",
+                                        tint = Color.White
+                                    )
+                                }
+
+                                IconButton(onClick = onDismiss) {
+                                    Icon(
+                                        imageVector = Icons.Default.FullscreenExit,
+                                        contentDescription = "Exit Fullscreen",
+                                        tint = Color.White
+                                    )
+                                }
+                            }
+                        }
+
+                        // Center controls
+                        Row(
+                            modifier = Modifier.align(Alignment.Center),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(28.dp)
+                        ) {
+                            IconButton(onClick = { viewModel.previous() }) {
+                                Icon(
+                                    imageVector = Icons.Default.SkipPrevious,
+                                    contentDescription = "Previous",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(34.dp)
+                                )
+                            }
+
+                            IconButton(
+                                onClick = {
+                                    viewModel.seekTo((playerState.currentPositionMs - 10_000L).coerceAtLeast(0L))
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Replay10,
+                                    contentDescription = "Rewind 10s",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(30.dp)
+                                )
+                            }
+
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(CircleShape)
+                                    .clickable { viewModel.togglePlayPause() }
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    if (playerState.isBuffering) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(28.dp),
+                                            color = MaterialTheme.colorScheme.onPrimary,
+                                            strokeWidth = 3.dp
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                            contentDescription = "Play/Pause",
+                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                            modifier = Modifier.size(34.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            IconButton(
+                                onClick = {
+                                    viewModel.seekTo((playerState.currentPositionMs + 10_000L).coerceAtMost(totalDuration))
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Forward10,
+                                    contentDescription = "Forward 10s",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(30.dp)
+                                )
+                            }
+
+                            IconButton(onClick = { viewModel.next() }) {
+                                Icon(
+                                    imageVector = Icons.Default.SkipNext,
+                                    contentDescription = "Next",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(34.dp)
+                                )
+                            }
+                        }
+
+                        // Bottom scrubber
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .align(Alignment.BottomCenter)
+                                .padding(horizontal = 24.dp, vertical = 18.dp)
+                        ) {
+                            Slider(
+                                value = progress,
+                                onValueChange = { frac ->
+                                    isDraggingSlider = true
+                                    seekingPosition = frac * totalDuration
+                                },
+                                onValueChangeFinished = {
+                                    seekingPosition?.let { viewModel.seekTo(it.toLong()) }
+                                    seekingPosition = null
+                                    isDraggingSlider = false
+                                },
+                                colors = SliderDefaults.colors(
+                                    thumbColor = MaterialTheme.colorScheme.primary,
+                                    activeTrackColor = MaterialTheme.colorScheme.primary,
+                                    inactiveTrackColor = Color.White.copy(alpha = 0.25f)
+                                )
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = formatMs(displayPosition),
+                                    color = Color.White.copy(alpha = 0.85f),
+                                    fontSize = 12.sp,
+                                    fontFamily = OutfitFontFamily
+                                )
+                                Text(
+                                    text = formatMs(totalDuration),
+                                    color = Color.White.copy(alpha = 0.85f),
+                                    fontSize = 12.sp,
+                                    fontFamily = OutfitFontFamily
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

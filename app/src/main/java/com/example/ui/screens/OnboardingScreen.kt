@@ -5,7 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,47 +16,30 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.SyneFontFamily
 
-// Clean, Minimal Dark Neutral & Warm Gold Palette (Zero Red)
-private val MinimalBg = Color(0xFF0B0D11)
-private val MinimalSurface = Color(0xFF141820)
-private val MinimalBorder = Color(0xFF232936)
-private val MinimalGold = Color(0xFFE5B869)
-private val MinimalTeal = Color(0xFF4FD1C5)
-private val MinimalTextPrimary = Color(0xFFF8FAFC)
-private val MinimalTextSecondary = Color(0xFF94A3B8)
-private val MinimalInk = Color(0xFF0B0D11)
-
 /**
- * Clean, Minimal 2-Step Onboarding Screen (Zero Red, No Broken Grid Wrapping):
- * - Step 1: Centered app logo (`R.drawable.ic_splash_logo`) as the first impression, clean title &
- *   subtitle, three full-width minimal feature rows, and a bottom "Continue" CTA button.
- * - Step 2: Minimal profile setup (Name & Age) with 100% local on-device privacy assurance.
+ * Editorial, Theme-Matched 2-Step Onboarding Screen inspired by Claude & ChatGPT mobile apps:
+ * - Matches the active `CascadeTheme` (`MaterialTheme.colorScheme.background`, `surfaceVariant`,
+ *   `onBackground`, `onSurfaceVariant`) with high-contrast monochrome CTAs (zero red).
+ * - Zero truncated `...` (`TextOverflow.Ellipsis`) anywhere — all headings and descriptions wrap
+ *   naturally with generous line height.
+ * - Step 1 presents the app image (`ic_splash_logo`) as a clean visual first impression followed by
+ *   editorial typography and three full-wrap capability notes.
+ * - Step 2 asks for the listener's name and age with clean, minimal inputs.
  */
 @Composable
 fun OnboardingScreen(
@@ -66,45 +49,51 @@ fun OnboardingScreen(
     var name by remember { mutableStateOf("") }
     var age by remember { mutableStateOf("") }
 
+    val bgColor = MaterialTheme.colorScheme.background
+    val surfaceColor = MaterialTheme.colorScheme.surfaceVariant
+    val borderColor = MaterialTheme.colorScheme.outlineVariant
+    val primaryText = MaterialTheme.colorScheme.onBackground
+    val secondaryText = MaterialTheme.colorScheme.onSurfaceVariant
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MinimalBg)
+            .background(bgColor)
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(horizontal = 24.dp, vertical = 16.dp)
+            .padding(horizontal = 28.dp, vertical = 20.dp)
     ) {
-        // Minimal Top Bar: Step Indicator & Skip
+        // Minimal Top Progress Bar
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     modifier = Modifier
-                        .width(if (currentStep == 1) 22.dp else 8.dp)
-                        .height(6.dp)
+                        .width(if (currentStep == 1) 24.dp else 8.dp)
+                        .height(5.dp)
                         .clip(CircleShape)
-                        .background(if (currentStep == 1) MinimalGold else MinimalBorder)
+                        .background(if (currentStep == 1) primaryText else borderColor)
                 )
                 Box(
                     modifier = Modifier
-                        .width(if (currentStep == 2) 22.dp else 8.dp)
-                        .height(6.dp)
+                        .width(if (currentStep == 2) 24.dp else 8.dp)
+                        .height(5.dp)
                         .clip(CircleShape)
-                        .background(if (currentStep == 2) MinimalGold else MinimalBorder)
+                        .background(if (currentStep == 2) primaryText else borderColor)
                 )
             }
 
             if (currentStep == 1) {
                 Text(
                     text = "Skip",
-                    color = MinimalTextSecondary,
-                    fontSize = 13.sp,
+                    color = secondaryText,
+                    fontSize = 14.sp,
                     fontFamily = OutfitFontFamily,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier
@@ -112,139 +101,18 @@ fun OnboardingScreen(
                         .clickable { currentStep = 2 }
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 )
-            } else {
-                Text(
-                    text = "Step 2 of 2",
-                    color = MinimalTextSecondary,
-                    fontSize = 12.sp,
-                    fontFamily = OutfitFontFamily,
-                    fontWeight = FontWeight.Medium
-                )
             }
         }
 
         AnimatedContent(
             targetState = currentStep,
-            transitionSpec = { fadeIn(tween(240)) togetherWith fadeOut(tween(180)) },
+            transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(160)) },
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
-            label = "minimal_onboarding_step"
+            label = "editorial_onboarding"
         ) { step ->
             if (step == 1) {
-                // ────────────────────────────────────────────────────────────
-                // STEP 1: Clean App Image First Impression + 3 Minimal Rows
-                // ────────────────────────────────────────────────────────────
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState()),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Centered App Image & Title Block
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Surface(
-                            modifier = Modifier
-                                .size(96.dp)
-                                .border(
-                                    width = 1.dp,
-                                    color = MinimalBorder,
-                                    shape = RoundedCornerShape(24.dp)
-                                ),
-                            shape = RoundedCornerShape(24.dp),
-                            color = MinimalSurface,
-                            shadowElevation = 12.dp
-                        ) {
-                            Image(
-                                painter = painterResource(id = R.drawable.ic_splash_logo),
-                                contentDescription = "Seitharol App Logo",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(20.dp))
-
-                        Text(
-                            text = "Seitharol",
-                            color = MinimalTextPrimary,
-                            fontSize = 28.sp,
-                            fontFamily = SyneFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Text(
-                            text = "High-resolution streaming, synchronized lyrics, and pure offline playback.",
-                            color = MinimalTextSecondary,
-                            fontSize = 14.sp,
-                            fontFamily = OutfitFontFamily,
-                            lineHeight = 20.sp,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 12.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    // 3 Clean Full-Width Minimal Feature Rows (never overflows or wraps awkwardly)
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        MinimalFeatureRow(
-                            iconIndex = 0,
-                            accent = MinimalGold,
-                            title = "Studio-Grade Audio",
-                            subtitle = "Pure 320kbps streaming with 5-band equalizer"
-                        )
-                        MinimalFeatureRow(
-                            iconIndex = 1,
-                            accent = MinimalTeal,
-                            title = "Time-Synced Lyrics",
-                            subtitle = "Interactive synchronized lyrics with tap-to-seek"
-                        )
-                        MinimalFeatureRow(
-                            iconIndex = 2,
-                            accent = MinimalGold,
-                            title = "True Offline Mode",
-                            subtitle = "Save tracks on-device for zero-data listening"
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    Button(
-                        onClick = { currentStep = 2 },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MinimalGold,
-                            contentColor = MinimalInk
-                        ),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                    ) {
-                        Text(
-                            text = "Continue",
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
-                    }
-                }
-            } else {
-                // ────────────────────────────────────────────────────────────
-                // STEP 2: Minimal Profile Setup (Zero Red, No Support Email)
-                // ────────────────────────────────────────────────────────────
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -252,52 +120,135 @@ fun OnboardingScreen(
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(28.dp))
 
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        // App Image for First Impression
+                        Surface(
+                            modifier = Modifier
+                                .size(84.dp)
+                                .border(1.dp, borderColor, RoundedCornerShape(22.dp)),
+                            shape = RoundedCornerShape(22.dp),
+                            color = surfaceColor
                         ) {
-                            Surface(
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .border(1.dp, MinimalBorder, RoundedCornerShape(14.dp)),
-                                shape = RoundedCornerShape(14.dp),
-                                color = MinimalSurface
-                            ) {
-                                Image(
-                                    painter = painterResource(id = R.drawable.ic_splash_logo),
-                                    contentDescription = "Seitharol",
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            }
-                            Column {
-                                Text(
-                                    text = "Your Profile",
-                                    color = MinimalTextPrimary,
-                                    fontSize = 22.sp,
-                                    fontFamily = SyneFontFamily,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "Personalize your home screen greeting",
-                                    color = MinimalTextSecondary,
-                                    fontSize = 13.sp,
-                                    fontFamily = OutfitFontFamily
-                                )
-                            }
+                            Image(
+                                painter = painterResource(id = R.drawable.ic_splash_logo),
+                                contentDescription = "Seitharol",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
                         }
 
                         Spacer(modifier = Modifier.height(28.dp))
 
                         Text(
-                            text = "Name",
-                            color = MinimalTextPrimary,
-                            fontSize = 13.sp,
+                            text = "Welcome to Seitharol",
+                            color = primaryText,
+                            fontSize = 30.sp,
+                            lineHeight = 36.sp,
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Text(
+                            text = "An uncompromising music player crafted for high-resolution streaming, time-synced lyrics, and offline listening.",
+                            color = secondaryText,
+                            fontSize = 15.sp,
+                            lineHeight = 23.sp,
+                            fontFamily = OutfitFontFamily
+                        )
+
+                        Spacer(modifier = Modifier.height(32.dp))
+
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(22.dp)
+                        ) {
+                            EditorialPoint(
+                                title = "Pure Studio Audio",
+                                body = "Stream high-bitrate tracks with a customizable 5-band equalizer.",
+                                primaryText = primaryText,
+                                secondaryText = secondaryText,
+                                borderColor = borderColor
+                            )
+                            EditorialPoint(
+                                title = "Synchronized Lyrics",
+                                body = "Read along in real time and tap any line to jump directly to that moment.",
+                                primaryText = primaryText,
+                                secondaryText = secondaryText,
+                                borderColor = borderColor
+                            )
+                            EditorialPoint(
+                                title = "Offline Library",
+                                body = "Save songs directly to your device for uninterrupted playback without internet.",
+                                primaryText = primaryText,
+                                secondaryText = secondaryText,
+                                borderColor = borderColor
+                            )
+                        }
+                    }
+
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Spacer(modifier = Modifier.height(28.dp))
+                        Button(
+                            onClick = { currentStep = 2 },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = primaryText,
+                                contentColor = bgColor
+                            ),
+                            shape = RoundedCornerShape(27.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(54.dp)
+                        ) {
+                            Text(
+                                text = "Continue",
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 16.sp
+                            )
+                        }
+                    }
+                }
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Spacer(modifier = Modifier.height(32.dp))
+
+                        Text(
+                            text = "How should we greet you?",
+                            color = primaryText,
+                            fontSize = 28.sp,
+                            lineHeight = 34.sp,
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Text(
+                            text = "Your name personalizes your home screen. Your profile is stored locally on your device.",
+                            color = secondaryText,
+                            fontSize = 15.sp,
+                            lineHeight = 22.sp,
+                            fontFamily = OutfitFontFamily
+                        )
+
+                        Spacer(modifier = Modifier.height(32.dp))
+
+                        Text(
+                            text = "Your name",
+                            color = primaryText,
+                            fontSize = 14.sp,
                             fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(bottom = 6.dp)
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(bottom = 8.dp)
                         )
 
                         OutlinedTextField(
@@ -306,33 +257,33 @@ fun OnboardingScreen(
                             placeholder = {
                                 Text(
                                     text = "Enter your name",
-                                    color = MinimalTextSecondary.copy(alpha = 0.6f),
+                                    color = secondaryText.copy(alpha = 0.6f),
                                     fontFamily = OutfitFontFamily
                                 )
                             },
                             singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(14.dp),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = MinimalGold,
-                                unfocusedBorderColor = MinimalBorder,
-                                focusedContainerColor = MinimalSurface,
-                                unfocusedContainerColor = MinimalSurface,
-                                focusedTextColor = MinimalTextPrimary,
-                                unfocusedTextColor = MinimalTextPrimary,
-                                cursorColor = MinimalGold
+                                focusedBorderColor = primaryText,
+                                unfocusedBorderColor = borderColor,
+                                focusedContainerColor = surfaceColor,
+                                unfocusedContainerColor = surfaceColor,
+                                focusedTextColor = primaryText,
+                                unfocusedTextColor = primaryText,
+                                cursorColor = primaryText
                             ),
                             modifier = Modifier.fillMaxWidth()
                         )
 
-                        Spacer(modifier = Modifier.height(18.dp))
+                        Spacer(modifier = Modifier.height(20.dp))
 
                         Text(
-                            text = "Age (Optional)",
-                            color = MinimalTextPrimary,
-                            fontSize = 13.sp,
+                            text = "Age",
+                            color = primaryText,
+                            fontSize = 14.sp,
                             fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(bottom = 6.dp)
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(bottom = 8.dp)
                         )
 
                         OutlinedTextField(
@@ -344,103 +295,74 @@ fun OnboardingScreen(
                             },
                             placeholder = {
                                 Text(
-                                    text = "e.g., 21",
-                                    color = MinimalTextSecondary.copy(alpha = 0.6f),
+                                    text = "Enter your age",
+                                    color = secondaryText.copy(alpha = 0.6f),
                                     fontFamily = OutfitFontFamily
                                 )
                             },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(14.dp),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = MinimalGold,
-                                unfocusedBorderColor = MinimalBorder,
-                                focusedContainerColor = MinimalSurface,
-                                unfocusedContainerColor = MinimalSurface,
-                                focusedTextColor = MinimalTextPrimary,
-                                unfocusedTextColor = MinimalTextPrimary,
-                                cursorColor = MinimalGold
+                                focusedBorderColor = primaryText,
+                                unfocusedBorderColor = borderColor,
+                                focusedContainerColor = surfaceColor,
+                                unfocusedContainerColor = surfaceColor,
+                                focusedTextColor = primaryText,
+                                unfocusedTextColor = primaryText,
+                                cursorColor = primaryText
                             ),
                             modifier = Modifier.fillMaxWidth()
                         )
+                    }
 
-                        Spacer(modifier = Modifier.height(18.dp))
-
-                        // Compact Local Privacy Note
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(1.dp, MinimalBorder, RoundedCornerShape(12.dp)),
-                            shape = RoundedCornerShape(12.dp),
-                            color = MinimalSurface
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Spacer(modifier = Modifier.height(28.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            OutlinedButton(
+                                onClick = { currentStep = 1 },
+                                shape = RoundedCornerShape(27.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = primaryText),
+                                border = BorderStroke(1.dp, borderColor),
+                                modifier = Modifier
+                                    .weight(0.38f)
+                                    .height(54.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Lock,
-                                    contentDescription = null,
-                                    tint = MinimalTeal,
-                                    modifier = Modifier.size(18.dp)
-                                )
                                 Text(
-                                    text = "Saved locally on your device. No account required.",
-                                    color = MinimalTextSecondary,
-                                    fontSize = 12.sp,
-                                    fontFamily = OutfitFontFamily
+                                    text = "Back",
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 15.sp
+                                )
+                            }
+
+                            Button(
+                                onClick = {
+                                    val finalName = name.trim().ifBlank { "Listener" }
+                                    val finalAge = age.trim().ifBlank { "18" }
+                                    onContinue(finalName, finalAge)
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = primaryText,
+                                    contentColor = bgColor
+                                ),
+                                shape = RoundedCornerShape(27.dp),
+                                modifier = Modifier
+                                    .weight(0.62f)
+                                    .height(54.dp)
+                            ) {
+                                Text(
+                                    text = "Continue",
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 16.sp
                                 )
                             }
                         }
                     }
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = { currentStep = 1 },
-                            shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MinimalTextPrimary),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, MinimalBorder),
-                            modifier = Modifier
-                                .weight(0.38f)
-                                .height(52.dp)
-                        ) {
-                            Text(
-                                text = "Back",
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 15.sp
-                            )
-                        }
-
-                        Button(
-                            onClick = {
-                                val finalName = name.trim().ifBlank { "Music Lover" }
-                                val finalAge = age.trim().ifBlank { "18" }
-                                onContinue(finalName, finalAge)
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MinimalGold,
-                                contentColor = MinimalInk
-                            ),
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier
-                                .weight(0.62f)
-                                .height(52.dp)
-                        ) {
-                            Text(
-                                text = "Start Listening",
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
-                            )
-                        }
-                    }
                 }
             }
         }
@@ -448,135 +370,42 @@ fun OnboardingScreen(
 }
 
 @Composable
-private fun MinimalFeatureRow(
-    iconIndex: Int,
-    accent: Color,
+private fun EditorialPoint(
     title: String,
-    subtitle: String
+    body: String,
+    primaryText: androidx.compose.ui.graphics.Color,
+    secondaryText: androidx.compose.ui.graphics.Color,
+    borderColor: androidx.compose.ui.graphics.Color
 ) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, MinimalBorder, RoundedCornerShape(14.dp)),
-        shape = RoundedCornerShape(14.dp),
-        color = MinimalSurface
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top
     ) {
-        Row(
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(accent.copy(alpha = 0.14f)),
-                contentAlignment = Alignment.Center
-            ) {
-                MinimalFeatureSvgIcon(
-                    index = iconIndex,
-                    tint = accent,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    color = MinimalTextPrimary,
-                    fontSize = 14.sp,
-                    fontFamily = SyneFontFamily,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = subtitle,
-                    color = MinimalTextSecondary,
-                    fontSize = 12.sp,
-                    fontFamily = OutfitFontFamily,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun MinimalFeatureSvgIcon(
-    index: Int,
-    tint: Color,
-    modifier: Modifier = Modifier.size(18.dp)
-) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val stroke = Stroke(width = w * 0.10f, cap = StrokeCap.Round)
-        when (index) {
-            0 -> {
-                val bars = listOf(0.35f, 0.70f, 0.95f, 0.60f, 0.40f)
-                bars.forEachIndexed { idx, ratio ->
-                    val x = w * (0.18f + idx * 0.16f)
-                    val barH = h * ratio
-                    val topY = (h - barH) / 2f
-                    drawLine(
-                        color = tint,
-                        start = Offset(x, topY),
-                        end = Offset(x, topY + barH),
-                        strokeWidth = w * 0.10f,
-                        cap = StrokeCap.Round
-                    )
-                }
-            }
-            1 -> {
-                drawRoundRect(
-                    color = tint,
-                    topLeft = Offset(w * 0.12f, h * 0.16f),
-                    size = Size(w * 0.76f, h * 0.68f),
-                    cornerRadius = CornerRadius(w * 0.14f, w * 0.14f),
-                    style = stroke
-                )
-                drawLine(
-                    color = tint,
-                    start = Offset(w * 0.28f, h * 0.40f),
-                    end = Offset(w * 0.72f, h * 0.40f),
-                    strokeWidth = w * 0.09f,
-                    cap = StrokeCap.Round
-                )
-                drawLine(
-                    color = tint,
-                    start = Offset(w * 0.28f, h * 0.60f),
-                    end = Offset(w * 0.56f, h * 0.60f),
-                    strokeWidth = w * 0.09f,
-                    cap = StrokeCap.Round
-                )
-            }
-            else -> {
-                drawLine(
-                    color = tint,
-                    start = Offset(w * 0.50f, h * 0.16f),
-                    end = Offset(w * 0.50f, h * 0.66f),
-                    strokeWidth = w * 0.10f,
-                    cap = StrokeCap.Round
-                )
-                val arrow = Path().apply {
-                    moveTo(w * 0.30f, h * 0.48f)
-                    lineTo(w * 0.50f, h * 0.68f)
-                    lineTo(w * 0.70f, h * 0.48f)
-                }
-                drawPath(arrow, color = tint, style = stroke)
-                drawLine(
-                    color = tint,
-                    start = Offset(w * 0.22f, h * 0.84f),
-                    end = Offset(w * 0.78f, h * 0.84f),
-                    strokeWidth = w * 0.10f,
-                    cap = StrokeCap.Round
-                )
-            }
+                .padding(top = 7.dp)
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(primaryText)
+        )
+        Spacer(modifier = Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = primaryText,
+                fontSize = 16.sp,
+                lineHeight = 21.sp,
+                fontFamily = SyneFontFamily,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(3.dp))
+            Text(
+                text = body,
+                color = secondaryText,
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                fontFamily = OutfitFontFamily
+            )
         }
     }
 }

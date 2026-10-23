@@ -33,6 +33,7 @@ import com.example.ui.CascadeViewModel
 import com.example.ui.components.AddToPlaylistModal
 import com.example.ui.components.CreatePlaylistModal
 import com.example.ui.components.SeitharolDeepLinkHelper
+import com.example.ui.components.SeitharolPullToRefreshBox
 import com.example.ui.components.TrackCard
 import com.example.ui.theme.*
 
@@ -107,7 +108,15 @@ fun PlaylistScreen(
     var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
 
-    Box(
+    SeitharolPullToRefreshBox(
+        isRefreshing = isLoadingPlaylist,
+        onRefresh = {
+            isLoadingPlaylist = true
+            viewModel.loadPlaylistTracks(playlistId) { tracks ->
+                remotePlaylistTracks = tracks
+                isLoadingPlaylist = false
+            }
+        },
         modifier = modifier
             .fillMaxSize()
             .background(SeitharolBg)
@@ -242,7 +251,7 @@ fun PlaylistScreen(
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier.clickable {
-                                    filteredTracks.forEach { viewModel.startDownload(it, DownloadTier.STANDARD) }
+                                    viewModel.downloadAllTracks(filteredTracks, DownloadTier.STANDARD)
                                 }
                             ) {
                                 Surface(
@@ -493,7 +502,7 @@ fun PlaylistScreen(
                             .clip(RoundedCornerShape(12.dp))
                             .clickable {
                                 showMoreSheet = false
-                                remotePlaylistTracks.forEach { viewModel.startDownload(it, DownloadTier.STANDARD) }
+                                viewModel.downloadAllTracks(remotePlaylistTracks, DownloadTier.STANDARD)
                             }
                             .padding(vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically

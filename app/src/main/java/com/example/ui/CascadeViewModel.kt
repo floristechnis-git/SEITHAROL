@@ -32,8 +32,9 @@ import kotlinx.coroutines.launch
 
 enum class ProviderFilter(val label: String) {
     ALL("All"),
-    YOUTUBE("YouTube"),
+    MUSIC("Music"),
     JIOSAAVN("JioSaavn"),
+    YOUTUBE("YouTube"),
     LOCAL("Downloaded")
 }
 
@@ -257,8 +258,10 @@ class CascadeViewModel(
     val freshReleases = MutableStateFlow<List<Track>>(emptyList())
     val personalizedTracks = MutableStateFlow<List<Track>>(emptyList())
     val selectedMood = MutableStateFlow("All")
-    val isLoadingHome = MutableStateFlow(false)
+    val isLoadingHome = MutableStateFlow(true)
     val isHomeLoading: StateFlow<Boolean> = isLoadingHome.asStateFlow()
+    val hasCompletedInitialHomeLoad = MutableStateFlow(false)
+    val trendingSearches = MutableStateFlow<List<String>>(emptyList())
 
     private val _followedArtists = MutableStateFlow<List<Artist>>(emptyList())
     val followedArtists: StateFlow<List<Artist>> = _followedArtists.asStateFlow()
@@ -343,7 +346,7 @@ class CascadeViewModel(
                         }
                         ytDeferred.await() + saavnDeferred.await()
                     }
-                    ProviderFilter.YOUTUBE -> InnerTubeStreamExtractor.searchOfficialYtmSongs(clean, limit = 25)
+                    ProviderFilter.MUSIC -> InnerTubeStreamExtractor.searchOfficialYtmSongs(clean, limit = 25)
                     ProviderFilter.JIOSAAVN -> {
                         resolverEngine.jioSaavnProvider.searchTracks(clean, limit = 25).map {
                             com.seitharol.data.resolver.CandidateStream(
@@ -359,10 +362,15 @@ class CascadeViewModel(
                             )
                         }
                     }
+                    ProviderFilter.YOUTUBE -> InnerTubeStreamExtractor.searchAllYoutubeVideos(clean, limit = 25)
                     ProviderFilter.LOCAL -> emptyList()
                 }
 
-                val ranked = CanonicalAudioResolver.rankSearchResultsByRelevance(clean, rawCandidates)
+                val ranked = if (filter == ProviderFilter.YOUTUBE) {
+                    rawCandidates.distinctBy { it.videoId }
+                } else {
+                    CanonicalAudioResolver.rankSearchResultsByRelevance(clean, rawCandidates)
+                }
                 onlineSearchResults.value = ranked.map { c ->
                     Track(
                         id = c.videoId,
@@ -370,7 +378,8 @@ class CascadeViewModel(
                         artist = c.artist,
                         album = c.albumName.orEmpty(),
                         durationMs = c.durationSeconds * 1000L,
-                        artUrl = c.thumbnailUrl
+                        artUrl = c.thumbnailUrl,
+                        genre = if (c.videoType == "MUSIC_VIDEO_TYPE_OMV" || filter == ProviderFilter.YOUTUBE) "YouTube Video" else "Music"
                     )
                 }
                 if (token == searchRequestToken) {
@@ -414,10 +423,11 @@ class CascadeViewModel(
 
     init {
         playerManager.isAutoplayEnabled = autoSuggestManager.isAutoSuggestEnabled.value && !isOfflineMode.value
+        loadHomeScreenMusic()
+        loadDiscoverFeed()
+        loadTrendingSearches()
         viewModelScope.launch(vmExceptionHandler) {
             downloadRepository.rescanLocalDownloads()
-            loadHomeScreenMusic()
-            loadDiscoverFeed()
         }
 
         viewModelScope.launch(vmExceptionHandler) {
@@ -488,6 +498,7 @@ class CascadeViewModel(
                     freshReleases.value = offlineTracks
                 }
                 isLoadingHome.value = false
+                hasCompletedInitialHomeLoad.value = true
                 return@launch
             }
             isLoadingHome.value = true
@@ -559,11 +570,44 @@ class CascadeViewModel(
                         }
                         .map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
                 }
+                if (personalizedTracks.value.isEmpty() && trendingHits.value.isEmpty()) {
+                    delay(650L)
+                    val fallbackSongs = InnerTubeStreamExtractor.searchOfficialYtmSongs("Manipuri & Indian Top Songs", limit = 16)
+                        .map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
+                    if (fallbackSongs.isNotEmpty()) {
+                        personalizedTracks.value = fallbackSongs
+                        trendingHits.value = fallbackSongs.take(12)
+                        if (freshReleases.value.isEmpty()) freshReleases.value = fallbackSongs.drop(4).take(10)
+                    }
+                }
             } catch (e: Exception) {
                 Log.w("CascadeViewModel", "Home load error: ${e.message}")
             } finally {
                 isLoadingHome.value = false
+                hasCompletedInitialHomeLoad.value = true
             }
+        }
+    }
+
+    fun loadTrendingSearches() {
+        viewModelScope.launch(vmExceptionHandler) {
+            if (isOfflineMode.value) return@launch
+            runCatching {
+                val realTrending = InnerTubeStreamExtractor.fetchRealTrendingSearches()
+                if (realTrending.isNotEmpty()) {
+                    trendingSearches.value = realTrending
+                }
+            }
+        }
+    }
+
+    fun refreshSearchAndTrending() {
+        loadTrendingSearches()
+        val currentQ = searchQuery.value.trim()
+        if (currentQ.length >= 2) {
+            executeRankedSearch(currentQ, selectedProviderFilter.value)
+        } else {
+            loadHomeScreenMusic()
         }
     }
 
@@ -975,7 +1019,11 @@ class CascadeViewModel(
     }
 
     fun startDownload(track: Track, tier: DownloadTier = DownloadTier.STANDARD) {
-        viewModelScope.launch(vmExceptionHandler) { runCatching { downloadRepository.startDownload(track, tier) } }
+        runCatching { downloadRepository.enqueueDownload(track, tier) }
+    }
+
+    fun downloadAllTracks(tracks: List<Track>, tier: DownloadTier = DownloadTier.STANDARD) {
+        runCatching { downloadRepository.enqueueDownloadAll(tracks, tier) }
     }
 
     fun cancelDownload(trackId: String) {
@@ -1108,6 +1156,9 @@ class CascadeViewModel(
     fun setLoudnessGain(gainDb: Float) = playerManager.setLoudnessGain(gainDb)
     fun setSleepTimer(minutes: Int) = playerManager.setSleepTimer(minutes)
     fun adjustLyricOffset(deltaMs: Long) = playerManager.adjustLyricOffset(deltaMs)
+    fun setVideoMode(enabled: Boolean) = playerManager.setVideoMode(enabled)
+    fun setPlaybackSpeed(speed: Float) = playerManager.setPlaybackSpeed(speed)
+    fun attachVideoTextureView(textureView: android.view.TextureView?) = playerManager.attachVideoTextureView(textureView)
     fun setTemporaryTrackQuality(quality: AudioQuality) = playerManager.setTemporaryTrackQuality(quality)
     fun getTemporaryTrackQuality(): AudioQuality? = playerManager.getTemporaryTrackQuality()
 

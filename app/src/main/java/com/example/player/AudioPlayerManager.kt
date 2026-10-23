@@ -74,7 +74,9 @@ data class PlayerState(
     val currentPresetName: String = "Flat",
     val sleepTimerMinutesLeft: Int = 0,
     val isSingleTrackPlayback: Boolean = false,
-    val isPartOfPlaylist: Boolean = false
+    val isPartOfPlaylist: Boolean = false,
+    val isVideoMode: Boolean = false,
+    val playbackSpeed: Float = 1.0f
 )
 
 /**
@@ -1904,6 +1906,83 @@ class AudioPlayerManager(
         val secondary = parts.getOrNull(1)?.trim()
             ?.takeIf { it.isNotEmpty() && !it.equals(primary, ignoreCase = true) }
         return primary to secondary
+    }
+
+
+    private var attachedTextureView: android.view.TextureView? = null
+
+    fun attachVideoTextureView(textureView: android.view.TextureView?) {
+        try {
+            val player = exoPlayer ?: return
+            if (textureView == null) {
+                attachedTextureView?.let { player.clearVideoTextureView(it) }
+                attachedTextureView = null
+            } else {
+                attachedTextureView = textureView
+                player.setVideoTextureView(textureView)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "attachVideoTextureView error: ${t.message}")
+        }
+    }
+
+    fun setPlaybackSpeed(speed: Float) {
+        val clamped = speed.coerceIn(0.5f, 2.0f)
+        _state.value = _state.value.copy(playbackSpeed = clamped)
+        try {
+            exoPlayer?.setPlaybackSpeed(clamped)
+        } catch (_: Throwable) {}
+    }
+
+    fun setVideoMode(enabled: Boolean) {
+        if (_state.value.isVideoMode == enabled) return
+        val current = _state.value.currentTrack ?: run {
+            _state.value = _state.value.copy(isVideoMode = enabled)
+            return
+        }
+        val currentPos = (exoPlayer?.currentPosition?.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
+        _state.value = _state.value.copy(isVideoMode = enabled, isBuffering = true)
+        userRequestedPlay = true
+        hasUserInitiatedPlaybackThisSession = true
+
+        loadTrackJob?.cancel()
+        loadTrackJob = coroutineScope.launch {
+            try {
+                if (enabled) {
+                    val rawStreamUrl = withContext(Dispatchers.IO) {
+                        var ytId = InnerTubeStreamExtractor.extractVideoId(current.id)
+                        if (ytId.isNullOrBlank()) {
+                            val searched = InnerTubeStreamExtractor.searchAllYoutubeVideos("${current.title} ${current.artist}".trim(), limit = 1)
+                            ytId = searched.firstOrNull()?.videoId
+                        }
+                        if (!ytId.isNullOrBlank()) {
+                            InnerTubeStreamExtractor.resolveRawVideoStreamById(ytId).getOrNull()
+                        } else null
+                    }
+                    if (!rawStreamUrl.isNullOrBlank() && isActive && _state.value.currentTrack?.id == current.id) {
+                        setupAndPlaySource(rawStreamUrl, current, startPositionMs = currentPos)
+                        attachedTextureView?.let { tv ->
+                            runCatching { exoPlayer?.setVideoTextureView(tv) }
+                        }
+                    } else {
+                        _state.value = _state.value.copy(isBuffering = false)
+                    }
+                } else {
+                    val preferredQuality = getPreferredAudioQuality()
+                    val (safeTrack, stream) = withContext(Dispatchers.IO) {
+                        val localTrack = resolveLocalTrackIfAvailable(current)
+                        localTrack to resolverEngine.resolveTrack(localTrack, preferredQuality)
+                    }
+                    if (isActive && _state.value.currentTrack?.id == current.id) {
+                        _state.value = _state.value.copy(currentTrack = safeTrack, activeStream = stream)
+                        setupAndPlaySource(stream.streamUrl, safeTrack, startPositionMs = currentPos)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "setVideoMode switch error: ${e.message}")
+                _state.value = _state.value.copy(isBuffering = false)
+            }
+        }
     }
 
     private var temporaryTrackQuality: com.seitharol.data.resolver.AudioQuality? = null

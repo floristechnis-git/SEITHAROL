@@ -514,7 +514,7 @@ fun PlaybackQueueModal(
                             )
                         }
 
-                        itemsIndexed(suggestedTracks, key = { _, track -> "suggested_${track.id}" }) { _, track ->
+                        itemsIndexed(suggestedTracks, key = { idx, track -> "suggested_${track.id}_$idx" }) { _, track ->
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
                                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),

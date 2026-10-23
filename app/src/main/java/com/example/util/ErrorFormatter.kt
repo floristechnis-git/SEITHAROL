@@ -42,9 +42,15 @@ object ErrorFormatter {
     ): String {
         val nextSuffix = if (hasNextTrack) " Playing next song." else " Please try again."
 
-        // 1. Check network connectivity first
+        val raw = throwable?.message.orEmpty()
+        val lower = raw.lowercase()
+        if (lower.contains("offline mode") || lower.contains("not cached locally") || lower.contains("not available on device")) {
+            return "Track not available offline. Connect to internet or download first."
+        }
+
+        // 1. Check network connectivity
         if (context != null && !isOnline(context)) {
-            return "No internet connection. Please check your network."
+            return "No internet connection. Playing downloaded offline tracks only."
         }
 
         if (throwable == null) {
@@ -76,22 +82,16 @@ object ErrorFormatter {
         }
 
         // 3. Inspect message text for key patterns
-        val raw = throwable.message.orEmpty()
-        val lower = raw.lowercase()
-
         return when {
             lower.contains("unknownhost") ||
-            lower.contains("no address associated") ||
-            lower.contains("network is unreachable") ||
-            lower.contains("failed to connect") ||
-            lower.contains("enonetwork") -> {
+                lower.contains("no address associated") ||
+                lower.contains("network is unreachable") ||
+                lower.contains("failed to connect") ||
+                lower.contains("enonetwork") -> {
                 "No internet connection. Please check your network."
             }
             lower.contains("timeout") || lower.contains("timed out") -> {
                 "Connection timed out. Please check your internet connection."
-            }
-            lower.contains("offline mode") || lower.contains("not cached locally") || lower.contains("not available on device") -> {
-                "Track not available offline. Connect to internet or download first."
             }
             lower.contains("403") || lower.contains("forbidden") || lower.contains("unauthorized") -> {
                 "Playback source temporarily restricted.$nextSuffix"
@@ -115,25 +115,25 @@ object ErrorFormatter {
      * Sanitizes any raw notification string before presenting it to the user.
      */
     fun sanitizeNotice(rawMessage: String, context: Context? = null): String {
-        if (context != null && !isOnline(context)) {
-            return "No internet connection. Please check your network."
-        }
-
         val lower = rawMessage.lowercase()
 
-        // Pass through legitimate user notifications
+        // 1. Always pass through legitimate non-error user notifications even when in Airplane Mode
         if (lower.startsWith("sleep timer") ||
             lower.startsWith("added to") ||
             lower.startsWith("removed from") ||
             lower.startsWith("playlist created") ||
             lower.startsWith("profile details") ||
-            lower.startsWith("stream cache")
+            lower.startsWith("stream cache") ||
+            lower.startsWith("airplane mode") ||
+            lower.startsWith("track not available offline") ||
+            lower.startsWith("sponsorblock: skipped") ||
+            lower.startsWith("skipped sponsor")
         ) {
             return rawMessage
         }
 
-        if (lower.startsWith("sponsorblock: skipped") || lower.startsWith("skipped sponsor")) {
-            return rawMessage
+        if (context != null && !isOnline(context)) {
+            return "No internet connection. Please check your network."
         }
 
         // Detect and sanitize any dev-mode reports, stack traces, or fallback messages
@@ -155,9 +155,9 @@ object ErrorFormatter {
         ) {
             return when {
                 lower.contains("unknownhost") ||
-                lower.contains("no address associated") ||
-                lower.contains("network is unreachable") ||
-                lower.contains("failed to connect") -> {
+                    lower.contains("no address associated") ||
+                    lower.contains("network is unreachable") ||
+                    lower.contains("failed to connect") -> {
                     "No internet connection. Please check your network."
                 }
                 lower.contains("offline") -> {

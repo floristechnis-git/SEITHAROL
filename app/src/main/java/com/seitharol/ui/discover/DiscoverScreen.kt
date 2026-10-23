@@ -143,7 +143,7 @@ fun DiscoverScreen(
                 modifier = Modifier.fillMaxSize(),
                 beyondViewportPageCount = 1
             ) { pageIndex ->
-                val track = activeFeed[pageIndex]
+                val track = activeFeed.getOrNull(pageIndex) ?: return@VerticalPager
                 val primaryArtist = track.artists.firstOrNull().orEmpty().ifBlank { "Unknown Artist" }
 
                 DiscoverShortPage(
@@ -179,7 +179,7 @@ fun DiscoverScreen(
                             type = "text/plain"
                             putExtra(Intent.EXTRA_TEXT, shareMsg)
                         }
-                        context.startActivity(Intent.createChooser(shareIntent, "Share Track"))
+                        runCatching { context.startActivity(Intent.createChooser(shareIntent, "Share Track")) }
                     },
                     onOpenFullSongClick = {
                         scope.launch {

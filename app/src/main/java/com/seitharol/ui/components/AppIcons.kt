@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
@@ -51,6 +52,151 @@ fun HomeNavSvgIcon(
             color = tint,
             style = Stroke(width = 1.8f * sx, join = StrokeJoin.Round, cap = StrokeCap.Round)
         )
+    }
+}
+
+/**
+ * Studio Headphone SVG Icon for "Fresh New Music" cards on HomeScreen.
+ */
+@Composable
+fun HeadphoneSvgIcon(
+    tint: Color = Color.White,
+    modifier: Modifier = Modifier.size(20.dp)
+) {
+    Canvas(modifier = modifier) {
+        val sx = size.width / 24f
+        val sy = size.height / 24f
+        val strokeWidth = 2.0f * sx
+
+        // Headband arch
+        val bandPath = Path().apply {
+            moveTo(4f * sx, 14f * sy)
+            lineTo(4f * sx, 11.5f * sy)
+            cubicTo(
+                4f * sx, 6.5f * sy,
+                20f * sx, 6.5f * sy,
+                20f * sx, 11.5f * sy
+            )
+            lineTo(20f * sx, 14f * sy)
+        }
+        drawPath(
+            path = bandPath,
+            color = tint,
+            style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        )
+
+        // Left ear cup
+        drawRoundRect(
+            color = tint,
+            topLeft = Offset(3f * sx, 13f * sy),
+            size = Size(4.2f * sx, 6.5f * sy),
+            cornerRadius = CornerRadius(1.8f * sx, 1.8f * sy),
+            style = Fill
+        )
+
+        // Right ear cup
+        drawRoundRect(
+            color = tint,
+            topLeft = Offset(16.8f * sx, 13f * sy),
+            size = Size(4.2f * sx, 6.5f * sy),
+            cornerRadius = CornerRadius(1.8f * sx, 1.8f * sy),
+            style = Fill
+        )
+    }
+}
+
+/**
+ * Notification Bell SVG Icon with integrated Alert UI (ringing waves + live unread alert dot).
+ */
+@Composable
+fun NotificationBellAlertSvgIcon(
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    hasUnreadAlert: Boolean = false,
+    alertDotColor: Color = Color(0xFFFFB74D),
+    modifier: Modifier = Modifier.size(22.dp)
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "notif_alert_pulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 0.90f,
+        targetValue = if (hasUnreadAlert) 1.22f else 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 850, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "notif_dot_scale"
+    )
+
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val sx = size.width / 24f
+            val sy = size.height / 24f
+            val stroke = Stroke(width = 1.9f * sx, cap = StrokeCap.Round, join = StrokeJoin.Round)
+
+            // Bell body
+            val bellPath = Path().apply {
+                moveTo(18f * sx, 8.5f * sy)
+                cubicTo(
+                    18f * sx, 5.0f * sy,
+                    15.3f * sx, 2.8f * sy,
+                    12f * sx, 2.8f * sy
+                )
+                cubicTo(
+                    8.7f * sx, 2.8f * sy,
+                    6f * sx, 5.0f * sy,
+                    6f * sx, 8.5f * sy
+                )
+                cubicTo(
+                    6f * sx, 13.5f * sy,
+                    4.0f * sx, 15.2f * sy,
+                    4.0f * sx, 16.5f * sy
+                )
+                lineTo(20.0f * sx, 16.5f * sy)
+                cubicTo(
+                    20.0f * sx, 15.2f * sy,
+                    18f * sx, 13.5f * sy,
+                    18f * sx, 8.5f * sy
+                )
+                close()
+            }
+            drawPath(path = bellPath, color = tint, style = stroke)
+
+            // Bell clapper
+            val clapperPath = Path().apply {
+                moveTo(10.0f * sx, 19.2f * sy)
+                cubicTo(
+                    10.6f * sx, 20.6f * sy,
+                    13.4f * sx, 20.6f * sy,
+                    14.0f * sx, 19.2f * sy
+                )
+            }
+            drawPath(path = clapperPath, color = tint, style = stroke)
+
+            if (hasUnreadAlert) {
+                // Subtle acoustic alert arc on top-left of bell
+                val wavePath = Path().apply {
+                    moveTo(4.2f * sx, 4.5f * sy)
+                    cubicTo(2.6f * sx, 6.0f * sy, 2.3f * sx, 8.2f * sy, 3.2f * sx, 10.0f * sy)
+                }
+                drawPath(
+                    path = wavePath,
+                    color = alertDotColor,
+                    style = Stroke(width = 1.6f * sx, cap = StrokeCap.Round)
+                )
+
+                // Outer glow halo for unread alert badge
+                drawCircle(
+                    color = alertDotColor.copy(alpha = 0.32f),
+                    radius = 4.2f * sx * pulseScale,
+                    center = Offset(18.2f * sx, 5.5f * sy)
+                )
+                // Crisp inner alert dot
+                drawCircle(
+                    color = alertDotColor,
+                    radius = 3.0f * sx,
+                    center = Offset(18.2f * sx, 5.5f * sy)
+                )
+            }
+        }
     }
 }
 

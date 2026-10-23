@@ -12,6 +12,7 @@ import com.seitharol.data.resolver.InnerTubeStreamExtractor
 import com.seitharol.data.resolver.StreamResolver
 import com.seitharol.data.resolver.TrackMetadata
 import kotlinx.coroutines.runBlocking
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 
 @OptIn(UnstableApi::class)
@@ -96,10 +97,6 @@ object OuterTuneResolvingDataSource {
     /**
      * Inspects the signed `c=` and `cver=` parameters on googlevideo.com stream URLs and returns
      * the exact matching headers required by GoogleVideo CDN.
-     *
-     * - `VISIONOS` (c=VISIONOS): requires Apple Vision Pro Safari User-Agent + Origin & Referer
-     *   headers (`https://www.youtube.com`) so googlevideo serves the entire stream without 1MB cutoff.
-     * - `ANDROID_VR`, `IOS`, `ANDROID_TESTSUITE`: require their exact native app User-Agent without Origin/Referer.
      */
     fun resolveClientHeadersForUrl(streamUrl: String): Map<String, String> {
         val lower = streamUrl.lowercase()
@@ -178,7 +175,6 @@ object OuterTuneResolvingDataSource {
             }
 
             // Already-resolved HTTP(S) CDN URLs (e.g. googlevideo.com or saavncdn.com):
-            // Attach exact client-matching User-Agent, Origin & Referer headers via withRequestHeaders
             if (rawUri.startsWith("http") &&
                 !rawUri.contains("youtube.com/watch") &&
                 !rawUri.contains("music.youtube.com/watch") &&
@@ -197,12 +193,16 @@ object OuterTuneResolvingDataSource {
 
             if (rawUri.startsWith("saavn_clip:")) {
                 val saavnId = rawUri.removePrefix("saavn_clip:").substringBefore("?").trim()
-                val resolvedSaavn = runBlocking {
-                    StreamResolver.resolveExactStreamUrl(
-                        TrackMetadata(id = saavnId, title = "", artist = ""),
-                        targetQuality
-                    )
-                } ?: throw IllegalStateException("Unable to resolve Saavn stream for $saavnId")
+                val resolvedSaavn = try {
+                    runBlocking {
+                        StreamResolver.resolveExactStreamUrl(
+                            TrackMetadata(id = saavnId, title = "", artist = ""),
+                            targetQuality
+                        )
+                    }
+                } catch (e: Exception) {
+                    throw IOException("Unable to resolve Saavn stream for $saavnId", e)
+                } ?: throw IOException("Unable to resolve Saavn stream for $saavnId")
 
                 return@Factory dataSpec
                     .withUri(Uri.parse(resolvedSaavn))
@@ -219,13 +219,17 @@ object OuterTuneResolvingDataSource {
 
             if (!cleanYtId.isNullOrBlank()) {
                 val cached = if (forceRefresh) null else getCachedUrl(cleanYtId, targetQuality)
-                val resolvedUrl = cached ?: runBlocking {
-                    InnerTubeStreamExtractor.resolveExactYoutubeStreamById(
-                        cleanYtId,
-                        targetQuality,
-                        forceRefresh = forceRefresh
-                    ).getOrNull()
-                } ?: throw IllegalStateException("Unable to resolve YouTube stream for $cleanYtId")
+                val resolvedUrl = cached ?: try {
+                    runBlocking {
+                        InnerTubeStreamExtractor.resolveExactYoutubeStreamById(
+                            cleanYtId,
+                            targetQuality,
+                            forceRefresh = forceRefresh
+                        ).getOrNull()
+                    }
+                } catch (e: Exception) {
+                    throw IOException("Unable to resolve YouTube stream for $cleanYtId", e)
+                } ?: throw IOException("Unable to resolve YouTube stream for $cleanYtId")
 
                 val headers = resolveClientHeadersForUrl(resolvedUrl)
                 val mergedHeaders = HashMap<String, String>(dataSpec.httpRequestHeaders)

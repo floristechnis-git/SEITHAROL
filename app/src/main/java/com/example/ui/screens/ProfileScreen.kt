@@ -25,7 +25,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.AppPreferences
 import com.example.ui.CascadeViewModel
+import com.example.ui.components.ManipurCalendarNotificationEngine
 import com.example.ui.theme.*
+import com.seitharol.ui.components.NotificationBellAlertSvgIcon
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -46,6 +48,7 @@ fun ProfileScreen(
     val isOfflineMode by viewModel.isOfflineMode.collectAsState()
     val currentPackVersion by viewModel.currentPackVersion.collectAsState()
     val totalDownloadedBytes by viewModel.totalDownloadedBytes.collectAsState()
+    val hasUnreadNotifications by ManipurCalendarNotificationEngine.hasUnreadAlerts.collectAsState()
 
     var showEditProfileDialog by remember { mutableStateOf(false) }
     var showAccountInfo by remember { mutableStateOf(false) }
@@ -72,7 +75,7 @@ fun ProfileScreen(
                         .clip(RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant)
                 ) {
-                    // Top Notification button on right
+                    // Top Notification button on right with live Alert UI badge
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -88,11 +91,11 @@ fun ProfileScreen(
                             onClick = onOpenNotifications
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Notifications,
-                                    contentDescription = "Notifications",
+                                NotificationBellAlertSvgIcon(
                                     tint = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.size(20.dp)
+                                    hasUnreadAlert = hasUnreadNotifications,
+                                    alertDotColor = Color(0xFFFFB74D),
+                                    modifier = Modifier.size(21.dp)
                                 )
                             }
                         }
@@ -348,7 +351,10 @@ fun ProfileScreen(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "Forces pure on-device cached playback",
+                                text = if (isOfflineMode)
+                                    "Active • Playing ${downloadedTracks.size} cached offline songs"
+                                else
+                                    "Forces pure on-device cached playback (${downloadedTracks.size} saved)",
                                 fontSize = 12.sp,
                                 fontFamily = OutfitFontFamily,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -357,7 +363,17 @@ fun ProfileScreen(
 
                         Switch(
                             checked = isOfflineMode,
-                            onCheckedChange = { viewModel.setOfflineMode(it) },
+                            onCheckedChange = { enabled ->
+                                viewModel.setOfflineMode(enabled)
+                                coroutineScope.launch {
+                                    val msg = if (enabled) {
+                                        "Airplane Mode Offline enabled (${downloadedTracks.size} offline songs ready)."
+                                    } else {
+                                        "Airplane Mode Offline disabled. Online streaming restored."
+                                    }
+                                    snackbarHostState.showSnackbar(msg)
+                                }
+                            },
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
                                 checkedTrackColor = MaterialTheme.colorScheme.primary,
@@ -372,7 +388,7 @@ fun ProfileScreen(
                 }
             }
 
-            // "About Us" Clean Section
+            // "About & Support" Clean Section
             item {
                 Spacer(modifier = Modifier.height(14.dp))
                 Text(
@@ -406,13 +422,23 @@ fun ProfileScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = page.title,
-                                    fontFamily = OutfitFontFamily,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = page.title,
+                                        fontFamily = OutfitFontFamily,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (page == com.seitharol.ui.settings.InfoPageType.HELP) {
+                                        Text(
+                                            text = "Contact support at floristechnis@proton.me",
+                                            fontFamily = OutfitFontFamily,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
                                 com.seitharol.ui.search.ChevronRightSvgIcon(
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(18.dp)

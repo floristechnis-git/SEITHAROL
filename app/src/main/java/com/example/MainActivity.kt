@@ -17,7 +17,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.example.data.AppPreferences
-import com.example.data.model.Track
 import com.example.ui.CascadeApp
 import com.example.ui.CascadeViewModel
 import com.example.ui.CascadeViewModelFactory
@@ -41,6 +40,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private var pendingDeepLink by mutableStateOf<SeitharolDeepLinkHelper.DeepLinkTarget?>(null)
+    private var openNotificationsRequest by mutableStateOf(false)
 
     companion object {
         var hasShownSplashThisProcess = false
@@ -55,8 +55,9 @@ class MainActivity : ComponentActivity() {
             window?.decorView?.isForceDarkAllowed = false
         }
 
-        // Ensure singleton ExoPlayer is initialized if the Activity was recreated after process/activity reclamation
-        (application as? CascadeApplication)?.audioPlayerManager?.ensurePlayerInitialized()
+        // Ensure singleton ExoPlayer is initialized and restores any persisted checkpoint
+        val playerMgr = (application as? CascadeApplication)?.audioPlayerManager
+        playerMgr?.ensurePlayerInitialized()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -64,14 +65,21 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Check Manipur Solar/Lunar Calendar & Nov 27 Birthday notification
+        // Check Manipur Solar/Lunar Calendar & past notification store
         runCatching {
             ManipurCalendarNotificationEngine.checkAndDispatchDailyNotification(applicationContext)
         }
 
-        // Parse initial deep-link intent (/share/track/[id], /share/artist/[id], seitharol://..., audio/* file)
-        SeitharolDeepLinkHelper.parseIncomingIntent(intent, this)?.let { target ->
-            pendingDeepLink = target
+        // Parse initial deep-link or notification intent
+        handleIncomingIntent(intent)
+
+        // If returning from notification, deep link, saved instance state, or active/paused playback session,
+        // skip the splash screen so the app never feels like it restarted from the beginning.
+        val hasActiveOrRestoredTrack = playerMgr?.state?.value?.currentTrack != null
+        val launchedFromNotification = intent?.getBooleanExtra("FROM_NOTIFICATION", false) == true ||
+            intent?.getBooleanExtra("OPEN_NOTIFICATIONS_MODAL", false) == true
+        if (savedInstanceState != null || hasActiveOrRestoredTrack || launchedFromNotification || pendingDeepLink != null) {
+            hasShownSplashThisProcess = true
         }
 
         setContent {
@@ -83,7 +91,6 @@ class MainActivity : ComponentActivity() {
             val persistedSettings by settingsManager.state.collectAsState()
             val systemDark = isSystemInDarkTheme()
 
-            // Deterministic single source of truth for Theme Mode across the entire app
             val effectiveDark = when (persistedSettings.themeMode) {
                 ThemeMode.LIGHT -> false
                 ThemeMode.DARK -> true
@@ -139,7 +146,11 @@ class MainActivity : ComponentActivity() {
                             null -> Unit
                         }
                     }
-                    CascadeApp(viewModel = viewModel)
+                    CascadeApp(
+                        viewModel = viewModel,
+                        openNotificationsRequest = openNotificationsRequest,
+                        onNotificationsOpened = { openNotificationsRequest = false }
+                    )
                 }
             }
         }
@@ -148,15 +159,31 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        hasShownSplashThisProcess = true
+        handleIncomingIntent(intent)
+    }
+
+    private fun handleIncomingIntent(intent: Intent?) {
+        if (intent == null) return
+        if (intent.getBooleanExtra("OPEN_NOTIFICATIONS_MODAL", false)) {
+            openNotificationsRequest = true
+        }
         SeitharolDeepLinkHelper.parseIncomingIntent(intent, this)?.let { target ->
             pendingDeepLink = target
         }
     }
 
+    override fun onStop() {
+        super.onStop()
+        // Persist current playback position whenever the user leaves the foreground
+        runCatching {
+            (application as? CascadeApplication)?.audioPlayerManager?.persistCurrentPlaybackState()
+        }
+    }
+
     override fun onDestroy() {
         // Do NOT call audioPlayerManager.release() or stopPlayback() when Android reclaims MainActivity
-        // in the background or during lock/unlock transitions while music is playing; MediaPlaybackService
-        // owns background playback lifecycle.
+        // in the background; MediaPlaybackService owns background playback lifecycle.
         super.onDestroy()
     }
 }

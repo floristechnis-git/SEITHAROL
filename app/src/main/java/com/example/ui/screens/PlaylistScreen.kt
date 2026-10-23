@@ -32,6 +32,7 @@ import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
 import com.example.ui.components.AddToPlaylistModal
 import com.example.ui.components.CreatePlaylistModal
+import com.example.ui.components.SeitharolDeepLinkHelper
 import com.example.ui.components.TrackCard
 import com.example.ui.theme.*
 
@@ -49,7 +50,6 @@ fun PlaylistScreen(
     val context = LocalContext.current
 
     val playlists by viewModel.playlists.collectAsState()
-    val allTracks by viewModel.allTracks.collectAsState()
 
     val savedPlaylist = remember(playlistId, playlists) {
         playlists.firstOrNull { it.id == playlistId }
@@ -117,447 +117,452 @@ fun PlaylistScreen(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 140.dp)
         ) {
-        // Hero Header (340dp height with dark gradient)
-        item {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(340.dp)
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(
-                                MaterialTheme.colorScheme.surfaceVariant,
-                                MaterialTheme.colorScheme.background
-                            )
-                        )
-                    )
-            ) {
-                // Top Action Bar
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Back button
-                    Surface(
-                        modifier = Modifier.size(44.dp),
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        onClick = onBack
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-
-                    // More button -> triggers ModalBottomSheet
-                    Surface(
-                        modifier = Modifier.size(44.dp),
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        onClick = { showMoreSheet = true }
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.MoreHoriz,
-                                contentDescription = "More",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Playlist Info & Controls
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(top = 40.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    val badgeTag = remember(playlistId, displayTitle, displayDescription) {
-                        when {
-                            playlistId.startsWith("RD") || displayTitle.contains("Mix", ignoreCase = true) -> "MIX"
-                            playlistId.startsWith("MPREb_") || playlistId.startsWith("OLAK5uy_") || displayTitle.contains("Album", ignoreCase = true) -> "ALBUM"
-                            displayDescription.contains("Single", ignoreCase = true) -> "SINGLE"
-                            else -> "PLAYLIST"
-                        }
-                    }
-                    val badgeColor = when (badgeTag) {
-                        "MIX" -> Color(0xFFE50914)
-                        "ALBUM" -> Color(0xFF8E24AA)
-                        "SINGLE" -> Color(0xFF00897B)
-                        else -> Color(0xFF2E66FF)
-                    }
-
-                    Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = badgeColor
-                    ) {
-                        Text(
-                            text = badgeTag,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color.White,
-                            letterSpacing = 0.8.sp,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = currentPlaylist.title,
-                        fontFamily = SyneFontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 26.sp,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Text(
-                        text = currentPlaylist.description.ifBlank { "The best tracks every week" },
-                        fontFamily = OutfitFontFamily,
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    // Action buttons row: Download (48dp pill), Play (64dp circle), Like (48dp pill)
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(28.dp)
-                    ) {
-                        // Download All
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clickable {
-                                filteredTracks.forEach { viewModel.startDownload(it, DownloadTier.STANDARD) }
-                            }
-                        ) {
-                            Surface(
-                                modifier = Modifier.size(48.dp),
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.surfaceVariant
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.Download,
-                                        contentDescription = "Download",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Download",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 11.sp,
-                                fontFamily = OutfitFontFamily
-                            )
-                        }
-
-                        // Big Play Button
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clickable {
-                                if (filteredTracks.isNotEmpty()) {
-                                    if (filteredTracks.size == 1 && (playlistId.startsWith("RD") || playlistId.startsWith("RDAMVM"))) {
-                                        viewModel.startRadioMix(filteredTracks.first())
-                                    } else {
-                                        viewModel.playQueue(filteredTracks, 0)
-                                    }
-                                }
-                            }
-                        ) {
-                            Surface(
-                                modifier = Modifier.size(64.dp),
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.primary
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.PlayArrow,
-                                        contentDescription = "Play Playlist",
-                                        tint = MaterialTheme.colorScheme.onPrimary,
-                                        modifier = Modifier.size(32.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Play",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 11.sp,
-                                fontFamily = OutfitFontFamily
-                            )
-                        }
-
-                        // Like Playlist (Persisted in Room)
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clickable {
-                                viewModel.togglePlaylistLike(currentPlaylist)
-                            }
-                        ) {
-                            Surface(
-                                modifier = Modifier.size(48.dp),
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.surfaceVariant
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = if (currentPlaylist.isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
-                                        contentDescription = "Like",
-                                        tint = if (currentPlaylist.isLiked) SeitharolRedHeart else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = if (currentPlaylist.isLiked) "Liked" else "Like",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 11.sp,
-                                fontFamily = OutfitFontFamily
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Dedicated Search Bar for this Playlist
-        item {
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = { Text("Search in ${currentPlaylist.title}...") },
-                singleLine = true,
-                shape = RoundedCornerShape(24.dp),
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { searchQuery = "" }) {
-                            Icon(Icons.Default.Close, contentDescription = "Clear search")
-                        }
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-            )
-        }
-
-        // Section Title
-        item {
-            Text(
-                text = "Tracks (${filteredTracks.size})",
-                fontFamily = SyneFontFamily,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 18.sp,
-                color = SeitharolDark,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
-            )
-        }
-
-        // Playlist tracks
-        if (filteredTracks.isEmpty()) {
+            // Hero Header (340dp height with dark gradient)
             item {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 40.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (isLoadingPlaylist) {
-                        CircularProgressIndicator(
-                            color = SeitharolDark,
-                            modifier = Modifier.size(36.dp)
+                        .height(340.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    MaterialTheme.colorScheme.surfaceVariant,
+                                    MaterialTheme.colorScheme.background
+                                )
+                            )
                         )
-                    } else {
+                ) {
+                    // Top Action Bar
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding()
+                            .padding(horizontal = 20.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Back button
+                        Surface(
+                            modifier = Modifier.size(44.dp),
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            onClick = onBack
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = "Back",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+
+                        // More button -> triggers ModalBottomSheet
+                        Surface(
+                            modifier = Modifier.size(44.dp),
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            onClick = { showMoreSheet = true }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.MoreHoriz,
+                                    contentDescription = "More",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Playlist Info & Controls
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(top = 40.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        val badgeTag = remember(playlistId, displayTitle, displayDescription) {
+                            when {
+                                playlistId.startsWith("RD") || displayTitle.contains("Mix", ignoreCase = true) -> "MIX"
+                                playlistId.startsWith("MPREb_") || playlistId.startsWith("OLAK5uy_") || displayTitle.contains("Album", ignoreCase = true) -> "ALBUM"
+                                displayDescription.contains("Single", ignoreCase = true) -> "SINGLE"
+                                else -> "PLAYLIST"
+                            }
+                        }
+                        val badgeColor = when (badgeTag) {
+                            "MIX" -> Color(0xFFE50914)
+                            "ALBUM" -> Color(0xFF8E24AA)
+                            "SINGLE" -> Color(0xFF00897B)
+                            else -> Color(0xFF2E66FF)
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = badgeColor
+                        ) {
+                            Text(
+                                text = badgeTag,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color.White,
+                                letterSpacing = 0.8.sp,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
                         Text(
-                            text = if (searchQuery.isNotEmpty()) "No tracks matched '$searchQuery'" else "This playlist is empty.\nAdd tracks from Search, Home, or Player to build your playlist.",
-                            color = SeitharolTextSecondary,
+                            text = currentPlaylist.title,
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 26.sp,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Text(
+                            text = currentPlaylist.description.ifBlank { "The best tracks every week" },
                             fontFamily = OutfitFontFamily,
-                            fontSize = 14.sp,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(20.dp))
+
+                        // Action buttons row: Download (48dp pill), Play (64dp circle), Like (48dp pill)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(28.dp)
+                        ) {
+                            // Download All
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.clickable {
+                                    filteredTracks.forEach { viewModel.startDownload(it, DownloadTier.STANDARD) }
+                                }
+                            ) {
+                                Surface(
+                                    modifier = Modifier.size(48.dp),
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.surfaceVariant
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Download,
+                                            contentDescription = "Download",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Download",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.sp,
+                                    fontFamily = OutfitFontFamily
+                                )
+                            }
+
+                            // Big Play Button
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.clickable {
+                                    if (filteredTracks.isNotEmpty()) {
+                                        if (filteredTracks.size == 1 && (playlistId.startsWith("RD") || playlistId.startsWith("RDAMVM"))) {
+                                            viewModel.startRadioMix(filteredTracks.first())
+                                        } else {
+                                            viewModel.playQueue(filteredTracks, 0)
+                                        }
+                                    }
+                                }
+                            ) {
+                                Surface(
+                                    modifier = Modifier.size(64.dp),
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primary
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.PlayArrow,
+                                            contentDescription = "Play Playlist",
+                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                            modifier = Modifier.size(32.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Play",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.sp,
+                                    fontFamily = OutfitFontFamily
+                                )
+                            }
+
+                            // Like Playlist (Persisted in Room)
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.clickable {
+                                    viewModel.togglePlaylistLike(currentPlaylist)
+                                }
+                            ) {
+                                Surface(
+                                    modifier = Modifier.size(48.dp),
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.surfaceVariant
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = if (currentPlaylist.isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
+                                            contentDescription = "Like",
+                                            tint = if (currentPlaylist.isLiked) SeitharolRedHeart else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = if (currentPlaylist.isLiked) "Liked" else "Like",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.sp,
+                                    fontFamily = OutfitFontFamily
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Dedicated Search Bar for this Playlist
+            item {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Search in ${currentPlaylist.title}...") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(24.dp),
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Close, contentDescription = "Clear search")
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+
+            // Section Title
+            item {
+                Text(
+                    text = "Tracks (${filteredTracks.size})",
+                    fontFamily = SyneFontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 18.sp,
+                    color = SeitharolDark,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+                )
+            }
+
+            // Playlist tracks — include index in key so duplicate tracks never throw IllegalArgumentException
+            if (filteredTracks.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 40.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isLoadingPlaylist) {
+                            CircularProgressIndicator(
+                                color = SeitharolDark,
+                                modifier = Modifier.size(36.dp)
+                            )
+                        } else {
+                            Text(
+                                text = if (searchQuery.isNotEmpty()) "No tracks matched '$searchQuery'" else "This playlist is empty.\nAdd tracks from Search, Home, or Player to build your playlist.",
+                                color = SeitharolTextSecondary,
+                                fontFamily = OutfitFontFamily,
+                                fontSize = 14.sp,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            } else {
+                itemsIndexed(filteredTracks, key = { index, track -> "pl_tr_${track.id}_$index" }) { index, track ->
+                    ClampedSwipeToDeleteRow(onDelete = { viewModel.removeTrackFromPlaylist(currentPlaylist.id, track.id) }) {
+                        TrackCard(
+                            track = track,
+                            isPlaying = playerState.currentTrack?.id == track.id,
+                            rankNumber = index + 1,
+                            onTrackClick = {
+                                if (filteredTracks.isNotEmpty()) {
+                                    viewModel.playQueue(filteredTracks, index)
+                                } else {
+                                    viewModel.playTrack(track)
+                                }
+                            },
+                            onLikeClick = { viewModel.toggleLike(track) },
+                            onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
+                            onPlayNextClick = { viewModel.playNext(track) },
+                            onAddToQueueClick = { viewModel.addToQueue(track) },
+                            onAddToPlaylistClick = { trackToAddToPlaylist = track },
+                            onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                         )
                     }
                 }
             }
-        } else {
-            itemsIndexed(filteredTracks, key = { _, track -> "pl_tr_${track.id}" }) { index, track ->
-                ClampedSwipeToDeleteRow(onDelete = { viewModel.removeTrackFromPlaylist(currentPlaylist.id, track.id) }) {
-                    TrackCard(
-                        track = track,
-                        isPlaying = playerState.currentTrack?.id == track.id,
-                        rankNumber = index + 1,
-                        onTrackClick = {
-                            if (filteredTracks.isNotEmpty()) {
-                                viewModel.playQueue(filteredTracks, index)
-                            } else {
-                                viewModel.playTrack(track)
-                            }
-                        },
-                        onLikeClick = { viewModel.toggleLike(track) },
-                        onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
-                        onPlayNextClick = { viewModel.playNext(track) },
-                        onAddToQueueClick = { viewModel.addToQueue(track) },
-                        onAddToPlaylistClick = { trackToAddToPlaylist = track },
-                        onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
-                    )
-                }
-            }
         }
-    }
 
-    // More Options Bottom Sheet
-    if (showMoreSheet) {
-        ModalBottomSheet(
-            onDismissRequest = { showMoreSheet = false },
-            containerColor = SeitharolWhite,
-            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 16.dp)
+        // More Options Bottom Sheet
+        if (showMoreSheet) {
+            ModalBottomSheet(
+                onDismissRequest = { showMoreSheet = false },
+                containerColor = SeitharolWhite,
+                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
             ) {
-                Text(
-                    text = currentPlaylist.title,
-                    fontFamily = SyneFontFamily,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = SeitharolDark
-                )
-                Text(
-                    text = "${remotePlaylistTracks.size} tracks",
-                    fontFamily = OutfitFontFamily,
-                    fontSize = 12.sp,
-                    color = SeitharolTextSecondary
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                HorizontalDivider(color = SeitharolBorder)
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Play Next
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable {
-                            showMoreSheet = false
-                            remotePlaylistTracks.reversed().forEach { viewModel.playNext(it) }
-                        }
-                        .padding(vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(horizontal = 24.dp, vertical = 16.dp)
                 ) {
-                    Icon(Icons.Default.PlaylistPlay, contentDescription = null, tint = SeitharolDark)
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Text("Play Next", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
-                }
+                    Text(
+                        text = currentPlaylist.title,
+                        fontFamily = SyneFontFamily,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = SeitharolDark
+                    )
+                    Text(
+                        text = "${remotePlaylistTracks.size} tracks",
+                        fontFamily = OutfitFontFamily,
+                        fontSize = 12.sp,
+                        color = SeitharolTextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider(color = SeitharolBorder)
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                // Add all to Queue
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable {
-                            showMoreSheet = false
-                            remotePlaylistTracks.forEach { viewModel.addToQueue(it) }
-                        }
-                        .padding(vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.QueueMusic, contentDescription = null, tint = SeitharolDark)
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Text("Add all to Queue", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
-                }
-
-                // Download Playlist
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable {
-                            showMoreSheet = false
-                            remotePlaylistTracks.forEach { viewModel.startDownload(it, DownloadTier.STANDARD) }
-                        }
-                        .padding(vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.Download, contentDescription = null, tint = SeitharolDark)
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Text("Download Playlist", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
-                }
-
-                // Share
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable {
-                            showMoreSheet = false
-                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_SUBJECT, currentPlaylist.title)
-                                putExtra(Intent.EXTRA_TEXT, "Listen to '${currentPlaylist.title}' on Seitharol!")
+                    // Play Next
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable {
+                                showMoreSheet = false
+                                remotePlaylistTracks.reversed().forEach { viewModel.playNext(it) }
                             }
-                            context.startActivity(Intent.createChooser(shareIntent, "Share Playlist"))
-                        }
-                        .padding(vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.Share, contentDescription = null, tint = SeitharolDark)
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Text("Share Playlist", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.PlaylistPlay, contentDescription = null, tint = SeitharolDark)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text("Play Next", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
+                    }
+
+                    // Add all to Queue
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable {
+                                showMoreSheet = false
+                                remotePlaylistTracks.forEach { viewModel.addToQueue(it) }
+                            }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.QueueMusic, contentDescription = null, tint = SeitharolDark)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text("Add all to Queue", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
+                    }
+
+                    // Download Playlist
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable {
+                                showMoreSheet = false
+                                remotePlaylistTracks.forEach { viewModel.startDownload(it, DownloadTier.STANDARD) }
+                            }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = null, tint = SeitharolDark)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text("Download Playlist", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
+                    }
+
+                    // Share Playlist with clickable HTTPS link
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable {
+                                showMoreSheet = false
+                                runCatching {
+                                    val shareMsg = SeitharolDeepLinkHelper.buildPlaylistShareMessage(
+                                        currentPlaylist.title,
+                                        currentPlaylist.id
+                                    )
+                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_SUBJECT, currentPlaylist.title)
+                                        putExtra(Intent.EXTRA_TEXT, shareMsg)
+                                    }
+                                    context.startActivity(Intent.createChooser(shareIntent, "Share Playlist"))
+                                }
+                            }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = null, tint = SeitharolDark)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text("Share Playlist", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
+                    }
                 }
             }
         }
-    }
 
-    // Modal to add track to playlist
-    trackToAddToPlaylist?.let { track ->
-        AddToPlaylistModal(
-            track = track,
-            playlists = playlists,
-            onSelectPlaylist = { pId ->
-                viewModel.addTrackToPlaylist(pId, track)
-                trackToAddToPlaylist = null
-            },
-            onCreateNewPlaylist = {
-                showCreatePlaylistDialog = true
-            },
-            onDismiss = {
-                trackToAddToPlaylist = null
-            }
-        )
-    }
+        // Modal to add track to playlist
+        trackToAddToPlaylist?.let { track ->
+            AddToPlaylistModal(
+                track = track,
+                playlists = playlists,
+                onSelectPlaylist = { pId ->
+                    viewModel.addTrackToPlaylist(pId, track)
+                    trackToAddToPlaylist = null
+                },
+                onCreateNewPlaylist = {
+                    showCreatePlaylistDialog = true
+                },
+                onDismiss = {
+                    trackToAddToPlaylist = null
+                }
+            )
+        }
 
-    if (showCreatePlaylistDialog) {
-        CreatePlaylistModal(
-            onConfirm = { name ->
-                viewModel.createPlaylist(name, "User created playlist", trackToAddToPlaylist)
-                trackToAddToPlaylist = null
-                showCreatePlaylistDialog = false
-            },
-            onDismiss = {
-                showCreatePlaylistDialog = false
-            }
-        )
+        if (showCreatePlaylistDialog) {
+            CreatePlaylistModal(
+                onConfirm = { name ->
+                    viewModel.createPlaylist(name, "User created playlist", trackToAddToPlaylist)
+                    trackToAddToPlaylist = null
+                    showCreatePlaylistDialog = false
+                },
+                onDismiss = {
+                    showCreatePlaylistDialog = false
+                }
+            )
+        }
     }
 }
-}
-

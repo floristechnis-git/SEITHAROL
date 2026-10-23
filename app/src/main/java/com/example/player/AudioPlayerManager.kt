@@ -14,7 +14,6 @@ import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
-import androidx.media3.session.MediaSession
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultDataSource
@@ -22,6 +21,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import com.example.data.local.CascadeDatabase
 import com.example.data.model.LyricsLine
 import com.example.data.model.SponsorSegment
 import com.example.data.model.Track
@@ -39,6 +39,9 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.firstOrNull
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 
 enum class RepeatMode {
@@ -77,7 +80,8 @@ data class PlayerState(
 /**
  * Modern AudioPlayerManager powered by AndroidX Media3 ExoPlayer.
  * Uses OuterTuneResolvingDataSource with client-matched User-Agents, fast error policy,
- * 14s buffering watchdog, non-blocking IO track resolution, and strict canonical failover.
+ * 14s buffering watchdog, non-blocking IO track resolution, persistent playback checkpoint
+ * restoration, and strict canonical failover.
  */
 class AudioPlayerManager(
     private val context: Context,
@@ -93,6 +97,9 @@ class AudioPlayerManager(
         Log.e(TAG, "Uncaught coroutine exception in AudioPlayerManager: ${throwable.message}", throwable)
     }
     private val coroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob() + exceptionHandler)
+
+    private val playbackPrefs = context.applicationContext.getSharedPreferences("seitharol_playback_state", Context.MODE_PRIVATE)
+    private var lastCheckpointSaveMs: Long = 0L
 
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state.asStateFlow()
@@ -115,7 +122,6 @@ class AudioPlayerManager(
     private val settingsManager = AppSettingsManager.getInstance(context)
     private var lastUserSeekTimestamp: Long = 0L
 
-    private var mediaSession: MediaSession? = null
     private var audioFocusRequest: AudioFocusRequest? = null
     private var wasPlayingBeforeCall: Boolean = false
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
@@ -128,6 +134,7 @@ class AudioPlayerManager(
                     wasPlayingBeforeCall = true
                     exoPlayer?.pause()
                     _state.value = _state.value.copy(isPlaying = false)
+                    persistCurrentPlaybackState()
                 }
             } else if (state == TelephonyManager.EXTRA_STATE_IDLE) {
                 if (wasPlayingBeforeCall) {
@@ -148,27 +155,24 @@ class AudioPlayerManager(
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS -> {
-                // Permanent focus loss -> another media player took over (media overwrite)
                 wasPlayingBeforeCall = false
                 exoPlayer?.pause()
                 _state.value = _state.value.copy(isPlaying = false)
+                persistCurrentPlaybackState()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                // Transient loss: check if it's an incoming or ongoing phone call
                 if (isPhoneCallActive()) {
                     if (exoPlayer?.isPlaying == true || _state.value.isPlaying) {
                         wasPlayingBeforeCall = true
                         exoPlayer?.pause()
                         _state.value = _state.value.copy(isPlaying = false)
+                        persistCurrentPlaybackState()
                     }
                 } else {
-                    // It's a game, another app opening, or system settings!
-                    // Do NOT pause! Duck volume slightly so game sound effects and music can coexist smoothly.
                     exoPlayer?.volume = 0.5f
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                // Notifications, assistant prompts, or games: duck volume, NEVER pause
                 exoPlayer?.volume = 0.4f
             }
         }
@@ -177,8 +181,8 @@ class AudioPlayerManager(
     private fun isPhoneCallActive(): Boolean {
         val am = audioManager ?: return false
         return am.mode == AudioManager.MODE_IN_CALL ||
-               am.mode == AudioManager.MODE_IN_COMMUNICATION ||
-               am.mode == AudioManager.MODE_RINGTONE
+            am.mode == AudioManager.MODE_IN_COMMUNICATION ||
+            am.mode == AudioManager.MODE_RINGTONE
     }
 
     private fun requestAudioFocus(): Boolean {
@@ -237,6 +241,9 @@ class AudioPlayerManager(
             initExoPlayer()
             startPositionTracker()
         }
+        if (_state.value.currentTrack == null) {
+            restorePersistedPlaybackStateSync()
+        }
     }
 
     var isAutoplayEnabled: Boolean = true
@@ -260,9 +267,164 @@ class AudioPlayerManager(
     init {
         MediaPlaybackService.playerManager = this
         initExoPlayer()
+        restorePersistedPlaybackStateSync()
+        restoreCheckpointFromDatabaseAsync()
         startPositionTracker()
         observeAudioSettings()
         registerTelephonyReceiver()
+    }
+
+    /**
+     * Saves the current track, queue, and playback position to SharedPreferences & Room DB
+     * so that if the user pauses playback or the OS reclaims the app in the background,
+     * reopening the app restores the exact song and position in sync with the notification.
+     */
+    fun persistCurrentPlaybackState() {
+        runCatching {
+            val s = _state.value
+            val current = s.currentTrack
+            if (current == null) {
+                playbackPrefs.edit().remove("saved_session_json").apply()
+                return
+            }
+            val livePos = exoPlayer?.currentPosition?.takeIf { it > 0L } ?: s.currentPositionMs
+            val root = JSONObject().apply {
+                put("currentIndex", s.currentIndex)
+                put("positionMs", livePos.coerceAtLeast(0L))
+                put("durationMs", s.durationMs.coerceAtLeast(current.durationMs))
+                put("repeatMode", s.repeatMode.name)
+                put("isShuffle", s.isShuffle)
+                put("isSingleTrackPlayback", s.isSingleTrackPlayback)
+                put("isPartOfPlaylist", s.isPartOfPlaylist)
+                put("currentTrack", trackToJson(current))
+                val qArr = JSONArray()
+                s.queue.take(50).forEach { t -> qArr.put(trackToJson(t)) }
+                put("queue", qArr)
+            }
+            playbackPrefs.edit().putString("saved_session_json", root.toString()).apply()
+
+            coroutineScope.launch(Dispatchers.IO) {
+                runCatching {
+                    musicRepository.saveCheckpoint(
+                        trackId = current.id,
+                        index = s.currentIndex,
+                        posMs = livePos.coerceAtLeast(0L),
+                        queueIds = s.queue.map { it.id },
+                        shuffle = s.isShuffle,
+                        repeat = s.repeatMode.ordinal
+                    )
+                }
+            }
+        }
+    }
+
+    private fun trackToJson(t: Track): JSONObject = JSONObject().apply {
+        put("id", t.id)
+        put("title", t.title)
+        put("artist", t.artist)
+        put("album", t.album)
+        put("durationMs", t.durationMs)
+        put("artUrl", t.artUrl)
+        put("isDownloaded", t.isDownloaded)
+        put("localPath", t.localPath.orEmpty())
+        put("isLiked", t.isLiked)
+        put("lyrics", t.lyrics)
+        put("genre", t.genre)
+        put("audioUrl", t.audioUrl)
+    }
+
+    private fun jsonToTrack(o: JSONObject): Track = Track(
+        id = o.optString("id"),
+        title = o.optString("title"),
+        artist = o.optString("artist"),
+        album = o.optString("album"),
+        durationMs = o.optLong("durationMs", 210_000L),
+        artUrl = o.optString("artUrl"),
+        isDownloaded = o.optBoolean("isDownloaded", false),
+        localPath = o.optString("localPath").takeIf { it.isNotBlank() },
+        isLiked = o.optBoolean("isLiked", false),
+        lyrics = o.optString("lyrics"),
+        genre = o.optString("genre", "Music"),
+        audioUrl = o.optString("audioUrl")
+    )
+
+    private fun restorePersistedPlaybackStateSync() {
+        runCatching {
+            if (_state.value.currentTrack != null) return
+            val raw = playbackPrefs.getString("saved_session_json", null) ?: return
+            val root = JSONObject(raw)
+            val currentObj = root.optJSONObject("currentTrack") ?: return
+            val restoredTrack = jsonToTrack(currentObj)
+            if (restoredTrack.id.isBlank()) return
+
+            val qArr = root.optJSONArray("queue")
+            val restoredQueue = mutableListOf<Track>()
+            if (qArr != null) {
+                for (i in 0 until qArr.length()) {
+                    qArr.optJSONObject(i)?.let { restoredQueue.add(jsonToTrack(it)) }
+                }
+            }
+            if (restoredQueue.isEmpty()) {
+                restoredQueue.add(restoredTrack)
+            }
+
+            val savedIdx = root.optInt("currentIndex", 0).coerceIn(0, restoredQueue.lastIndex)
+            val savedPos = root.optLong("positionMs", 0L).coerceAtLeast(0L)
+            val savedDur = root.optLong("durationMs", restoredTrack.durationMs.takeIf { it > 0L } ?: 210_000L)
+            val savedRepeat = runCatching { RepeatMode.valueOf(root.optString("repeatMode", RepeatMode.ALL.name)) }
+                .getOrDefault(RepeatMode.ALL)
+            val savedShuffle = root.optBoolean("isShuffle", false)
+            val localLyrics = parseLrc(restoredTrack.lyrics)
+            val activeIdx = localLyrics.indexOfLast { it.timestampMs <= savedPos }
+
+            _state.value = _state.value.copy(
+                currentTrack = restoredTrack,
+                queue = restoredQueue,
+                currentIndex = savedIdx,
+                currentPositionMs = savedPos,
+                durationMs = savedDur,
+                repeatMode = savedRepeat,
+                isShuffle = savedShuffle,
+                isPlaying = false,
+                isBuffering = false,
+                lyricLines = localLyrics,
+                activeLyricIndex = activeIdx,
+                isSingleTrackPlayback = root.optBoolean("isSingleTrackPlayback", false),
+                isPartOfPlaylist = root.optBoolean("isPartOfPlaylist", true)
+            )
+        }
+    }
+
+    private fun restoreCheckpointFromDatabaseAsync() {
+        coroutineScope.launch(Dispatchers.IO) {
+            runCatching {
+                if (_state.value.currentTrack != null) return@launch
+                val checkpoint = musicRepository.getCheckpoint() ?: return@launch
+                val trackId = checkpoint.currentTrackId ?: return@launch
+                val track = musicRepository.getTrackById(trackId) ?: return@launch
+                val queueIds = checkpoint.queueIdsJson.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                val queueTracks = queueIds.mapNotNull { id -> musicRepository.getTrackById(id) }.ifEmpty { listOf(track) }
+                val validIdx = checkpoint.currentIndex.coerceIn(0, queueTracks.lastIndex)
+                val posMs = checkpoint.positionMs.coerceAtLeast(0L)
+                val repeat = RepeatMode.entries.getOrElse(checkpoint.repeatMode) { RepeatMode.ALL }
+
+                withContext(Dispatchers.Main) {
+                    if (_state.value.currentTrack == null) {
+                        _state.value = _state.value.copy(
+                            currentTrack = track,
+                            queue = queueTracks,
+                            currentIndex = validIdx,
+                            currentPositionMs = posMs,
+                            durationMs = track.durationMs.takeIf { it > 0L } ?: 210_000L,
+                            isShuffle = checkpoint.shuffleMode,
+                            repeatMode = repeat,
+                            isPlaying = false,
+                            isBuffering = false
+                        )
+                    }
+                }
+            }
+        }
     }
 
     private fun observeAudioSettings() {
@@ -321,12 +483,14 @@ class AudioPlayerManager(
             val player = exoPlayer ?: return@launch
             if (current.id == expectedTrackId && (_state.value.isBuffering || isRetryingOrLoading) && !player.isPlaying) {
                 Log.w(TAG, "Buffering watchdog triggered after 14s for '${current.title}', rotating stream source...")
+                val resumePos = (player.currentPosition.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
                 resolverEngine.invalidateTrack(current.id)
                 try {
                     val freshStream = withContext(Dispatchers.IO) {
                         withTimeout(10_000L) {
+                            val localFirst = resolveLocalTrackIfAvailable(current)
                             resolverEngine.resolveTrack(
-                                track = current.copy(audioUrl = ""),
+                                track = localFirst.copy(audioUrl = ""),
                                 preferredQuality = com.seitharol.data.resolver.AudioQuality.LOW,
                                 forceRefresh = true,
                                 preferNonYoutubeFallback = false
@@ -335,7 +499,7 @@ class AudioPlayerManager(
                     }
                     if (isActive && _state.value.currentTrack?.id == expectedTrackId) {
                         _state.value = _state.value.copy(activeStream = freshStream, isBuffering = true)
-                        setupAndPlaySource(freshStream.streamUrl, current)
+                        setupAndPlaySource(freshStream.streamUrl, current, startPositionMs = resumePos)
                     }
                 } catch (e: Exception) {
                     isRetryingOrLoading = false
@@ -353,7 +517,6 @@ class AudioPlayerManager(
                 getPreferredAudioQuality()
             }
             val dataSourceFactory = DefaultDataSource.Factory(context, resolvingFactory)
-            // Use minimumLoadableRetryCount = 1 so ExoPlayer fails fast instead of hanging for 45s on a dead URL
             val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
                 .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(/* minimumLoadableRetryCount = */ 1))
 
@@ -387,12 +550,6 @@ class AudioPlayerManager(
             }
 
             exoPlayer = builder.build().apply {
-                try {
-                    mediaSession?.release()
-                    mediaSession = MediaSession.Builder(context, this).build()
-                } catch (t: Throwable) {
-                    Log.w(TAG, "MediaSession init non-fatal: ${t.message}")
-                }
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         when (playbackState) {
@@ -413,6 +570,7 @@ class AudioPlayerManager(
                                 trackRetryCount = 0
                                 lastFailedTrackId = null
                                 initEqualizer(audioSessionId)
+                                persistCurrentPlaybackState()
                                 if (isPlaying || playWhenReady) {
                                     startPositionTracker()
                                 }
@@ -423,7 +581,8 @@ class AudioPlayerManager(
                                 onTrackCompleted()
                             }
                             Player.STATE_IDLE -> {
-                                if (!isRetryingOrLoading) {
+                                val loadingActive = isRetryingOrLoading || loadTrackJob?.isActive == true || retryJob?.isActive == true
+                                if (!loadingActive) {
                                     bufferingWatchdogJob?.cancel()
                                     _state.value = _state.value.copy(isBuffering = false)
                                 }
@@ -434,7 +593,7 @@ class AudioPlayerManager(
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                         super.onMediaItemTransition(mediaItem, reason)
                         val current = _state.value.currentTrack
-                        val isCurrentOffline = current?.isDownloaded == true || !current?.localPath.isNullOrBlank()
+                        val isCurrentOffline = current?.isDownloaded == true || !current?.localPath.isNullOrBlank() || resolverEngine.isOfflineMode.value
                         if (isAutoplayEnabled && !isCurrentOffline) {
                             val isNearEnd = _state.value.currentIndex >= _state.value.queue.size - 1
                             if (isNearEnd && _state.value.queue.isNotEmpty()) {
@@ -448,7 +607,7 @@ class AudioPlayerManager(
                             bufferingWatchdogJob?.cancel()
                             isRetryingOrLoading = false
                         }
-                        if (!isPlaying && isRetryingOrLoading) {
+                        if (!isPlaying && (isRetryingOrLoading || loadTrackJob?.isActive == true || retryJob?.isActive == true)) {
                             _state.value = _state.value.copy(isPlaying = false, isBuffering = true)
                             return
                         }
@@ -456,6 +615,7 @@ class AudioPlayerManager(
                             isPlaying = isPlaying,
                             isBuffering = if (isPlaying) false else _state.value.isBuffering
                         )
+                        persistCurrentPlaybackState()
                         startPositionTracker()
                         if (isPlaying) {
                             try {
@@ -489,18 +649,34 @@ class AudioPlayerManager(
                                 trackRetryCount = 0
                             }
 
-                            if (!com.example.util.ErrorFormatter.isOnline(context)) {
-                                bufferingWatchdogJob?.cancel()
-                                isRetryingOrLoading = false
-                                _skipEvent.emit("No internet connection. Please check your network.")
-                                trackRetryCount = 0
-                                lastFailedTrackId = null
-                                _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
-                                MediaPlaybackService.stopService(context)
+                            // First check if a local downloaded copy exists on device
+                            val localResolved = withContext(Dispatchers.IO) { resolveLocalTrackIfAvailable(current) }
+                            if (localResolved.isDownloaded && !localResolved.localPath.isNullOrBlank()) {
+                                val localStreamUrl = if (localResolved.localPath.startsWith("content://")) {
+                                    localResolved.localPath
+                                } else {
+                                    Uri.fromFile(File(localResolved.localPath.removePrefix("file://"))).toString()
+                                }
+                                setupAndPlaySource(localStreamUrl, localResolved, startPositionMs = resumePositionMs)
                                 return@launch
                             }
 
-                            // Allow up to 2 fast retries before stopping or advancing
+                            if (resolverEngine.isOfflineMode.value || !com.example.util.ErrorFormatter.isOnline(context)) {
+                                bufferingWatchdogJob?.cancel()
+                                isRetryingOrLoading = false
+                                val msg = if (resolverEngine.isOfflineMode.value) {
+                                    "Track not available offline. Connect to internet or download first."
+                                } else {
+                                    "No internet connection. Please check your network."
+                                }
+                                _skipEvent.emit(msg)
+                                trackRetryCount = 0
+                                lastFailedTrackId = null
+                                _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+                                persistCurrentPlaybackState()
+                                return@launch
+                            }
+
                             if (trackRetryCount >= 2) {
                                 bufferingWatchdogJob?.cancel()
                                 isRetryingOrLoading = false
@@ -517,7 +693,7 @@ class AudioPlayerManager(
                                         exoPlayer?.clearMediaItems()
                                     } catch (_: Throwable) {}
                                     _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
-                                    MediaPlaybackService.stopService(context)
+                                    persistCurrentPlaybackState()
                                 }
                                 return@launch
                             }
@@ -526,8 +702,6 @@ class AudioPlayerManager(
                             delay(150L)
                             if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
                             try {
-                                // Strictly re-resolve the exact original track ID (rotating to the next verified InnerTube client)
-                                // with ZERO cross-provider or remix fallback searches!
                                 val freshStream = withTimeout(10_000L) {
                                     resolverEngine.resolveTrack(
                                         track = current.copy(audioUrl = ""),
@@ -574,7 +748,7 @@ class AudioPlayerManager(
                                         exoPlayer?.clearMediaItems()
                                     } catch (_: Throwable) {}
                                     _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
-                                    MediaPlaybackService.stopService(context)
+                                    persistCurrentPlaybackState()
                                 }
                             }
                         }
@@ -593,7 +767,12 @@ class AudioPlayerManager(
             isRetryingOrLoading = true
             startBufferingWatchdog(track.id)
             val parsedUri = when {
-                sourceUrl.startsWith("file://") -> Uri.parse(sourceUrl)
+                sourceUrl.startsWith("content://") -> Uri.parse(sourceUrl)
+                sourceUrl.startsWith("file://") -> {
+                    val rawPath = Uri.parse(sourceUrl).path ?: sourceUrl.removePrefix("file://")
+                    val f = File(rawPath)
+                    if (f.exists()) Uri.fromFile(f) else Uri.fromFile(File(sourceUrl.removePrefix("file://")))
+                }
                 sourceUrl.startsWith("/") -> Uri.fromFile(File(sourceUrl))
                 else -> Uri.parse(sourceUrl)
             }
@@ -660,6 +839,12 @@ class AudioPlayerManager(
                             activeLyricIndex = activeIdx
                         )
 
+                        val now = System.currentTimeMillis()
+                        if (now - lastCheckpointSaveMs > 5_000L) {
+                            lastCheckpointSaveMs = now
+                            persistCurrentPlaybackState()
+                        }
+
                         if (safeDur > 0L && (pos.toFloat() / safeDur.toFloat()) > 0.75f) {
                             prefetchNextTrack()
                         }
@@ -671,6 +856,7 @@ class AudioPlayerManager(
     }
 
     private fun prefetchNextTrack() {
+        if (resolverEngine.isOfflineMode.value) return
         val q = _state.value.queue
         val nextIndex = _state.value.currentIndex + 1
         if (nextIndex in q.indices) {
@@ -679,7 +865,8 @@ class AudioPlayerManager(
                 prefetchedTrackId = nextTrack.id
                 coroutineScope.launch(Dispatchers.IO) {
                     try {
-                        resolverEngine.resolveTrack(nextTrack, getPreferredAudioQuality())
+                        val resolvedLocal = resolveLocalTrackIfAvailable(nextTrack)
+                        resolverEngine.resolveTrack(resolvedLocal, getPreferredAudioQuality())
                     } catch (e: Exception) {
                         Log.w(TAG, "Prefetch failed for ${nextTrack.id}: ${e.message}")
                     }
@@ -716,10 +903,11 @@ class AudioPlayerManager(
             queue = tracks,
             currentIndex = validIndex,
             currentTrack = tracks[validIndex],
+            currentPositionMs = 0L,
             isSingleTrackPlayback = !isPlaylist,
             isPartOfPlaylist = isPlaylist
         )
-        loadAndPlayCurrent()
+        loadAndPlayCurrent(resumePositionMs = 0L)
     }
 
     fun playTrack(track: Track) {
@@ -737,6 +925,7 @@ class AudioPlayerManager(
             _state.value = _state.value.copy(
                 currentIndex = index,
                 currentTrack = track,
+                currentPositionMs = 0L,
                 isSingleTrackPlayback = true,
                 isPartOfPlaylist = false
             )
@@ -746,11 +935,12 @@ class AudioPlayerManager(
                 queue = currentQueue,
                 currentIndex = 0,
                 currentTrack = track,
+                currentPositionMs = 0L,
                 isSingleTrackPlayback = true,
                 isPartOfPlaylist = false
             )
         }
-        loadAndPlayCurrent()
+        loadAndPlayCurrent(resumePositionMs = 0L)
     }
 
     fun playQueueIndex(index: Int) {
@@ -761,8 +951,12 @@ class AudioPlayerManager(
             loadTrackJob?.cancel()
             retryJob?.cancel()
             bufferingWatchdogJob?.cancel()
-            _state.value = _state.value.copy(currentIndex = index, currentTrack = q[index])
-            loadAndPlayCurrent()
+            _state.value = _state.value.copy(
+                currentIndex = index,
+                currentTrack = q[index],
+                currentPositionMs = 0L
+            )
+            loadAndPlayCurrent(resumePositionMs = 0L)
         }
     }
 
@@ -786,6 +980,7 @@ class AudioPlayerManager(
                 currentIndex = 0
             )
         }
+        persistCurrentPlaybackState()
     }
 
     fun removeFromQueue(index: Int) {
@@ -800,8 +995,9 @@ class AudioPlayerManager(
                 else -> _state.value.currentIndex
             }
             _state.value = _state.value.copy(queue = q, currentIndex = newIndex)
+            persistCurrentPlaybackState()
             if (wasCurrent && q.isNotEmpty()) {
-                loadAndPlayCurrent()
+                loadAndPlayCurrent(resumePositionMs = 0L)
             }
         }
     }
@@ -819,6 +1015,7 @@ class AudioPlayerManager(
             else -> currentIdx
         }
         _state.value = _state.value.copy(queue = q, currentIndex = newCurrentIndex)
+        persistCurrentPlaybackState()
         try {
             exoPlayer?.let { player ->
                 if (fromIndex in 0 until player.mediaItemCount && toIndex in 0 until player.mediaItemCount) {
@@ -835,6 +1032,7 @@ class AudioPlayerManager(
         } else {
             _state.value = _state.value.copy(queue = emptyList(), currentIndex = 0)
         }
+        persistCurrentPlaybackState()
     }
 
     fun stopPlayback() {
@@ -856,6 +1054,7 @@ class AudioPlayerManager(
             queue = emptyList(),
             currentIndex = 0
         )
+        playbackPrefs.edit().remove("saved_session_json").apply()
         try {
             MediaPlaybackService.stopService(context)
         } catch (_: Throwable) {}
@@ -865,6 +1064,7 @@ class AudioPlayerManager(
         val q = _state.value.queue.toMutableList()
         q.add(track)
         _state.value = _state.value.copy(queue = q)
+        persistCurrentPlaybackState()
     }
 
     fun playNext(track: Track) {
@@ -872,10 +1072,11 @@ class AudioPlayerManager(
         val insertIndex = (_state.value.currentIndex + 1).coerceAtMost(q.size)
         q.add(insertIndex, track)
         _state.value = _state.value.copy(queue = q)
+        persistCurrentPlaybackState()
     }
 
-    private fun loadAndPlayCurrent() {
-        val current = _state.value.queue.getOrNull(_state.value.currentIndex) ?: return
+    private fun loadAndPlayCurrent(resumePositionMs: Long = 0L) {
+        val current = _state.value.queue.getOrNull(_state.value.currentIndex) ?: _state.value.currentTrack ?: return
         prefetchedTrackId = null
         loadTrackJob?.cancel()
         retryJob?.cancel()
@@ -896,22 +1097,29 @@ class AudioPlayerManager(
             _state.value = _state.value.copy(isBuffering = true)
         }
 
+        // Start foreground service immediately so background transitions never lose CPU/network priority
+        try {
+            MediaPlaybackService.startService(context)
+        } catch (_: Throwable) {}
+
         loadTrackJob = coroutineScope.launch {
             try {
                 val localLyrics = parseLrc(current.lyrics)
                 val expectedDuration = if (current.durationMs > 0L) current.durationMs else 210000L
+                val initialPos = resumePositionMs.coerceAtLeast(0L)
+                val initialLyricIdx = localLyrics.indexOfLast { it.timestampMs <= initialPos + _state.value.lyricOffsetMs }
 
                 _state.value = _state.value.copy(
                     currentTrack = current,
                     isBuffering = true,
                     durationMs = expectedDuration,
-                    currentPositionMs = 0L,
+                    currentPositionMs = initialPos,
                     lyricLines = localLyrics,
-                    activeLyricIndex = -1
+                    activeLyricIndex = initialLyricIdx
                 )
 
-                // Fetch synchronized lyrics asynchronously without delaying stream resolution
-                if (localLyrics.isEmpty()) {
+                // Fetch synchronized lyrics asynchronously when online
+                if (localLyrics.isEmpty() && !resolverEngine.isOfflineMode.value && com.example.util.ErrorFormatter.isOnline(context)) {
                     coroutineScope.launch(Dispatchers.IO) {
                         val lrclibLines = com.example.network.NetworkClients.fetchLrclibLyrics(
                             artist = current.artist,
@@ -935,7 +1143,7 @@ class AudioPlayerManager(
                             musicRepository.saveCheckpoint(
                                 trackId = resolvedLocalTrack.id,
                                 index = _state.value.currentIndex,
-                                posMs = 0L,
+                                posMs = initialPos,
                                 queueIds = _state.value.queue.map { it.id },
                                 shuffle = _state.value.isShuffle,
                                 repeat = _state.value.repeatMode.ordinal
@@ -953,8 +1161,13 @@ class AudioPlayerManager(
 
                 if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
 
-                _state.value = _state.value.copy(activeStream = stream, isBuffering = true)
-                setupAndPlaySource(stream.streamUrl, safeTrack)
+                _state.value = _state.value.copy(
+                    currentTrack = safeTrack,
+                    activeStream = stream,
+                    isBuffering = true
+                )
+                persistCurrentPlaybackState()
+                setupAndPlaySource(stream.streamUrl, safeTrack, startPositionMs = initialPos)
             } catch (e: Exception) {
                 if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
                 bufferingWatchdogJob?.cancel()
@@ -965,6 +1178,7 @@ class AudioPlayerManager(
                     exoPlayer?.clearMediaItems()
                 } catch (_: Throwable) {}
                 _state.value = _state.value.copy(isBuffering = false, isPlaying = false)
+                persistCurrentPlaybackState()
                 val hasNextTrack = !_state.value.isSingleTrackPlayback && _state.value.currentIndex < _state.value.queue.lastIndex
                 val friendlyMessage = com.example.util.ErrorFormatter.toUserFriendlyMessage(e, context, current.title, hasNextTrack)
                 _skipEvent.emit(friendlyMessage)
@@ -979,58 +1193,104 @@ class AudioPlayerManager(
         val downloadDir = File(context.filesDir, "downloads")
         val safeId = current.id.replace(Regex("[^A-Za-z0-9_]"), "_")
         val cleanYtId = InnerTubeStreamExtractor.extractVideoId(current.id)
-        val isContentUri = current.localPath?.startsWith("content://") == true
-        val isContentReadable = if (isContentUri) {
-            runCatching {
-                context.contentResolver.openAssetFileDescriptor(Uri.parse(current.localPath), "r")?.use { true } ?: false
-            }.getOrDefault(false)
-        } else false
+        val dlService = runCatching {
+            com.seitharol.data.download.DownloadPreferencesAndService.getInstance(context)
+        }.getOrNull()
+        val canonicalId = dlService?.canonicalTrackId(current.id) ?: (cleanYtId ?: current.id)
 
-        if (isContentReadable) {
+        fun isContentUriReadable(uriStr: String?): Boolean {
+            if (uriStr.isNullOrBlank() || !uriStr.startsWith("content://")) return false
+            return runCatching {
+                context.contentResolver.openAssetFileDescriptor(Uri.parse(uriStr), "r")?.use { true } ?: false
+            }.getOrDefault(false)
+        }
+
+        if (isContentUriReadable(current.localPath)) {
             return current.copy(isDownloaded = true, localPath = current.localPath)
         }
 
         val dbTrack = runCatching {
-            musicRepository.getTrackById(current.id) ?: cleanYtId?.let { musicRepository.getTrackById(it) }
+            musicRepository.getTrackById(current.id)
+                ?: musicRepository.getTrackById(canonicalId)
+                ?: cleanYtId?.let { musicRepository.getTrackById(it) }
+                ?: musicRepository.getDownloadedTracks().firstOrNull()?.firstOrNull {
+                    it.id == current.id ||
+                        it.id == canonicalId ||
+                        (it.title.equals(current.title, ignoreCase = true) &&
+                            (current.artist.isBlank() || it.artist.contains(current.artist, ignoreCase = true) || current.artist.contains(it.artist, ignoreCase = true)))
+                }
         }.getOrNull()
-        val dbPath = dbTrack?.takeIf { it.isDownloaded }?.localPath
+        val dbPath = dbTrack?.localPath
+
+        val downloadEntityPath = runCatching {
+            val downloadDao = CascadeDatabase.getInstance(context).downloadDao()
+            (downloadDao.getDownload(current.id)
+                ?: downloadDao.getDownload(canonicalId)
+                ?: cleanYtId?.let { downloadDao.getDownload(it) })?.localPath
+        }.getOrNull()
+
         val discoverDownloadPath = runCatching {
-            com.seitharol.data.download.DownloadPreferencesAndService.getInstance(context)
-                .completedDownloads.value.firstOrNull {
-                    it.sourceId == current.id ||
+            dlService?.completedDownloads?.value?.firstOrNull {
+                it.sourceId == current.id ||
+                    dlService.canonicalTrackId(it.sourceId) == canonicalId ||
                     (cleanYtId != null && InnerTubeStreamExtractor.extractVideoId(it.sourceId) == cleanYtId) ||
-                    (it.title.equals(current.title, ignoreCase = true) && (current.artist.isBlank() || it.artists.any { a -> current.artist.contains(a, ignoreCase = true) }))
-                }?.localPath
+                    (it.title.equals(current.title, ignoreCase = true) &&
+                        (current.artist.isBlank() || it.artists.any { a -> current.artist.contains(a, ignoreCase = true) || a.contains(current.artist, ignoreCase = true) }))
+            }?.localPath
         }.getOrNull()
+
+        listOfNotNull(dbPath, downloadEntityPath, discoverDownloadPath).forEach { candidateUri ->
+            if (isContentUriReadable(candidateUri)) {
+                return current.copy(isDownloaded = true, localPath = candidateUri)
+            }
+        }
+
         val discoverDir = File(
             android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC),
             "Seitharol"
         )
 
         val localCandidates = mutableListOf<File>()
-        current.localPath?.takeIf { !it.startsWith("content://") }?.let { localCandidates.add(File(it.removePrefix("file://"))) }
-        dbPath?.takeIf { !it.startsWith("content://") }?.let { localCandidates.add(File(it.removePrefix("file://"))) }
-        discoverDownloadPath?.takeIf { !it.startsWith("content://") }?.let { localCandidates.add(File(it.removePrefix("file://"))) }
-        localCandidates.add(File(downloadDir, "$safeId.audio"))
-        localCandidates.add(File(downloadDir, "${current.id}.audio"))
-        localCandidates.add(File(downloadDir, "${current.id}_high.opus"))
-        localCandidates.add(File(downloadDir, "${current.id}_high.m4a"))
-        localCandidates.add(File(downloadDir, "${current.id}_original.opus"))
-        localCandidates.add(File(downloadDir, "${current.id}_original.m4a"))
-        localCandidates.add(File(downloadDir, "${current.id}_standard.opus"))
-        localCandidates.add(File(downloadDir, "${current.id}_standard.m4a"))
-        localCandidates.add(File(downloadDir, "${current.id}_data saver.m4a"))
-        localCandidates.add(File(downloadDir, "${current.id}_data_saver.opus"))
-        if (cleanYtId != null) {
-            localCandidates.add(File(downloadDir, "${cleanYtId}.audio"))
-            localCandidates.add(File(downloadDir, "${cleanYtId}_high.opus"))
-            localCandidates.add(File(downloadDir, "${cleanYtId}_standard.opus"))
-            localCandidates.add(File(downloadDir, "${cleanYtId}_standard.m4a"))
+        listOfNotNull(current.localPath, dbPath, downloadEntityPath, discoverDownloadPath)
+            .filter { !it.startsWith("content://") && it.isNotBlank() }
+            .forEach { path ->
+                val rawPath = if (path.startsWith("file://")) {
+                    Uri.parse(path).path ?: path.removePrefix("file://")
+                } else path
+                localCandidates.add(File(rawPath))
+            }
+
+        for (idCandidate in listOfNotNull(current.id, canonicalId, cleanYtId, safeId).distinct()) {
+            localCandidates.add(File(downloadDir, "$idCandidate.audio"))
+            localCandidates.add(File(downloadDir, "${idCandidate}_high.opus"))
+            localCandidates.add(File(downloadDir, "${idCandidate}_high.m4a"))
+            localCandidates.add(File(downloadDir, "${idCandidate}_original.opus"))
+            localCandidates.add(File(downloadDir, "${idCandidate}_original.m4a"))
+            localCandidates.add(File(downloadDir, "${idCandidate}_standard.opus"))
+            localCandidates.add(File(downloadDir, "${idCandidate}_standard.m4a"))
+            localCandidates.add(File(downloadDir, "${idCandidate}_data saver.m4a"))
+            localCandidates.add(File(downloadDir, "${idCandidate}_data_saver.opus"))
+            localCandidates.add(File(downloadDir, "${idCandidate}_data_saver.m4a"))
         }
+
+        if (downloadDir.exists() && downloadDir.isDirectory) {
+            downloadDir.listFiles()?.forEach { f ->
+                if (f.isFile && f.length() > 10_240L && !f.name.endsWith(".tmp")) {
+                    if (f.name.startsWith("${current.id}_") ||
+                        f.name.startsWith("${canonicalId}_") ||
+                        (cleanYtId != null && f.name.startsWith("${cleanYtId}_"))
+                    ) {
+                        localCandidates.add(f)
+                    }
+                }
+            }
+        }
+
         if (discoverDir.exists() && discoverDir.isDirectory) {
             discoverDir.listFiles()?.forEach { f ->
                 if (f.isFile && f.length() > 10_240L && !f.name.endsWith(".tmp")) {
                     if ((cleanYtId != null && f.name.contains(cleanYtId)) ||
+                        f.name.contains(canonicalId, ignoreCase = true) ||
                         (current.title.isNotBlank() && f.nameWithoutExtension.contains(current.title, ignoreCase = true))
                     ) {
                         localCandidates.add(f)
@@ -1040,11 +1300,10 @@ class AudioPlayerManager(
         }
 
         val foundLocal = localCandidates.firstOrNull { it.exists() && it.length() > 0L }
-        return when {
-            foundLocal != null -> current.copy(isDownloaded = true, localPath = foundLocal.absolutePath)
-            dbPath?.startsWith("content://") == true -> current.copy(isDownloaded = true, localPath = dbPath)
-            discoverDownloadPath?.startsWith("content://") == true -> current.copy(isDownloaded = true, localPath = discoverDownloadPath)
-            else -> current.copy(isDownloaded = false, localPath = null)
+        return if (foundLocal != null) {
+            current.copy(isDownloaded = true, localPath = foundLocal.absolutePath)
+        } else {
+            current.copy(isDownloaded = false, localPath = null)
         }
     }
 
@@ -1121,29 +1380,41 @@ class AudioPlayerManager(
         loadTrackJob?.cancel()
         retryJob?.cancel()
         val player = exoPlayer ?: return
+        val currentPos = player.currentPosition.takeIf { it > 0L } ?: _state.value.currentPositionMs
         player.playWhenReady = false
         player.pause()
-        _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+        _state.value = _state.value.copy(
+            isPlaying = false,
+            isBuffering = false,
+            currentPositionMs = currentPos.coerceAtLeast(0L)
+        )
+        persistCurrentPlaybackState()
         abandonAudioFocus()
     }
 
     fun togglePlayPause() {
+        ensurePlayerInitialized()
         val player = exoPlayer ?: return
         if (_state.value.isPlaying || player.isPlaying) {
             pause()
         } else {
+            val savedResumePos = _state.value.currentPositionMs.coerceAtLeast(0L)
             if (_state.value.currentTrack != null) {
                 if (player.playbackState == Player.STATE_IDLE || player.mediaItemCount == 0) {
-                    loadAndPlayCurrent()
+                    loadAndPlayCurrent(resumePositionMs = savedResumePos)
                 } else {
                     requestAudioFocus()
+                    if (savedResumePos > 0L && kotlin.math.abs(player.currentPosition - savedResumePos) > 1500L) {
+                        player.seekTo(savedResumePos)
+                    }
                     player.playWhenReady = true
                     player.play()
                     _state.value = _state.value.copy(isPlaying = true)
+                    persistCurrentPlaybackState()
                     MediaPlaybackService.startService(context)
                 }
             } else if (_state.value.queue.isNotEmpty()) {
-                loadAndPlayCurrent()
+                loadAndPlayCurrent(resumePositionMs = savedResumePos)
             }
         }
     }
@@ -1154,6 +1425,7 @@ class AudioPlayerManager(
         exoPlayer?.seekTo(clamped)
         val activeIdx = _state.value.lyricLines.indexOfLast { it.timestampMs <= clamped + _state.value.lyricOffsetMs }
         _state.value = _state.value.copy(currentPositionMs = clamped, activeLyricIndex = activeIdx)
+        persistCurrentPlaybackState()
     }
 
     fun next() {
@@ -1165,8 +1437,12 @@ class AudioPlayerManager(
         } else {
             (_state.value.currentIndex + 1) % queue.size
         }
-        _state.value = _state.value.copy(currentIndex = nextIndex, currentTrack = queue[nextIndex])
-        loadAndPlayCurrent()
+        _state.value = _state.value.copy(
+            currentIndex = nextIndex,
+            currentTrack = queue[nextIndex],
+            currentPositionMs = 0L
+        )
+        loadAndPlayCurrent(resumePositionMs = 0L)
     }
 
     fun previous() {
@@ -1183,8 +1459,12 @@ class AudioPlayerManager(
         } else {
             queue.lastIndex
         }
-        _state.value = _state.value.copy(currentIndex = prevIndex, currentTrack = queue[prevIndex])
-        loadAndPlayCurrent()
+        _state.value = _state.value.copy(
+            currentIndex = prevIndex,
+            currentTrack = queue[prevIndex],
+            currentPositionMs = 0L
+        )
+        loadAndPlayCurrent(resumePositionMs = 0L)
     }
 
     fun setRepeatMode(mode: RepeatMode) {
@@ -1194,6 +1474,7 @@ class AudioPlayerManager(
             RepeatMode.ONE -> Player.REPEAT_MODE_ONE
             RepeatMode.ALL -> Player.REPEAT_MODE_ALL
         }
+        persistCurrentPlaybackState()
     }
 
     fun cycleRepeatMode() {
@@ -1207,6 +1488,7 @@ class AudioPlayerManager(
 
     fun toggleShuffle() {
         _state.value = _state.value.copy(isShuffle = !_state.value.isShuffle)
+        persistCurrentPlaybackState()
     }
 
     fun adjustLyricOffset(deltaMs: Long) {
@@ -1229,7 +1511,7 @@ class AudioPlayerManager(
                 left--
                 _state.value = _state.value.copy(sleepTimerMinutesLeft = left)
             }
-            exoPlayer?.pause()
+            pause()
             _state.value = _state.value.copy(isPlaying = false, sleepTimerMinutesLeft = 0)
             _skipEvent.emit("Sleep timer finished. Playback paused.")
         }
@@ -1293,12 +1575,13 @@ class AudioPlayerManager(
                 RepeatMode.OFF -> {
                     val isLast = _state.value.currentIndex >= _state.value.queue.lastIndex
                     val current = _state.value.currentTrack
-                    val isCurrentOffline = current?.isDownloaded == true || !current?.localPath.isNullOrBlank() || _state.value.queue.any { it.isDownloaded || !it.localPath.isNullOrBlank() }
+                    val isCurrentOffline = resolverEngine.isOfflineMode.value || current?.isDownloaded == true || !current?.localPath.isNullOrBlank() || _state.value.queue.any { it.isDownloaded || !it.localPath.isNullOrBlank() }
                     if (isLast) {
                         if (isAutoplayEnabled && !isCurrentOffline) {
                             triggerAutoplayNext()
                         } else {
                             _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
+                            persistCurrentPlaybackState()
                         }
                     } else {
                         next()
@@ -1311,7 +1594,7 @@ class AudioPlayerManager(
     }
 
     private fun prefetchAutoplayRecommendation() {
-        if (isFetchingAutoplay) return
+        if (isFetchingAutoplay || resolverEngine.isOfflineMode.value) return
         val current = _state.value.currentTrack ?: return
         val isOffline = current.isDownloaded || !current.localPath.isNullOrBlank() || _state.value.queue.any { it.isDownloaded || !it.localPath.isNullOrBlank() }
         if (isOffline || !isAutoplayEnabled) return
@@ -1365,7 +1648,7 @@ class AudioPlayerManager(
     }
 
     fun triggerAutoplayNext() {
-        if (isFetchingAutoplay) return
+        if (isFetchingAutoplay || resolverEngine.isOfflineMode.value) return
         val current = _state.value.currentTrack ?: _state.value.queue.lastOrNull()
         if (current == null) {
             _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
@@ -1498,7 +1781,7 @@ class AudioPlayerManager(
     fun setTemporaryTrackQuality(quality: com.seitharol.data.resolver.AudioQuality) {
         temporaryTrackQuality = quality
         val current = _state.value.currentTrack ?: return
-        val currentPos = exoPlayer?.currentPosition ?: 0L
+        val currentPos = exoPlayer?.currentPosition ?: _state.value.currentPositionMs
         coroutineScope.launch {
             try {
                 isRetryingOrLoading = true
@@ -1521,7 +1804,7 @@ class AudioPlayerManager(
     }
 
     fun release() {
-        stopPlayback()
+        persistCurrentPlaybackState()
         bufferingWatchdogJob?.cancel()
         positionJob?.cancel()
         sleepTimerJob?.cancel()
@@ -1532,10 +1815,6 @@ class AudioPlayerManager(
         boundAudioSessionId = -1
         try {
             context.unregisterReceiver(telephonyReceiver)
-        } catch (_: Throwable) {}
-        try {
-            mediaSession?.release()
-            mediaSession = null
         } catch (_: Throwable) {}
         abandonAudioFocus()
         exoPlayer?.release()

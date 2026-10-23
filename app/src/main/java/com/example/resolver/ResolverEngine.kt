@@ -1,6 +1,9 @@
 package com.example.resolver
 
+import android.content.Context
+import android.net.Uri
 import android.util.Log
+import com.example.CascadeApplication
 import com.example.data.model.ResolverNode
 import com.example.data.model.Track
 import com.example.data.model.TrustZone as ModelTrustZone
@@ -88,7 +91,7 @@ class ResolverEngine {
     )
     val activeNodes: StateFlow<List<ResolverNode>> = _activeNodes.asStateFlow()
 
-    private val _isOfflineMode = MutableStateFlow(false)
+    private val _isOfflineMode = MutableStateFlow(loadPersistedOfflineMode())
     val isOfflineMode: StateFlow<Boolean> = _isOfflineMode.asStateFlow()
 
     private val _circuitBreakerState = MutableStateFlow(CircuitBreakerState.CLOSED)
@@ -97,8 +100,19 @@ class ResolverEngine {
     private val _currentPackVersion = MutableStateFlow("v2026.10-standalone-vr")
     val currentPackVersion: StateFlow<String> = _currentPackVersion.asStateFlow()
 
+    private fun loadPersistedOfflineMode(): Boolean {
+        return runCatching {
+            val prefs = CascadeApplication.instance.getSharedPreferences("seitharol_prefs", Context.MODE_PRIVATE)
+            prefs.getBoolean("airplane_offline_mode", false)
+        }.getOrDefault(false)
+    }
+
     fun setOfflineMode(enabled: Boolean) {
         _isOfflineMode.value = enabled
+        runCatching {
+            val prefs = CascadeApplication.instance.getSharedPreferences("seitharol_prefs", Context.MODE_PRIVATE)
+            prefs.edit().putBoolean("airplane_offline_mode", enabled).apply()
+        }
     }
 
     fun selectNode(nodeId: String) {
@@ -135,7 +149,7 @@ class ResolverEngine {
             invalidateTrack(rawId)
         }
 
-        // 1. Verified Local File Priority
+        // 1. Verified Local File Priority (Always works in Airplane Mode Offline & Online)
         if (!track.localPath.isNullOrBlank()) {
             if (track.localPath.startsWith("content://")) {
                 return@withContext ResolvedStream(
@@ -150,11 +164,16 @@ class ResolverEngine {
                     latencyMs = 1
                 )
             }
-            val localFile = File(track.localPath.removePrefix("file://"))
+            val rawFilePath = if (track.localPath.startsWith("file://")) {
+                Uri.parse(track.localPath).path ?: track.localPath.removePrefix("file://")
+            } else {
+                track.localPath
+            }
+            val localFile = File(rawFilePath)
             if (localFile.exists() && localFile.length() > 0L) {
                 return@withContext ResolvedStream(
                     videoId = rawId.ifBlank { "local_track" },
-                    streamUrl = if (track.localPath.startsWith("http")) track.localPath else "file://${localFile.absolutePath}",
+                    streamUrl = if (track.localPath.startsWith("http")) track.localPath else Uri.fromFile(localFile).toString(),
                     itag = track.itag,
                     codec = track.codec,
                     bitrate = "160 kbps",
@@ -167,11 +186,7 @@ class ResolverEngine {
         }
 
         if (_isOfflineMode.value) {
-            val isContent = track.localPath?.startsWith("content://") == true
-            val isLocalExisting = !track.localPath.isNullOrBlank() && (isContent || File(track.localPath.removePrefix("file://")).exists())
-            if (!isLocalExisting) {
-                throw IllegalStateException("Offline Mode active. Stream not cached locally.")
-            }
+            throw IllegalStateException("Offline Mode active. Stream not cached locally.")
         }
 
         // 2. Lookup in In-Memory Stream Cache (quality-aware)
@@ -205,9 +220,8 @@ class ResolverEngine {
         val targetKbps = preferredQuality.maxBitrateKbps
         val failures = mutableListOf<String>()
 
-        // 4. STRICT ORIGINAL YOUTUBE VIDEO_ID RESOLUTION — ZERO BACKGROUND SEARCHES OR REMIX FALLBACKS!
+        // 4. STRICT ORIGINAL YOUTUBE VIDEO_ID RESOLUTION
         if (isYouTubeId) {
-            // 4a. Primary Fast Path: Direct multi-client InnerTube extraction for this exact videoId
             val directResult = com.seitharol.data.resolver.InnerTubeStreamExtractor
                 .resolveExactYoutubeStreamById(targetVideoId, preferredQuality, forceRefresh = forceRefresh)
             if (directResult.isSuccess) {
@@ -229,7 +243,6 @@ class ResolverEngine {
                 failures.add("InnerTubeDirect: ${directResult.exceptionOrNull()?.message}")
             }
 
-            // 4b. Secondary Path for the EXACT SAME videoId (DeviceInnerTubeResolver + Piped + Invidious)
             val req = ResolveRequest(videoId = targetVideoId, title = track.title, artist = track.artist)
             for (directNode in listOf(deviceInnerTubeResolver, pipedResolver, invidiousResolver)) {
                 try {

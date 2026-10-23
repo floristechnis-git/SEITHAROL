@@ -54,7 +54,11 @@ sealed interface SubScreen {
 }
 
 @Composable
-fun CascadeApp(viewModel: CascadeViewModel) {
+fun CascadeApp(
+    viewModel: CascadeViewModel,
+    openNotificationsRequest: Boolean = false,
+    onNotificationsOpened: () -> Unit = {}
+) {
     val playerState by viewModel.playerState.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
     val context = LocalContext.current
@@ -98,6 +102,13 @@ fun CascadeApp(viewModel: CascadeViewModel) {
 
     val snackbarHostState = remember { SnackbarHostState() }
 
+    LaunchedEffect(openNotificationsRequest) {
+        if (openNotificationsRequest) {
+            showNotifications = true
+            onNotificationsOpened()
+        }
+    }
+
     LaunchedEffect(Unit) {
         viewModel.skipNotice.collectLatest { msg ->
             val professionalMsg = com.example.util.ErrorFormatter.sanitizeNotice(msg, context)
@@ -113,7 +124,7 @@ fun CascadeApp(viewModel: CascadeViewModel) {
         }
     }
 
-    // Auto-expand PlayerScreen when opening a shared track via seitharol:// or /share/track/[id]
+    // Auto-expand PlayerScreen when opening a shared track via HTTPS deep link or seitharol://
     LaunchedEffect(Unit) {
         viewModel.playerExpandEvent.collectLatest {
             currentSubScreen = SubScreen.None
@@ -442,12 +453,17 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                             onOpenEqualizer = { currentSubScreen = SubScreen.SoundSettings },
                             onOpenSleepTimer = { showSleepTimer = true },
                             onShareTrack = { title ->
-                                val sendIntent = Intent().apply {
-                                    action = Intent.ACTION_SEND
-                                    putExtra(Intent.EXTRA_TEXT, "Listen to $title on Seitharol!")
-                                    type = "text/plain"
+                                runCatching {
+                                    val shareMsg = playerState.currentTrack?.let {
+                                        SeitharolDeepLinkHelper.buildTrackShareMessage(it)
+                                    } ?: "Listen to $title on Seitharol!"
+                                    val sendIntent = Intent().apply {
+                                        action = Intent.ACTION_SEND
+                                        putExtra(Intent.EXTRA_TEXT, shareMsg)
+                                        type = "text/plain"
+                                    }
+                                    context.startActivity(Intent.createChooser(sendIntent, "Share Track"))
                                 }
-                                context.startActivity(Intent.createChooser(sendIntent, "Share Track"))
                             }
                         )
                     } else {
@@ -812,15 +828,17 @@ fun CascadeApp(viewModel: CascadeViewModel) {
                         },
                         onOpenSleepTimer = { showSleepTimer = true },
                         onShareTrack = { title ->
-                            val shareMsg = playerState.currentTrack?.let {
-                                SeitharolDeepLinkHelper.buildTrackShareMessage(it)
-                            } ?: "Listen to $title on Seitharol!"
-                            val sendIntent = Intent().apply {
-                                action = Intent.ACTION_SEND
-                                putExtra(Intent.EXTRA_TEXT, shareMsg)
-                                type = "text/plain"
+                            runCatching {
+                                val shareMsg = playerState.currentTrack?.let {
+                                    SeitharolDeepLinkHelper.buildTrackShareMessage(it)
+                                } ?: "Listen to $title on Seitharol!"
+                                val sendIntent = Intent().apply {
+                                    action = Intent.ACTION_SEND
+                                    putExtra(Intent.EXTRA_TEXT, shareMsg)
+                                    type = "text/plain"
+                                }
+                                context.startActivity(Intent.createChooser(sendIntent, "Share Track"))
                             }
-                            context.startActivity(Intent.createChooser(sendIntent, "Share Track"))
                         }
                     )
                 }

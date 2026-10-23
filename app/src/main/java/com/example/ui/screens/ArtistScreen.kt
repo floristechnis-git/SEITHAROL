@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shuffle
@@ -23,6 +24,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,13 +48,23 @@ fun ArtistScreen(
 ) {
     BackHandler(onBack = onBack)
 
+    val isOfflineMode by viewModel.isOfflineMode.collectAsState()
+    val downloadedTracks by viewModel.downloadedTracks.collectAsState()
     var artistData by remember(artistName) { mutableStateOf<YtmArtistPageData?>(null) }
     var isLoading by remember(artistName) { mutableStateOf(true) }
 
-    LaunchedEffect(artistName) {
+    LaunchedEffect(artistName, isOfflineMode) {
         isLoading = true
-        artistData = InnerTubeStreamExtractor.fetchArtistPage(artistName)
+        artistData = if (isOfflineMode) {
+            null
+        } else {
+            runCatching { InnerTubeStreamExtractor.fetchArtistPage(artistName) }.getOrNull()
+        }
         isLoading = false
+    }
+
+    val offlineArtistTracks = remember(downloadedTracks, artistName) {
+        downloadedTracks.filter { it.artist.contains(artistName, ignoreCase = true) }
     }
 
     Box(
@@ -65,6 +77,88 @@ fun ArtistScreen(
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.align(Alignment.Center)
             )
+        } else if (artistData == null) {
+            // Safe Offline / Error Fallback with Back Button and any downloaded songs by this artist
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .padding(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBack) {
+                        BackArrowSvgIcon(tint = MaterialTheme.colorScheme.onBackground, modifier = Modifier.size(22.dp))
+                    }
+                    Text(
+                        text = artistName,
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    IconButton(onClick = { onShareArtist(artistName) }) {
+                        Icon(Icons.Default.Share, contentDescription = "Share", tint = MaterialTheme.colorScheme.onBackground)
+                    }
+                }
+
+                if (offlineArtistTracks.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Downloaded Songs by $artistName (${offlineArtistTracks.size})",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
+                    )
+                    LazyColumn(contentPadding = PaddingValues(bottom = 120.dp)) {
+                        items(offlineArtistTracks, key = { "off_art_${it.id}" }) { track ->
+                            ListItem(
+                                headlineContent = { Text(track.title, fontWeight = FontWeight.SemiBold) },
+                                supportingContent = { Text("${track.artist} • Offline") },
+                                leadingContent = {
+                                    AsyncImage(
+                                        model = track.artUrl,
+                                        contentDescription = track.title,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.size(48.dp).clip(RoundedCornerShape(10.dp))
+                                    )
+                                },
+                                modifier = Modifier.clickable {
+                                    viewModel.playQueue(offlineArtistTracks, offlineArtistTracks.indexOf(track).coerceAtLeast(0), isPlaylist = false)
+                                }
+                            )
+                        }
+                    }
+                } else {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Default.CloudOff,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "Artist page unavailable offline",
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Connect to the internet to browse full discography for $artistName.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                }
+            }
         } else {
             val page = artistData ?: return@Box
             val domainTopSongs = remember(page.topSongs) { page.topSongs.map { it.toDomainTrack() } }
@@ -299,7 +393,7 @@ fun ArtistScreen(
                     }
                 }
 
-                // 4A. Official Multi-Track Albums Carousel (Never contains 1-track fake single folders)
+                // 4A. Official Multi-Track Albums Carousel
                 val pureAlbums = page.albums.filterNot {
                     it.type.equals("SINGLE", true) ||
                         it.subtitle.contains("Single", true) ||
@@ -373,7 +467,7 @@ fun ArtistScreen(
                     }
                 }
 
-                // 4B. Singles (Rendered as Direct Playable Song Tracks — NEVER fake playlist folders!)
+                // 4B. Singles
                 if (page.singles.isNotEmpty()) {
                     item {
                         Spacer(modifier = Modifier.height(16.dp))

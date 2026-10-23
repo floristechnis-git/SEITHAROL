@@ -30,34 +30,57 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.model.Track
 import com.example.ui.theme.*
+import com.seitharol.data.resolver.InnerTubeStreamExtractor
 import java.net.URLDecoder
 import java.net.URLEncoder
 
 /**
- * App-to-App Deep Link & Intent Launcher Helper for SEITHAROL:
- * - Track route: `/share/track/[id]` & `seitharol://share/track/[id]`
- * - Artist route: `/share/artist/[id]` & `seitharol://share/artist/[id]`
- * When tapped in WhatsApp, Telegram, or SMS, launches SEITHAROL directly via the
- * `seitharol://` protocol or `/share/...` intent filter on the receiver's device.
+ * Universal HTTPS Share & Deep Link Helper for SEITHAROL:
+ * - Replaces raw `seitharol://` text in shared messages (which messaging platforms like WhatsApp,
+ *   Telegram, Instagram, and SMS treat as non-clickable plain text) with clean RFC-3986 `https://`
+ *   URLs (`https://seitharol.app/share/...` and `https://music.youtube.com/watch?v=...`) that are
+ *   100% clickable across every messaging platform.
+ * - Supports opening shared tracks/artists via `Intent.ACTION_VIEW` (`https://`, `http://`, `seitharol://`),
+ *   `Intent.ACTION_SEND` ("Share to Seitharol" from WhatsApp/Telegram), and pasting into Search.
  */
 object SeitharolDeepLinkHelper {
     const val WEB_SHARE_HOST = "https://seitharol.app"
 
-    fun buildTrackShareMessage(track: Track): String {
+    fun buildTrackShareUrl(track: Track): String {
+        val cleanId = InnerTubeStreamExtractor.extractVideoId(track.id) ?: track.id.trim()
         val encTitle = encodeParam(track.title)
         val encArtist = encodeParam(track.artist)
-        val encArt = encodeParam(track.artUrl)
-        val launcherUrl = "$WEB_SHARE_HOST/share/track/${encodeParam(track.id)}?title=$encTitle&artist=$encArtist&art=$encArt"
-        val directProtocol = "seitharol://track/${encodeParam(track.id)}?title=$encTitle&artist=$encArtist"
-        return "Listen to \"${track.title}\" by ${track.artist} on SEITHAROL:\n$launcherUrl\n\nOpen directly in app: $directProtocol"
+        return "$WEB_SHARE_HOST/share/track/${encodeParam(cleanId)}?title=$encTitle&artist=$encArtist"
+    }
+
+    fun buildTrackShareMessage(track: Track): String {
+        val cleanId = InnerTubeStreamExtractor.extractVideoId(track.id)
+        val shareUrl = buildTrackShareUrl(track)
+        val ytStreamLink = if (!cleanId.isNullOrBlank()) {
+            "\nStream link: https://music.youtube.com/watch?v=$cleanId"
+        } else ""
+        return "Listen to \"${track.title}\" by ${track.artist} on SEITHAROL:\n$shareUrl$ytStreamLink"
+    }
+
+    fun buildArtistShareUrl(artistName: String, browseId: String? = null): String {
+        val idOrName = encodeParam(browseId?.takeIf { it.isNotBlank() } ?: artistName)
+        val encName = encodeParam(artistName)
+        return "$WEB_SHARE_HOST/share/artist/$idOrName?name=$encName"
     }
 
     fun buildArtistShareMessage(artistName: String, browseId: String? = null): String {
-        val idOrName = encodeParam(browseId?.takeIf { it.isNotBlank() } ?: artistName)
-        val encName = encodeParam(artistName)
-        val launcherUrl = "$WEB_SHARE_HOST/share/artist/$idOrName?name=$encName"
-        val directProtocol = "seitharol://artist/$idOrName?name=$encName"
-        return "Check out $artistName on SEITHAROL:\n$launcherUrl\n\nOpen directly in app: $directProtocol"
+        val launcherUrl = buildArtistShareUrl(artistName, browseId)
+        val ytChannelLink = if (!browseId.isNullOrBlank() && browseId.startsWith("UC")) {
+            "\nChannel: https://music.youtube.com/channel/$browseId"
+        } else ""
+        return "Check out $artistName on SEITHAROL:\n$launcherUrl$ytChannelLink"
+    }
+
+    fun buildPlaylistShareMessage(playlistTitle: String, playlistId: String): String {
+        val encTitle = encodeParam(playlistTitle)
+        val encId = encodeParam(playlistId)
+        val launcherUrl = "$WEB_SHARE_HOST/share/playlist/$encId?title=$encTitle"
+        return "Listen to \"$playlistTitle\" on SEITHAROL:\n$launcherUrl"
     }
 
     sealed interface DeepLinkTarget {
@@ -82,25 +105,46 @@ object SeitharolDeepLinkHelper {
         ) : DeepLinkTarget
     }
 
+    fun parseSharedTextOrUrl(rawText: String?): DeepLinkTarget? {
+        if (rawText.isNullOrBlank()) return null
+        val urlRegex = Regex("""(https?://[^\s"<>]+|seitharol://[^\s"<>]+)""", RegexOption.IGNORE_CASE)
+        val matches = urlRegex.findAll(rawText).map { it.value }.toList()
+        for (candidate in matches) {
+            val parsedUri = runCatching { Uri.parse(candidate) }.getOrNull() ?: continue
+            parseUriTarget(parsedUri)?.let { return it }
+        }
+        val directUri = runCatching { Uri.parse(rawText.trim()) }.getOrNull()
+        if (directUri != null) {
+            parseUriTarget(directUri)?.let { return it }
+        }
+        return null
+    }
+
     fun parseIncomingIntent(intent: Intent?, context: Context? = null): DeepLinkTarget? {
-        val uri: Uri = intent?.data ?: return null
-        val scheme = uri.scheme?.lowercase().orEmpty()
-        val host = uri.host?.lowercase().orEmpty()
-        val segments = uri.pathSegments.orEmpty()
+        if (intent == null) return null
         val action = intent.action
         val mimeType = intent.type?.lowercase().orEmpty()
 
+        // Support "Share -> Seitharol" from WhatsApp, Telegram, Browser, or YouTube Music
+        if (action == Intent.ACTION_SEND && mimeType.startsWith("text/")) {
+            val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
+            parseSharedTextOrUrl(sharedText)?.let { return it }
+        }
+
+        val uri: Uri = intent.data ?: return null
+        val scheme = uri.scheme?.lowercase().orEmpty()
+
         // 1. Audio file "Open With" from file explorer or content providers
         val isAudioMime = mimeType.startsWith("audio/") ||
-                mimeType == "application/ogg" ||
-                mimeType == "application/x-ogg" ||
-                mimeType == "application/flac" ||
-                mimeType == "application/x-flac" ||
-                mimeType == "application/itunes"
+            mimeType == "application/ogg" ||
+            mimeType == "application/x-ogg" ||
+            mimeType == "application/flac" ||
+            mimeType == "application/x-flac" ||
+            mimeType == "application/itunes"
         val isAudioExtension = uri.lastPathSegment?.lowercase()?.let { name ->
             name.endsWith(".mp3") || name.endsWith(".flac") || name.endsWith(".m4a") ||
-            name.endsWith(".wav") || name.endsWith(".ogg") || name.endsWith(".opus") ||
-            name.endsWith(".aac") || name.endsWith(".wma") || name.endsWith(".m4b")
+                name.endsWith(".wav") || name.endsWith(".ogg") || name.endsWith(".opus") ||
+                name.endsWith(".aac") || name.endsWith(".wma") || name.endsWith(".m4b")
         } == true
 
         if (action == Intent.ACTION_VIEW && (isAudioMime || isAudioExtension || (scheme == "content" && isAudioMime))) {
@@ -114,7 +158,15 @@ object SeitharolDeepLinkHelper {
             )
         }
 
-        // 2. Custom scheme: seitharol://track/[id] or seitharol://share/track/[id] or seitharol://artist/[name]
+        return parseUriTarget(uri)
+    }
+
+    private fun parseUriTarget(uri: Uri): DeepLinkTarget? {
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        val host = uri.host?.lowercase().orEmpty()
+        val segments = uri.pathSegments.orEmpty()
+
+        // Custom scheme: seitharol://track/[id] or seitharol://share/track/[id] or seitharol://artist/[name]
         if (scheme == "seitharol") {
             return when {
                 host == "track" && segments.isNotEmpty() -> {
@@ -152,7 +204,7 @@ object SeitharolDeepLinkHelper {
             }
         }
 
-        // 3. HTTPS / HTTP intent launcher routes: /share/track/[id] and /share/artist/[id]
+        // HTTPS / HTTP routes: /share/track/[id], /share/artist/[id], and YouTube / YouTube Music watch links
         if (scheme == "https" || scheme == "http") {
             val shareIdx = segments.indexOfFirst { it.equals("share", ignoreCase = true) }
             if (shareIdx >= 0 && segments.size > shareIdx + 2) {
@@ -168,6 +220,18 @@ object SeitharolDeepLinkHelper {
                     return DeepLinkTarget.ArtistTarget(
                         artistName = name,
                         browseId = rawId.takeIf { it.startsWith("UC") || it.startsWith("MPLA") }
+                    )
+                }
+            }
+
+            if (host.contains("youtube.com") || host.contains("youtu.be")) {
+                val ytId = InnerTubeStreamExtractor.extractVideoId(uri.toString())
+                if (!ytId.isNullOrBlank()) {
+                    return DeepLinkTarget.TrackTarget(
+                        trackId = ytId,
+                        title = uri.getQueryParameter("title")?.let(::decodeParam).orEmpty(),
+                        artist = uri.getQueryParameter("artist")?.let(::decodeParam).orEmpty(),
+                        artUrl = "https://i.ytimg.com/vi/$ytId/hqdefault.jpg"
                     )
                 }
             }
@@ -188,7 +252,6 @@ object SeitharolDeepLinkHelper {
         var album = "Local Audio"
         var durationMs = 0L
 
-        // 1. Try MediaMetadataRetriever for embedded ID3/FLAC/Vorbis metadata
         if (context != null) {
             val retriever = android.media.MediaMetadataRetriever()
             try {
@@ -211,7 +274,6 @@ object SeitharolDeepLinkHelper {
             }
         }
 
-        // 2. Fallback to OpenableColumns.DISPLAY_NAME or uri.lastPathSegment
         if (title.isBlank() && context != null && uri.scheme == "content") {
             try {
                 context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
@@ -229,13 +291,11 @@ object SeitharolDeepLinkHelper {
             title = uri.lastPathSegment.orEmpty()
         }
 
-        // Clean filename extension (e.g., "Song Name.mp3" -> "Song Name")
         val cleanName = title.substringBeforeLast('.')
         if (title.contains('.')) {
             title = cleanName
         }
 
-        // If artist is empty and title has "Artist - Title" format, split it
         if (artist.isBlank() && title.contains(" - ")) {
             val parts = title.split(" - ", limit = 2)
             artist = parts[0].trim()
@@ -248,8 +308,11 @@ object SeitharolDeepLinkHelper {
         return ExtractedAudio(title, artist, album, durationMs)
     }
 
+    // Encode using %20 instead of '+' so messaging app URL parsers never break the link mid-query
     private fun encodeParam(value: String): String =
-        runCatching { URLEncoder.encode(value.trim(), "UTF-8") }.getOrDefault(value.trim())
+        runCatching {
+            URLEncoder.encode(value.trim(), "UTF-8").replace("+", "%20")
+        }.getOrDefault(value.trim())
 
     private fun decodeParam(value: String): String =
         runCatching { URLDecoder.decode(value, "UTF-8") }.getOrDefault(value)
@@ -265,8 +328,7 @@ fun ShareArtistModal(
     val modalSheetState = rememberModalBottomSheetState()
 
     val shareUrl = remember(artistName) {
-        val enc = runCatching { URLEncoder.encode(artistName.trim(), "UTF-8") }.getOrDefault(artistName.trim())
-        "${SeitharolDeepLinkHelper.WEB_SHARE_HOST}/share/artist/$enc?name=$enc"
+        SeitharolDeepLinkHelper.buildArtistShareUrl(artistName)
     }
 
     val shareText = remember(artistName) {
@@ -278,13 +340,16 @@ fun ShareArtistModal(
     }
 
     fun triggerChooserShare() {
-        val sendIntent = Intent().apply {
-            action = Intent.ACTION_SEND
-            putExtra(Intent.EXTRA_TEXT, shareText)
-            type = "text/plain"
+        runCatching {
+            val sendIntent = Intent().apply {
+                action = Intent.ACTION_SEND
+                putExtra(Intent.EXTRA_SUBJECT, "$artistName on Seitharol")
+                putExtra(Intent.EXTRA_TEXT, shareText)
+                type = "text/plain"
+            }
+            val shareIntent = Intent.createChooser(sendIntent, "Share $artistName via")
+            context.startActivity(shareIntent)
         }
-        val shareIntent = Intent.createChooser(sendIntent, "Share $artistName via")
-        context.startActivity(shareIntent)
         onDismiss()
     }
 
@@ -321,7 +386,7 @@ fun ShareArtistModal(
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
             val clip = ClipData.newPlainText("Artist Link", shareUrl)
             clipboard?.setPrimaryClip(clip)
-            Toast.makeText(context, "Seitharol artist link copied to clipboard", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Shareable HTTPS link copied to clipboard", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Toast.makeText(context, "Failed to copy link", Toast.LENGTH_SHORT).show()
         }
@@ -420,10 +485,12 @@ fun ShareArtistModal(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "seitharol://artist • Opens directly in SEITHAROL",
+                            text = shareUrl,
                             fontSize = 12.sp,
                             fontFamily = OutfitFontFamily,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }

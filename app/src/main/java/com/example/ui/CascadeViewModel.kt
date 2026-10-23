@@ -18,9 +18,11 @@ import com.example.player.EqualizerPreset
 import com.example.player.PlayerState
 import com.example.resolver.CircuitBreakerState
 import com.example.resolver.ResolverEngine
+import com.example.ui.components.SeitharolDeepLinkHelper
 import com.seitharol.data.resolver.AudioQuality
 import com.seitharol.data.resolver.CanonicalAudioResolver
 import com.seitharol.data.resolver.InnerTubeStreamExtractor
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -48,6 +50,10 @@ class CascadeViewModel(
     val playerManager: AudioPlayerManager
 ) : ViewModel() {
 
+    private val vmExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Log.e("CascadeViewModel", "Handled coroutine exception: ${throwable.message}", throwable)
+    }
+
     val allTracks: StateFlow<List<Track>> = musicRepository.getAllTracks()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
@@ -66,7 +72,10 @@ class CascadeViewModel(
                     .openAssetFileDescriptor(android.net.Uri.parse(path), "r")?.use { true } ?: false
             }.getOrDefault(false)
         } else {
-            val f = java.io.File(path.removePrefix("file://"))
+            val rawPath = if (path.startsWith("file://")) {
+                android.net.Uri.parse(path).path ?: path.removePrefix("file://")
+            } else path
+            val f = java.io.File(rawPath)
             f.exists() && f.length() > 0L
         }
     }
@@ -79,7 +88,6 @@ class CascadeViewModel(
         val dlService = com.seitharol.data.download.DownloadPreferencesAndService.getInstance(com.example.CascadeApplication.instance)
         val trackMap = LinkedHashMap<String, Track>()
         dbTracks.forEach { track ->
-            // Skip any corrupted "Artist - Title" filename-scanned entries or entries whose local file was deleted
             val isFakeScannedId = track.id.contains(" - ") && track.artist == "Downloaded Music"
             if (!isFakeScannedId && isLocalUriOrFileReadable(track.localPath)) {
                 val canonId = dlService.canonicalTrackId(track.id)
@@ -172,7 +180,7 @@ class CascadeViewModel(
     val playerExpandEvent: SharedFlow<Unit> = _playerExpandEvent.asSharedFlow()
 
     fun navigateToArtist(artistName: String) {
-        viewModelScope.launch { _artistNavigationEvent.emit(artistName) }
+        viewModelScope.launch(vmExceptionHandler) { _artistNavigationEvent.emit(artistName) }
     }
 
     fun openSharedTrackById(
@@ -181,35 +189,40 @@ class CascadeViewModel(
         fallbackArtist: String = "",
         fallbackArtUrl: String = ""
     ) {
-        viewModelScope.launch {
-            val cleanId = InnerTubeStreamExtractor.extractVideoId(trackId) ?: trackId.trim()
-            val existing = musicRepository.getTrackById(cleanId)
-            val trackToPlay = when {
-                existing != null -> existing
-                fallbackTitle.isNotBlank() -> Track(
-                    id = cleanId,
-                    title = fallbackTitle,
-                    artist = fallbackArtist.ifBlank { "Artist" },
-                    album = "Shared Track",
-                    durationMs = 210_000L,
-                    artUrl = fallbackArtUrl.ifBlank {
-                        if (cleanId.length == 11) "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg" else ""
-                    }
-                )
-                else -> {
-                    val oembed = resolverEngine.youtubeInnerTubeProvider.fetchMetadataById(cleanId)
-                    Track(
+        viewModelScope.launch(vmExceptionHandler) {
+            runCatching {
+                val cleanId = InnerTubeStreamExtractor.extractVideoId(trackId) ?: trackId.trim()
+                val existing = musicRepository.getTrackById(cleanId)
+                    ?: downloadedTracks.value.firstOrNull { it.id == cleanId }
+                val trackToPlay = when {
+                    existing != null -> existing
+                    fallbackTitle.isNotBlank() -> Track(
                         id = cleanId,
-                        title = oembed?.first ?: "Shared Track",
-                        artist = oembed?.second ?: "Artist",
-                        album = "Single",
+                        title = fallbackTitle,
+                        artist = fallbackArtist.ifBlank { "Artist" },
+                        album = "Shared Track",
                         durationMs = 210_000L,
-                        artUrl = if (cleanId.length == 11) "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg" else ""
+                        artUrl = fallbackArtUrl.ifBlank {
+                            if (cleanId.length == 11) "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg" else ""
+                        }
                     )
+                    else -> {
+                        val oembed = runCatching {
+                            resolverEngine.youtubeInnerTubeProvider.fetchMetadataById(cleanId)
+                        }.getOrNull()
+                        Track(
+                            id = cleanId,
+                            title = oembed?.first ?: "Shared Track",
+                            artist = oembed?.second ?: "Artist",
+                            album = "Single",
+                            durationMs = 210_000L,
+                            artUrl = if (cleanId.length == 11) "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg" else ""
+                        )
+                    }
                 }
+                playTrack(trackToPlay)
+                _playerExpandEvent.emit(Unit)
             }
-            playTrack(trackToPlay)
-            _playerExpandEvent.emit(Unit)
         }
     }
 
@@ -220,21 +233,23 @@ class CascadeViewModel(
         durationMs: Long = 0L,
         album: String = "Local Audio"
     ) {
-        viewModelScope.launch {
-            val trackId = "file_${uri.hashCode()}"
-            val track = Track(
-                id = trackId,
-                title = title.ifBlank { "Audio File" },
-                artist = artist.ifBlank { "Local Audio" },
-                album = album.ifBlank { "Local Audio" },
-                durationMs = durationMs,
-                artUrl = "",
-                genre = "Local Audio",
-                isDownloaded = true,
-                localPath = uri.toString()
-            )
-            playTrack(track)
-            _playerExpandEvent.emit(Unit)
+        viewModelScope.launch(vmExceptionHandler) {
+            runCatching {
+                val trackId = "file_${uri.hashCode()}"
+                val track = Track(
+                    id = trackId,
+                    title = title.ifBlank { "Audio File" },
+                    artist = artist.ifBlank { "Local Audio" },
+                    album = album.ifBlank { "Local Audio" },
+                    durationMs = durationMs,
+                    artUrl = "",
+                    genre = "Local Audio",
+                    isDownloaded = true,
+                    localPath = uri.toString()
+                )
+                playTrack(track)
+                _playerExpandEvent.emit(Unit)
+            }
         }
     }
 
@@ -277,11 +292,29 @@ class CascadeViewModel(
     private fun executeRankedSearch(query: String, filter: ProviderFilter) {
         val clean = query.trim()
         activeSearchJob?.cancel()
-        if (clean.length < 2 || isOfflineMode.value) {
+
+        // If the user pasted a shared Seitharol or YouTube Music link into Search, open it directly!
+        SeitharolDeepLinkHelper.parseSharedTextOrUrl(clean)?.let { target ->
+            when (target) {
+                is SeitharolDeepLinkHelper.DeepLinkTarget.TrackTarget -> {
+                    searchQuery.value = ""
+                    openSharedTrackById(target.trackId, target.title, target.artist, target.artUrl)
+                    return
+                }
+                is SeitharolDeepLinkHelper.DeepLinkTarget.ArtistTarget -> {
+                    searchQuery.value = ""
+                    navigateToArtist(target.artistName)
+                    return
+                }
+                else -> Unit
+            }
+        }
+
+        if (clean.length < 2 || isOfflineMode.value || !com.example.util.ErrorFormatter.isOnline(com.example.CascadeApplication.instance)) {
             searchRequestToken++
             onlineSearchResults.value = emptyList()
             isSearchingOnline.value = false
-            hasCompletedOnlineSearch.value = false
+            hasCompletedOnlineSearch.value = true
             return
         }
 
@@ -289,7 +322,7 @@ class CascadeViewModel(
         isSearchingOnline.value = true
         hasCompletedOnlineSearch.value = false
 
-        activeSearchJob = viewModelScope.launch {
+        activeSearchJob = viewModelScope.launch(vmExceptionHandler) {
             try {
                 val rawCandidates = when (filter) {
                     ProviderFilter.ALL -> {
@@ -330,7 +363,6 @@ class CascadeViewModel(
                     ProviderFilter.LOCAL -> emptyList()
                 }
 
-                // Rank strictly by relevance to user's query
                 val ranked = CanonicalAudioResolver.rankSearchResultsByRelevance(clean, rawCandidates)
                 onlineSearchResults.value = ranked.map { c ->
                     Track(
@@ -382,24 +414,29 @@ class CascadeViewModel(
     val suggestedPlaylists: StateFlow<List<com.example.player.SuggestedPlaylist>> = autoSuggestManager.suggestedPlaylists
 
     init {
-        playerManager.isAutoplayEnabled = autoSuggestManager.isAutoSuggestEnabled.value
-        loadHomeScreenMusic()
-        loadDiscoverFeed()
-        viewModelScope.launch { downloadRepository.rescanLocalDownloads() }
+        playerManager.isAutoplayEnabled = autoSuggestManager.isAutoSuggestEnabled.value && !isOfflineMode.value
+        viewModelScope.launch(vmExceptionHandler) {
+            downloadRepository.rescanLocalDownloads()
+            loadHomeScreenMusic()
+            loadDiscoverFeed()
+        }
 
-        viewModelScope.launch {
+        viewModelScope.launch(vmExceptionHandler) {
             searchQuery
                 .collectLatest { query ->
                     val clean = query.trim()
-                    if (clean.length >= 2 && !isOfflineMode.value) {
-                        // Immediately set loading state before debounce so "No songs found" never flashes while typing
-                        isSearchingOnline.value = true
-                        hasCompletedOnlineSearch.value = false
-                        delay(320L)
-                        executeRankedSearch(clean, selectedProviderFilter.value)
-                        runCatching { NetworkClients.getSearchSuggestions(clean) }
-                            .onSuccess { searchSuggestions.value = it }
-                            .onFailure { searchSuggestions.value = emptyList() }
+                    if (clean.length >= 2) {
+                        if (!isOfflineMode.value && com.example.util.ErrorFormatter.isOnline(com.example.CascadeApplication.instance)) {
+                            isSearchingOnline.value = true
+                            hasCompletedOnlineSearch.value = false
+                            delay(320L)
+                            executeRankedSearch(clean, selectedProviderFilter.value)
+                            runCatching { NetworkClients.getSearchSuggestions(clean) }
+                                .onSuccess { searchSuggestions.value = it }
+                                .onFailure { searchSuggestions.value = emptyList() }
+                        } else {
+                            executeRankedSearch(clean, selectedProviderFilter.value)
+                        }
                     } else {
                         activeSearchJob?.cancel()
                         searchRequestToken++
@@ -411,14 +448,14 @@ class CascadeViewModel(
                 }
         }
 
-        viewModelScope.launch {
+        viewModelScope.launch(vmExceptionHandler) {
             autoSuggestManager.isAutoSuggestEnabled.collect { enabled ->
-                playerManager.isAutoplayEnabled = enabled
+                playerManager.isAutoplayEnabled = enabled && !isOfflineMode.value
             }
         }
 
         // Keep Home & Discover shelves reactively synced with liked/downloaded state
-        viewModelScope.launch {
+        viewModelScope.launch(vmExceptionHandler) {
             combine(likedTrackIds, downloadedTracksById) { likedIds, downloadedMap ->
                 likedIds to downloadedMap
             }.collect { (likedIds, downloadedMap) ->
@@ -443,14 +480,18 @@ class CascadeViewModel(
         }
     }
 
-    /**
-     * OuterTune-style Personalization Engine:
-     * Reads persisted listening history & liked tracks directly from Room DB (avoiding cold StateFlow empty values),
-     * then builds personalized Quick Picks (via RDAMVM Automix) and artist/mood shelves.
-     */
     fun loadHomeScreenMusic() {
-        viewModelScope.launch {
-            if (isOfflineMode.value) return@launch
+        viewModelScope.launch(vmExceptionHandler) {
+            if (isOfflineMode.value || !com.example.util.ErrorFormatter.isOnline(com.example.CascadeApplication.instance)) {
+                val offlineTracks = downloadedTracks.value
+                if (offlineTracks.isNotEmpty()) {
+                    personalizedTracks.value = offlineTracks
+                    trendingHits.value = offlineTracks
+                    freshReleases.value = offlineTracks
+                }
+                isLoadingHome.value = false
+                return@launch
+            }
             isLoadingHome.value = true
             try {
                 val realHistory = musicRepository.getActiveHistory().firstOrNull().orEmpty()
@@ -489,7 +530,6 @@ class CascadeViewModel(
                     .map { it.key }
                     .take(5)
 
-                // 1. Personalized Quick Picks / For You feed via YouTube Music RDAMVM Automix + Top Artists / Searches
                 val personalizedCandidates = InnerTubeStreamExtractor.buildPersonalizedHomeFeed(
                     seedVideoIds = seedIds,
                     favoriteArtists = topArtists,
@@ -508,7 +548,6 @@ class CascadeViewModel(
                     trendingHits.value = mapped.take(12)
                 }
 
-                // 2. Regional / Manipuri & Fresh Releases shelf
                 val freshCandidates = InnerTubeStreamExtractor.searchOfficialYtmSongs(
                     query = if (topArtists.isNotEmpty()) "${topArtists.first()} new songs" else "Manipuri latest official songs",
                     limit = 12
@@ -531,7 +570,8 @@ class CascadeViewModel(
     }
 
     fun loadDiscoverFeed() {
-        viewModelScope.launch {
+        viewModelScope.launch(vmExceptionHandler) {
+            if (isOfflineMode.value) return@launch
             try {
                 val hist = musicRepository.getActiveHistory().firstOrNull().orEmpty().map { it.toNormalizedTrack() }
                 val liked = musicRepository.getLikedTracks().firstOrNull().orEmpty().map { it.toNormalizedTrack() }
@@ -544,7 +584,7 @@ class CascadeViewModel(
     }
 
     fun registerLocallyDownloadedTrack(normalized: com.seitharol.domain.model.NormalizedTrack) {
-        viewModelScope.launch {
+        viewModelScope.launch(vmExceptionHandler) {
             val dlService = com.seitharol.data.download.DownloadPreferencesAndService.getInstance(com.example.CascadeApplication.instance)
             val canonId = dlService.canonicalTrackId(normalized.sourceId)
             val localTrack = Track(
@@ -566,7 +606,7 @@ class CascadeViewModel(
     val isRefreshingLibrary = MutableStateFlow(false)
 
     fun refreshLibrary() {
-        viewModelScope.launch {
+        viewModelScope.launch(vmExceptionHandler) {
             isRefreshingLibrary.value = true
             try {
                 downloadRepository.rescanLocalDownloads()
@@ -583,7 +623,6 @@ class CascadeViewModel(
         val results = mutableListOf<com.seitharol.domain.model.NormalizedTrack>()
         val likedIds = likedTrackIds.value
 
-        // 1. YouTube Music official songs FIRST
         runCatching {
             val ytmTracks = com.seitharol.data.resolver.InnerTubeStreamExtractor.searchOfficialYtmSongs(clean, limit = 25)
             val mapped = ytmTracks.map { yt ->
@@ -605,14 +644,12 @@ class CascadeViewModel(
             results.addAll(mapped)
         }
 
-        // 2. Supplementary Spotify preview tracks as fallback
         runCatching {
             val previewTracks = spotifyProviderInstance.searchTracksWithPreviews(clean, limit = 15)
             results.addAll(previewTracks.map { it.copy(isLiked = likedIds.contains(it.sourceId)) })
         }
 
         val cleanLower = clean.lowercase()
-        // Rank results so the actual original track matching query and title is strictly at position 0
         return results.distinctBy { it.sourceId }.sortedWith(
             compareByDescending<com.seitharol.domain.model.NormalizedTrack> { track ->
                 val titleLower = track.title.lowercase().trim()
@@ -673,8 +710,9 @@ class CascadeViewModel(
     fun selectHomeMood(mood: String) {
         val targetMood = if (selectedMood.value == mood && mood != "All") "All" else mood
         selectedMood.value = targetMood
+        if (isOfflineMode.value) return
         moodFetchJob?.cancel()
-        moodFetchJob = viewModelScope.launch {
+        moodFetchJob = viewModelScope.launch(vmExceptionHandler) {
             isLoadingHome.value = true
             try {
                 val realHistory = musicRepository.getActiveHistory().firstOrNull().orEmpty()
@@ -705,33 +743,44 @@ class CascadeViewModel(
     fun selectMood(mood: String) = selectHomeMood(mood)
 
     fun setQueryImmediately(newQuery: String) {
-        // Only update searchQuery StateFlow; let the single debounced collector run executeRankedSearch
-        // so competing coroutines never overwrite search results out of order.
         searchQuery.value = newQuery
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val searchResults: StateFlow<List<Track>> = combine(
-        combine(searchQuery, searchFilter, selectedProviderFilter) { q, filter, provider ->
-            Triple(q, filter, provider)
+        combine(searchQuery, searchFilter, selectedProviderFilter, isOfflineMode) { q, filter, provider, offline ->
+             listOf(q, filter, provider, offline)
         },
         combine(downloadedTracks, onlineSearchResults, likedTrackIds) { downloaded, onlineTracks, likedIds ->
             Triple(downloaded, onlineTracks, likedIds)
         }
-    ) { (query, filter, provider), (downloaded, onlineTracks, likedIds) ->
+    ) { params, (downloaded, onlineTracks, likedIds) ->
+        val query = params[0] as String
+        val filter = params[1] as SearchFilter
+        val provider = params[2] as ProviderFilter
+        val offline = params[3] as Boolean
+
         val cleanQuery = query.trim()
         val dlMap = downloaded.associateBy { it.id }
+        val deviceOffline = offline || !com.example.util.ErrorFormatter.isOnline(com.example.CascadeApplication.instance)
 
-        val baseList: List<Track> = if (provider == ProviderFilter.LOCAL) {
+        val baseList: List<Track> = if (provider == ProviderFilter.LOCAL || deviceOffline) {
             if (cleanQuery.isBlank()) downloaded
             else downloaded.filter {
                 it.title.contains(cleanQuery, ignoreCase = true) ||
-                    it.artist.contains(cleanQuery, ignoreCase = true)
+                    it.artist.contains(cleanQuery, ignoreCase = true) ||
+                    it.album.contains(cleanQuery, ignoreCase = true)
             }
         } else {
-            // Never dump fake/demo database tracks when searchQuery is blank
             if (cleanQuery.isBlank()) emptyList()
-            else onlineTracks.map { enrichTrackStatus(it, likedIds, dlMap) }
+            else {
+                val matchingLocal = downloaded.filter {
+                    it.title.contains(cleanQuery, ignoreCase = true) ||
+                        it.artist.contains(cleanQuery, ignoreCase = true)
+                }
+                val enrichedOnline = onlineTracks.map { enrichTrackStatus(it, likedIds, dlMap) }
+                (matchingLocal + enrichedOnline).distinctBy { it.id }
+            }
         }
 
         when (filter) {
@@ -748,44 +797,64 @@ class CascadeViewModel(
             playPlaylistOrMix(track.id)
             return
         }
-        val isOffline = track.isDownloaded || !track.localPath.isNullOrBlank()
+        val dlMatch = downloadedTracksById.value[track.id] ?: downloadedTracks.value.firstOrNull {
+            it.title.equals(track.title, ignoreCase = true) &&
+                (track.artist.isBlank() || it.artist.contains(track.artist, ignoreCase = true) || track.artist.contains(it.artist, ignoreCase = true))
+        }
+        val effectiveTrack = if (dlMatch != null) {
+            track.copy(isDownloaded = true, localPath = dlMatch.localPath)
+        } else track
+
+        val isOffline = effectiveTrack.isDownloaded || !effectiveTrack.localPath.isNullOrBlank() || isOfflineMode.value
         if (isOffline) {
             autoSuggestManager.setAutoSuggestEnabled(false)
             playerManager.isAutoplayEnabled = false
         }
         automixFetchJob?.cancel()
-        playerManager.playTrack(track)
-        automixFetchJob = viewModelScope.launch {
-            musicRepository.insertTrack(track)
-            musicRepository.recordPlayHistory(track)
+        playerManager.playTrack(effectiveTrack)
+        automixFetchJob = viewModelScope.launch(vmExceptionHandler) {
+            runCatching {
+                musicRepository.insertTrack(effectiveTrack)
+                musicRepository.recordPlayHistory(effectiveTrack)
+            }
         }
     }
 
     fun playQueue(tracks: List<Track>, startIndex: Int = 0, isPlaylist: Boolean = true) {
-        val hasOffline = tracks.any { it.isDownloaded || !it.localPath.isNullOrBlank() }
+        val dlMap = downloadedTracksById.value
+        val enrichedTracks = tracks.map { enrichTrackStatus(it, likedTrackIds.value, dlMap) }
+        val hasOffline = enrichedTracks.any { it.isDownloaded || !it.localPath.isNullOrBlank() } || isOfflineMode.value
         if (hasOffline) {
             autoSuggestManager.setAutoSuggestEnabled(false)
             playerManager.isAutoplayEnabled = false
         }
-        viewModelScope.launch { tracks.forEach { musicRepository.insertTrack(it) } }
-        playerManager.playQueue(tracks, startIndex, isPlaylist = isPlaylist)
+        viewModelScope.launch(vmExceptionHandler) {
+            runCatching { enrichedTracks.forEach { musicRepository.insertTrack(it) } }
+        }
+        playerManager.playQueue(enrichedTracks, startIndex, isPlaylist = isPlaylist)
     }
 
     fun playPlaylistOrMix(playlistId: String) {
-        viewModelScope.launch {
-            if (playlistId == "liked_songs" || playlistId == "pl_liked_songs") {
-                val liked = likedTracks.value
-                if (liked.isNotEmpty()) {
-                    playQueue(liked, 0, isPlaylist = true)
-                }
-                return@launch
-            }
-            val localTracks = _userPlaylists.value[playlistId] ?: musicRepository.getTracksForPlaylist(playlistId).firstOrNull()
-            if (!localTracks.isNullOrEmpty()) {
-                playQueue(localTracks, 0, isPlaylist = true)
-                return@launch
-            }
+        viewModelScope.launch(vmExceptionHandler) {
             runCatching {
+                if (playlistId == "liked_songs" || playlistId == "pl_liked_songs") {
+                    val liked = likedTracks.value
+                    if (liked.isNotEmpty()) {
+                        playQueue(liked, 0, isPlaylist = true)
+                    }
+                    return@launch
+                }
+                val localTracks = _userPlaylists.value[playlistId] ?: musicRepository.getTracksForPlaylist(playlistId).firstOrNull()
+                if (!localTracks.isNullOrEmpty()) {
+                    val filtered = if (isOfflineMode.value) {
+                        val dlMap = downloadedTracksById.value
+                        localTracks.map { enrichTrackStatus(it, likedTrackIds.value, dlMap) }.filter { it.isDownloaded }
+                            .ifEmpty { localTracks }
+                    } else localTracks
+                    playQueue(filtered, 0, isPlaylist = true)
+                    return@launch
+                }
+                if (isOfflineMode.value) return@launch
                 val details = InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(playlistId)
                 val likedIds = likedTrackIds.value
                 val dlMap = downloadedTracksById.value
@@ -806,40 +875,43 @@ class CascadeViewModel(
     }
 
     fun playSingleRelease(collection: com.seitharol.data.resolver.YtmCollectionSummary, artistName: String) {
-        viewModelScope.launch {
-            val directVid = InnerTubeStreamExtractor.extractVideoId(collection.playlistId)
-                ?: InnerTubeStreamExtractor.extractVideoId(collection.browseId)
-            if (directVid != null) {
-                val directTrack = Track(
-                    id = directVid,
-                    title = collection.title,
-                    artist = artistName,
-                    album = "Single",
-                    durationMs = 210_000L,
-                    artUrl = collection.thumbnailUrl
-                )
-                playTrack(enrichTrackStatus(directTrack, likedTrackIds.value, downloadedTracksById.value))
-                return@launch
-            }
+        viewModelScope.launch(vmExceptionHandler) {
+            runCatching {
+                val directVid = InnerTubeStreamExtractor.extractVideoId(collection.playlistId)
+                    ?: InnerTubeStreamExtractor.extractVideoId(collection.browseId)
+                if (directVid != null) {
+                    val directTrack = Track(
+                        id = directVid,
+                        title = collection.title,
+                        artist = artistName,
+                        album = "Single",
+                        durationMs = 210_000L,
+                        artUrl = collection.thumbnailUrl
+                    )
+                    playTrack(enrichTrackStatus(directTrack, likedTrackIds.value, downloadedTracksById.value))
+                    return@launch
+                }
 
-            val candidate = runCatching {
-                InnerTubeStreamExtractor.searchOfficialYtmSongs("${collection.title} $artistName", limit = 1).firstOrNull()
-            }.getOrNull() ?: runCatching {
-                InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(collection.browseId).tracks.firstOrNull()
-            }.getOrNull()
+                val candidate = runCatching {
+                    InnerTubeStreamExtractor.searchOfficialYtmSongs("${collection.title} $artistName", limit = 1).firstOrNull()
+                }.getOrNull() ?: runCatching {
+                    InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(collection.browseId).tracks.firstOrNull()
+                }.getOrNull()
 
-            if (candidate != null) {
-                playTrack(enrichTrackStatus(candidate.toTrack(), likedTrackIds.value, downloadedTracksById.value))
+                if (candidate != null) {
+                    playTrack(enrichTrackStatus(candidate.toTrack(), likedTrackIds.value, downloadedTracksById.value))
+                }
             }
         }
     }
 
     fun startRadioMix(seedTrack: Track) {
-        viewModelScope.launch {
-            musicRepository.insertTrack(seedTrack)
-            musicRepository.recordPlayHistory(seedTrack)
-            playerManager.playQueue(listOf(seedTrack), 0, isPlaylist = false)
+        viewModelScope.launch(vmExceptionHandler) {
             runCatching {
+                musicRepository.insertTrack(seedTrack)
+                musicRepository.recordPlayHistory(seedTrack)
+                playerManager.playQueue(listOf(seedTrack), 0, isPlaylist = false)
+                if (isOfflineMode.value) return@launch
                 val automix = InnerTubeStreamExtractor.fetchAutomixQueue(seedTrack.id, limit = 35)
                 val likedIds = likedTrackIds.value
                 val dlMap = downloadedTracksById.value
@@ -853,31 +925,40 @@ class CascadeViewModel(
     }
 
     fun loadPlaylistTracks(playlistId: String, onResult: (List<Track>) -> Unit) {
-        viewModelScope.launch {
-            val likedIds = likedTrackIds.value
-            val dlMap = downloadedTracksById.value
-            val dbTracks = musicRepository.getTracksForPlaylist(playlistId).firstOrNull()
-            if (!dbTracks.isNullOrEmpty()) {
-                onResult(dbTracks.map { enrichTrackStatus(it, likedIds, dlMap) })
-                return@launch
-            }
-            val localTracks = _userPlaylists.value[playlistId]
-            if (!localTracks.isNullOrEmpty()) {
-                onResult(localTracks.map { enrichTrackStatus(it, likedIds, dlMap) })
-                return@launch
-            }
-            val remoteDetails = InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(playlistId)
-            val tracks = remoteDetails.tracks.map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
-            if (tracks.isNotEmpty()) {
-                onResult(tracks)
-            } else {
-                val cleanId = playlistId.removePrefix("VL").removePrefix("RDAMVM")
-                if (cleanId.length == 11) {
-                    val automix = InnerTubeStreamExtractor.fetchAutomixQueue(cleanId, limit = 35)
-                    onResult(automix.map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) })
-                } else {
-                    onResult(emptyList())
+        viewModelScope.launch(vmExceptionHandler) {
+            try {
+                val likedIds = likedTrackIds.value
+                val dlMap = downloadedTracksById.value
+                val dbTracks = musicRepository.getTracksForPlaylist(playlistId).firstOrNull()
+                if (!dbTracks.isNullOrEmpty()) {
+                    onResult(dbTracks.map { enrichTrackStatus(it, likedIds, dlMap) })
+                    return@launch
                 }
+                val localTracks = _userPlaylists.value[playlistId]
+                if (!localTracks.isNullOrEmpty()) {
+                    onResult(localTracks.map { enrichTrackStatus(it, likedIds, dlMap) })
+                    return@launch
+                }
+                if (isOfflineMode.value) {
+                    onResult(emptyList())
+                    return@launch
+                }
+                val remoteDetails = InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(playlistId)
+                val tracks = remoteDetails.tracks.map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
+                if (tracks.isNotEmpty()) {
+                    onResult(tracks)
+                } else {
+                    val cleanId = playlistId.removePrefix("VL").removePrefix("RDAMVM")
+                    if (cleanId.length == 11) {
+                        val automix = InnerTubeStreamExtractor.fetchAutomixQueue(cleanId, limit = 35)
+                        onResult(automix.map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) })
+                    } else {
+                        onResult(emptyList())
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("CascadeViewModel", "loadPlaylistTracks failed for $playlistId: ${e.message}")
+                onResult(emptyList())
             }
         }
     }
@@ -892,23 +973,42 @@ class CascadeViewModel(
     fun cycleRepeatMode() = playerManager.cycleRepeatMode()
 
     fun toggleLike(track: Track) {
-        viewModelScope.launch { musicRepository.toggleLike(track) }
+        viewModelScope.launch(vmExceptionHandler) { runCatching { musicRepository.toggleLike(track) } }
     }
 
     fun startDownload(track: Track, tier: DownloadTier = DownloadTier.STANDARD) {
-        viewModelScope.launch { downloadRepository.startDownload(track, tier) }
+        viewModelScope.launch(vmExceptionHandler) { runCatching { downloadRepository.startDownload(track, tier) } }
     }
 
     fun retryDownload(trackId: String) {
-        viewModelScope.launch { downloadRepository.retryDownload(trackId) }
+        viewModelScope.launch(vmExceptionHandler) { runCatching { downloadRepository.retryDownload(trackId) } }
     }
 
     fun deleteDownload(trackId: String) {
-        viewModelScope.launch { downloadRepository.deleteDownload(trackId) }
+        viewModelScope.launch(vmExceptionHandler) { runCatching { downloadRepository.deleteDownload(trackId) } }
     }
 
     fun removeDownload(trackId: String) = deleteDownload(trackId)
-    fun setOfflineMode(enabled: Boolean) = resolverEngine.setOfflineMode(enabled)
+
+    fun setOfflineMode(enabled: Boolean) {
+        resolverEngine.setOfflineMode(enabled)
+        if (enabled) {
+            playerManager.isAutoplayEnabled = false
+            selectedProviderFilter.value = ProviderFilter.LOCAL
+            viewModelScope.launch(vmExceptionHandler) {
+                downloadRepository.rescanLocalDownloads()
+                loadHomeScreenMusic()
+            }
+        } else {
+            playerManager.isAutoplayEnabled = autoSuggestManager.isAutoSuggestEnabled.value
+            if (selectedProviderFilter.value == ProviderFilter.LOCAL) {
+                selectedProviderFilter.value = ProviderFilter.ALL
+            }
+            loadHomeScreenMusic()
+            loadDiscoverFeed()
+        }
+    }
+
     fun selectResolverNode(nodeId: String) = resolverEngine.selectNode(nodeId)
 
     fun toggleFollowArtist(artist: Artist) {
@@ -919,69 +1019,81 @@ class CascadeViewModel(
     }
 
     fun createPlaylist(title: String, desc: String, initialTrack: Track? = null) {
-        viewModelScope.launch {
-            val id = musicRepository.createPlaylist(title, desc, initialTrack?.artUrl)
-            if (initialTrack != null) {
-                musicRepository.insertTrack(initialTrack)
-                musicRepository.addTrackToPlaylist(id, initialTrack.id)
-                _userPlaylists.value = _userPlaylists.value + (id to listOf(initialTrack))
-            } else {
-                _userPlaylists.value = _userPlaylists.value + (id to emptyList())
+        viewModelScope.launch(vmExceptionHandler) {
+            runCatching {
+                val id = musicRepository.createPlaylist(title, desc, initialTrack?.artUrl)
+                if (initialTrack != null) {
+                    musicRepository.insertTrack(initialTrack)
+                    musicRepository.addTrackToPlaylist(id, initialTrack.id)
+                    _userPlaylists.value = _userPlaylists.value + (id to listOf(initialTrack))
+                } else {
+                    _userPlaylists.value = _userPlaylists.value + (id to emptyList())
+                }
             }
         }
     }
 
     fun deletePlaylist(playlistId: String) {
-        viewModelScope.launch {
-            musicRepository.deletePlaylist(playlistId)
-            _userPlaylists.value = _userPlaylists.value - playlistId
+        viewModelScope.launch(vmExceptionHandler) {
+            runCatching {
+                musicRepository.deletePlaylist(playlistId)
+                _userPlaylists.value = _userPlaylists.value - playlistId
+            }
         }
     }
 
     fun removeTrackFromPlaylist(playlistId: String, trackId: String) {
-        viewModelScope.launch {
-            musicRepository.removeTrackFromPlaylist(playlistId, trackId)
-            val currentList = _userPlaylists.value[playlistId].orEmpty()
-            _userPlaylists.value = _userPlaylists.value + (playlistId to currentList.filterNot { it.id == trackId })
+        viewModelScope.launch(vmExceptionHandler) {
+            runCatching {
+                musicRepository.removeTrackFromPlaylist(playlistId, trackId)
+                val currentList = _userPlaylists.value[playlistId].orEmpty()
+                _userPlaylists.value = _userPlaylists.value + (playlistId to currentList.filterNot { it.id == trackId })
+            }
         }
     }
 
     fun addTrackToPlaylist(playlistId: String, trackId: String) {
-        viewModelScope.launch {
-            val track = allTracks.value.firstOrNull { it.id == trackId }
-                ?: onlineSearchResults.value.firstOrNull { it.id == trackId }
-                ?: trendingHits.value.firstOrNull { it.id == trackId }
-                ?: freshReleases.value.firstOrNull { it.id == trackId }
-                ?: personalizedTracks.value.firstOrNull { it.id == trackId }
-                ?: downloadedTracks.value.firstOrNull { it.id == trackId }
-                ?: playerState.value.currentTrack?.takeIf { it.id == trackId }
-                ?: musicRepository.getTrackById(trackId)
-            if (track != null) {
-                musicRepository.insertTrack(track)
+        viewModelScope.launch(vmExceptionHandler) {
+            runCatching {
+                val track = allTracks.value.firstOrNull { it.id == trackId }
+                    ?: onlineSearchResults.value.firstOrNull { it.id == trackId }
+                    ?: trendingHits.value.firstOrNull { it.id == trackId }
+                    ?: freshReleases.value.firstOrNull { it.id == trackId }
+                    ?: personalizedTracks.value.firstOrNull { it.id == trackId }
+                    ?: downloadedTracks.value.firstOrNull { it.id == trackId }
+                    ?: playerState.value.currentTrack?.takeIf { it.id == trackId }
+                    ?: musicRepository.getTrackById(trackId)
+                if (track != null) {
+                    musicRepository.insertTrack(track)
+                }
+                musicRepository.addTrackToPlaylist(playlistId, trackId)
+                if (track != null) {
+                    val currentList = _userPlaylists.value[playlistId].orEmpty()
+                    _userPlaylists.value = _userPlaylists.value + (playlistId to (currentList.filterNot { it.id == track.id } + track))
+                }
             }
-            musicRepository.addTrackToPlaylist(playlistId, trackId)
-            if (track != null) {
+        }
+    }
+
+    fun addTrackToPlaylist(playlistId: String, track: Track) {
+        viewModelScope.launch(vmExceptionHandler) {
+            runCatching {
+                musicRepository.insertTrack(track)
+                musicRepository.addTrackToPlaylist(playlistId, track.id)
                 val currentList = _userPlaylists.value[playlistId].orEmpty()
                 _userPlaylists.value = _userPlaylists.value + (playlistId to (currentList.filterNot { it.id == track.id } + track))
             }
         }
     }
 
-    fun addTrackToPlaylist(playlistId: String, track: Track) {
-        viewModelScope.launch {
-            musicRepository.insertTrack(track)
-            musicRepository.addTrackToPlaylist(playlistId, track.id)
-            val currentList = _userPlaylists.value[playlistId].orEmpty()
-            _userPlaylists.value = _userPlaylists.value + (playlistId to (currentList.filterNot { it.id == track.id } + track))
+    fun togglePlaylistLike(playlist: Playlist) {
+        viewModelScope.launch(vmExceptionHandler) {
+            runCatching { musicRepository.togglePlaylistLike(playlist.id, playlist.isLiked) }
         }
     }
 
-    fun togglePlaylistLike(playlist: Playlist) {
-        viewModelScope.launch { musicRepository.togglePlaylistLike(playlist.id, playlist.isLiked) }
-    }
-
     fun clearStreamCacheAndReset() {
-        viewModelScope.launch {
+        viewModelScope.launch(vmExceptionHandler) {
             resolverEngine.clearCache()
             searchQuery.value = ""
             onlineSearchResults.value = emptyList()
@@ -1013,42 +1125,45 @@ class CascadeViewModel(
     fun playNext(track: Track) = playerManager.playNext(track)
 
     fun playDownloadedTrack(trackId: String) {
-        viewModelScope.launch {
-            val track = musicRepository.getTrackById(trackId)
-                ?: activeDownloads.value.firstOrNull { it.trackId == trackId }?.let { dl ->
-                    Track(
-                        id = dl.trackId,
-                        title = dl.title,
-                        artist = dl.artist,
-                        album = dl.title,
-                        durationMs = 0L,
-                        artUrl = dl.artUrl,
-                        audioUrl = dl.localFilePath ?: "",
-                        localPath = dl.localFilePath,
-                        isDownloaded = true
-                    )
-                }
-            if (track != null) playerManager.playTrack(track)
+        viewModelScope.launch(vmExceptionHandler) {
+            runCatching {
+                val track = downloadedTracks.value.firstOrNull { it.id == trackId }
+                    ?: musicRepository.getTrackById(trackId)
+                    ?: activeDownloads.value.firstOrNull { it.trackId == trackId }?.let { dl ->
+                        Track(
+                            id = dl.trackId,
+                            title = dl.title,
+                            artist = dl.artist,
+                            album = dl.title,
+                            durationMs = 0L,
+                            artUrl = dl.artUrl,
+                            audioUrl = dl.localFilePath ?: "",
+                            localPath = dl.localFilePath,
+                            isDownloaded = true
+                        )
+                    }
+                if (track != null) playerManager.playTrack(track)
+            }
         }
     }
 
     fun deleteTrackFromHistory(trackId: String) {
-        viewModelScope.launch { musicRepository.deleteTrackFromHistory(trackId) }
+        viewModelScope.launch(vmExceptionHandler) { runCatching { musicRepository.deleteTrackFromHistory(trackId) } }
     }
 
     fun clearAllHistory() {
-        viewModelScope.launch { musicRepository.clearAllHistory() }
+        viewModelScope.launch(vmExceptionHandler) { runCatching { musicRepository.clearAllHistory() } }
     }
 
     fun toggleAutoSuggest() {
         autoSuggestManager.toggleAutoSuggest()
-        if (autoSuggestManager.isAutoSuggestEnabled.value) fetchAndAppendSuggestions()
+        if (autoSuggestManager.isAutoSuggestEnabled.value && !isOfflineMode.value) fetchAndAppendSuggestions()
     }
 
     fun fetchAndAppendSuggestions() {
-        if (!isAutoSuggestEnabled.value) return
+        if (!isAutoSuggestEnabled.value || isOfflineMode.value) return
         val seed = playerState.value.currentTrack ?: return
-        viewModelScope.launch {
+        viewModelScope.launch(vmExceptionHandler) {
             runCatching {
                 val currentQueue = playerState.value.queue
                 val freshTracks = autoSuggestManager.fetchNextSuggestions(seed, currentQueue, maxTracksToAppend = 3)

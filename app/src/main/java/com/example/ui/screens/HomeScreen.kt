@@ -42,8 +42,11 @@ import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
 import com.example.ui.components.AddToPlaylistModal
 import com.example.ui.components.CreatePlaylistModal
+import com.example.ui.components.ManipurCalendarNotificationEngine
 import com.example.ui.components.SuggestedArtistItem
 import com.example.ui.theme.*
+import com.seitharol.ui.components.HeadphoneSvgIcon
+import com.seitharol.ui.components.NotificationBellAlertSvgIcon
 import com.seitharol.ui.components.PlaylistThumbnailWithBadge
 import java.util.Calendar
 
@@ -133,6 +136,8 @@ fun HomeScreen(
     modifier: Modifier = Modifier
 ) {
     val allTracks by viewModel.allTracks.collectAsState()
+    val downloadedTracks by viewModel.downloadedTracks.collectAsState()
+    val isOfflineMode by viewModel.isOfflineMode.collectAsState()
     val trendingHits by viewModel.trendingHits.collectAsState()
     val freshReleases by viewModel.freshReleases.collectAsState()
     val personalizedTracks by viewModel.personalizedTracks.collectAsState()
@@ -141,18 +146,32 @@ fun HomeScreen(
     val playlists by viewModel.playlists.collectAsState()
     val activeHistory by viewModel.activeHistory.collectAsState()
     val likedTracks by viewModel.likedTracks.collectAsState()
-    val isDarkTheme = LocalIsDarkTheme.current
+    val hasUnreadNotifications by ManipurCalendarNotificationEngine.hasUnreadAlerts.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
     val appPreferences = remember { com.example.data.AppPreferences(context) }
     val userSettings by appPreferences.settings.collectAsState()
     val recentSearches by appPreferences.recentSearches.collectAsState()
 
-    // Deduplicate pools to ensure no duplicate songs appear
-    val deduplicatedAllTracks = remember(allTracks) {
-        allTracks.distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
+    LaunchedEffect(Unit) {
+        runCatching { ManipurCalendarNotificationEngine.checkAndDispatchDailyNotification(context) }
     }
-    val deduplicatedTrendingHits = remember(trendingHits) {
-        trendingHits.distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
+
+    // Deduplicate pools to ensure no duplicate songs appear; in Offline Mode filter strictly to downloaded tracks
+    val deduplicatedAllTracks = remember(allTracks, downloadedTracks, isOfflineMode) {
+        val basePool = if (isOfflineMode) {
+            downloadedTracks
+        } else {
+            (downloadedTracks + allTracks)
+        }
+        basePool.distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
+    }
+    val deduplicatedTrendingHits = remember(trendingHits, downloadedTracks, isOfflineMode) {
+        val basePool = if (isOfflineMode) {
+            downloadedTracks
+        } else {
+            trendingHits
+        }
+        basePool.distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
     }
 
     val currentlyPlayingSongId = playerState.currentTrack?.id
@@ -167,16 +186,23 @@ fun HomeScreen(
     }
 
     // Prepare Fresh New Music Items (Deduplicated, excluding Hero & Currently Playing)
-    val freshItems = remember(freshReleases, deduplicatedTrendingHits, deduplicatedAllTracks, excludedHeroIds) {
-        val pool = if (freshReleases.isNotEmpty()) freshReleases.distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
-        else if (deduplicatedTrendingHits.isNotEmpty()) deduplicatedTrendingHits.take(12)
-        else deduplicatedAllTracks.take(12)
+    val freshItems = remember(freshReleases, deduplicatedTrendingHits, deduplicatedAllTracks, excludedHeroIds, isOfflineMode) {
+        val pool = if (isOfflineMode) {
+            deduplicatedAllTracks.take(12)
+        } else if (freshReleases.isNotEmpty()) {
+            freshReleases.distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
+        } else if (deduplicatedTrendingHits.isNotEmpty()) {
+            deduplicatedTrendingHits.take(12)
+        } else {
+            deduplicatedAllTracks.take(12)
+        }
         pool.filterNot { it.id in excludedHeroIds }.take(12).map { it.toHomeMediaItem() }
     }
 
-    // Prepare YouTube Mixes Shelf (only authentic continuous mixes from YouTube Music, no synthetic mocks)
-    val youtubeMixes = remember(personalizedTracks) {
-        personalizedTracks
+    // Prepare YouTube Mixes Shelf (only authentic continuous mixes from YouTube Music when online)
+    val youtubeMixes = remember(personalizedTracks, isOfflineMode) {
+        if (isOfflineMode) emptyList()
+        else personalizedTracks
             .filter { it.id.startsWith("RD") }
             .map { it.toHomeMediaItem(isMix = true) }
             .distinctBy { it.id }
@@ -220,8 +246,15 @@ fun HomeScreen(
     }
 
     // Prepare Spotify-Style 2-Column "Speed Dial / Quick Picks" Bento Items (2x3 grid = 6 items)
-    // Prioritizes genuine playable songs similar to what has been listened to or searched recently
-    val quickDialItems = remember(personalizedTracks, activeHistory, trendingItems, recentSearches, excludedHeroIds) {
+    val quickDialItems = remember(personalizedTracks, activeHistory, trendingItems, downloadedTracks, isOfflineMode, recentSearches, excludedHeroIds) {
+        if (isOfflineMode) {
+            return@remember downloadedTracks
+                .filterNot { it.id in excludedHeroIds }
+                .map { it.toHomeMediaItem() }
+                .distinctBy { it.id }
+                .take(6)
+        }
+
         fun isAuthenticCleanSong(item: HomeMediaItem): Boolean {
             val a = item.subtitle.lowercase().trim()
             val t = item.title.lowercase().trim()
@@ -277,13 +310,12 @@ fun HomeScreen(
     }
 
     // Dynamic suggested artists strictly personalized from user's listening history, liked songs, and recent searches (strictly max 4)
-    val dynamicArtists = remember(activeHistory, likedTracks, recentSearches, trendingHits) {
+    val dynamicArtists = remember(activeHistory, likedTracks, recentSearches, trendingHits, downloadedTracks) {
         val artistScores = mutableMapOf<String, Int>()
         fun isValidArtist(a: String): Boolean {
             val lower = a.lowercase().trim()
             return lower.isNotBlank() && !bannedKeywords.any { lower.contains(it) }
         }
-        // Strictly score based on listening frequency (weight 2), user likes (weight 3), and searches (weight 2)
         activeHistory.forEach { track ->
             val a = track.artist.trim()
             if (isValidArtist(a)) {
@@ -294,6 +326,12 @@ fun HomeScreen(
             val a = track.artist.trim()
             if (isValidArtist(a)) {
                 artistScores[a] = (artistScores[a] ?: 0) + 3
+            }
+        }
+        downloadedTracks.forEach { track ->
+            val a = track.artist.trim()
+            if (isValidArtist(a)) {
+                artistScores[a] = (artistScores[a] ?: 0) + 2
             }
         }
         recentSearches.forEach { query ->
@@ -307,11 +345,9 @@ fun HomeScreen(
             .sortedByDescending { it.value }
             .map { it.key }
 
-        // If user has listened/liked/searched artists, show ONLY their top personalized artists (strictly max 4)
         if (personalized.isNotEmpty()) {
             personalized.take(4)
         } else {
-            // Only if brand-new user with zero history and zero likes, show at most 4 trending artists
             trendingHits
                 .map { it.artist.trim() }
                 .filter { isValidArtist(it) }
@@ -356,12 +392,15 @@ fun HomeScreen(
             .statusBarsPadding()
             .testTag("home_screen")
     ) {
+        // ContentPadding bottom is 0.dp so the Kangla Gate footer image sits flush against
+        // the exact bottommost edge of the HomeScreen; artist spacing is added inside the artist section.
         LazyColumn(
-            contentPadding = PaddingValues(bottom = 195.dp),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 0.dp),
             verticalArrangement = Arrangement.spacedBy(26.dp)
         ) {
             // ────────────────────────────────────────────────────────────
-            // Top Navigation Bar: "SEITHAROL" (Auto-suggest removed)
+            // Top Navigation Bar: "SEITHAROL"
             // ────────────────────────────────────────────────────────────
             item {
                 Row(
@@ -411,11 +450,11 @@ fun HomeScreen(
                             onClick = onOpenNotifications
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Notifications,
-                                    contentDescription = "Notifications",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp)
+                                NotificationBellAlertSvgIcon(
+                                    tint = if (hasUnreadNotifications) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    hasUnreadAlert = hasUnreadNotifications,
+                                    alertDotColor = Color(0xFFFFB74D),
+                                    modifier = Modifier.size(21.dp)
                                 )
                             }
                         }
@@ -479,7 +518,7 @@ fun HomeScreen(
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Search songs, artists, albums, or mixes...",
+                                text = if (isOfflineMode) "Search your downloaded offline songs..." else "Search songs, artists, albums, or mixes...",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                                 fontSize = 14.sp,
                                 fontFamily = OutfitFontFamily,
@@ -491,8 +530,65 @@ fun HomeScreen(
                 }
             }
 
+            if (isOfflineMode) {
+                item {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AirplanemodeActive,
+                                    contentDescription = "Airplane Mode Offline",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "Airplane Mode Offline Active",
+                                        fontFamily = SyneFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "${downloadedTracks.size} cached tracks ready for pure offline playback",
+                                        fontFamily = OutfitFontFamily,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            TextButton(onClick = { viewModel.setOfflineMode(false) }) {
+                                Text(
+                                    text = "Go Online",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // ────────────────────────────────────────────────────────────
-            // 1. YouTube Music Style Category Filter Chips (Pure White active state)
+            // 1. YouTube Music Style Category Filter Chips
             // ────────────────────────────────────────────────────────────
             item {
                 LazyRow(
@@ -547,8 +643,6 @@ fun HomeScreen(
                 }
             }
 
-
-
             // ────────────────────────────────────────────────────────────
             // First-launch empty state (when offline or loading hasn't completed yet)
             // ────────────────────────────────────────────────────────────
@@ -571,30 +665,36 @@ fun HomeScreen(
                                 modifier = Modifier.size(48.dp)
                             )
                             Text(
-                                text = "No content loaded yet",
+                                text = if (isOfflineMode) "No offline songs downloaded yet" else "No content loaded yet",
                                 color = MaterialTheme.colorScheme.onBackground,
                                 fontFamily = SyneFontFamily,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 17.sp
                             )
                             Text(
-                                text = "Check your internet connection\nand tap Retry to load music.",
+                                text = if (isOfflineMode)
+                                    "Disable Airplane Mode Offline or download tracks first to listen offline."
+                                else
+                                    "Check your internet connection\nand tap Retry to load music.",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontFamily = OutfitFontFamily,
                                 fontSize = 14.sp,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                textAlign = TextAlign.Center
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Surface(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(24.dp))
-                                    .clickable { viewModel.loadHomeScreenMusic() }
+                                    .clickable {
+                                        if (isOfflineMode) viewModel.setOfflineMode(false)
+                                        else viewModel.loadHomeScreenMusic()
+                                    }
                                     .testTag("home_retry_btn"),
                                 shape = RoundedCornerShape(24.dp),
                                 color = MaterialTheme.colorScheme.primary
                             ) {
                                 Text(
-                                    text = "  Retry  ",
+                                    text = if (isOfflineMode) "  Go Online  " else "  Retry  ",
                                     color = MaterialTheme.colorScheme.onPrimary,
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Medium,
@@ -675,8 +775,8 @@ fun HomeScreen(
             // ────────────────────────────────────────────────────────────
             if (trendingItems.isNotEmpty()) {
                 item {
-                    val shelfTitle = if (isAllMood) "Trending Songs for You" else "$selectedMood Top Songs"
-                    val shelfSubtitle = if (isAllMood) "Swipe for top charts & viral tracks" else "Popular releases under $selectedMood"
+                    val shelfTitle = if (isOfflineMode) "Offline Library Tracks" else if (isAllMood) "Trending Songs for You" else "$selectedMood Top Songs"
+                    val shelfSubtitle = if (isOfflineMode) "Ready for zero-data playback" else if (isAllMood) "Swipe for top charts & viral tracks" else "Popular releases under $selectedMood"
                     TrendingSongsHorizontalShelf(
                         tracks = trendingItems,
                         title = shelfTitle,
@@ -707,7 +807,7 @@ fun HomeScreen(
             }
 
             // ────────────────────────────────────────────────────────────
-            // 4. "Fresh New Music" — High-Res Editorial Cards (No Circle Div!)
+            // 4. "Fresh New Music" — High-Res Editorial Cards with Headphone SVG
             // ────────────────────────────────────────────────────────────
             if (freshItems.isNotEmpty()) {
                 item {
@@ -756,27 +856,18 @@ fun HomeScreen(
             }
 
             // ────────────────────────────────────────────────────────────
-            // 7. "Suggested Artists" + Kangla Gate Aesthetic Footer Image
+            // 7. "Suggested Artists" (with dedicated bottom spacing for artists)
+            //    + Kangla Gate Aesthetic Footer Image pinned flush to the very bottom edge (0.dp)!
             // ────────────────────────────────────────────────────────────
             item {
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 16.dp)
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    // Kangla Gate Aesthetic Footer Image (supports slight overlap behind Suggested Artists)
-                    HomeScreenKanglaFooterImage(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.BottomCenter)
-                            .padding(top = if (dynamicArtists.isNotEmpty()) 96.dp else 0.dp)
-                    )
-
                     if (dynamicArtists.isNotEmpty()) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 110.dp)
+                                .padding(bottom = 195.dp)
                         ) {
                             SectionHeader(
                                 title = "Suggested Artists",
@@ -795,7 +886,16 @@ fun HomeScreen(
                                 }
                             }
                         }
+                    } else {
+                        Spacer(modifier = Modifier.height(195.dp))
                     }
+
+                    // Kangla Gate Aesthetic Footer Image — bottom edge is strictly flush with the very bottom of HomeScreen
+                    HomeScreenKanglaFooterImage(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.BottomCenter)
+                    )
                 }
             }
         }
@@ -857,7 +957,7 @@ fun AestheticMusicHomeScreen(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
-        contentPadding = PaddingValues(bottom = 110.dp),
+        contentPadding = PaddingValues(bottom = 0.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp)
     ) {
         // 1. Mood & Genre Filter Chips (YouTube Music / Spotify style)
@@ -908,7 +1008,7 @@ fun AestheticMusicHomeScreen(
             )
         }
 
-        // 4. FRESH NEW MUSIC — High-Res Editorial Cards (No Circle Div!)
+        // 4. FRESH NEW MUSIC — High-Res Editorial Cards with Headphone SVG
         item {
             FreshNewMusicShelf(
                 tracks = freshNewMusic,
@@ -938,6 +1038,17 @@ fun AestheticMusicHomeScreen(
                     items = albumsAndPlaylists,
                     badgeText = null,
                     onItemClick = onMixOrPlaylistClick
+                )
+            }
+        }
+
+        item {
+            Box(modifier = Modifier.fillMaxWidth()) {
+                Spacer(modifier = Modifier.height(195.dp))
+                HomeScreenKanglaFooterImage(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.BottomCenter)
                 )
             }
         }
@@ -982,11 +1093,9 @@ fun TrendingSongsHorizontalShelf(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(280.dp) // Comfortably fits 4 rows of 60.dp cards with 10.dp spacing
+                .height(280.dp)
         ) {
-            itemsIndexed(tracks, key = { idx, item -> "${item.id}_$idx" }) { index, track ->
-                val rank = index + 1
-                val isTopThree = rank <= 3
+            itemsIndexed(tracks, key = { idx, item -> "${item.id}_$idx" }) { _, track ->
                 val isPlaying = currentPlayingId == track.id
                 var showMenu by remember { mutableStateOf(false) }
 
@@ -994,7 +1103,7 @@ fun TrendingSongsHorizontalShelf(
                     shape = RoundedCornerShape(12.dp),
                     color = if (isPlaying) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                     modifier = Modifier
-                        .width(320.dp) // Leaves right-edge peek inviting horizontal swipe
+                        .width(320.dp)
                         .height(60.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .clickable { onTrackClick(track) }
@@ -1015,7 +1124,6 @@ fun TrendingSongsHorizontalShelf(
                                 .clip(RoundedCornerShape(10.dp))
                         )
 
-                        // Clean space without stray div dot
                         Spacer(modifier = Modifier.width(12.dp))
 
                         // Song Title & Artist / Album
@@ -1135,7 +1243,7 @@ fun TrendingSongsHorizontalShelf(
 }
 
 /**
- * Redesigned "Fresh New Music" Shelf — High-Res Square Cards (176.dp, NO Circle Div!)
+ * Redesigned "Fresh New Music" Shelf — High-Res Square Cards (176.dp) with Headphone SVG Badge
  */
 @Composable
 fun FreshNewMusicShelf(
@@ -1166,7 +1274,7 @@ fun FreshNewMusicShelf(
                             .size(176.dp)
                             .clip(RoundedCornerShape(14.dp))
                     ) {
-                        // Full-bleed High-Res Cover Art (No circular clip!)
+                        // Full-bleed High-Res Cover Art
                         AsyncImage(
                             model = upgradeThumbnail(track.thumbnailUrl),
                             contentDescription = track.title,
@@ -1206,7 +1314,7 @@ fun FreshNewMusicShelf(
                             )
                         }
 
-                        // Floating Rounded Square Play Action (Bottom-Right, NO Circle)
+                        // Floating Rounded Square Headphone SVG Action (Bottom-Right)
                         Surface(
                             color = MaterialTheme.colorScheme.primary,
                             shape = RoundedCornerShape(10.dp),
@@ -1215,12 +1323,12 @@ fun FreshNewMusicShelf(
                                 .padding(10.dp)
                                 .size(34.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = "Play",
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.padding(6.dp)
-                            )
+                            Box(contentAlignment = Alignment.Center) {
+                                HeadphoneSvgIcon(
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
                         }
                     }
 
@@ -1260,7 +1368,6 @@ fun QuickDialBentoSection(
     val topItems = items.take(12)
     val columns = topItems.chunked(2)
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        // Responsive card column width: fits 2 columns side-by-side within device width without overflowing
         val cardWidth = ((maxWidth - 42.dp) / 2f).coerceIn(148.dp, 210.dp)
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp),
@@ -1273,47 +1380,48 @@ fun QuickDialBentoSection(
                     modifier = Modifier.width(cardWidth),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                colItems.forEach { item ->
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(62.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { onItemClick(item) }
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            AsyncImage(
-                                model = upgradeThumbnail(item.thumbnailUrl),
-                                contentDescription = item.title,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.size(62.dp)
-                            )
-                            Column(
-                                modifier = Modifier
-                                    .padding(horizontal = 12.dp, vertical = 4.dp)
-                                    .weight(1f),
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Text(
-                                    text = item.title,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    fontSize = 13.sp,
-                                    fontFamily = SyneFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
+                    colItems.forEach { item ->
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(62.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onItemClick(item) }
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                AsyncImage(
+                                    model = upgradeThumbnail(item.thumbnailUrl),
+                                    contentDescription = item.title,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.size(62.dp)
                                 )
-                                if (item.subtitle.isNotBlank() && !item.subtitle.equals(item.title, ignoreCase = true)) {
+                                Column(
+                                    modifier = Modifier
+                                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                                        .weight(1f),
+                                    verticalArrangement = Arrangement.Center
+                                ) {
                                     Text(
-                                        text = item.subtitle,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                        fontSize = 11.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        maxLines = 1,
+                                        text = item.title,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontSize = 13.sp,
+                                        fontFamily = SyneFontFamily,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 2,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    if (item.subtitle.isNotBlank() && !item.subtitle.equals(item.title, ignoreCase = true)) {
+                                        Text(
+                                            text = item.subtitle,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                            fontSize = 11.sp,
+                                            fontFamily = OutfitFontFamily,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1322,7 +1430,6 @@ fun QuickDialBentoSection(
             }
         }
     }
-}
 }
 
 /**
@@ -1424,11 +1531,10 @@ private fun SectionHeader(title: String, subtitle: String) {
     }
 }
 
-
 /**
  * Renders the Kangla Gate aesthetic footer image (`app/src/main/res/drawable/HomeScreen-footer.png`
- * or normalized `homescreen_footer`) with transparent background at the bottom of HomeScreen,
- * allowing subtle overlap behind the Suggested Artists section.
+ * or normalized `homescreen_footer`) with its bottom edge strictly flush at the bottommost edge
+ * (`0.dp`) of the HomeScreen.
  */
 @Composable
 fun HomeScreenKanglaFooterImage(modifier: Modifier = Modifier) {
@@ -1449,7 +1555,7 @@ fun HomeScreenKanglaFooterImage(modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(165.dp),
+            .wrapContentHeight(Alignment.Bottom),
         contentAlignment = Alignment.BottomCenter
     ) {
         if (drawableResId != 0) {
@@ -1457,16 +1563,22 @@ fun HomeScreenKanglaFooterImage(modifier: Modifier = Modifier) {
                 painter = androidx.compose.ui.res.painterResource(id = drawableResId),
                 contentDescription = "Kangla Gate Footer",
                 contentScale = ContentScale.FillWidth,
+                alignment = Alignment.BottomCenter,
                 alpha = 0.88f,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
             )
         } else {
             AsyncImage(
                 model = "file:///android_asset/homescreen_footer.png",
                 contentDescription = "Kangla Gate Footer",
                 contentScale = ContentScale.FillWidth,
+                alignment = Alignment.BottomCenter,
                 alpha = 0.88f,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
             )
         }
     }

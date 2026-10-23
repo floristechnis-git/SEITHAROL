@@ -82,6 +82,7 @@ class DeviceInnerTubeResolver : Resolver {
         for (attempt in clientConfigs) {
             try {
                 val result = executePlayerRequest(
+                    req = req,
                     videoId = cleanVideoId,
                     attempt = attempt,
                     sts = sts,
@@ -112,6 +113,7 @@ class DeviceInnerTubeResolver : Resolver {
     )
 
     private fun executePlayerRequest(
+        req: ResolveRequest,
         videoId: String,
         attempt: ClientAttempt,
         sts: Int,

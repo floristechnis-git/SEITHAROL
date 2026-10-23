@@ -11,6 +11,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URLDecoder
 import java.util.Locale
 
 class YouTubeInnerTubeProvider : AudioStreamProvider {
@@ -480,6 +481,33 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                 resolvedBy = "On-Device InnerTube (${profile.name})",
                 latencyMs = 15
             )
+        }
+    }
+
+    private fun extractAndDecipherSignatureCipher(cipherStr: String): String? {
+        return try {
+            val params = mutableMapOf<String, String>()
+            for (param in cipherStr.split("&")) {
+                val idx = param.indexOf('=')
+                if (idx != -1) {
+                    val key = URLDecoder.decode(param.substring(0, idx), "UTF-8")
+                    val value = URLDecoder.decode(param.substring(idx + 1), "UTF-8")
+                    params[key] = value
+                }
+            }
+            val rawUrl = params["url"] ?: return null
+            val sig = params["s"]
+            val sigParam = params["sp"] ?: "sig"
+            if (sig.isNullOrBlank()) return rawUrl
+
+            val activeOps = KotlinJsInterp.getActiveCipherOperations()
+            val decipheredSig = KotlinJsInterp.decipherSignature(sig, activeOps)
+            if (decipheredSig.isBlank() || decipheredSig == sig) return null
+            val separator = if (rawUrl.contains("?")) "&" else "?"
+            "$rawUrl$separator$sigParam=$decipheredSig"
+        } catch (e: Exception) {
+            Log.w(TAG, "extractAndDecipherSignatureCipher failed: ${e.message}")
+            null
         }
     }
 

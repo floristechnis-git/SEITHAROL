@@ -2,7 +2,11 @@ package com.example.data.repository
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Environment
 import android.util.Log
@@ -12,13 +16,21 @@ import com.example.data.local.*
 import com.example.data.model.*
 import com.example.network.NetworkClients
 import com.example.resolver.ResolverEngine
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.coroutineContext
 
 class MusicRepository(
     private val db: CascadeDatabase
@@ -66,7 +78,6 @@ class MusicRepository(
         val existing = historyDao.getRecentHistoryForTrack(track.id, fiveMinutesAgo)
         if (existing != null) return@withContext
 
-        // Preserve existing isLiked / isDownloaded flags if already in Room
         val existingTrack = trackDao.getTrackById(track.id)
         val mergedTrack = track.copy(
             isLiked = existingTrack?.isLiked ?: track.isLiked,
@@ -196,7 +207,6 @@ class MusicRepository(
                 } else {
                     pl.coverUrl
                 }
-                // Touch playlist entity so Room's getAllPlaylists() Flow emits immediately with updated trackCount!
                 playlistDao.insertPlaylist(pl.copy(coverUrl = updatedCover))
             }
         }
@@ -336,13 +346,47 @@ class DownloadRepository(
     private val db: CascadeDatabase,
     private val resolverEngine: ResolverEngine
 ) {
+    private val appContext = context.applicationContext
     private val downloadDao = db.downloadDao()
     private val trackDao = db.trackDao()
-    private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+    private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val activeDownloadJobs = ConcurrentHashMap<String, Job>()
+    private val activeTrackTitles = ConcurrentHashMap<String, String>()
+    private val notificationManager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
     private val DOWNLOAD_CHANNEL_ID = "seitharol_download_channel"
+
+    companion object {
+        const val ACTION_CANCEL_TRACK_DOWNLOAD = "com.example.ACTION_CANCEL_TRACK_DOWNLOAD"
+        const val EXTRA_TRACK_ID = "EXTRA_TRACK_ID"
+    }
+
+    private val cancelReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            if (intent?.action == ACTION_CANCEL_TRACK_DOWNLOAD) {
+                val trackId = intent.getStringExtra(EXTRA_TRACK_ID).orEmpty()
+                if (trackId.isNotBlank()) {
+                    cancelDownload(trackId)
+                }
+            }
+        }
+    }
 
     init {
         createDownloadNotificationChannel()
+        registerCancelReceiver()
+    }
+
+    private fun registerCancelReceiver() {
+        try {
+            val filter = IntentFilter(ACTION_CANCEL_TRACK_DOWNLOAD)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                appContext.registerReceiver(cancelReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                appContext.registerReceiver(cancelReceiver, filter)
+            }
+        } catch (t: Throwable) {
+            Log.w("DownloadRepository", "Cancel receiver registration skipped: ${t.message}")
+        }
     }
 
     private fun createDownloadNotificationChannel() {
@@ -359,16 +403,35 @@ class DownloadRepository(
         }
     }
 
-    private fun updateDownloadNotification(title: String, progress: Int, isCompleted: Boolean = false, isFailed: Boolean = false) {
+    private fun buildCancelPendingIntent(trackId: String, notifId: Int): PendingIntent {
+        val cancelIntent = Intent(ACTION_CANCEL_TRACK_DOWNLOAD).apply {
+            setPackage(appContext.packageName)
+            putExtra(EXTRA_TRACK_ID, trackId)
+        }
+        return PendingIntent.getBroadcast(
+            appContext,
+            notifId,
+            cancelIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private fun updateDownloadNotification(
+        trackId: String,
+        title: String,
+        progress: Int,
+        isCompleted: Boolean = false,
+        isFailed: Boolean = false
+    ) {
         try {
             val notifId = title.hashCode()
             if (isCompleted || isFailed) {
                 notificationManager?.cancel(notifId)
 
-                val completedNotification = NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
+                val completedNotification = NotificationCompat.Builder(appContext, DOWNLOAD_CHANNEL_ID)
                     .setSmallIcon(R.drawable.ic_stat_music_note)
                     .setContentTitle(if (isFailed) "Download Failed" else "Download Completed")
-                    .setContentText(if (isFailed) "$title • Tap to retry" else "$title is ready for offline playback")
+                    .setContentText(if (isFailed) "$title • Tap to dismiss" else "$title is ready for offline playback")
                     .setPriority(NotificationCompat.PRIORITY_LOW)
                     .setOngoing(false)
                     .setAutoCancel(true)
@@ -380,10 +443,13 @@ class DownloadRepository(
             }
 
             val clamped = progress.coerceIn(0, 99)
-            val builder = NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
+            val cancelPending = buildCancelPendingIntent(trackId, notifId)
+            val builder = NotificationCompat.Builder(appContext, DOWNLOAD_CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_music_note)
                 .setContentTitle("Downloading $title")
-                .setContentText("$clamped%")
+                .setContentText("$clamped% • Tap to cancel")
+                .setContentIntent(cancelPending)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", cancelPending)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
@@ -405,7 +471,7 @@ class DownloadRepository(
                 artUrl = track?.artUrl ?: "",
                 tier = when (entity.tier) {
                     "Data Saver" -> DownloadTier.DATA_SAVER
-                    "High" -> DownloadTier.HIGH
+                    "High", "Lossless / Master" -> DownloadTier.HIGH
                     "Original" -> DownloadTier.ORIGINAL
                     else -> DownloadTier.STANDARD
                 },
@@ -426,8 +492,61 @@ class DownloadRepository(
 
     fun getTotalDownloadedBytes(): Flow<Long> = downloadDao.getTotalDownloadedBytes().map { it ?: 0L }
 
+    fun cancelDownload(trackId: String) {
+        val discoverService = runCatching {
+            com.seitharol.data.download.DownloadPreferencesAndService.getInstance(appContext)
+        }.getOrNull()
+        val canonicalId = discoverService?.canonicalTrackId(trackId) ?: trackId
+
+        activeDownloadJobs.remove(trackId)?.cancel()
+        activeDownloadJobs.remove(canonicalId)?.cancel()
+
+        val savedTitle = activeTrackTitles.remove(trackId) ?: activeTrackTitles.remove(canonicalId)
+        if (savedTitle != null) {
+            notificationManager?.cancel(savedTitle.hashCode())
+        }
+
+        // Also cancel if this download was started by Discover's DownloadPreferencesAndService
+        val currentDiscoverState = discoverService?.downloadState?.value
+        if (currentDiscoverState is com.seitharol.data.download.DownloadTaskState.Downloading) {
+            if (currentDiscoverState.trackId == trackId ||
+                discoverService.canonicalTrackId(currentDiscoverState.trackId) == canonicalId
+            ) {
+                discoverService.cancelActiveDownload()
+            }
+        }
+
+        repoScope.launch {
+            runCatching {
+                val trackObj = trackDao.getTrackById(trackId) ?: trackDao.getTrackById(canonicalId)
+                trackObj?.title?.let { notificationManager?.cancel(it.hashCode()) }
+
+                val downloadDir = File(appContext.filesDir, "downloads")
+                if (downloadDir.exists()) {
+                    downloadDir.listFiles()?.forEach { f ->
+                        if ((f.name.startsWith("${trackId}_") || f.name.startsWith("${canonicalId}_")) && f.name.endsWith(".tmp")) {
+                            f.delete()
+                        }
+                    }
+                }
+                downloadDao.deleteDownload(trackId)
+                downloadDao.deleteDownload(canonicalId)
+            }
+        }
+    }
+
     suspend fun startDownload(track: Track, tier: DownloadTier) = withContext(Dispatchers.IO) {
-        val downloadDir = File(context.filesDir, "downloads").apply { if (!exists()) mkdirs() }
+        activeDownloadJobs[track.id]?.cancel()
+        val job = repoScope.launch {
+            executeDownload(track, tier)
+        }
+        activeDownloadJobs[track.id] = job
+        activeTrackTitles[track.id] = track.title
+        job.join()
+    }
+
+    private suspend fun executeDownload(track: Track, tier: DownloadTier) = withContext(Dispatchers.IO) {
+        val downloadDir = File(appContext.filesDir, "downloads").apply { if (!exists()) mkdirs() }
         val ext = if (tier.codec.contains("Opus", ignoreCase = true)) "opus" else "m4a"
         val destFile = File(downloadDir, "${track.id}_${tier.name.lowercase()}.$ext")
         val tempFile = File(downloadDir, "${track.id}_${tier.name.lowercase()}.tmp")
@@ -452,6 +571,7 @@ class DownloadRepository(
                     totalBytes = 4_000_000L
                 )
             )
+            updateDownloadNotification(track.id, track.title, 5)
 
             val resolvedStream = resolverEngine.resolveTrack(track)
             val streamUrl = resolvedStream.streamUrl
@@ -460,7 +580,6 @@ class DownloadRepository(
                 throw IllegalStateException("Empty stream URL resolved for ${track.title}")
             }
 
-            // Use client-matched headers so GoogleVideo CDN never rejects download with HTTP 403
             val clientHeaders = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(streamUrl)
             val requestBuilder = Request.Builder().url(streamUrl)
             clientHeaders.forEach { (k, v) -> requestBuilder.header(k, v) }
@@ -481,6 +600,7 @@ class DownloadRepository(
                         var lastProgressUpdate = System.currentTimeMillis()
 
                         while (input.read(buffer).also { bytesRead = it } != -1) {
+                            coroutineContext.ensureActive()
                             output.write(buffer, 0, bytesRead)
                             totalRead += bytesRead
 
@@ -499,7 +619,7 @@ class DownloadRepository(
                                         totalBytes = contentLength
                                     )
                                 )
-                                updateDownloadNotification(track.title, (progress * 100).toInt())
+                                updateDownloadNotification(track.id, track.title, (progress * 100).toInt())
                             }
                         }
                         output.flush()
@@ -530,13 +650,24 @@ class DownloadRepository(
                     )
                     trackDao.insertTrack(completedTrack.toEntity())
                     trackDao.setDownloaded(track.id, true, finalFile.absolutePath)
-                    updateDownloadNotification(track.title, 100, isCompleted = true)
+                    activeDownloadJobs.remove(track.id)
+                    activeTrackTitles.remove(track.id)
+                    updateDownloadNotification(track.id, track.title, 100, isCompleted = true)
                 } else {
                     if (tempFile.exists()) tempFile.delete()
                     throw IllegalStateException("Downloaded file was corrupt or smaller than 10KB (${tempFile.length()} bytes)")
                 }
             }
+        } catch (e: CancellationException) {
+            activeDownloadJobs.remove(track.id)
+            activeTrackTitles.remove(track.id)
+            if (tempFile.exists()) tempFile.delete()
+            notificationManager?.cancel(track.title.hashCode())
+            downloadDao.deleteDownload(track.id)
+            throw e
         } catch (e: Exception) {
+            activeDownloadJobs.remove(track.id)
+            activeTrackTitles.remove(track.id)
             Log.e("DownloadRepository", "Download failed for ${track.id}: ${e.message}", e)
             if (tempFile.exists()) tempFile.delete()
             if (destFile.exists() && destFile.length() <= 10_240L) destFile.delete()
@@ -551,7 +682,7 @@ class DownloadRepository(
                     totalBytes = 0L
                 )
             )
-            updateDownloadNotification(track.title, 0, isFailed = true)
+            updateDownloadNotification(track.id, track.title, 0, isFailed = true)
         }
     }
 
@@ -587,8 +718,9 @@ class DownloadRepository(
     }
 
     suspend fun deleteDownload(trackId: String) = withContext(Dispatchers.IO) {
+        cancelDownload(trackId)
         val discoverService = runCatching {
-            com.seitharol.data.download.DownloadPreferencesAndService.getInstance(context)
+            com.seitharol.data.download.DownloadPreferencesAndService.getInstance(appContext)
         }.getOrNull()
         val canonicalId = discoverService?.canonicalTrackId(trackId) ?: trackId
         val trackObj = trackDao.getTrackById(trackId) ?: trackDao.getTrackById(canonicalId)
@@ -596,14 +728,13 @@ class DownloadRepository(
 
         listOfNotNull(dl?.localPath, trackObj?.localPath).distinct().forEach { path ->
             if (path.startsWith("content://")) {
-                runCatching { context.contentResolver.delete(android.net.Uri.parse(path), null, null) }
+                runCatching { appContext.contentResolver.delete(android.net.Uri.parse(path), null, null) }
             } else {
                 val file = File(path.removePrefix("file://"))
                 if (file.exists()) file.delete()
             }
         }
 
-        // Also delete any matching public Seitharol file for this track title so rescan never recreates it
         val publicDir = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
             "Seitharol"
@@ -621,7 +752,6 @@ class DownloadRepository(
         trackDao.setDownloaded(trackId, false, null)
         trackDao.setDownloaded(canonicalId, false, null)
 
-        // Remove from Discover & Download preferences service so ghost items never remain in UI
         discoverService?.removeCompletedDownload(trackId, trackObj?.title)
         if (canonicalId != trackId) {
             discoverService?.removeCompletedDownload(canonicalId, trackObj?.title)
@@ -630,11 +760,8 @@ class DownloadRepository(
 
     suspend fun rescanLocalDownloads() = withContext(Dispatchers.IO) {
         try {
-            val downloadDir = File(context.filesDir, "downloads")
+            val downloadDir = File(appContext.filesDir, "downloads")
 
-            // Only scan internal app download directory by filename; public Seitharol directory is
-            // already tracked with canonical IDs in DownloadPreferencesAndService.completedDownloads
-            // (scanning publicDir by "Artist - Title.m4a" created fake duplicate TrackEntities!).
             val directoriesToScan = listOfNotNull(
                 downloadDir.takeIf { it.exists() }
             )
@@ -684,7 +811,7 @@ class DownloadRepository(
             }
 
             val discoverService = runCatching {
-                com.seitharol.data.download.DownloadPreferencesAndService.getInstance(context)
+                com.seitharol.data.download.DownloadPreferencesAndService.getInstance(appContext)
             }.getOrNull()
             discoverService?.completedDownloads?.value?.forEach { norm ->
                 if (!norm.localPath.isNullOrBlank()) {

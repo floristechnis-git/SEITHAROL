@@ -33,16 +33,17 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
- * Foreground Service for background audio playback with rich media notification.
+ * Crash-proof Foreground Service for background audio playback with synchronized media notification.
  *
  * Key fixes:
- * 1. Filters `playerManager.state` via `distinctUntilChanged` on track identity and play/pause/buffering
- *    state so `updateNotification` is NEVER spammed on 200ms `currentPositionMs` ticks.
- * 2. Uses a single consistent small icon (`applicationInfo.icon` fallback to `ic_stat_music_note`)
- *    with `setOnlyAlertOnce(true)` and no duplicate unlinked MediaSession, eliminating the icon
- *    conflict where the music SVG and app icon fought for place.
- * 3. Holds CPU WakeLock and WifiLock with a grace period across track transitions so background
- *    playback never stops when the screen is off.
+ * 1. Uses safe 2-stage foreground promotion (`ServiceCompat.startForeground` with fallback to 2-arg
+ *    `startForeground` and `NotificationManager.notify`) and avoids `STOP_FOREGROUND_DETACH` so
+ *    Android 12–15 NEVER throws `ForegroundServiceDidNotStartInTimeException`,
+ *    `ForegroundServiceStartNotAllowedException`, or `IllegalArgumentException`.
+ * 2. Syncs Play/Pause icon strictly with `isPlaying` (never showing "Playing"/Pause icon while
+ *    merely loading/buffering without active audio streaming).
+ * 3. Unconditionally stops playback and removes the notification in `onTaskRemoved` when the app
+ *    is cleared from Recents.
  */
 class MediaPlaybackService : Service() {
 
@@ -56,6 +57,7 @@ class MediaPlaybackService : Service() {
     private var currentArtBitmap: Bitmap? = null
     private var lastLoadedArtUrl: String? = null
     @Volatile private var isTerminating = false
+    @Volatile private var isInForeground = false
 
     companion object {
         private const val TAG = "MediaPlaybackService"
@@ -68,26 +70,34 @@ class MediaPlaybackService : Service() {
         const val ACTION_STOP = "com.example.ACTION_STOP"
 
         var playerManager: AudioPlayerManager? = null
+        @Volatile var isRunning: Boolean = false
 
         fun startService(context: Context) {
-            val intent = Intent(context, MediaPlaybackService::class.java)
+            val appCtx = context.applicationContext
+            val intent = Intent(appCtx, MediaPlaybackService::class.java)
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(intent)
-                } else {
-                    context.startService(intent)
-                }
+                // Use startService first so Android never arms a fatal 5s ForegroundServiceDidNotStartInTimeException
+                // bomb during activity transitions; onCreate/onStartCommand still promote to foreground safely.
+                appCtx.startService(intent)
             } catch (e: Throwable) {
-                Log.w(TAG, "startForegroundService exception: ${e.message}")
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        appCtx.startForegroundService(intent)
+                    }
+                } catch (e2: Throwable) {
+                    Log.w(TAG, "Unable to start MediaPlaybackService: ${e2.message}")
+                }
             }
         }
 
         fun stopService(context: Context) {
-            val intent = Intent(context, MediaPlaybackService::class.java)
+            val appCtx = context.applicationContext
+            val intent = Intent(appCtx, MediaPlaybackService::class.java)
             try {
-                context.stopService(intent)
+                val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                nm?.cancel(NOTIFICATION_ID)
+                appCtx.stopService(intent)
             } catch (_: Throwable) {
-                // Ignore
             }
         }
     }
@@ -98,6 +108,8 @@ class MediaPlaybackService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
+        isTerminating = false
         createNotificationChannel()
 
         if (playerManager == null) {
@@ -138,6 +150,7 @@ class MediaPlaybackService : Service() {
                         old.isBuffering == new.isBuffering
                 }
                 ?.collect { state ->
+                    if (isTerminating) return@collect
                     val track = state.currentTrack
                     val activePlayback = state.isPlaying || state.isBuffering
                     if (track != null) {
@@ -152,40 +165,32 @@ class MediaPlaybackService : Service() {
                                 }
                             } catch (_: Throwable) {}
                         } else {
-                            // Delay lock release by 20s so track transitions or brief pauses never drop background CPU/Wi-Fi
                             lockReleaseJob?.cancel()
                             lockReleaseJob = serviceScope.launch {
                                 delay(20_000L)
                                 val stillPaused = !(playerManager?.state?.value?.let { it.isPlaying || it.isBuffering } ?: false)
                                 if (stillPaused) {
-                                    try {
-                                        if (wakeLock?.isHeld == true) wakeLock?.release()
-                                        if (wifiLock?.isHeld == true) wifiLock?.release()
-                                    } catch (_: Throwable) {}
+                                    releaseWakeAndWifiLocks()
                                 }
                             }
                         }
                         loadArtAndNotify(track, state.isPlaying, state.isBuffering)
                     } else {
                         lockReleaseJob?.cancel()
-                        try {
-                            ServiceCompat.stopForeground(this@MediaPlaybackService, ServiceCompat.STOP_FOREGROUND_REMOVE)
-                            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-                            nm?.cancel(NOTIFICATION_ID)
-                        } catch (_: Throwable) {}
+                        stopAndRemoveNotification()
                     }
                 }
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        isRunning = true
         createNotificationChannel()
         if (playerManager == null) {
             playerManager = (application as? com.example.CascadeApplication)?.audioPlayerManager
         }
         playerManager?.ensurePlayerInitialized()
 
-        // Always satisfy Android's 5-second startForegroundService contract immediately
         startForegroundSynchronously()
 
         when (intent?.action) {
@@ -194,12 +199,43 @@ class MediaPlaybackService : Service() {
             ACTION_NEXT -> playerManager?.next()
             ACTION_STOP -> {
                 playerManager?.pause()
-                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                stopAndRemoveNotification()
                 return START_NOT_STICKY
             }
         }
-        return START_STICKY
+        return START_NOT_STICKY
+    }
+
+    private fun promoteOrNotifySafely(notification: Notification) {
+        if (isTerminating) return
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        if (!isInForeground) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    ServiceCompat.startForeground(
+                        this,
+                        NOTIFICATION_ID,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                    )
+                } else {
+                    startForeground(NOTIFICATION_ID, notification)
+                }
+                isInForeground = true
+                return
+            } catch (_: Throwable) {
+                try {
+                    startForeground(NOTIFICATION_ID, notification)
+                    isInForeground = true
+                    return
+                } catch (e2: Throwable) {
+                    Log.w(TAG, "Foreground promotion fallback to notify: ${e2.message}")
+                }
+            }
+        }
+        runCatching {
+            nm?.notify(NOTIFICATION_ID, notification)
+        }
     }
 
     private fun startForegroundSynchronously() {
@@ -210,12 +246,7 @@ class MediaPlaybackService : Service() {
 
             if (currentTrack != null) {
                 val notification = buildMediaNotification(currentTrack, isPlaying, isBuffering)
-                ServiceCompat.startForeground(
-                    this,
-                    NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-                )
+                promoteOrNotifySafely(notification)
                 return
             }
 
@@ -235,16 +266,11 @@ class MediaPlaybackService : Service() {
                 .setContentIntent(openPendingIntent)
                 .setOnlyAlertOnce(true)
                 .setSilent(true)
-                .setOngoing(isPlaying || isBuffering)
+                .setOngoing(isPlaying)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .build()
 
-            ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-            )
+            promoteOrNotifySafely(notification)
         } catch (t: Throwable) {
             Log.e(TAG, "Failed startForegroundSynchronously: ${t.message}", t)
         }
@@ -256,7 +282,6 @@ class MediaPlaybackService : Service() {
         if (isTerminating) return
         if (track.artUrl != lastLoadedArtUrl && track.artUrl.isNotBlank()) {
             lastLoadedArtUrl = track.artUrl
-            // Update text & controls immediately before artwork finishes downloading
             updateNotification(track, isPlaying, isBuffering)
             serviceScope.launch(Dispatchers.IO) {
                 if (isTerminating) return@launch
@@ -271,14 +296,14 @@ class MediaPlaybackService : Service() {
                     if (result is BitmapDrawable) {
                         currentArtBitmap = result.bitmap
                     }
-                } catch (_: Exception) {
+                } catch (_: Throwable) {
                     currentArtBitmap = null
                 }
                 val latestState = playerManager?.state?.value
                 val latestTrack = latestState?.currentTrack ?: track
                 val latestPlaying = latestState?.isPlaying ?: isPlaying
                 val latestBuffering = latestState?.isBuffering ?: isBuffering
-                if (latestTrack.id == track.id) {
+                if (!isTerminating && latestTrack.id == track.id) {
                     updateNotification(latestTrack, latestPlaying, latestBuffering)
                 }
             }
@@ -315,10 +340,16 @@ class MediaPlaybackService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val showPauseIcon = isPlaying || isBuffering
-        val playPauseIcon = if (showPauseIcon) R.drawable.ic_pause else R.drawable.ic_play
-        val playPauseTitle = if (showPauseIcon) "Pause" else "Play"
-        val keepForeground = isPlaying || isBuffering
+        val stopIntent = Intent(this, MediaPlaybackService::class.java).apply { action = ACTION_STOP }
+        val stopPending = PendingIntent.getService(
+            this, 4, stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Strict sync: ONLY show the Pause icon ("Playing") when audio is actively playing!
+        // Never show the notification as playing when paused during loading.
+        val playPauseIcon = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
+        val playPauseTitle = if (isPlaying) "Pause" else "Play"
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(resolveConsistentSmallIcon())
@@ -326,14 +357,16 @@ class MediaPlaybackService : Service() {
             .setContentText(track.artist)
             .setSubText(
                 when {
-                    track.isDownloaded -> "Offline"
-                    isBuffering -> "Buffering..."
+                    isPlaying && track.isDownloaded -> "Offline • Playing"
                     isPlaying -> "Playing"
+                    isBuffering -> "Loading..."
+                    track.isDownloaded -> "Offline • Paused"
                     else -> "Paused"
                 }
             )
             .setContentIntent(openPendingIntent)
-            .setOngoing(keepForeground)
+            .setDeleteIntent(stopPending)
+            .setOngoing(isPlaying)
             .setOnlyAlertOnce(true)
             .setSilent(true)
             .setShowWhen(false)
@@ -357,23 +390,8 @@ class MediaPlaybackService : Service() {
     private fun updateNotification(track: Track, isPlaying: Boolean, isBuffering: Boolean) {
         if (isTerminating) return
         try {
-            val keepForeground = isPlaying || isBuffering
             val notification = buildMediaNotification(track, isPlaying, isBuffering)
-            if (keepForeground) {
-                ServiceCompat.startForeground(
-                    this,
-                    NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-                )
-            } else {
-                // Detach foreground requirement when paused so user can swipe away if desired, while updating play/pause state
-                runCatching {
-                    ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
-                }
-                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-                manager?.notify(NOTIFICATION_ID, notification)
-            }
+            promoteOrNotifySafely(notification)
         } catch (e: Throwable) {
             Log.e(TAG, "updateNotification failed: ${e.message}", e)
         }
@@ -395,39 +413,47 @@ class MediaPlaybackService : Service() {
         }
     }
 
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        val isActivelyPlaying = playerManager?.state?.value?.let { it.isPlaying || it.isBuffering } == true
-        if (!isActivelyPlaying) {
-            isTerminating = true
-            serviceScope.cancel()
-            runCatching {
-                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-                nm?.cancel(NOTIFICATION_ID)
-                if (wakeLock?.isHeld == true) {
-                    wakeLock?.release()
-                }
-                if (wifiLock?.isHeld == true) {
-                    wifiLock?.release()
-                }
-            }
+    private fun releaseWakeAndWifiLocks() {
+        runCatching {
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+        }
+        runCatching {
+            if (wifiLock?.isHeld == true) wifiLock?.release()
+        }
+    }
+
+    private fun stopAndRemoveNotification() {
+        isTerminating = true
+        isRunning = false
+        isInForeground = false
+        lockReleaseJob?.cancel()
+        releaseWakeAndWifiLocks()
+        runCatching {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        }
+        runCatching {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            nm?.cancel(NOTIFICATION_ID)
+        }
+        runCatching {
             stopSelf()
         }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // When the user clears/swipes the app from Recents, ALWAYS pause playback and remove
+        // the playback notification so no stale play control notification remains behind.
+        runCatching {
+            playerManager?.onAppClearedFromRecents()
+        }
+        stopAndRemoveNotification()
+        serviceScope.cancel()
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
-        isTerminating = true
-        lockReleaseJob?.cancel()
+        stopAndRemoveNotification()
         serviceScope.cancel()
-        runCatching {
-            if (wakeLock?.isHeld == true) {
-                wakeLock?.release()
-            }
-            if (wifiLock?.isHeld == true) {
-                wifiLock?.release()
-            }
-        }
         super.onDestroy()
     }
 }

@@ -54,29 +54,22 @@ sealed interface SubScreen {
 }
 
 @Composable
-fun CascadeApp(
+private fun DiscoverSubScreenHost(
     viewModel: CascadeViewModel,
-    openNotificationsRequest: Boolean = false,
-    onNotificationsOpened: () -> Unit = {}
+    onVisitArtist: (String) -> Unit,
+    onOpenFullSongMaximized: (com.seitharol.domain.model.NormalizedTrack) -> Unit,
+    onNavigateBack: () -> Unit
 ) {
-    val playerState by viewModel.playerState.collectAsState()
-    val playlists by viewModel.playlists.collectAsState()
     val context = LocalContext.current
-
     val downloadService = remember { com.seitharol.data.download.DownloadPreferencesAndService.getInstance(context) }
     val previewExoPlayer = remember {
+        val resolvingFactory = com.seitharol.player.OuterTuneResolvingDataSource.createFactory {
+            com.seitharol.data.resolver.AudioQuality.LOW
+        }
+        val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(context, resolvingFactory)
         androidx.media3.exoplayer.ExoPlayer.Builder(context)
-            .setMediaSourceFactory(
-                androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
-                    com.seitharol.player.OuterTuneResolvingDataSource.createFactory {
-                        com.seitharol.data.resolver.AudioQuality.LOW
-                    }
-                )
-            )
+            .setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory))
             .build()
-    }
-    DisposableEffect(Unit) {
-        onDispose { previewExoPlayer.release() }
     }
     val seitharolPlayerManager = remember(previewExoPlayer) {
         val innerTube = com.seitharol.data.resolver.DefaultInnerTubeProvider(viewModel.resolverEngine.youtubeInnerTubeProvider)
@@ -85,6 +78,60 @@ fun CascadeApp(
         val engine = com.seitharol.data.resolver.ResolverEngine(context, matcher, innerTube, jioSaavn)
         com.seitharol.player.AudioPlayerManager(previewExoPlayer, engine, context.applicationContext)
     }
+    DisposableEffect(previewExoPlayer) {
+        onDispose {
+            runCatching { seitharolPlayerManager.stopPreviewAndClear() }
+            runCatching { previewExoPlayer.release() }
+        }
+    }
+
+    val feedTracks by viewModel.discoverTracks.collectAsState()
+    com.seitharol.ui.discover.DiscoverScreen(
+        feedTracks = feedTracks,
+        audioPlayerManager = seitharolPlayerManager,
+        downloadService = downloadService,
+        onSearchPreviewTracks = { query -> viewModel.searchDiscoverPreviews(query) },
+        onToggleLike = { track ->
+            viewModel.toggleLike(
+                Track(
+                    id = track.sourceId,
+                    title = track.title,
+                    artist = track.artists.firstOrNull() ?: "",
+                    album = track.album ?: "",
+                    durationMs = track.durationMs,
+                    artUrl = track.artUrl,
+                    isLiked = track.isLiked
+                )
+            )
+        },
+        onVisitArtist = { name, _ ->
+            seitharolPlayerManager.stopPreviewAndClear()
+            onVisitArtist(name)
+        },
+        onOpenFullSongMaximized = { resolvedTrack ->
+            seitharolPlayerManager.stopPreviewAndClear()
+            onOpenFullSongMaximized(resolvedTrack)
+        },
+        onTrackDownloadedLocally = { localNormalizedTrack ->
+            viewModel.registerLocallyDownloadedTrack(localNormalizedTrack)
+        },
+        onNavigateBack = {
+            seitharolPlayerManager.stopPreviewAndClear()
+            onNavigateBack()
+        }
+    )
+}
+
+@Composable
+fun CascadeApp(
+    viewModel: CascadeViewModel,
+    openNotificationsRequest: Boolean = false,
+    onNotificationsOpened: () -> Unit = {}
+) {
+    val playerState by viewModel.playerState.collectAsState()
+    val playlists by viewModel.playlists.collectAsState()
+    val context = LocalContext.current
+    val compositionStartMs = remember { System.currentTimeMillis() }
 
     var currentDestination by remember { mutableStateOf(AppDestination.HOME) }
     var previousDestination by remember { mutableStateOf(AppDestination.HOME) }
@@ -112,6 +159,10 @@ fun CascadeApp(
     LaunchedEffect(Unit) {
         viewModel.skipNotice.collectLatest { msg ->
             val professionalMsg = com.example.util.ErrorFormatter.sanitizeNotice(msg, context)
+            val isColdStart = (System.currentTimeMillis() - compositionStartMs) < 4000L
+            if (isColdStart && professionalMsg.contains("No internet connection", ignoreCase = true)) {
+                return@collectLatest
+            }
             snackbarHostState.showSnackbar(message = professionalMsg, duration = SnackbarDuration.Short)
         }
     }
@@ -147,9 +198,7 @@ fun CascadeApp(
         val isTablet = maxWidth >= 600.dp
 
         if (isTablet) {
-            // Adaptive Tablet Layout
             Row(modifier = Modifier.fillMaxSize()) {
-                // Navigation Rail
                 NavigationRail(
                     containerColor = MaterialTheme.colorScheme.surface,
                     contentColor = MaterialTheme.colorScheme.onSurface,
@@ -233,7 +282,6 @@ fun CascadeApp(
                     )
                 }
 
-                // Center Content Area
                 Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                     when (val sub = currentSubScreen) {
                         is SubScreen.Artist -> ArtistScreen(
@@ -327,42 +375,15 @@ fun CascadeApp(
                             )
                         }
                         is SubScreen.Discover -> {
-                            val feedTracks by viewModel.discoverTracks.collectAsState()
-                            com.seitharol.ui.discover.DiscoverScreen(
-                                feedTracks = feedTracks,
-                                audioPlayerManager = seitharolPlayerManager,
-                                downloadService = downloadService,
-                                onSearchPreviewTracks = { query -> viewModel.searchDiscoverPreviews(query) },
-                                onToggleLike = { track ->
-                                    viewModel.toggleLike(
-                                        Track(
-                                            id = track.sourceId,
-                                            title = track.title,
-                                            artist = track.artists.firstOrNull() ?: "",
-                                            album = track.album ?: "",
-                                            durationMs = track.durationMs,
-                                            artUrl = track.artUrl,
-                                            isLiked = track.isLiked
-                                        )
-                                    )
-                                },
-                                onVisitArtist = { name, _ ->
-                                    seitharolPlayerManager.stopPreviewAndClear()
-                                    currentSubScreen = SubScreen.Artist(name)
-                                },
+                            DiscoverSubScreenHost(
+                                viewModel = viewModel,
+                                onVisitArtist = { name -> currentSubScreen = SubScreen.Artist(name) },
                                 onOpenFullSongMaximized = { resolvedTrack ->
-                                    seitharolPlayerManager.stopPreviewAndClear()
                                     currentSubScreen = SubScreen.None
                                     viewModel.playNormalizedTrackFull(resolvedTrack)
                                     isPlayerExpanded = true
                                 },
-                                onTrackDownloadedLocally = { localNormalizedTrack ->
-                                    viewModel.registerLocallyDownloadedTrack(localNormalizedTrack)
-                                },
-                                onNavigateBack = {
-                                    seitharolPlayerManager.stopPreviewAndClear()
-                                    currentSubScreen = SubScreen.None
-                                }
+                                onNavigateBack = { currentSubScreen = SubScreen.None }
                             )
                         }
                         is SubScreen.None -> when (currentDestination) {
@@ -437,7 +458,6 @@ fun CascadeApp(
                     )
                 }
 
-                // Right Pane: Now Playing on Tablet
                 Surface(
                     modifier = Modifier
                         .widthIn(min = 340.dp, max = 400.dp)
@@ -449,7 +469,7 @@ fun CascadeApp(
                         PlayerScreen(
                             viewModel = viewModel,
                             playerState = playerState,
-                            onDismiss = { /* Visible on tablet */ },
+                            onDismiss = { },
                             onOpenEqualizer = { currentSubScreen = SubScreen.SoundSettings },
                             onOpenSleepTimer = { showSleepTimer = true },
                             onShareTrack = { title ->
@@ -481,9 +501,7 @@ fun CascadeApp(
                 }
             }
         } else {
-            // Mobile Phone Handheld Layout
             Box(modifier = Modifier.fillMaxSize()) {
-                // Main Screens Stack
                 when (val sub = currentSubScreen) {
                     is SubScreen.Artist -> {
                         BackHandler { currentSubScreen = SubScreen.None }
@@ -598,46 +616,15 @@ fun CascadeApp(
                         )
                     }
                     is SubScreen.Discover -> {
-                        BackHandler {
-                            seitharolPlayerManager.stopPreviewAndClear()
-                            currentSubScreen = SubScreen.None
-                        }
-                        val feedTracks by viewModel.discoverTracks.collectAsState()
-                        com.seitharol.ui.discover.DiscoverScreen(
-                            feedTracks = feedTracks,
-                            audioPlayerManager = seitharolPlayerManager,
-                            downloadService = downloadService,
-                            onSearchPreviewTracks = { query -> viewModel.searchDiscoverPreviews(query) },
-                            onToggleLike = { track ->
-                                viewModel.toggleLike(
-                                    Track(
-                                        id = track.sourceId,
-                                        title = track.title,
-                                        artist = track.artists.firstOrNull() ?: "",
-                                        album = track.album ?: "",
-                                        durationMs = track.durationMs,
-                                        artUrl = track.artUrl,
-                                        isLiked = track.isLiked
-                                    )
-                                )
-                            },
-                            onVisitArtist = { name, _ ->
-                                seitharolPlayerManager.stopPreviewAndClear()
-                                currentSubScreen = SubScreen.Artist(name)
-                            },
+                        DiscoverSubScreenHost(
+                            viewModel = viewModel,
+                            onVisitArtist = { name -> currentSubScreen = SubScreen.Artist(name) },
                             onOpenFullSongMaximized = { resolvedTrack ->
-                                seitharolPlayerManager.stopPreviewAndClear()
                                 currentSubScreen = SubScreen.None
                                 viewModel.playNormalizedTrackFull(resolvedTrack)
                                 isPlayerExpanded = true
                             },
-                            onTrackDownloadedLocally = { localNormalizedTrack ->
-                                viewModel.registerLocallyDownloadedTrack(localNormalizedTrack)
-                            },
-                            onNavigateBack = {
-                                seitharolPlayerManager.stopPreviewAndClear()
-                                currentSubScreen = SubScreen.None
-                            }
+                            onNavigateBack = { currentSubScreen = SubScreen.None }
                         )
                     }
                     is SubScreen.None -> {
@@ -726,7 +713,6 @@ fun CascadeApp(
                     }
                 }
 
-                // Floating MiniPlayer & Bottom Nav Container
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -734,7 +720,6 @@ fun CascadeApp(
                         .navigationBarsPadding(),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // Floating Mini Player (if playing & player not expanded & not on Discover screen)
                     if (playerState.currentTrack != null && !isPlayerExpanded && currentSubScreen !is SubScreen.Discover) {
                         MiniPlayer(
                             playerState = playerState,
@@ -746,7 +731,6 @@ fun CascadeApp(
                         )
                     }
 
-                    // Floating Pill Navigation Bar (matching Home board style: 230dp wide, 60dp high, radius 30dp, #0D0D0D)
                     if (currentSubScreen is SubScreen.None) {
                         Surface(
                             modifier = Modifier
@@ -811,7 +795,6 @@ fun CascadeApp(
                         .padding(bottom = 100.dp)
                 )
 
-                // Full Player Screen Modal on Mobile
                 AnimatedVisibility(
                     visible = isPlayerExpanded,
                     enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
@@ -845,7 +828,6 @@ fun CascadeApp(
             }
         }
 
-        // Modals
         if (showSleepTimer) {
             SleepTimerModal(
                 currentMinutesLeft = playerState.sleepTimerMinutesLeft,

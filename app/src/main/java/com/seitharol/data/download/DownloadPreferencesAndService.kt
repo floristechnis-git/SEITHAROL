@@ -3,8 +3,12 @@ package com.seitharol.data.download
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
@@ -14,7 +18,6 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.seitharol.data.preferences.AppSettingsManager
 import com.seitharol.data.resolver.AudioQuality
-import com.seitharol.data.resolver.CanonicalAudioResolver
 import com.seitharol.data.resolver.InnerTubeStreamExtractor
 import com.seitharol.data.resolver.StreamResolver
 import com.seitharol.data.resolver.TrackMetadata
@@ -31,13 +34,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.io.OutputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import kotlin.coroutines.coroutineContext
 
 enum class DownloadProvider(val id: String, val displayName: String, val subtitle: String) {
@@ -70,14 +74,39 @@ sealed class DownloadTaskState {
 }
 
 class DownloadPreferencesAndService(private val context: Context) {
-    private val prefs = context.applicationContext.getSharedPreferences("discover_download_prefs", Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val prefs = appContext.getSharedPreferences("discover_download_prefs", Context.MODE_PRIVATE)
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var activeDownloadJob: Job? = null
-    private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+    @Volatile private var activeTrackTitle: String? = null
+    @Volatile private var activeCanonicalId: String? = null
+    private val notificationManager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
     private val DOWNLOAD_CHANNEL_ID = "seitharol_download_channel"
+
+    private val cancelReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            if (intent?.action == ACTION_CANCEL_DISCOVER_DOWNLOAD) {
+                cancelActiveDownload()
+            }
+        }
+    }
 
     init {
         createDownloadNotificationChannel()
+        registerCancelReceiver()
+    }
+
+    private fun registerCancelReceiver() {
+        try {
+            val filter = IntentFilter(ACTION_CANCEL_DISCOVER_DOWNLOAD)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                appContext.registerReceiver(cancelReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                appContext.registerReceiver(cancelReceiver, filter)
+            }
+        } catch (t: Throwable) {
+            Log.w("DownloadPreferences", "Cancel receiver registration skipped: ${t.message}")
+        }
     }
 
     private fun createDownloadNotificationChannel() {
@@ -94,15 +123,28 @@ class DownloadPreferencesAndService(private val context: Context) {
         }
     }
 
+    private fun buildCancelPendingIntent(notifId: Int): PendingIntent {
+        val cancelIntent = Intent(ACTION_CANCEL_DISCOVER_DOWNLOAD).apply {
+            setPackage(appContext.packageName)
+            putExtra("NOTIF_ID", notifId)
+        }
+        return PendingIntent.getBroadcast(
+            appContext,
+            notifId,
+            cancelIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
     private fun updateDownloadNotification(title: String, progress: Int, isCompleted: Boolean = false, isFailed: Boolean = false) {
         try {
             val notifId = title.hashCode()
             if (isCompleted || isFailed) {
                 notificationManager?.cancel(notifId)
-                val completedNotification = NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
+                val completedNotification = NotificationCompat.Builder(appContext, DOWNLOAD_CHANNEL_ID)
                     .setSmallIcon(com.example.R.drawable.ic_stat_music_note)
                     .setContentTitle(if (isFailed) "Download Failed" else "Download Completed")
-                    .setContentText(if (isFailed) "$title • Tap to retry" else "$title is ready for offline playback")
+                    .setContentText(if (isFailed) "$title • Tap to dismiss" else "$title is ready for offline playback")
                     .setPriority(NotificationCompat.PRIORITY_LOW)
                     .setOngoing(false)
                     .setAutoCancel(true)
@@ -113,10 +155,13 @@ class DownloadPreferencesAndService(private val context: Context) {
             }
 
             val clamped = progress.coerceIn(0, 99)
-            val builder = NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
+            val cancelPending = buildCancelPendingIntent(notifId)
+            val builder = NotificationCompat.Builder(appContext, DOWNLOAD_CHANNEL_ID)
                 .setSmallIcon(com.example.R.drawable.ic_stat_music_note)
                 .setContentTitle("Downloading $title")
-                .setContentText("$clamped%")
+                .setContentText("$clamped% • Tap to cancel")
+                .setContentIntent(cancelPending)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", cancelPending)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
@@ -136,13 +181,36 @@ class DownloadPreferencesAndService(private val context: Context) {
 
     fun cancelActiveDownload() {
         val current = _downloadState.value
+        val titleToCancel = activeTrackTitle
+        val canonToCancel = activeCanonicalId
         activeDownloadJob?.cancel()
         activeDownloadJob = null
+        activeTrackTitle = null
+        activeCanonicalId = null
+
+        if (titleToCancel != null) {
+            notificationManager?.cancel(titleToCancel.hashCode())
+        }
         if (current is DownloadTaskState.Downloading) {
             notificationManager?.cancel(current.trackTitle.hashCode())
             _downloadState.value = DownloadTaskState.Canceled(current.trackId)
         } else {
             _downloadState.value = DownloadTaskState.Idle
+        }
+
+        if (canonToCancel != null) {
+            serviceScope.launch {
+                runCatching {
+                    val db = com.example.data.local.CascadeDatabase.getInstance(appContext)
+                    db.downloadDao().deleteDownload(canonToCancel)
+                    val downloadDir = File(appContext.filesDir, "downloads")
+                    downloadDir.listFiles()?.forEach { f ->
+                        if (f.name.startsWith(canonToCancel) && f.name.endsWith(".tmp")) {
+                            f.delete()
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -150,7 +218,7 @@ class DownloadPreferencesAndService(private val context: Context) {
         track: NormalizedTrack,
         provider: DownloadProvider,
         format: DownloadFormat,
-        preferredQuality: AudioQuality = AppSettingsManager.getInstance(context).state.value.downloadQuality,
+        preferredQuality: AudioQuality = AppSettingsManager.getInstance(appContext).state.value.downloadQuality,
         onTrackSavedAsLocalMusic: (NormalizedTrack) -> Unit
     ) {
         activeDownloadJob?.cancel()
@@ -163,133 +231,148 @@ class DownloadPreferencesAndService(private val context: Context) {
         track: NormalizedTrack,
         provider: DownloadProvider,
         format: DownloadFormat,
-        preferredQuality: AudioQuality = AppSettingsManager.getInstance(context).state.value.downloadQuality,
+        preferredQuality: AudioQuality = AppSettingsManager.getInstance(appContext).state.value.downloadQuality,
         onTrackSavedAsLocalMusic: (NormalizedTrack) -> Unit
     ): Result<Uri> = withContext(Dispatchers.IO) {
         recordProviderAndFormatSelection(provider, format)
         val primaryArtist = track.artists.firstOrNull().orEmpty().ifBlank { "Unknown Artist" }
+        val canonicalId = canonicalTrackId(track.sourceId)
+        activeTrackTitle = track.title
+        activeCanonicalId = canonicalId
+
         _downloadState.value = DownloadTaskState.Downloading(
             trackId = track.sourceId,
             trackTitle = track.title,
             artistName = primaryArtist,
             thumbnailUrl = track.artUrl,
-            progressPercent = 1,
+            progressPercent = 2,
             downloadedBytes = 0L,
-            totalBytes = 0L,
+            totalBytes = 4_000_000L,
             provider = provider
         )
+        updateDownloadNotification(track.title, 2)
+
+        val downloadDir = File(appContext.filesDir, "downloads").apply { if (!exists()) mkdirs() }
+        val tempFile = File(downloadDir, "${canonicalId}_discover.${format.ext}.tmp")
+        val internalDestFile = File(downloadDir, "${canonicalId}_discover.${format.ext}")
 
         runCatching {
+            val db = com.example.data.local.CascadeDatabase.getInstance(appContext)
+            val trackDao = db.trackDao()
+            val downloadDao = db.downloadDao()
+            val existingTrack = trackDao.getTrackById(canonicalId) ?: trackDao.getTrackById(track.sourceId)
+            trackDao.insertTrack(
+                com.example.data.local.TrackEntity(
+                    id = canonicalId,
+                    title = track.title,
+                    artist = primaryArtist,
+                    album = track.album ?: "Discover Downloads",
+                    durationMs = track.durationMs.takeIf { it > 0L } ?: 210_000L,
+                    artUrl = track.artUrl.orEmpty(),
+                    isLiked = existingTrack?.isLiked ?: track.isLiked,
+                    isDownloaded = false,
+                    localPath = internalDestFile.absolutePath
+                )
+            )
+            downloadDao.insertDownload(
+                com.example.data.local.DownloadEntity(
+                    trackId = canonicalId,
+                    tier = format.label,
+                    state = "DOWNLOADING",
+                    localPath = internalDestFile.absolutePath,
+                    progress = 0.05f,
+                    bytesDownloaded = 0L,
+                    totalBytes = 4_000_000L
+                )
+            )
+
             val streamUrl = resolveDirectDownloadUrl(track, primaryArtist, provider, preferredQuality)
                 ?: throw IllegalStateException("Could not resolve downloadable stream for ${track.title}")
 
             val headers = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(streamUrl)
-            val conn = (URL(streamUrl).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 20_000
-                readTimeout = 60_000
-                headers.forEach { (k, v) -> setRequestProperty(k, v) }
-                setRequestProperty("Range", "bytes=0-")
-            }
-            if (conn.responseCode !in 200..299) {
-                throw IllegalStateException("Audio server returned HTTP ${conn.responseCode}")
-            }
+            val requestBuilder = Request.Builder().url(streamUrl)
+            headers.forEach { (k, v) -> requestBuilder.header(k, v) }
 
             val fallbackEstimatedBytes = ((track.durationMs / 1000L).coerceAtLeast(180L)) * 20_000L
-            val totalBytes = conn.contentLengthLong.takeIf { it > 1000L } ?: fallbackEstimatedBytes
-            val safeFileName = sanitizeFileName("$primaryArtist - ${track.title}.${format.ext}")
+            var finalTotalBytes = fallbackEstimatedBytes
 
-            val savedUri: Uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val resolver = context.contentResolver
-                val contentValues = ContentValues().apply {
-                    put(MediaStore.Audio.Media.DISPLAY_NAME, safeFileName)
-                    put(MediaStore.Audio.Media.MIME_TYPE, format.mimeType)
-                    put(MediaStore.Audio.Media.TITLE, track.title)
-                    put(MediaStore.Audio.Media.ARTIST, track.artists.joinToString(", "))
-                    put(MediaStore.Audio.Media.ALBUM, track.album ?: "Single")
-                    put(MediaStore.Audio.Media.DURATION, track.durationMs)
-                    put(MediaStore.Audio.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MUSIC}/Seitharol")
-                    put(MediaStore.Audio.Media.IS_MUSIC, 1)
-                    put(MediaStore.Audio.Media.IS_PENDING, 1)
+            com.example.network.NetworkClients.okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IllegalStateException("Audio server returned HTTP ${response.code}")
                 }
-                val itemUri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, contentValues)
-                    ?: throw IllegalStateException("Failed to create MediaStore Audio entry")
+                val body = response.body ?: throw IllegalStateException("Empty response body from audio server")
+                val totalBytes = body.contentLength().takeIf { it > 10_000L } ?: fallbackEstimatedBytes
+                finalTotalBytes = totalBytes
 
-                try {
-                    resolver.openOutputStream(itemUri)?.use { output ->
-                        streamWithProgress(conn, output, totalBytes, track, primaryArtist, provider)
-                    } ?: throw IllegalStateException("Failed to open output stream for $itemUri")
-
-                    val publishValues = ContentValues().apply {
-                        put(MediaStore.Audio.Media.IS_PENDING, 0)
+                body.byteStream().use { input ->
+                    FileOutputStream(tempFile).use { output ->
+                        streamWithProgress(
+                            input = input,
+                            output = output,
+                            totalBytes = totalBytes,
+                            track = track,
+                            canonicalId = canonicalId,
+                            primaryArtist = primaryArtist,
+                            provider = provider,
+                            format = format,
+                            destPath = internalDestFile.absolutePath,
+                            downloadDao = downloadDao
+                        )
                     }
-                    resolver.update(itemUri, publishValues, null, null)
-                    itemUri
-                } catch (e: Exception) {
-                    resolver.delete(itemUri, null, null)
-                    throw e
                 }
-            } else {
-                val publicMusicDir = File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
-                    "Seitharol"
-                ).apply { if (!exists()) mkdirs() }
-                val destFile = File(publicMusicDir, safeFileName)
-                try {
-                    FileOutputStream(destFile).use { output ->
-                        streamWithProgress(conn, output, totalBytes, track, primaryArtist, provider)
-                    }
-                } catch (e: Exception) {
-                    destFile.delete()
-                    throw e
-                }
-                MediaScannerConnection.scanFile(
-                    context,
-                    arrayOf(destFile.absolutePath),
-                    arrayOf(format.mimeType),
-                    null
-                )
-                Uri.fromFile(destFile)
             }
+
+            if (!tempFile.exists() || tempFile.length() <= 8_192L) {
+                tempFile.delete()
+                throw IllegalStateException("Downloaded audio stream was incomplete")
+            }
+
+            if (internalDestFile.exists()) internalDestFile.delete()
+            val renamed = tempFile.renameTo(internalDestFile)
+            val validInternalFile = if (renamed) internalDestFile else tempFile
+            finalTotalBytes = validInternalFile.length()
+
+            // Mirror to public Music/Seitharol if possible, but always keep internalDestFile as guaranteed offline file
+            val safeFileName = sanitizeFileName("$primaryArtist - ${track.title}.${format.ext}")
+            runCatching {
+                exportToPublicMusicFolder(validInternalFile, safeFileName, format, track)
+            }
+
+            val savedUri = Uri.fromFile(validInternalFile)
 
             val localMusicTrack = track.copy(
                 source = TrackSource.LOCAL_FILE,
+                sourceId = canonicalId,
                 isPlayableNatively = true,
-                localPath = savedUri.toString()
+                localPath = validInternalFile.absolutePath
             )
             persistCompletedDownload(localMusicTrack)
 
-            val canonicalId = canonicalTrackId(track.sourceId)
             runCatching {
-                val db = com.example.data.local.CascadeDatabase.getInstance(context)
-                val trackDao = db.trackDao()
-                val downloadDao = db.downloadDao()
-                val existing = trackDao.getTrackById(canonicalId) ?: trackDao.getTrackById(track.sourceId)
-                if (existing == null) {
-                    trackDao.insertTrack(
-                        com.example.data.local.TrackEntity(
-                            id = canonicalId,
-                            title = track.title,
-                            artist = primaryArtist,
-                            album = track.album ?: "Discover Downloads",
-                            durationMs = track.durationMs,
-                            artUrl = track.artUrl.orEmpty(),
-                            isDownloaded = true,
-                            localPath = savedUri.toString()
-                        )
+                val existing = trackDao.getTrackById(canonicalId)
+                trackDao.insertTrack(
+                    com.example.data.local.TrackEntity(
+                        id = canonicalId,
+                        title = track.title,
+                        artist = primaryArtist,
+                        album = track.album ?: "Discover Downloads",
+                        durationMs = track.durationMs.takeIf { it > 0L } ?: 210_000L,
+                        artUrl = track.artUrl.orEmpty(),
+                        isLiked = existing?.isLiked ?: track.isLiked,
+                        isDownloaded = true,
+                        localPath = validInternalFile.absolutePath
                     )
-                } else {
-                    trackDao.setDownloaded(canonicalId, true, savedUri.toString())
-                }
+                )
+                trackDao.setDownloaded(canonicalId, true, validInternalFile.absolutePath)
                 downloadDao.insertDownload(
                     com.example.data.local.DownloadEntity(
                         trackId = canonicalId,
-                        tier = format.name.replaceFirstChar { it.uppercase() },
+                        tier = format.label,
                         state = "COMPLETED",
-                        localPath = savedUri.toString(),
+                        localPath = validInternalFile.absolutePath,
                         progress = 1.0f,
-                        bytesDownloaded = totalBytes,
-                        totalBytes = totalBytes
+                        bytesDownloaded = finalTotalBytes,
+                        totalBytes = finalTotalBytes
                     )
                 )
             }
@@ -297,14 +380,23 @@ class DownloadPreferencesAndService(private val context: Context) {
             withContext(Dispatchers.Main) {
                 onTrackSavedAsLocalMusic(localMusicTrack)
             }
+            activeTrackTitle = null
+            activeCanonicalId = null
             updateDownloadNotification(track.title, 100, isCompleted = true)
             _downloadState.value = DownloadTaskState.Completed(track.sourceId, savedUri)
             savedUri
         }.onFailure { err ->
+            activeTrackTitle = null
+            activeCanonicalId = null
+            if (tempFile.exists()) tempFile.delete()
+            val db = runCatching { com.example.data.local.CascadeDatabase.getInstance(appContext) }.getOrNull()
             if (err is CancellationException) {
                 notificationManager?.cancel(track.title.hashCode())
+                runCatching { db?.downloadDao()?.deleteDownload(canonicalId) }
                 _downloadState.value = DownloadTaskState.Canceled(track.sourceId)
             } else {
+                Log.e("DownloadPreferences", "Discover download failed for ${track.title}: ${err.message}", err)
+                runCatching { db?.downloadDao()?.deleteDownload(canonicalId) }
                 updateDownloadNotification(track.title, 0, isFailed = true)
                 _downloadState.value = DownloadTaskState.Failed(
                     trackId = track.sourceId,
@@ -314,55 +406,127 @@ class DownloadPreferencesAndService(private val context: Context) {
         }
     }
 
+    private fun exportToPublicMusicFolder(
+        sourceFile: File,
+        safeFileName: String,
+        format: DownloadFormat,
+        track: NormalizedTrack
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = appContext.contentResolver
+            val contentValues = ContentValues().apply {
+                put(MediaStore.Audio.Media.DISPLAY_NAME, safeFileName)
+                put(MediaStore.Audio.Media.MIME_TYPE, format.mimeType)
+                put(MediaStore.Audio.Media.TITLE, track.title)
+                put(MediaStore.Audio.Media.ARTIST, track.artists.joinToString(", "))
+                put(MediaStore.Audio.Media.ALBUM, track.album ?: "Single")
+                put(MediaStore.Audio.Media.DURATION, track.durationMs)
+                put(MediaStore.Audio.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MUSIC}/Seitharol")
+                put(MediaStore.Audio.Media.IS_MUSIC, 1)
+                put(MediaStore.Audio.Media.IS_PENDING, 1)
+            }
+            val itemUri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, contentValues) ?: return
+            try {
+                resolver.openOutputStream(itemUri)?.use { out ->
+                    FileInputStream(sourceFile).use { input ->
+                        input.copyTo(out)
+                    }
+                }
+                val publishValues = ContentValues().apply {
+                    put(MediaStore.Audio.Media.IS_PENDING, 0)
+                }
+                resolver.update(itemUri, publishValues, null, null)
+            } catch (e: Throwable) {
+                runCatching { resolver.delete(itemUri, null, null) }
+            }
+        } else {
+            val publicMusicDir = File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+                "Seitharol"
+            ).apply { if (!exists()) mkdirs() }
+            val destFile = File(publicMusicDir, safeFileName)
+            FileInputStream(sourceFile).use { input ->
+                FileOutputStream(destFile).use { out ->
+                    input.copyTo(out)
+                }
+            }
+            MediaScannerConnection.scanFile(
+                appContext,
+                arrayOf(destFile.absolutePath),
+                arrayOf(format.mimeType),
+                null
+            )
+        }
+    }
+
     private suspend fun streamWithProgress(
-        conn: HttpURLConnection,
+        input: InputStream,
         output: OutputStream,
         totalBytes: Long,
         track: NormalizedTrack,
+        canonicalId: String,
         primaryArtist: String,
-        provider: DownloadProvider
+        provider: DownloadProvider,
+        format: DownloadFormat,
+        destPath: String,
+        downloadDao: com.example.data.local.DownloadDao
     ) {
         var downloadedBytes = 0L
         var lastNotifMs = 0L
-        conn.inputStream.use { input ->
-            val buffer = ByteArray(16 * 1024)
-            var bytesRead: Int
-            while (input.read(buffer).also { bytesRead = it } != -1) {
-                coroutineContext.ensureActive()
-                output.write(buffer, 0, bytesRead)
-                downloadedBytes += bytesRead
-                val progress = ((downloadedBytes * 100L) / totalBytes.coerceAtLeast(1L)).toInt().coerceIn(1, 99)
-                _downloadState.value = DownloadTaskState.Downloading(
-                    trackId = track.sourceId,
-                    trackTitle = track.title,
-                    artistName = primaryArtist,
-                    thumbnailUrl = track.artUrl,
-                    progressPercent = progress,
-                    downloadedBytes = downloadedBytes,
-                    totalBytes = totalBytes,
-                    provider = provider
-                )
-                val now = System.currentTimeMillis()
-                if (now - lastNotifMs > 300L) {
-                    lastNotifMs = now
-                    updateDownloadNotification(track.title, progress)
+        val buffer = ByteArray(16 * 1024)
+        var bytesRead: Int
+        while (input.read(buffer).also { bytesRead = it } != -1) {
+            coroutineContext.ensureActive()
+            output.write(buffer, 0, bytesRead)
+            downloadedBytes += bytesRead
+            val progress = ((downloadedBytes * 100L) / totalBytes.coerceAtLeast(1L)).toInt().coerceIn(1, 99)
+            _downloadState.value = DownloadTaskState.Downloading(
+                trackId = track.sourceId,
+                trackTitle = track.title,
+                artistName = primaryArtist,
+                thumbnailUrl = track.artUrl,
+                progressPercent = progress,
+                downloadedBytes = downloadedBytes,
+                totalBytes = totalBytes,
+                provider = provider
+            )
+            val now = System.currentTimeMillis()
+            if (now - lastNotifMs > 300L) {
+                lastNotifMs = now
+                updateDownloadNotification(track.title, progress)
+                runCatching {
+                    downloadDao.updateDownload(
+                        com.example.data.local.DownloadEntity(
+                            trackId = canonicalId,
+                            tier = format.label,
+                            state = "DOWNLOADING",
+                            localPath = destPath,
+                            progress = (progress / 100f).coerceIn(0.02f, 0.99f),
+                            bytesDownloaded = downloadedBytes,
+                            totalBytes = totalBytes
+                        )
+                    )
                 }
             }
-            output.flush()
         }
+        output.flush()
     }
 
     private suspend fun resolveDirectDownloadUrl(
         track: NormalizedTrack,
         primaryArtist: String,
         provider: DownloadProvider,
-        preferredQuality: AudioQuality = AppSettingsManager.getInstance(context).state.value.downloadQuality
+        preferredQuality: AudioQuality = AppSettingsManager.getInstance(appContext).state.value.downloadQuality
     ): String? {
+        // 1. Check if track.sourceId or track.previewUrl contains a valid 11-char YouTube videoId
         val cleanYtId = InnerTubeStreamExtractor.extractVideoId(track.sourceId)
+            ?: InnerTubeStreamExtractor.extractVideoId(track.previewUrl?.removePrefix("ytm_clip:"))
         if (!cleanYtId.isNullOrBlank()) {
-            // Strictly download the exact original YouTube videoId without searching for alternate tracks
-            return InnerTubeStreamExtractor.resolveWorkingStreamUrl(cleanYtId, preferredQuality).getOrNull()
+            val directYt = InnerTubeStreamExtractor.resolveWorkingStreamUrl(cleanYtId, preferredQuality).getOrNull()
+                ?: InnerTubeStreamExtractor.resolveExactYoutubeStreamById(cleanYtId, preferredQuality, forceRefresh = true).getOrNull()
+            if (!directYt.isNullOrBlank()) return directYt
         }
+
         val canonicalId = canonicalTrackId(track.sourceId)
         val metadata = TrackMetadata(
             id = canonicalId,
@@ -372,7 +536,48 @@ class DownloadPreferencesAndService(private val context: Context) {
             durationSeconds = (track.durationMs / 1000L).toInt(),
             thumbnailUrl = track.artUrl
         )
-        return StreamResolver.resolveExactStreamUrl(metadata, preferredQuality)
+
+        // 2. If JioSaavn is selected, try JioSaavn first, then fall back to YouTube Music search
+        if (provider == DownloadProvider.JIOSAAVN) {
+            val saavnUrl = runCatching { StreamResolver.resolveExactStreamUrl(metadata, preferredQuality) }.getOrNull()
+            if (!saavnUrl.isNullOrBlank()) return saavnUrl
+        }
+
+        // 3. Search YouTube Music by title + artist for non-YouTube seeded Discover tracks (e.g. Spotify/iTunes/Deezer)
+        val searchQuery = "${track.title} $primaryArtist".trim()
+        if (searchQuery.isNotBlank()) {
+            val ytmCandidates = runCatching {
+                InnerTubeStreamExtractor.searchOfficialYtmSongs(searchQuery, limit = 5)
+            }.getOrDefault(emptyList())
+            for (cand in ytmCandidates) {
+                val resolved = InnerTubeStreamExtractor.resolveWorkingStreamUrl(cand.videoId, preferredQuality).getOrNull()
+                    ?: InnerTubeStreamExtractor.resolveExactYoutubeStreamById(cand.videoId, preferredQuality).getOrNull()
+                if (!resolved.isNullOrBlank()) return resolved
+            }
+        }
+
+        // 4. Fallback to JioSaavn if not already tried
+        if (provider != DownloadProvider.JIOSAAVN) {
+            val saavnUrl = runCatching { StreamResolver.resolveExactStreamUrl(metadata, preferredQuality) }.getOrNull()
+            if (!saavnUrl.isNullOrBlank()) return saavnUrl
+        }
+
+        // 5. Fallback to full app ResolverEngine
+        val appResolverUrl = runCatching {
+            val domainTrack = com.example.data.model.Track(
+                id = canonicalId,
+                title = track.title,
+                artist = primaryArtist,
+                album = track.album.orEmpty(),
+                durationMs = track.durationMs,
+                artUrl = track.artUrl
+            )
+            com.example.CascadeApplication.instance.resolverEngine.resolveTrack(domainTrack, preferredQuality).streamUrl
+        }.getOrNull()
+        if (!appResolverUrl.isNullOrBlank()) return appResolverUrl
+
+        // 6. Final fallback to direct HTTP previewUrl if available
+        return track.previewUrl?.takeIf { it.startsWith("http") }
     }
 
     fun canonicalTrackId(rawId: String): String {
@@ -402,7 +607,7 @@ class DownloadPreferencesAndService(private val context: Context) {
         toRemove.forEach { item ->
             val path = item.localPath.orEmpty()
             if (path.startsWith("content://")) {
-                runCatching { context.contentResolver.delete(Uri.parse(path), null, null) }
+                runCatching { appContext.contentResolver.delete(Uri.parse(path), null, null) }
             } else if (path.isNotBlank()) {
                 runCatching { File(path.removePrefix("file://")).takeIf { it.exists() }?.delete() }
             }
@@ -482,6 +687,8 @@ class DownloadPreferencesAndService(private val context: Context) {
     private fun sanitizeFileName(name: String): String = name.replace(Regex("[\\/:*?\"<>|]"), "_").trim()
 
     companion object {
+        const val ACTION_CANCEL_DISCOVER_DOWNLOAD = "com.seitharol.ACTION_CANCEL_DISCOVER_DOWNLOAD"
+
         @Volatile
         private var instance: DownloadPreferencesAndService? = null
 

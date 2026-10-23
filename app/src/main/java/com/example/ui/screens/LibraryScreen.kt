@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -22,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -30,6 +32,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.data.model.DownloadState
 import com.example.data.model.Playlist
 import com.example.data.model.Track
 import com.example.player.PlayerState
@@ -37,6 +40,8 @@ import com.example.ui.CascadeViewModel
 import com.example.ui.components.AddToPlaylistModal
 import com.example.ui.components.TrackCard
 import com.example.ui.theme.*
+import com.seitharol.data.download.DownloadPreferencesAndService
+import com.seitharol.data.download.DownloadTaskState
 import com.seitharol.ui.components.PlaylistThumbnailWithBadge
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -65,7 +70,10 @@ fun LibraryScreen(
     val likedTracks by viewModel.likedTracks.collectAsState()
     val downloadedTracks by viewModel.downloadedTracks.collectAsState()
     val activeHistory by viewModel.activeHistory.collectAsState()
-    val isRefreshingLibrary by viewModel.isRefreshingLibrary.collectAsState()
+    val activeDownloads by viewModel.activeDownloads.collectAsState()
+    val inProgressCount = remember(activeDownloads) {
+        activeDownloads.count { it.state == DownloadState.DOWNLOADING || it.state == DownloadState.FINALIZING || it.state == DownloadState.QUEUED }
+    }
 
     val navTabs = remember { listOf("All", "Playlists", "Downloads", "Liked", "On Device") }
     var selectedNavTab by remember { mutableStateOf("All") }
@@ -97,7 +105,6 @@ fun LibraryScreen(
         LazyColumn(
             contentPadding = PaddingValues(bottom = 140.dp)
         ) {
-        // 1. Heading & New Playlist Button
         item {
             Row(
                 modifier = Modifier
@@ -146,7 +153,6 @@ fun LibraryScreen(
             }
         }
 
-        // 2. History > on TOP of Library nav pills + Horizontal Scrollable Thumbnails
         if (activeHistory.isNotEmpty()) {
             item {
                 Row(
@@ -202,7 +208,6 @@ fun LibraryScreen(
             }
         }
 
-        // 3. Category Nav Chips (Full-width horizontal scrolling with plenty of room)
         item {
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp),
@@ -235,7 +240,7 @@ fun LibraryScreen(
                         border = null,
                         label = {
                             Text(
-                                text = tab,
+                                text = if (tab == "Downloads" && inProgressCount > 0) "Downloads ($inProgressCount)" else tab,
                                 style = MaterialTheme.typography.labelMedium,
                                 maxLines = 1,
                                 softWrap = false,
@@ -247,7 +252,6 @@ fun LibraryScreen(
             }
         }
 
-        // 4. Filter Button Row (Moved directly below the category chips row)
         item {
             Row(
                 modifier = Modifier
@@ -301,7 +305,6 @@ fun LibraryScreen(
             }
         }
 
-        // 4. Liked Songs List Item (shown on All)
         if (selectedNavTab == "All") {
             item {
                 Row(
@@ -335,7 +338,6 @@ fun LibraryScreen(
             }
         }
 
-        // 5. Downloaded Songs List Item (shown on All)
         if (selectedNavTab == "All") {
             item {
                 Row(
@@ -360,16 +362,15 @@ fun LibraryScreen(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "${downloadedTracks.size} offline songs",
+                            text = if (inProgressCount > 0) "${downloadedTracks.size} offline songs • $inProgressCount downloading..." else "${downloadedTracks.size} offline songs",
                             style = MaterialTheme.typography.bodySmall,
-                            color = SeitharolTextSecondary
+                            color = if (inProgressCount > 0) MaterialTheme.colorScheme.primary else SeitharolTextSecondary
                         )
                     }
                 }
             }
         }
 
-        // 6. On-Device Local Audio Item (shown on All)
         if (selectedNavTab == "All") {
             item {
                 Row(
@@ -403,7 +404,6 @@ fun LibraryScreen(
             }
         }
 
-        // 6. User Playlists with Clamped Swipe-to-Delete and Donut/Thumbnail badge
         items(filteredPlaylists.distinctBy { it.id }, key = { "pl_${it.id}" }) { pl ->
             ClampedSwipeToDeleteRow(
                 onDelete = { viewModel.deletePlaylist(pl.id) }
@@ -472,10 +472,6 @@ fun LibraryScreen(
 }
 }
 
-/**
- * Clamped Swipe-Left Row: never slides past -88.dp so the user can always slide it back
- * to 0.dp or tap the Delete button to remove the item cleanly.
- */
 @Composable
 fun ClampedSwipeToDeleteRow(
     onDelete: () -> Unit,
@@ -487,7 +483,6 @@ fun ClampedSwipeToDeleteRow(
     val offsetX = remember { Animatable(0f) }
 
     Box(modifier = Modifier.fillMaxWidth()) {
-        // Background Delete Action Button - only visible when actively dragged
         val isSwiping = offsetX.value < -4f
         if (isSwiping) {
             Box(
@@ -511,7 +506,6 @@ fun ClampedSwipeToDeleteRow(
             }
         }
 
-        // Foreground Content clamped strictly to [maxRevealPx, 0f] with opaque background
         Surface(
             modifier = Modifier
                 .offset { IntOffset(offsetX.value.roundToInt(), 0) }
@@ -540,9 +534,6 @@ fun ClampedSwipeToDeleteRow(
     }
 }
 
-/**
- * Dedicated History Screen with Top-Left Back Arrow and Search Bar.
- */
 @Composable
 fun HistoryScreen(
     viewModel: CascadeViewModel,
@@ -571,7 +562,6 @@ fun HistoryScreen(
             .background(SeitharolBg)
             .statusBarsPadding()
     ) {
-        // Top Bar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -592,7 +582,6 @@ fun HistoryScreen(
             }
         }
 
-        // View Mode Filter Tabs (Recent 15 Days vs Archived)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -611,7 +600,6 @@ fun HistoryScreen(
             )
         }
 
-        // Dedicated Search Bar
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
@@ -663,7 +651,8 @@ fun HistoryScreen(
 }
 
 /**
- * Dedicated Downloads Screen with Top-Left Back Arrow and Search Bar.
+ * Dedicated Downloads Screen with Top-Left Back Arrow, Search Bar,
+ * and live "Currently Downloading" processing section with Cancel button.
  */
 @Composable
 fun DownloadsScreen(
@@ -673,9 +662,30 @@ fun DownloadsScreen(
     onAddToPlaylist: (com.example.data.model.Track) -> Unit = {}
 ) {
     BackHandler(onBack = onBack)
+    val context = LocalContext.current
     val downloadedTracks by viewModel.downloadedTracks.collectAsState()
+    val activeDownloads by viewModel.activeDownloads.collectAsState()
+    val downloadService = remember { DownloadPreferencesAndService.getInstance(context) }
+    val discoverTaskState by downloadService.downloadState.collectAsState()
+
     var searchQuery by remember { mutableStateOf("") }
     var showQualitySheet by remember { mutableStateOf(false) }
+
+    val inProgressQueueItems = remember(activeDownloads) {
+        activeDownloads.filter {
+            it.state == DownloadState.DOWNLOADING ||
+                it.state == DownloadState.FINALIZING ||
+                it.state == DownloadState.QUEUED
+        }
+    }
+
+    val activeDiscoverDownloading = discoverTaskState as? DownloadTaskState.Downloading
+    val showDiscoverCardSeparately = remember(activeDiscoverDownloading, inProgressQueueItems) {
+        activeDiscoverDownloading != null && inProgressQueueItems.none {
+            it.trackId == activeDiscoverDownloading.trackId ||
+                downloadService.canonicalTrackId(it.trackId) == downloadService.canonicalTrackId(activeDiscoverDownloading.trackId)
+        }
+    }
 
     val filteredTracks = remember(downloadedTracks, searchQuery) {
         if (searchQuery.isBlank()) downloadedTracks
@@ -737,7 +747,51 @@ fun DownloadsScreen(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 120.dp)
         ) {
-            if (filteredTracks.isEmpty()) {
+            // ────────────────────────────────────────────────────────────
+            // Currently Processing / Downloading Section with Cancel Button
+            // ────────────────────────────────────────────────────────────
+            if (inProgressQueueItems.isNotEmpty() || showDiscoverCardSeparately) {
+                item {
+                    Text(
+                        text = "Currently Downloading",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                    )
+                }
+
+                if (showDiscoverCardSeparately && activeDiscoverDownloading != null) {
+                    item(key = "active_discover_dl_${activeDiscoverDownloading.trackId}") {
+                        ActiveProcessingDownloadCard(
+                            title = activeDiscoverDownloading.trackTitle,
+                            artist = activeDiscoverDownloading.artistName,
+                            artUrl = activeDiscoverDownloading.thumbnailUrl,
+                            progressFraction = (activeDiscoverDownloading.progressPercent / 100f).coerceIn(0f, 1f),
+                            subtitle = "Downloading via ${activeDiscoverDownloading.provider.displayName} • ${activeDiscoverDownloading.progressPercent}%",
+                            onCancel = { downloadService.cancelActiveDownload() }
+                        )
+                    }
+                }
+
+                items(inProgressQueueItems, key = { "active_dl_${it.trackId}" }) { item ->
+                    val safeProg = if (item.progress.isNaN() || item.progress.isInfinite()) 0f else item.progress.coerceIn(0f, 1f)
+                    val pct = (safeProg * 100).toInt().coerceIn(0, 99)
+                    ActiveProcessingDownloadCard(
+                        title = item.title,
+                        artist = item.artist,
+                        artUrl = item.artUrl,
+                        progressFraction = safeProg,
+                        subtitle = "Downloading (${item.tier.label}) • $pct%",
+                        onCancel = { viewModel.cancelDownload(item.trackId) }
+                    )
+                }
+
+                item {
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
+
+            if (filteredTracks.isEmpty() && inProgressQueueItems.isEmpty() && !showDiscoverCardSeparately) {
                 item {
                     Box(modifier = Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
                         Text("No downloaded songs yet", color = SeitharolTextSecondary)
@@ -771,9 +825,118 @@ fun DownloadsScreen(
     }
 }
 
-/**
- * Dedicated Liked Songs Screen with Top-Left Back Arrow and Search Bar.
- */
+@Composable
+fun ActiveProcessingDownloadCard(
+    title: String,
+    artist: String,
+    artUrl: String,
+    progressFraction: Float,
+    subtitle: String,
+    onCancel: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        tonalElevation = 2.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surface),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AsyncImage(
+                        model = artUrl,
+                        contentDescription = title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 14.sp,
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = artist,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        fontFamily = OutfitFontFamily,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = subtitle,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 11.sp,
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                OutlinedButton(
+                    onClick = onCancel,
+                    shape = RoundedCornerShape(20.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    modifier = Modifier.height(34.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Cancel download",
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Cancel",
+                        fontSize = 12.sp,
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            LinearProgressIndicator(
+                progress = { progressFraction.coerceIn(0f, 1f) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(5.dp)
+                    .clip(RoundedCornerShape(3.dp)),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surface
+            )
+        }
+    }
+}
+
 @Composable
 fun LikedSongsScreen(
     viewModel: CascadeViewModel,

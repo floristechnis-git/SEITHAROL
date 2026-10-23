@@ -16,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.lifecycleScope
 import com.example.data.AppPreferences
 import com.example.ui.CascadeApp
 import com.example.ui.CascadeViewModel
@@ -27,6 +28,8 @@ import com.example.ui.splash.SplashScreen
 import com.example.ui.theme.CascadeTheme
 import com.seitharol.data.preferences.AppSettingsManager
 import com.seitharol.data.preferences.ThemeMode
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val viewModel: CascadeViewModel by viewModels {
@@ -57,17 +60,22 @@ class MainActivity : ComponentActivity() {
 
         // Ensure singleton ExoPlayer is initialized and restores any persisted checkpoint
         val playerMgr = (application as? CascadeApplication)?.audioPlayerManager
-        playerMgr?.ensurePlayerInitialized()
+        runCatching { playerMgr?.ensurePlayerInitialized() }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
+            runCatching {
+                if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
+                }
             }
         }
 
-        // Check Manipur Solar/Lunar Calendar & past notification store
-        runCatching {
-            ManipurCalendarNotificationEngine.checkAndDispatchDailyNotification(applicationContext)
+        // Run Manipur Solar/Lunar Calendar & past notification store off the UI thread
+        val appCtx = applicationContext
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching {
+                ManipurCalendarNotificationEngine.checkAndDispatchDailyNotification(appCtx)
+            }
         }
 
         // Parse initial deep-link or notification intent
@@ -168,8 +176,10 @@ class MainActivity : ComponentActivity() {
         if (intent.getBooleanExtra("OPEN_NOTIFICATIONS_MODAL", false)) {
             openNotificationsRequest = true
         }
-        SeitharolDeepLinkHelper.parseIncomingIntent(intent, this)?.let { target ->
-            pendingDeepLink = target
+        runCatching {
+            SeitharolDeepLinkHelper.parseIncomingIntent(intent, this)?.let { target ->
+                pendingDeepLink = target
+            }
         }
     }
 
@@ -182,8 +192,6 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        // Do NOT call audioPlayerManager.release() or stopPlayback() when Android reclaims MainActivity
-        // in the background; MediaPlaybackService owns background playback lifecycle.
         super.onDestroy()
     }
 }

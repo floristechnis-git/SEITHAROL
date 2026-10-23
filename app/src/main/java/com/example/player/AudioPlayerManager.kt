@@ -118,6 +118,11 @@ class AudioPlayerManager(
     private var lastFailedTrackId: String? = null
     @Volatile
     private var isRetryingOrLoading: Boolean = false
+    @Volatile
+    private var userRequestedPlay: Boolean = false
+    @Volatile
+    private var hasUserInitiatedPlaybackThisSession: Boolean = false
+
     private val appPreferences = com.example.data.AppPreferences(context)
     private val settingsManager = AppSettingsManager.getInstance(context)
     private var lastUserSeekTimestamp: Long = 0L
@@ -132,13 +137,16 @@ class AudioPlayerManager(
             if (state == TelephonyManager.EXTRA_STATE_RINGING || state == TelephonyManager.EXTRA_STATE_OFFHOOK) {
                 if (exoPlayer?.isPlaying == true || _state.value.isPlaying) {
                     wasPlayingBeforeCall = true
+                    userRequestedPlay = false
                     exoPlayer?.pause()
-                    _state.value = _state.value.copy(isPlaying = false)
+                    _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
                     persistCurrentPlaybackState()
                 }
             } else if (state == TelephonyManager.EXTRA_STATE_IDLE) {
                 if (wasPlayingBeforeCall) {
                     wasPlayingBeforeCall = false
+                    userRequestedPlay = true
+                    exoPlayer?.playWhenReady = true
                     exoPlayer?.play()
                 }
             }
@@ -151,21 +159,25 @@ class AudioPlayerManager(
                 exoPlayer?.volume = 1.0f
                 if (wasPlayingBeforeCall) {
                     wasPlayingBeforeCall = false
+                    userRequestedPlay = true
+                    exoPlayer?.playWhenReady = true
                     exoPlayer?.play()
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS -> {
                 wasPlayingBeforeCall = false
+                userRequestedPlay = false
                 exoPlayer?.pause()
-                _state.value = _state.value.copy(isPlaying = false)
+                _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
                 persistCurrentPlaybackState()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
                 if (isPhoneCallActive()) {
                     if (exoPlayer?.isPlaying == true || _state.value.isPlaying) {
                         wasPlayingBeforeCall = true
+                        userRequestedPlay = false
                         exoPlayer?.pause()
-                        _state.value = _state.value.copy(isPlaying = false)
+                        _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
                         persistCurrentPlaybackState()
                     }
                 } else {
@@ -187,37 +199,43 @@ class AudioPlayerManager(
 
     private fun requestAudioFocus(): Boolean {
         val am = audioManager ?: return true
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val playbackAttributes = android.media.AudioAttributes.Builder()
-                .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
-                .build()
-            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(playbackAttributes)
-                .setAcceptsDelayedFocusGain(true)
-                .setOnAudioFocusChangeListener(audioFocusChangeListener)
-                .build()
-            audioFocusRequest = request
-            am.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        } else {
-            @Suppress("DEPRECATION")
-            am.requestAudioFocus(
-                audioFocusChangeListener,
-                AudioManager.STREAM_MUSIC,
-                AudioManager.AUDIOFOCUS_GAIN
-            ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val playbackAttributes = android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+                val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                    .setAudioAttributes(playbackAttributes)
+                    .setAcceptsDelayedFocusGain(true)
+                    .setOnAudioFocusChangeListener(audioFocusChangeListener)
+                    .build()
+                audioFocusRequest = request
+                am.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            } else {
+                @Suppress("DEPRECATION")
+                am.requestAudioFocus(
+                    audioFocusChangeListener,
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.AUDIOFOCUS_GAIN
+                ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            }
+        } catch (_: Throwable) {
+            true
         }
     }
 
     private fun abandonAudioFocus() {
         val am = audioManager ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
-            audioFocusRequest = null
-        } else {
-            @Suppress("DEPRECATION")
-            am.abandonAudioFocus(audioFocusChangeListener)
-        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
+                audioFocusRequest = null
+            } else {
+                @Suppress("DEPRECATION")
+                am.abandonAudioFocus(audioFocusChangeListener)
+            }
+        } catch (_: Throwable) {}
     }
 
     private fun registerTelephonyReceiver() {
@@ -430,7 +448,13 @@ class AudioPlayerManager(
     private fun observeAudioSettings() {
         coroutineScope.launch {
             settingsManager.state.collect { persisted ->
-                applyPersistedEqualizerAndEffects(persisted.eqEnabled, persisted.eqBandsDb, persisted.audioNormalization)
+                if (boundAudioSessionId > 0 && boundAudioSessionId != C.AUDIO_SESSION_ID_UNSET) {
+                    if (persisted.eqEnabled && equalizer == null) {
+                        initEqualizer(boundAudioSessionId)
+                    } else {
+                        applyPersistedEqualizerAndEffects(persisted.eqEnabled, persisted.eqBandsDb, persisted.audioNormalization)
+                    }
+                }
             }
         }
     }
@@ -443,33 +467,34 @@ class AudioPlayerManager(
         equalizer?.let { eq ->
             try {
                 eq.enabled = eqEnabled
-                val numBands = eq.numberOfBands.toInt()
-                val minLevel = eq.bandLevelRange[0].toInt()
-                val maxLevel = eq.bandLevelRange[1].toInt()
-                for (i in 0 until numBands) {
-                    val db = if (eqEnabled) (bandsDb.getOrNull(i) ?: 0f) else 0f
-                    val targetMilliBels = (db * 100f).toInt().coerceIn(minLevel, maxLevel)
-                    eq.setBandLevel(i.toShort(), targetMilliBels.toShort())
+                if (eqEnabled) {
+                    val numBands = eq.numberOfBands.toInt()
+                    val range = eq.bandLevelRange
+                    if (range != null && range.size >= 2) {
+                        val minLevel = range[0].toInt()
+                        val maxLevel = range[1].toInt()
+                        for (i in 0 until numBands) {
+                            val db = bandsDb.getOrNull(i) ?: 0f
+                            val targetMilliBels = (db * 100f).toInt().coerceIn(minLevel, maxLevel)
+                            eq.setBandLevel(i.toShort(), targetMilliBels.toShort())
+                        }
+                    }
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed applying persisted EQ: ${e.message}")
+            } catch (t: Throwable) {
+                Log.w(TAG, "Failed applying persisted EQ: ${t.message}")
             }
         }
 
         loudnessEnhancer?.let { enhancer ->
             try {
-                val shouldEnable = normalizeVolume || _state.value.loudnessGainDb != 0f
+                val shouldEnable = _state.value.loudnessGainDb != 0f
                 enhancer.enabled = shouldEnable
                 if (shouldEnable) {
-                    val targetGainMb = if (normalizeVolume) {
-                        600 // +6 dB gentle loudness normalization
-                    } else {
-                        (_state.value.loudnessGainDb * 100f).toInt()
-                    }
+                    val targetGainMb = (_state.value.loudnessGainDb * 100f).toInt()
                     enhancer.setTargetGain(targetGainMb)
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "LoudnessEnhancer update failed: ${e.message}")
+            } catch (t: Throwable) {
+                Log.w(TAG, "LoudnessEnhancer update failed: ${t.message}")
             }
         }
     }
@@ -478,7 +503,7 @@ class AudioPlayerManager(
         bufferingWatchdogJob?.cancel()
         bufferingWatchdogJob = coroutineScope.launch {
             delay(14_000L)
-            if (!isActive) return@launch
+            if (!isActive || !userRequestedPlay) return@launch
             val current = _state.value.currentTrack ?: return@launch
             val player = exoPlayer ?: return@launch
             if (current.id == expectedTrackId && (_state.value.isBuffering || isRetryingOrLoading) && !player.isPlaying) {
@@ -497,7 +522,7 @@ class AudioPlayerManager(
                             )
                         }
                     }
-                    if (isActive && _state.value.currentTrack?.id == expectedTrackId) {
+                    if (isActive && userRequestedPlay && _state.value.currentTrack?.id == expectedTrackId) {
                         _state.value = _state.value.copy(activeStream = freshStream, isBuffering = true)
                         setupAndPlaySource(freshStream.streamUrl, current, startPositionMs = resumePos)
                     }
@@ -554,24 +579,35 @@ class AudioPlayerManager(
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         when (playbackState) {
                             Player.STATE_BUFFERING -> {
-                                _state.value = _state.value.copy(isBuffering = true)
-                                _state.value.currentTrack?.id?.let { startBufferingWatchdog(it) }
+                                if (userRequestedPlay) {
+                                    _state.value = _state.value.copy(isBuffering = true)
+                                    _state.value.currentTrack?.id?.let { startBufferingWatchdog(it) }
+                                } else {
+                                    _state.value = _state.value.copy(isBuffering = false, isPlaying = false)
+                                }
                             }
                             Player.STATE_READY -> {
                                 bufferingWatchdogJob?.cancel()
                                 isRetryingOrLoading = false
                                 val dur = duration.coerceAtLeast(0L)
                                 val safeDur = if (dur > 0L && dur != C.TIME_UNSET) dur else _state.value.durationMs
+                                // If the user requested playback and stream resolution just finished,
+                                // ensure ExoPlayer immediately starts playing rather than staying paused.
+                                if (userRequestedPlay && !playWhenReady) {
+                                    playWhenReady = true
+                                    play()
+                                }
+                                val activelyPlaying = userRequestedPlay && playWhenReady
                                 _state.value = _state.value.copy(
                                     isBuffering = false,
-                                    isPlaying = playWhenReady,
+                                    isPlaying = activelyPlaying,
                                     durationMs = safeDur
                                 )
                                 trackRetryCount = 0
                                 lastFailedTrackId = null
                                 initEqualizer(audioSessionId)
                                 persistCurrentPlaybackState()
-                                if (isPlaying || playWhenReady) {
+                                if (activelyPlaying) {
                                     startPositionTracker()
                                 }
                             }
@@ -581,10 +617,10 @@ class AudioPlayerManager(
                                 onTrackCompleted()
                             }
                             Player.STATE_IDLE -> {
-                                val loadingActive = isRetryingOrLoading || loadTrackJob?.isActive == true || retryJob?.isActive == true
+                                val loadingActive = userRequestedPlay && (isRetryingOrLoading || loadTrackJob?.isActive == true || retryJob?.isActive == true)
                                 if (!loadingActive) {
                                     bufferingWatchdogJob?.cancel()
-                                    _state.value = _state.value.copy(isBuffering = false)
+                                    _state.value = _state.value.copy(isBuffering = false, isPlaying = false)
                                 }
                             }
                         }
@@ -606,28 +642,38 @@ class AudioPlayerManager(
                         if (isPlaying) {
                             bufferingWatchdogJob?.cancel()
                             isRetryingOrLoading = false
-                        }
-                        if (!isPlaying && (isRetryingOrLoading || loadTrackJob?.isActive == true || retryJob?.isActive == true)) {
-                            _state.value = _state.value.copy(isPlaying = false, isBuffering = true)
-                            return
-                        }
-                        _state.value = _state.value.copy(
-                            isPlaying = isPlaying,
-                            isBuffering = if (isPlaying) false else _state.value.isBuffering
-                        )
-                        persistCurrentPlaybackState()
-                        startPositionTracker()
-                        if (isPlaying) {
+                            _state.value = _state.value.copy(isPlaying = true, isBuffering = false)
+                            persistCurrentPlaybackState()
+                            startPositionTracker()
                             try {
                                 MediaPlaybackService.startService(context)
-                            } catch (t: Throwable) {
-                                // Non-fatal
-                            }
+                            } catch (_: Throwable) {}
+                            return
                         }
+
+                        if (!userRequestedPlay) {
+                            bufferingWatchdogJob?.cancel()
+                            isRetryingOrLoading = false
+                            _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+                            persistCurrentPlaybackState()
+                            return
+                        }
+
+                        val stillLoading = loadTrackJob?.isActive == true || retryJob?.isActive == true || playbackState == Player.STATE_BUFFERING
+                        _state.value = _state.value.copy(
+                            isPlaying = false,
+                            isBuffering = stillLoading
+                        )
+                        persistCurrentPlaybackState()
                     }
 
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                         Log.e(TAG, "ExoPlayer error: ${error.errorCodeName} - ${error.message}", error)
+                        if (!userRequestedPlay) {
+                            isRetryingOrLoading = false
+                            _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+                            return
+                        }
                         val resumePositionMs = (exoPlayer?.currentPosition?.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
                         isRetryingOrLoading = true
                         _state.value = _state.value.copy(isPlaying = false, isBuffering = true)
@@ -664,12 +710,15 @@ class AudioPlayerManager(
                             if (resolverEngine.isOfflineMode.value || !com.example.util.ErrorFormatter.isOnline(context)) {
                                 bufferingWatchdogJob?.cancel()
                                 isRetryingOrLoading = false
-                                val msg = if (resolverEngine.isOfflineMode.value) {
-                                    "Track not available offline. Connect to internet or download first."
-                                } else {
-                                    "No internet connection. Please check your network."
+                                userRequestedPlay = false
+                                if (hasUserInitiatedPlaybackThisSession) {
+                                    val msg = if (resolverEngine.isOfflineMode.value) {
+                                        "Track not available offline. Connect to internet or download first."
+                                    } else {
+                                        "No internet connection. Please check your network."
+                                    }
+                                    _skipEvent.emit(msg)
                                 }
-                                _skipEvent.emit(msg)
                                 trackRetryCount = 0
                                 lastFailedTrackId = null
                                 _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
@@ -681,13 +730,16 @@ class AudioPlayerManager(
                                 bufferingWatchdogJob?.cancel()
                                 isRetryingOrLoading = false
                                 Log.w(TAG, "Retry attempts exhausted for '$title'.")
-                                val friendlyMsg = com.example.util.ErrorFormatter.toUserFriendlyMessage(error, context, title, hasNextTrack)
-                                _skipEvent.emit(friendlyMsg)
+                                if (hasUserInitiatedPlaybackThisSession) {
+                                    val friendlyMsg = com.example.util.ErrorFormatter.toUserFriendlyMessage(error, context, title, hasNextTrack)
+                                    _skipEvent.emit(friendlyMsg)
+                                }
                                 trackRetryCount = 0
                                 lastFailedTrackId = null
                                 if (hasNextTrack) {
                                     next()
                                 } else {
+                                    userRequestedPlay = false
                                     try {
                                         exoPlayer?.stop()
                                         exoPlayer?.clearMediaItems()
@@ -700,7 +752,7 @@ class AudioPlayerManager(
 
                             trackRetryCount++
                             delay(150L)
-                            if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
+                            if (!isActive || !userRequestedPlay || _state.value.currentTrack?.id != current.id) return@launch
                             try {
                                 val freshStream = withTimeout(10_000L) {
                                     resolverEngine.resolveTrack(
@@ -710,11 +762,11 @@ class AudioPlayerManager(
                                         preferNonYoutubeFallback = false
                                     )
                                 }
-                                if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
+                                if (!isActive || !userRequestedPlay || _state.value.currentTrack?.id != current.id) return@launch
                                 _state.value = _state.value.copy(activeStream = freshStream, isBuffering = true)
                                 setupAndPlaySource(freshStream.streamUrl, current, startPositionMs = resumePositionMs)
                             } catch (e: Exception) {
-                                if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
+                                if (!isActive || !userRequestedPlay || _state.value.currentTrack?.id != current.id) return@launch
                                 Log.e(TAG, "Retry attempt $trackRetryCount failed: ${e.message}", e)
                                 if (trackRetryCount == 1) {
                                     trackRetryCount++
@@ -727,7 +779,7 @@ class AudioPlayerManager(
                                                 preferNonYoutubeFallback = false
                                             )
                                         }
-                                        if (isActive && _state.value.currentTrack?.id == current.id) {
+                                        if (isActive && userRequestedPlay && _state.value.currentTrack?.id == current.id) {
                                             _state.value = _state.value.copy(activeStream = secondStream, isBuffering = true)
                                             setupAndPlaySource(secondStream.streamUrl, current, startPositionMs = resumePositionMs)
                                             return@launch
@@ -736,13 +788,16 @@ class AudioPlayerManager(
                                 }
                                 bufferingWatchdogJob?.cancel()
                                 isRetryingOrLoading = false
-                                val friendlyMsg = com.example.util.ErrorFormatter.toUserFriendlyMessage(e, context, title, hasNextTrack)
-                                _skipEvent.emit(friendlyMsg)
+                                if (hasUserInitiatedPlaybackThisSession) {
+                                    val friendlyMsg = com.example.util.ErrorFormatter.toUserFriendlyMessage(e, context, title, hasNextTrack)
+                                    _skipEvent.emit(friendlyMsg)
+                                }
                                 trackRetryCount = 0
                                 lastFailedTrackId = null
                                 if (hasNextTrack) {
                                     next()
                                 } else {
+                                    userRequestedPlay = false
                                     try {
                                         exoPlayer?.stop()
                                         exoPlayer?.clearMediaItems()
@@ -762,6 +817,11 @@ class AudioPlayerManager(
 
     private fun setupAndPlaySource(sourceUrl: String, track: Track, startPositionMs: Long = 0L) {
         try {
+            if (!userRequestedPlay) {
+                isRetryingOrLoading = false
+                _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+                return
+            }
             ensurePlayerInitialized()
             val player = exoPlayer ?: return
             isRetryingOrLoading = true
@@ -798,15 +858,16 @@ class AudioPlayerManager(
             } else {
                 player.setMediaItem(mediaItem)
             }
-            player.playWhenReady = true
+            player.playWhenReady = userRequestedPlay
             player.prepare()
-            player.play()
+            if (userRequestedPlay) {
+                player.play()
+            }
 
             startPositionTracker()
             try {
                 MediaPlaybackService.startService(context)
-            } catch (t: Throwable) {
-                // Non-fatal if foreground service is restricted
+            } catch (_: Throwable) {
             }
         } catch (e: Throwable) {
             bufferingWatchdogJob?.cancel()
@@ -889,6 +950,8 @@ class AudioPlayerManager(
 
     fun playQueue(tracks: List<Track>, startIndex: Int = 0, isPlaylist: Boolean = true) {
         if (tracks.isEmpty()) return
+        hasUserInitiatedPlaybackThisSession = true
+        userRequestedPlay = true
         trackRetryCount = 0
         lastFailedTrackId = null
         loadTrackJob?.cancel()
@@ -911,6 +974,8 @@ class AudioPlayerManager(
     }
 
     fun playTrack(track: Track) {
+        hasUserInitiatedPlaybackThisSession = true
+        userRequestedPlay = true
         trackRetryCount = 0
         lastFailedTrackId = null
         loadTrackJob?.cancel()
@@ -946,6 +1011,8 @@ class AudioPlayerManager(
     fun playQueueIndex(index: Int) {
         val q = _state.value.queue
         if (index in q.indices) {
+            hasUserInitiatedPlaybackThisSession = true
+            userRequestedPlay = true
             trackRetryCount = 0
             lastFailedTrackId = null
             loadTrackJob?.cancel()
@@ -1036,6 +1103,7 @@ class AudioPlayerManager(
     }
 
     fun stopPlayback() {
+        userRequestedPlay = false
         bufferingWatchdogJob?.cancel()
         isRetryingOrLoading = false
         positionJob?.cancel()
@@ -1043,6 +1111,7 @@ class AudioPlayerManager(
         retryJob?.cancel()
         abandonAudioFocus()
         try {
+            exoPlayer?.playWhenReady = false
             exoPlayer?.stop()
             exoPlayer?.clearMediaItems()
         } catch (_: Throwable) {}
@@ -1058,6 +1127,29 @@ class AudioPlayerManager(
         try {
             MediaPlaybackService.stopService(context)
         } catch (_: Throwable) {}
+    }
+
+    /**
+     * Called when the user swipes/clears the app from Recents.
+     * Saves the current checkpoint, stops audio playback cleanly, and clears active playing/buffering state.
+     */
+    fun onAppClearedFromRecents() {
+        persistCurrentPlaybackState()
+        userRequestedPlay = false
+        bufferingWatchdogJob?.cancel()
+        isRetryingOrLoading = false
+        loadTrackJob?.cancel()
+        retryJob?.cancel()
+        abandonAudioFocus()
+        try {
+            exoPlayer?.playWhenReady = false
+            exoPlayer?.pause()
+            exoPlayer?.stop()
+        } catch (_: Throwable) {}
+        _state.value = _state.value.copy(
+            isPlaying = false,
+            isBuffering = false
+        )
     }
 
     fun addToQueue(track: Track) {
@@ -1078,6 +1170,7 @@ class AudioPlayerManager(
     private fun loadAndPlayCurrent(resumePositionMs: Long = 0L) {
         val current = _state.value.queue.getOrNull(_state.value.currentIndex) ?: _state.value.currentTrack ?: return
         prefetchedTrackId = null
+        userRequestedPlay = true
         loadTrackJob?.cancel()
         retryJob?.cancel()
         bufferingWatchdogJob?.cancel()
@@ -1087,7 +1180,8 @@ class AudioPlayerManager(
         val stopImmediately = settingsManager.state.value.stopImmediatelyOnNewTrack
         if (stopImmediately) {
             try {
-                exoPlayer?.pause()
+                // Stop previous stream cleanly without setting playWhenReady = false
+                exoPlayer?.stop()
             } catch (_: Throwable) {}
             _state.value = _state.value.copy(
                 isPlaying = false,
@@ -1097,7 +1191,6 @@ class AudioPlayerManager(
             _state.value = _state.value.copy(isBuffering = true)
         }
 
-        // Start foreground service immediately so background transitions never lose CPU/network priority
         try {
             MediaPlaybackService.startService(context)
         } catch (_: Throwable) {}
@@ -1132,12 +1225,10 @@ class AudioPlayerManager(
                     }
                 }
 
-                // Perform all file-system checks & stream resolution off the Main thread with a 12s timeout bound
                 val preferredQuality = getPreferredAudioQuality()
                 val (safeTrack, stream) = withContext(Dispatchers.IO) {
                     val resolvedLocalTrack = resolveLocalTrackIfAvailable(current)
 
-                    // Save checkpoint & history asynchronously on IO
                     launch {
                         runCatching {
                             musicRepository.saveCheckpoint(
@@ -1159,7 +1250,13 @@ class AudioPlayerManager(
                     resolvedLocalTrack to resolvedStream
                 }
 
-                if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
+                if (!isActive || !userRequestedPlay || _state.value.currentTrack?.id != current.id) {
+                    if (!userRequestedPlay) {
+                        isRetryingOrLoading = false
+                        _state.value = _state.value.copy(isBuffering = false, isPlaying = false)
+                    }
+                    return@launch
+                }
 
                 _state.value = _state.value.copy(
                     currentTrack = safeTrack,
@@ -1168,10 +1265,17 @@ class AudioPlayerManager(
                 )
                 persistCurrentPlaybackState()
                 setupAndPlaySource(stream.streamUrl, safeTrack, startPositionMs = initialPos)
+            } catch (e: CancellationException) {
+                if (!userRequestedPlay) {
+                    isRetryingOrLoading = false
+                    _state.value = _state.value.copy(isBuffering = false, isPlaying = false)
+                }
+                throw e
             } catch (e: Exception) {
-                if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
+                if (!isActive || !userRequestedPlay || _state.value.currentTrack?.id != current.id) return@launch
                 bufferingWatchdogJob?.cancel()
                 isRetryingOrLoading = false
+                userRequestedPlay = false
                 Log.e(TAG, "Error loading track: ${e.message}", e)
                 try {
                     exoPlayer?.stop()
@@ -1180,8 +1284,10 @@ class AudioPlayerManager(
                 _state.value = _state.value.copy(isBuffering = false, isPlaying = false)
                 persistCurrentPlaybackState()
                 val hasNextTrack = !_state.value.isSingleTrackPlayback && _state.value.currentIndex < _state.value.queue.lastIndex
-                val friendlyMessage = com.example.util.ErrorFormatter.toUserFriendlyMessage(e, context, current.title, hasNextTrack)
-                _skipEvent.emit(friendlyMessage)
+                if (hasUserInitiatedPlaybackThisSession) {
+                    val friendlyMessage = com.example.util.ErrorFormatter.toUserFriendlyMessage(e, context, current.title, hasNextTrack)
+                    _skipEvent.emit(friendlyMessage)
+                }
                 if (hasNextTrack) {
                     next()
                 }
@@ -1271,6 +1377,9 @@ class AudioPlayerManager(
             localCandidates.add(File(downloadDir, "${idCandidate}_data saver.m4a"))
             localCandidates.add(File(downloadDir, "${idCandidate}_data_saver.opus"))
             localCandidates.add(File(downloadDir, "${idCandidate}_data_saver.m4a"))
+            localCandidates.add(File(downloadDir, "${idCandidate}_discover.m4a"))
+            localCandidates.add(File(downloadDir, "${idCandidate}_discover.flac"))
+            localCandidates.add(File(downloadDir, "${idCandidate}_discover.opus"))
         }
 
         if (downloadDir.exists() && downloadDir.isDirectory) {
@@ -1308,24 +1417,23 @@ class AudioPlayerManager(
     }
 
     private fun initEqualizer(audioSessionId: Int) {
-        if (audioSessionId <= 0) return
+        if (audioSessionId <= 0 || audioSessionId == C.AUDIO_SESSION_ID_UNSET) return
+        boundAudioSessionId = audioSessionId
         val persisted = settingsManager.state.value
-        if (boundAudioSessionId == audioSessionId && equalizer != null) {
-            applyPersistedEqualizerAndEffects(
-                eqEnabled = persisted.eqEnabled,
-                bandsDb = persisted.eqBandsDb,
-                normalizeVolume = persisted.audioNormalization
-            )
+        // Only attach hardware Equalizer/LoudnessEnhancer when explicitly enabled by the user
+        // to avoid native AudioEffect HAL crashes on devices with restricted DSP sessions.
+        if (!persisted.eqEnabled && _state.value.loudnessGainDb == 0f) {
             return
         }
         try {
-            boundAudioSessionId = audioSessionId
-            equalizer?.release()
-            equalizer = Equalizer(0, audioSessionId).apply {
-                enabled = persisted.eqEnabled
+            if (equalizer == null && persisted.eqEnabled) {
+                equalizer = Equalizer(0, audioSessionId).apply {
+                    enabled = persisted.eqEnabled
+                }
             }
-            loudnessEnhancer?.release()
-            loudnessEnhancer = runCatching { LoudnessEnhancer(audioSessionId) }.getOrNull()
+            if (loudnessEnhancer == null && _state.value.loudnessGainDb != 0f) {
+                loudnessEnhancer = runCatching { LoudnessEnhancer(audioSessionId) }.getOrNull()
+            }
             applyPersistedEqualizerAndEffects(
                 eqEnabled = persisted.eqEnabled,
                 bandsDb = persisted.eqBandsDb,
@@ -1375,14 +1483,17 @@ class AudioPlayerManager(
     }
 
     fun pause() {
+        userRequestedPlay = false
         bufferingWatchdogJob?.cancel()
         isRetryingOrLoading = false
         loadTrackJob?.cancel()
         retryJob?.cancel()
-        val player = exoPlayer ?: return
-        val currentPos = player.currentPosition.takeIf { it > 0L } ?: _state.value.currentPositionMs
-        player.playWhenReady = false
-        player.pause()
+        val player = exoPlayer
+        val currentPos = player?.currentPosition?.takeIf { it > 0L } ?: _state.value.currentPositionMs
+        try {
+            player?.playWhenReady = false
+            player?.pause()
+        } catch (_: Throwable) {}
         _state.value = _state.value.copy(
             isPlaying = false,
             isBuffering = false,
@@ -1393,11 +1504,14 @@ class AudioPlayerManager(
     }
 
     fun togglePlayPause() {
+        hasUserInitiatedPlaybackThisSession = true
         ensurePlayerInitialized()
         val player = exoPlayer ?: return
-        if (_state.value.isPlaying || player.isPlaying) {
+        // If actively playing OR currently loading/buffering a user-requested track, tapping toggle pauses cleanly!
+        if (_state.value.isPlaying || player.isPlaying || (_state.value.isBuffering && userRequestedPlay)) {
             pause()
         } else {
+            userRequestedPlay = true
             val savedResumePos = _state.value.currentPositionMs.coerceAtLeast(0L)
             if (_state.value.currentTrack != null) {
                 if (player.playbackState == Player.STATE_IDLE || player.mediaItemCount == 0) {
@@ -1409,7 +1523,7 @@ class AudioPlayerManager(
                     }
                     player.playWhenReady = true
                     player.play()
-                    _state.value = _state.value.copy(isPlaying = true)
+                    _state.value = _state.value.copy(isPlaying = true, isBuffering = false)
                     persistCurrentPlaybackState()
                     MediaPlaybackService.startService(context)
                 }
@@ -1431,6 +1545,8 @@ class AudioPlayerManager(
     fun next() {
         val queue = _state.value.queue
         if (queue.isEmpty()) return
+        hasUserInitiatedPlaybackThisSession = true
+        userRequestedPlay = true
 
         val nextIndex = if (_state.value.isShuffle) {
             (0 until queue.size).filter { it != _state.value.currentIndex }.randomOrNull() ?: 0
@@ -1448,6 +1564,8 @@ class AudioPlayerManager(
     fun previous() {
         val queue = _state.value.queue
         if (queue.isEmpty()) return
+        hasUserInitiatedPlaybackThisSession = true
+        userRequestedPlay = true
 
         if (_state.value.currentPositionMs > 4000) {
             seekTo(0)
@@ -1523,19 +1641,25 @@ class AudioPlayerManager(
         preset.bandLevels.forEachIndexed { idx, db ->
             settingsManager.setEqBand(idx, db)
         }
+        if (equalizer == null && boundAudioSessionId > 0) {
+            initEqualizer(boundAudioSessionId)
+        }
         equalizer?.let { eq ->
             try {
                 eq.enabled = true
                 val numBands = eq.numberOfBands.toInt()
-                val minLevel = eq.bandLevelRange[0].toInt()
-                val maxLevel = eq.bandLevelRange[1].toInt()
-                for (i in 0 until numBands) {
-                    val db = preset.bandLevels.getOrNull(i) ?: 0f
-                    val targetMilliBels = (db * 100).toInt().coerceIn(minLevel, maxLevel)
-                    eq.setBandLevel(i.toShort(), targetMilliBels.toShort())
+                val range = eq.bandLevelRange
+                if (range != null && range.size >= 2) {
+                    val minLevel = range[0].toInt()
+                    val maxLevel = range[1].toInt()
+                    for (i in 0 until numBands) {
+                        val db = preset.bandLevels.getOrNull(i) ?: 0f
+                        val targetMilliBels = (db * 100).toInt().coerceIn(minLevel, maxLevel)
+                        eq.setBandLevel(i.toShort(), targetMilliBels.toShort())
+                    }
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed setting preset: ${e.message}")
+            } catch (t: Throwable) {
+                Log.w(TAG, "Failed setting preset: ${t.message}")
             }
         }
     }
@@ -1549,7 +1673,7 @@ class AudioPlayerManager(
                     val level = ((clamped / 100f) * 1000).toInt().toShort()
                     eq.setBandLevel(0, level)
                 }
-            } catch (_: Exception) {}
+            } catch (_: Throwable) {}
         }
     }
 
@@ -1558,6 +1682,9 @@ class AudioPlayerManager(
     fun setLoudnessGain(gainDb: Float) {
         _state.value = _state.value.copy(loudnessGainDb = gainDb)
         val persisted = settingsManager.state.value
+        if (loudnessEnhancer == null && gainDb != 0f && boundAudioSessionId > 0) {
+            loudnessEnhancer = runCatching { LoudnessEnhancer(boundAudioSessionId) }.getOrNull()
+        }
         applyPersistedEqualizerAndEffects(persisted.eqEnabled, persisted.eqBandsDb, persisted.audioNormalization)
     }
 
@@ -1580,7 +1707,8 @@ class AudioPlayerManager(
                         if (isAutoplayEnabled && !isCurrentOffline) {
                             triggerAutoplayNext()
                         } else {
-                            _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
+                            userRequestedPlay = false
+                            _state.value = _state.value.copy(isPlaying = false, isBuffering = false, currentPositionMs = 0L)
                             persistCurrentPlaybackState()
                         }
                     } else {
@@ -1651,12 +1779,14 @@ class AudioPlayerManager(
         if (isFetchingAutoplay || resolverEngine.isOfflineMode.value) return
         val current = _state.value.currentTrack ?: _state.value.queue.lastOrNull()
         if (current == null) {
-            _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
+            userRequestedPlay = false
+            _state.value = _state.value.copy(isPlaying = false, isBuffering = false, currentPositionMs = 0L)
             return
         }
         val isOffline = current.isDownloaded || !current.localPath.isNullOrBlank() || _state.value.queue.any { it.isDownloaded || !it.localPath.isNullOrBlank() }
         if (isOffline || !isAutoplayEnabled) {
-            _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
+            userRequestedPlay = false
+            _state.value = _state.value.copy(isPlaying = false, isBuffering = false, currentPositionMs = 0L)
             return
         }
         isFetchingAutoplay = true
@@ -1702,13 +1832,15 @@ class AudioPlayerManager(
                     }
                 } else {
                     withContext(Dispatchers.Main) {
-                        _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
+                        userRequestedPlay = false
+                        _state.value = _state.value.copy(isPlaying = false, isBuffering = false, currentPositionMs = 0L)
                     }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Autoplay recommendation fetch failed: ${e.message}", e)
                 withContext(Dispatchers.Main) {
-                    _state.value = _state.value.copy(isPlaying = false, currentPositionMs = 0L)
+                    userRequestedPlay = false
+                    _state.value = _state.value.copy(isPlaying = false, isBuffering = false, currentPositionMs = 0L)
                 }
             } finally {
                 isFetchingAutoplay = false
@@ -1784,6 +1916,7 @@ class AudioPlayerManager(
         val currentPos = exoPlayer?.currentPosition ?: _state.value.currentPositionMs
         coroutineScope.launch {
             try {
+                userRequestedPlay = true
                 isRetryingOrLoading = true
                 _state.value = _state.value.copy(isBuffering = true)
                 val stream = resolverEngine.resolveTrack(current.copy(audioUrl = ""), quality, forceRefresh = true)
@@ -1805,19 +1938,20 @@ class AudioPlayerManager(
 
     fun release() {
         persistCurrentPlaybackState()
+        userRequestedPlay = false
         bufferingWatchdogJob?.cancel()
         positionJob?.cancel()
         sleepTimerJob?.cancel()
-        loudnessEnhancer?.release()
+        runCatching { loudnessEnhancer?.release() }
         loudnessEnhancer = null
-        equalizer?.release()
+        runCatching { equalizer?.release() }
         equalizer = null
         boundAudioSessionId = -1
         try {
             context.unregisterReceiver(telephonyReceiver)
         } catch (_: Throwable) {}
         abandonAudioFocus()
-        exoPlayer?.release()
+        runCatching { exoPlayer?.release() }
         exoPlayer = null
         coroutineScope.cancel()
     }

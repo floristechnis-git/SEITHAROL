@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -17,17 +19,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import androidx.compose.foundation.Image
-import androidx.compose.ui.res.painterResource
 import com.example.R
 import com.example.data.model.DownloadItem
 import com.example.data.model.DownloadState
 import com.example.ui.CascadeViewModel
 import com.example.ui.theme.*
+import com.seitharol.data.download.DownloadTaskState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,10 +40,10 @@ fun DownloadsScreen(
     val downloads by viewModel.activeDownloads.collectAsState()
     val totalBytes by viewModel.totalDownloadedBytes.collectAsState()
     val isOfflineMode by viewModel.isOfflineMode.collectAsState()
-    val isRefreshingLibrary by viewModel.isRefreshingLibrary.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
     val downloadService = remember { com.seitharol.data.download.DownloadPreferencesAndService.getInstance(context) }
     val standaloneDownloads by downloadService.completedDownloads.collectAsState()
+    val discoverTaskState by downloadService.downloadState.collectAsState()
 
     val totalMb = totalBytes / (1024 * 1024)
     var showQualitySheet by remember { mutableStateOf(false) }
@@ -52,11 +54,13 @@ fun DownloadsScreen(
     val deduplicatedQueueDownloads = remember(downloads, standaloneIds, standaloneDownloads) {
         downloads.filterNot { item ->
             val canon = downloadService.canonicalTrackId(item.trackId)
-            canon in standaloneIds || standaloneDownloads.any { s ->
+            item.state == DownloadState.COMPLETED && (canon in standaloneIds || standaloneDownloads.any { s ->
                 s.title.equals(item.title, ignoreCase = true)
-            }
+            })
         }
     }
+
+    val activeDiscoverDownloading = discoverTaskState as? DownloadTaskState.Downloading
 
     Box(
         modifier = modifier
@@ -67,241 +71,264 @@ fun DownloadsScreen(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 140.dp)
         ) {
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Downloads & Offline",
-                        fontFamily = SyneFontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 24.sp,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    Text(
-                        text = "Persistent on-device Opus audio storage",
-                        fontFamily = OutfitFontFamily,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 12.sp
-                    )
-                }
-                IconButton(
-                    onClick = { showQualitySheet = true },
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Audio Quality Settings",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-
-        // Offline Simulator & Info Card
-        item {
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp)),
-                color = SeitharolWhite
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Airplane Mode Offline",
-                                color = SeitharolDark,
-                                fontSize = 15.sp,
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Text(
-                                text = if (isOfflineMode)
-                                    "Playing from local storage only."
-                                else
-                                    "Connected. Streaming and downloading enabled.",
-                                color = SeitharolTextSecondary,
-                                fontSize = 12.sp,
-                                fontFamily = OutfitFontFamily
-                            )
-                        }
-
-                        Switch(
-                            checked = isOfflineMode,
-                            onCheckedChange = { viewModel.setOfflineMode(it) },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = Color.Transparent,
-                                uncheckedThumbColor = MaterialTheme.colorScheme.primary,
-                                uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
-                                uncheckedBorderColor = MaterialTheme.colorScheme.outline
-                            ),
-                            modifier = Modifier.testTag("downloads_offline_switch")
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                    HorizontalDivider(color = SeitharolDivider)
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column {
-                            Text("Total Stored", color = SeitharolTextSecondary, fontSize = 11.sp, fontFamily = OutfitFontFamily)
-                            Text("$totalMb MB", color = SeitharolDark, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = OutfitFontFamily)
-                        }
-                        Column {
-                            Text("Downloaded Tracks", color = SeitharolTextSecondary, fontSize = 11.sp, fontFamily = OutfitFontFamily)
-                            Text("${downloads.count { it.state == DownloadState.COMPLETED }}", color = SeitharolDark, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = OutfitFontFamily)
-                        }
-                        Column {
-                            Text("Format", color = SeitharolTextSecondary, fontSize = 11.sp, fontFamily = OutfitFontFamily)
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Image(
-                                    painter = painterResource(id = R.drawable.ic_mp3),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp).padding(end = 4.dp)
-                                )
-                                Text("Opus 160k", color = SeitharolDark, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = OutfitFontFamily)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Standalone Discover / Public Downloads (Distinct card color from cache downloads)
-        if (standaloneDownloads.isNotEmpty()) {
             item {
-                Spacer(modifier = Modifier.height(20.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Discover & Public Downloads (${standaloneDownloads.size})",
-                        fontFamily = SyneFontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 16.sp,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    Text(
-                        text = "Standalone files",
-                        fontSize = 12.sp,
-                        fontFamily = OutfitFontFamily,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            items(standaloneDownloads) { track ->
-                StandaloneDownloadItemRow(
-                    track = track,
-                    onClick = {
-                        viewModel.playTrack(
-                            com.example.data.model.Track(
-                                id = track.sourceId,
-                                title = track.title,
-                                artist = track.artists.joinToString(", "),
-                                album = track.album ?: "Single",
-                                durationMs = track.durationMs,
-                                artUrl = track.artUrl,
-                                isDownloaded = true,
-                                localPath = track.localPath
-                            )
-                        )
-                    },
-                    onDelete = { viewModel.deleteDownload(track.sourceId) }
-                )
-            }
-        }
-
-        item {
-            Spacer(modifier = Modifier.height(20.dp))
-            Text(
-                text = "Track Download Queue (${deduplicatedQueueDownloads.size})",
-                fontFamily = SyneFontFamily,
-                fontWeight = FontWeight.Medium,
-                fontSize = 16.sp,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-        }
-
-        if (deduplicatedQueueDownloads.isEmpty()) {
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 40.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = Icons.Default.CloudDownload,
-                            contentDescription = null,
-                            tint = Color(0xFFAAAAAA),
-                            modifier = Modifier.size(48.dp)
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "No downloaded tracks yet",
-                            color = SeitharolTextSecondary,
+                            text = "Downloads & Offline",
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 24.sp,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        Text(
+                            text = "Persistent on-device Opus audio storage",
                             fontFamily = OutfitFontFamily,
-                            fontSize = 14.sp
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp
+                        )
+                    }
+                    IconButton(
+                        onClick = { showQualitySheet = true },
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Audio Quality Settings",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(22.dp)
                         )
                     }
                 }
+                Spacer(modifier = Modifier.height(16.dp))
             }
-        } else {
-            items(deduplicatedQueueDownloads) { item ->
-                DownloadItemRow(
-                    item = item,
-                    onClick = {
-                        if (item.state == DownloadState.COMPLETED) {
-                            viewModel.playDownloadedTrack(item.trackId)
+
+            item {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp)),
+                    color = SeitharolWhite
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Airplane Mode Offline",
+                                    color = SeitharolDark,
+                                    fontSize = 15.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = if (isOfflineMode)
+                                        "Playing from local storage only."
+                                    else
+                                        "Connected. Streaming and downloading enabled.",
+                                    color = SeitharolTextSecondary,
+                                    fontSize = 12.sp,
+                                    fontFamily = OutfitFontFamily
+                                )
+                            }
+
+                            Switch(
+                                checked = isOfflineMode,
+                                onCheckedChange = { viewModel.setOfflineMode(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    checkedBorderColor = Color.Transparent,
+                                    uncheckedThumbColor = MaterialTheme.colorScheme.primary,
+                                    uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    uncheckedBorderColor = MaterialTheme.colorScheme.outline
+                                ),
+                                modifier = Modifier.testTag("downloads_offline_switch")
+                            )
                         }
-                    },
-                    onDelete = { viewModel.deleteDownload(item.trackId) },
-                    onRetry = { viewModel.retryDownload(item.trackId) }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider(color = SeitharolDivider)
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text("Total Stored", color = SeitharolTextSecondary, fontSize = 11.sp, fontFamily = OutfitFontFamily)
+                                Text("$totalMb MB", color = SeitharolDark, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = OutfitFontFamily)
+                            }
+                            Column {
+                                Text("Downloaded Tracks", color = SeitharolTextSecondary, fontSize = 11.sp, fontFamily = OutfitFontFamily)
+                                Text("${downloads.count { it.state == DownloadState.COMPLETED }}", color = SeitharolDark, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = OutfitFontFamily)
+                            }
+                            Column {
+                                Text("Format", color = SeitharolTextSecondary, fontSize = 11.sp, fontFamily = OutfitFontFamily)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Image(
+                                        painter = painterResource(id = R.drawable.ic_mp3),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp).padding(end = 4.dp)
+                                    )
+                                    Text("Opus 160k", color = SeitharolDark, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = OutfitFontFamily)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (activeDiscoverDownloading != null) {
+                item {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Currently Downloading",
+                        fontFamily = SyneFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    ActiveProcessingDownloadCard(
+                        title = activeDiscoverDownloading.trackTitle,
+                        artist = activeDiscoverDownloading.artistName,
+                        artUrl = activeDiscoverDownloading.thumbnailUrl,
+                        progressFraction = (activeDiscoverDownloading.progressPercent / 100f).coerceIn(0f, 1f),
+                        subtitle = "Downloading via ${activeDiscoverDownloading.provider.displayName} • ${activeDiscoverDownloading.progressPercent}%",
+                        onCancel = { downloadService.cancelActiveDownload() }
+                    )
+                }
+            }
+
+            if (standaloneDownloads.isNotEmpty()) {
+                item {
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Discover & Public Downloads (${standaloneDownloads.size})",
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        Text(
+                            text = "Standalone files",
+                            fontSize = 12.sp,
+                            fontFamily = OutfitFontFamily,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                items(standaloneDownloads) { track ->
+                    StandaloneDownloadItemRow(
+                        track = track,
+                        onClick = {
+                            viewModel.playTrack(
+                                com.example.data.model.Track(
+                                    id = track.sourceId,
+                                    title = track.title,
+                                    artist = track.artists.joinToString(", "),
+                                    album = track.album ?: "Single",
+                                    durationMs = track.durationMs,
+                                    artUrl = track.artUrl,
+                                    isDownloaded = true,
+                                    localPath = track.localPath
+                                )
+                            )
+                        },
+                        onDelete = { viewModel.deleteDownload(track.sourceId) }
+                    )
+                }
+            }
+
+            item {
+                Spacer(modifier = Modifier.height(20.dp))
+                Text(
+                    text = "Track Download Queue (${deduplicatedQueueDownloads.size})",
+                    fontFamily = SyneFontFamily,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 16.sp,
+                    color = MaterialTheme.colorScheme.onBackground
                 )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            if (deduplicatedQueueDownloads.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 40.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Default.CloudDownload,
+                                contentDescription = null,
+                                tint = Color(0xFFAAAAAA),
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "No downloaded tracks yet",
+                                color = SeitharolTextSecondary,
+                                fontFamily = OutfitFontFamily,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                }
+            } else {
+                items(deduplicatedQueueDownloads) { item ->
+                    DownloadItemRow(
+                        item = item,
+                        onClick = {
+                            if (item.state == DownloadState.COMPLETED) {
+                                viewModel.playDownloadedTrack(item.trackId)
+                            }
+                        },
+                        onCancel = { viewModel.cancelDownload(item.trackId) },
+                        onDelete = { viewModel.deleteDownload(item.trackId) },
+                        onRetry = { viewModel.retryDownload(item.trackId) }
+                    )
+                }
             }
         }
-    }
 
-    if (showQualitySheet) {
-        com.example.ui.components.QualitySettingsBottomSheet(
-            onDismiss = { showQualitySheet = false }
-        )
+        if (showQualitySheet) {
+            com.example.ui.components.QualitySettingsBottomSheet(
+                onDismiss = { showQualitySheet = false }
+            )
+        }
     }
-}
 }
 
 @Composable
 fun DownloadItemRow(
     item: DownloadItem,
     onClick: () -> Unit = {},
+    onCancel: () -> Unit = {},
     onDelete: () -> Unit,
     onRetry: () -> Unit
 ) {
+    val safeProgress = if (item.progress.isNaN() || item.progress.isInfinite()) 0f else item.progress.coerceIn(0f, 1f)
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -376,6 +403,17 @@ fun DownloadItemRow(
                                 Text("Saved", color = Color(0xFF00C853), fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = OutfitFontFamily)
                             }
                         }
+                        IconButton(
+                            onClick = onDelete,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteOutline,
+                                contentDescription = "Delete download",
+                                tint = SeitharolTextSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                     DownloadState.ERROR -> {
                         IconButton(
@@ -389,53 +427,58 @@ fun DownloadItemRow(
                                 modifier = Modifier.size(20.dp)
                             )
                         }
+                        IconButton(
+                            onClick = onDelete,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteOutline,
+                                contentDescription = "Delete download",
+                                tint = SeitharolTextSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
-                    DownloadState.DOWNLOADING, DownloadState.FINALIZING -> {
+                    DownloadState.DOWNLOADING, DownloadState.FINALIZING, DownloadState.QUEUED -> {
                         Text(
-                            text = "${(item.progress * 100).toInt()}%",
+                            text = "${(safeProgress * 100).toInt()}%",
                             color = SeitharolDark,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = OutfitFontFamily,
-                            modifier = Modifier.padding(end = 4.dp)
+                            modifier = Modifier.padding(end = 6.dp)
                         )
-                    }
-                    DownloadState.QUEUED -> {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = Color(0x20FFA000),
-                            modifier = Modifier.padding(end = 4.dp)
+                        OutlinedButton(
+                            onClick = onCancel,
+                            shape = RoundedCornerShape(16.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            border = BorderStroke(1.dp, SeitharolTextSecondary.copy(alpha = 0.5f)),
+                            modifier = Modifier.height(32.dp)
                         ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Cancel",
+                                tint = SeitharolDark,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
                             Text(
-                                "Queued",
-                                color = Color(0xFFFFA000),
+                                text = "Cancel",
                                 fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium,
-                                fontFamily = OutfitFontFamily,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                fontWeight = FontWeight.SemiBold,
+                                color = SeitharolDark,
+                                fontFamily = OutfitFontFamily
                             )
                         }
                     }
                     DownloadState.IDLE -> {}
-                }
-
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.DeleteOutline,
-                        contentDescription = "Delete download",
-                        tint = SeitharolTextSecondary,
-                        modifier = Modifier.size(20.dp)
-                    )
                 }
             }
 
             if (item.state == DownloadState.DOWNLOADING || item.state == DownloadState.FINALIZING) {
                 Spacer(modifier = Modifier.height(8.dp))
                 LinearProgressIndicator(
-                    progress = { item.progress },
+                    progress = { safeProgress },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(4.dp)

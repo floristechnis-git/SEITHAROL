@@ -36,7 +36,7 @@ object ArtistAggregator {
         if (profilesFromSources.isEmpty()) return null
 
         // Select the profile with the most tracks as the canonical profile
-        val dominantProfile = profilesFromSources.maxByOrNull { it.tracks.size }!!
+        val dominantProfile = profilesFromSources.maxByOrNull { it.tracks.size } ?: return null
 
         // Merge and deduplicate tracks across all sources, prioritizing the dominant source's ordering
         val orderedProfiles = listOf(dominantProfile) + (profilesFromSources - dominantProfile)

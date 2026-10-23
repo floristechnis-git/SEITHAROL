@@ -1,4 +1,4 @@
-﻿package com.seitharol.ui.discover
+package com.seitharol.ui.discover
 
 import android.content.Intent
 import androidx.activity.compose.BackHandler
@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -99,8 +100,6 @@ fun DiscoverScreen(
         }
     }
 
-    // Play active page track when settledPage changes OR when search overlay closes,
-    // and pre-warm the next page's stream URL in background so swiping is instantaneous.
     LaunchedEffect(pagerState.settledPage, activeFeed.size, isInDiscoverSearchOpen) {
         if (isInDiscoverSearchOpen) {
             audioPlayerManager.pausePreview()
@@ -109,7 +108,6 @@ fun DiscoverScreen(
             if (activeTrack != null) {
                 audioPlayerManager.playPreview(activeTrack)
             }
-            // Pre-resolve next track in background
             val nextTrack = activeFeed.getOrNull(pagerState.settledPage + 1)
             if (nextTrack != null) {
                 launch(Dispatchers.IO) {
@@ -160,6 +158,7 @@ fun DiscoverScreen(
                     },
                     onLikeClick = { onToggleLike(track) },
                     onDownloadClick = { trackForDownloadSheet = track },
+                    onCancelDownload = { downloadService.cancelActiveDownload() },
                     onVisitArtistClick = {
                         audioPlayerManager.pausePreview()
                         onVisitArtist(primaryArtist, track.primaryArtistBrowseId)
@@ -317,6 +316,7 @@ private fun DiscoverShortPage(
     onTogglePlayPause: () -> Unit,
     onLikeClick: () -> Unit,
     onDownloadClick: () -> Unit,
+    onCancelDownload: () -> Unit = {},
     onVisitArtistClick: () -> Unit,
     onShareClick: () -> Unit,
     onOpenFullSongClick: () -> Unit
@@ -487,8 +487,11 @@ private fun DiscoverShortPage(
                         Text("Play Full", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
 
+                    val isThisDownloading = downloadState is DownloadTaskState.Downloading && downloadState.trackId == track.sourceId
                     Button(
-                        onClick = onDownloadClick,
+                        onClick = {
+                            if (isThisDownloading) onCancelDownload() else onDownloadClick()
+                        },
                         shape = RoundedCornerShape(50),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                         colors = ButtonDefaults.buttonColors(
@@ -497,9 +500,20 @@ private fun DiscoverShortPage(
                         ),
                         modifier = Modifier.height(38.dp)
                     ) {
-                        com.seitharol.ui.search.DownloadSvgIcon(tint = Color.White, modifier = Modifier.size(15.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Download", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        if (isThisDownloading) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Cancel",
+                                modifier = Modifier.size(15.dp),
+                                tint = Color.White
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Cancel", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        } else {
+                            com.seitharol.ui.search.DownloadSvgIcon(tint = Color.White, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Download", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
 
                     OutlinedButton(
@@ -524,7 +538,7 @@ private fun DiscoverShortPage(
                 if (downloadState is DownloadTaskState.Downloading && downloadState.trackId == track.sourceId) {
                     Spacer(modifier = Modifier.height(10.dp))
                     LinearProgressIndicator(
-                        progress = { downloadState.progressPercent / 100f },
+                        progress = { (downloadState.progressPercent / 100f).coerceIn(0f, 1f) },
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.fillMaxWidth(0.9f)
                     )
@@ -532,6 +546,13 @@ private fun DiscoverShortPage(
                         text = "Downloading via ${downloadState.provider.displayName} (${downloadState.progressPercent}%)",
                         style = MaterialTheme.typography.labelSmall,
                         color = Color.White
+                    )
+                } else if (downloadState is DownloadTaskState.Completed && downloadState.trackId == track.sourceId) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Saved to Downloads for offline playback",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFF00E676)
                     )
                 } else if (downloadState is DownloadTaskState.Failed && downloadState.trackId == track.sourceId) {
                     Spacer(modifier = Modifier.height(8.dp))

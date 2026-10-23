@@ -1,7 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.*
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -23,48 +23,40 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.SyneFontFamily
-import kotlin.math.cos
-import kotlin.math.sin
 
-// Bespoke Non-Red Luxury Onboarding Palette (Obsidian, Champagne Gold, Luminous Teal & Pearl)
-private val OnboardDeepBg = Color(0xFF0A0C10)
-private val OnboardCardSurface = Color(0xFF131720)
-private val OnboardCardElevated = Color(0xFF191E2B)
-private val OnboardBorderSubtle = Color(0xFF262D3D)
-private val OnboardChampagneGold = Color(0xFFE5B869)
-private val OnboardSoftGold = Color(0xFFF3D292)
-private val OnboardLuminousTeal = Color(0xFF4FD1C5)
-private val OnboardPearlWhite = Color(0xFFF8FAFC)
-private val OnboardSlateMuted = Color(0xFF94A3B8)
-private val OnboardDeepInk = Color(0xFF0B0D12)
+// Clean, Minimal Dark Neutral & Warm Gold Palette (Zero Red)
+private val MinimalBg = Color(0xFF0B0D11)
+private val MinimalSurface = Color(0xFF141820)
+private val MinimalBorder = Color(0xFF232936)
+private val MinimalGold = Color(0xFFE5B869)
+private val MinimalTeal = Color(0xFF4FD1C5)
+private val MinimalTextPrimary = Color(0xFFF8FAFC)
+private val MinimalTextSecondary = Color(0xFF94A3B8)
+private val MinimalInk = Color(0xFF0B0D11)
 
 /**
- * Flagship 2-Step Aesthetic & Professional Onboarding Experience (Zero Red):
- * - Step 1 of 2 (First Impression Intro Showcase): Showcases the visual identity of Seitharol with
- *   an animated acoustic halo framing the app emblem, expressive typography, and a 2x2 Bento grid
- *   highlighting Studio Master Streaming, Synced Lyrics, Offline Vault, and Cultural Curation.
- * - Step 2 of 2 (Personalize Your Experience): Glassmorphic profile card with live monogram avatar
- *   preview, Name & Age setup, and 100% local on-device privacy assurance.
+ * Clean, Minimal 2-Step Onboarding Screen (Zero Red, No Broken Grid Wrapping):
+ * - Step 1: Centered app logo (`R.drawable.ic_splash_logo`) as the first impression, clean title &
+ *   subtitle, three full-width minimal feature rows, and a bottom "Continue" CTA button.
+ * - Step 2: Minimal profile setup (Name & Age) with 100% local on-device privacy assurance.
  */
 @Composable
 fun OnboardingScreen(
@@ -74,631 +66,379 @@ fun OnboardingScreen(
     var name by remember { mutableStateOf("") }
     var age by remember { mutableStateOf("") }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "onboard_ambient")
-    val haloPhase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = (2f * Math.PI).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 6000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "halo_phase"
-    )
-    val logoBreath by infiniteTransition.animateFloat(
-        initialValue = 0.97f,
-        targetValue = 1.03f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "logo_breath"
-    )
-
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(OnboardDeepBg)
+            .background(MinimalBg)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(horizontal = 24.dp, vertical = 16.dp)
     ) {
-        // Ambient background radial mesh glow (Champagne Gold & Luminous Teal — Zero Red)
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        OnboardChampagneGold.copy(alpha = 0.14f),
-                        Color.Transparent
-                    ),
-                    center = Offset(size.width * 0.82f, size.height * 0.14f),
-                    radius = size.minDimension * 0.72f
-                ),
-                center = Offset(size.width * 0.82f, size.height * 0.14f),
-                radius = size.minDimension * 0.72f
-            )
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        OnboardLuminousTeal.copy(alpha = 0.10f),
-                        Color.Transparent
-                    ),
-                    center = Offset(size.width * 0.18f, size.height * 0.42f),
-                    radius = size.minDimension * 0.68f
-                ),
-                center = Offset(size.width * 0.18f, size.height * 0.42f),
-                radius = size.minDimension * 0.68f
-            )
+        // Minimal Top Bar: Step Indicator & Skip
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(if (currentStep == 1) 22.dp else 8.dp)
+                        .height(6.dp)
+                        .clip(CircleShape)
+                        .background(if (currentStep == 1) MinimalGold else MinimalBorder)
+                )
+                Box(
+                    modifier = Modifier
+                        .width(if (currentStep == 2) 22.dp else 8.dp)
+                        .height(6.dp)
+                        .clip(CircleShape)
+                        .background(if (currentStep == 2) MinimalGold else MinimalBorder)
+                )
+            }
+
+            if (currentStep == 1) {
+                Text(
+                    text = "Skip",
+                    color = MinimalTextSecondary,
+                    fontSize = 13.sp,
+                    fontFamily = OutfitFontFamily,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { currentStep = 2 }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            } else {
+                Text(
+                    text = "Step 2 of 2",
+                    color = MinimalTextSecondary,
+                    fontSize = 12.sp,
+                    fontFamily = OutfitFontFamily,
+                    fontWeight = FontWeight.Medium
+                )
+            }
         }
 
-        Column(
+        AnimatedContent(
+            targetState = currentStep,
+            transitionSpec = { fadeIn(tween(240)) togetherWith fadeOut(tween(180)) },
             modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 18.dp),
-            horizontalAlignment = Alignment.Start
-        ) {
-            // Top Step Indicator Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = OnboardCardElevated,
-                    modifier = Modifier.border(
-                        width = 1.dp,
-                        color = OnboardChampagneGold.copy(alpha = 0.30f),
-                        shape = RoundedCornerShape(20.dp)
-                    )
+                .weight(1f)
+                .fillMaxWidth(),
+            label = "minimal_onboarding_step"
+        ) { step ->
+            if (step == 1) {
+                // ────────────────────────────────────────────────────────────
+                // STEP 1: Clean App Image First Impression + 3 Minimal Rows
+                // ────────────────────────────────────────────────────────────
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState()),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(OnboardChampagneGold)
-                        )
-                        Text(
-                            text = if (currentStep == 1) "FIRST IMPRESSION • INTRO" else "PERSONALIZE • PROFILE",
-                            color = OnboardSoftGold,
-                            fontSize = 11.sp,
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.2.sp
-                        )
-                    }
-                }
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                Text(
-                    text = "0$currentStep / 02",
-                    color = OnboardSlateMuted,
-                    fontSize = 12.sp,
-                    fontFamily = SyneFontFamily,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Dual-Step Champagne Gold & Teal Progress Bar
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(
-                            Brush.horizontalGradient(
-                                listOf(OnboardChampagneGold, OnboardLuminousTeal)
-                            )
-                        )
-                )
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(
-                            if (currentStep >= 2) {
-                                Brush.horizontalGradient(
-                                    listOf(OnboardLuminousTeal, OnboardChampagneGold)
-                                )
-                            } else {
-                                Brush.horizontalGradient(
-                                    listOf(OnboardBorderSubtle, OnboardBorderSubtle)
-                                )
-                            }
-                        )
-                )
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            AnimatedContent(
-                targetState = currentStep,
-                transitionSpec = { fadeIn(tween(320)) togetherWith fadeOut(tween(220)) },
-                label = "onboarding_step_content"
-            ) { step ->
-                if (step == 1) {
-                    // ────────────────────────────────────────────────────────────
-                    // STEP 1 OF 2: Visual First Impression Showcase of Seitharol
-                    // ────────────────────────────────────────────────────────────
+                    // Centered App Image & Title Block
                     Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        // Hero App Emblem Stage with Animated Acoustic Soundstage Halo
-                        Box(
+                        Surface(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .height(220.dp),
-                            contentAlignment = Alignment.Center
+                                .size(96.dp)
+                                .border(
+                                    width = 1.dp,
+                                    color = MinimalBorder,
+                                    shape = RoundedCornerShape(24.dp)
+                                ),
+                            shape = RoundedCornerShape(24.dp),
+                            color = MinimalSurface,
+                            shadowElevation = 12.dp
                         ) {
-                            Canvas(modifier = Modifier.size(216.dp)) {
-                                val center = Offset(size.width / 2f, size.height / 2f)
-                                val baseRadius = size.minDimension * 0.34f
-
-                                // Outer orbital rings
-                                drawCircle(
-                                    color = OnboardChampagneGold.copy(alpha = 0.14f),
-                                    radius = baseRadius * 1.34f,
-                                    center = center,
-                                    style = Stroke(width = 1.2.dp.toPx())
-                                )
-                                drawCircle(
-                                    color = OnboardLuminousTeal.copy(alpha = 0.18f),
-                                    radius = baseRadius * 1.15f,
-                                    center = center,
-                                    style = Stroke(width = 1.5.dp.toPx())
-                                )
-
-                                // Dynamic radial acoustic bars around emblem
-                                val barCount = 36
-                                for (i in 0 until barCount) {
-                                    val angle = (i.toFloat() / barCount) * (2f * Math.PI).toFloat()
-                                    val wave = (sin(angle * 3f + haloPhase) + 1f) * 0.5f
-                                    val innerR = baseRadius * 1.06f
-                                    val outerR = innerR + (6.dp.toPx() + wave * 12.dp.toPx())
-                                    val start = Offset(
-                                        x = center.x + cos(angle) * innerR,
-                                        y = center.y + sin(angle) * innerR
-                                    )
-                                    val end = Offset(
-                                        x = center.x + cos(angle) * outerR,
-                                        y = center.y + sin(angle) * outerR
-                                    )
-                                    val barColor = if (i % 2 == 0) {
-                                        OnboardChampagneGold.copy(alpha = 0.45f + wave * 0.45f)
-                                    } else {
-                                        OnboardLuminousTeal.copy(alpha = 0.38f + wave * 0.45f)
-                                    }
-                                    drawLine(
-                                        color = barColor,
-                                        start = start,
-                                        end = end,
-                                        strokeWidth = 2.4.dp.toPx(),
-                                        cap = StrokeCap.Round
-                                    )
-                                }
-                            }
-
-                            // Center App Image / Emblem Card
-                            Surface(
-                                modifier = Modifier
-                                    .size(116.dp)
-                                    .scale(logoBreath)
-                                    .border(
-                                        width = 1.8.dp,
-                                        brush = Brush.linearGradient(
-                                            listOf(OnboardChampagneGold, OnboardLuminousTeal)
-                                        ),
-                                        shape = RoundedCornerShape(28.dp)
-                                    ),
-                                shape = RoundedCornerShape(28.dp),
-                                color = OnboardCardSurface,
-                                shadowElevation = 18.dp
-                            ) {
-                                Image(
-                                    painter = painterResource(id = R.drawable.ic_splash_logo),
-                                    contentDescription = "Seitharol Emblem",
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            }
+                            Image(
+                                painter = painterResource(id = R.drawable.ic_splash_logo),
+                                contentDescription = "Seitharol App Logo",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
                         }
+
+                        Spacer(modifier = Modifier.height(20.dp))
+
+                        Text(
+                            text = "Seitharol",
+                            color = MinimalTextPrimary,
+                            fontSize = 28.sp,
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center
+                        )
 
                         Spacer(modifier = Modifier.height(8.dp))
 
                         Text(
-                            text = "SEITHAROL",
-                            color = OnboardPearlWhite,
-                            fontSize = 30.sp,
-                            fontFamily = SyneFontFamily,
-                            fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 3.sp,
-                            textAlign = TextAlign.Center
-                        )
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        Text(
-                            text = "Where Studio-Grade Sound Meets Regional & Global Discovery",
-                            color = OnboardSoftGold,
-                            fontSize = 13.sp,
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            textAlign = TextAlign.Center
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Text(
-                            text = "Crafted for pure high-bitrate audio streaming, real-time synchronized lyrics, and zero-data offline playback.",
-                            color = OnboardSlateMuted,
+                            text = "High-resolution streaming, synchronized lyrics, and pure offline playback.",
+                            color = MinimalTextSecondary,
                             fontSize = 14.sp,
                             fontFamily = OutfitFontFamily,
                             lineHeight = 20.sp,
                             textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 8.dp)
+                            modifier = Modifier.padding(horizontal = 12.dp)
                         )
+                    }
 
-                        Spacer(modifier = Modifier.height(24.dp))
+                    Spacer(modifier = Modifier.height(24.dp))
 
-                        // 2x2 Bento Showcase Grid
-                        val bentoFeatures = listOf(
-                            Triple(
-                                "Studio Master Audio",
-                                "Direct 320kbps AAC & Opus streams with 5-band studio equalizer.",
-                                OnboardChampagneGold
-                            ),
-                            Triple(
-                                "Live Synced Lyrics",
-                                "Time-synced interactive lyrics with instant tap-to-seek.",
-                                OnboardLuminousTeal
-                            ),
-                            Triple(
-                                "Offline Opus Vault",
-                                "Save songs on-device for pure zero-data Airplane Mode listening.",
-                                OnboardLuminousTeal
-                            ),
-                            Triple(
-                                "Cultural Curation",
-                                "Personalized Manipuri, regional & global music discovery.",
-                                OnboardChampagneGold
-                            )
+                    // 3 Clean Full-Width Minimal Feature Rows (never overflows or wraps awkwardly)
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        MinimalFeatureRow(
+                            iconIndex = 0,
+                            accent = MinimalGold,
+                            title = "Studio-Grade Audio",
+                            subtitle = "Pure 320kbps streaming with 5-band equalizer"
                         )
+                        MinimalFeatureRow(
+                            iconIndex = 1,
+                            accent = MinimalTeal,
+                            title = "Time-Synced Lyrics",
+                            subtitle = "Interactive synchronized lyrics with tap-to-seek"
+                        )
+                        MinimalFeatureRow(
+                            iconIndex = 2,
+                            accent = MinimalGold,
+                            title = "True Offline Mode",
+                            subtitle = "Save tracks on-device for zero-data listening"
+                        )
+                    }
 
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    Button(
+                        onClick = { currentStep = 2 },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MinimalGold,
+                            contentColor = MinimalInk
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp)
+                    ) {
+                        Text(
+                            text = "Continue",
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                    }
+                }
+            } else {
+                // ────────────────────────────────────────────────────────────
+                // STEP 2: Minimal Profile Setup (Zero Red, No Support Email)
+                // ────────────────────────────────────────────────────────────
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            bentoFeatures.chunked(2).forEachIndexed { rowIdx, rowItems ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    rowItems.forEachIndexed { colIdx, (title, desc, accentColor) ->
-                                        val iconIndex = rowIdx * 2 + colIdx
-                                        Surface(
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .height(132.dp)
-                                                .border(
-                                                    width = 1.dp,
-                                                    color = OnboardBorderSubtle,
-                                                    shape = RoundedCornerShape(18.dp)
-                                                ),
-                                            shape = RoundedCornerShape(18.dp),
-                                            color = OnboardCardSurface
-                                        ) {
-                                            Column(
-                                                modifier = Modifier
-                                                    .fillMaxSize()
-                                                    .padding(14.dp),
-                                                verticalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(32.dp)
-                                                        .clip(RoundedCornerShape(10.dp))
-                                                        .background(accentColor.copy(alpha = 0.15f)),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    OnboardingBentoSvgIcon(
-                                                        index = iconIndex,
-                                                        tint = accentColor,
-                                                        modifier = Modifier.size(17.dp)
-                                                    )
-                                                }
-                                                Column {
-                                                    Text(
-                                                        text = title,
-                                                        color = OnboardPearlWhite,
-                                                        fontSize = 14.sp,
-                                                        fontFamily = SyneFontFamily,
-                                                        fontWeight = FontWeight.Bold,
-                                                        maxLines = 1
-                                                    )
-                                                    Spacer(modifier = Modifier.height(3.dp))
-                                                    Text(
-                                                        text = desc,
-                                                        color = OnboardSlateMuted,
-                                                        fontSize = 11.sp,
-                                                        fontFamily = OutfitFontFamily,
-                                                        lineHeight = 15.sp,
-                                                        maxLines = 3
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                            Surface(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .border(1.dp, MinimalBorder, RoundedCornerShape(14.dp)),
+                                shape = RoundedCornerShape(14.dp),
+                                color = MinimalSurface
+                            ) {
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_splash_logo),
+                                    contentDescription = "Seitharol",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                            Column {
+                                Text(
+                                    text = "Your Profile",
+                                    color = MinimalTextPrimary,
+                                    fontSize = 22.sp,
+                                    fontFamily = SyneFontFamily,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Personalize your home screen greeting",
+                                    color = MinimalTextSecondary,
+                                    fontSize = 13.sp,
+                                    fontFamily = OutfitFontFamily
+                                )
                             }
                         }
 
                         Spacer(modifier = Modifier.height(28.dp))
 
-                        Button(
-                            onClick = { currentStep = 2 },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = OnboardChampagneGold,
-                                contentColor = OnboardDeepInk
-                            ),
-                            shape = RoundedCornerShape(16.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(54.dp)
-                        ) {
-                            Text(
-                                text = "Get Started",
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 16.sp,
-                                letterSpacing = 0.5.sp
-                            )
-                        }
-                    }
-                } else {
-                    // ────────────────────────────────────────────────────────────
-                    // STEP 2 OF 2: Personalize Your Profile (Zero Red, No Support Email)
-                    // ────────────────────────────────────────────────────────────
-                    Column(
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        // Live Profile Preview Banner
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(
-                                    width = 1.dp,
-                                    brush = Brush.horizontalGradient(
-                                        listOf(
-                                            OnboardChampagneGold.copy(alpha = 0.45f),
-                                            OnboardLuminousTeal.copy(alpha = 0.35f)
-                                        )
-                                    ),
-                                    shape = RoundedCornerShape(22.dp)
-                                ),
-                            shape = RoundedCornerShape(22.dp),
-                            color = OnboardCardSurface
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(18.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(60.dp)
-                                        .clip(CircleShape)
-                                        .background(
-                                            Brush.linearGradient(
-                                                listOf(OnboardChampagneGold, OnboardLuminousTeal)
-                                            )
-                                        ),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    val initial = name.trim().firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "S"
-                                    Text(
-                                        text = initial,
-                                        color = OnboardDeepInk,
-                                        fontSize = 24.sp,
-                                        fontFamily = SyneFontFamily,
-                                        fontWeight = FontWeight.ExtraBold
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.width(16.dp))
-
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = if (name.isNotBlank()) "Welcome, ${name.trim()}" else "Create Your Listener Profile",
-                                        color = OnboardPearlWhite,
-                                        fontSize = 18.sp,
-                                        fontFamily = SyneFontFamily,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Spacer(modifier = Modifier.height(3.dp))
-                                    Text(
-                                        text = if (age.isNotBlank()) "Age $age • Tailored Acoustic Feed" else "Personalize your daily greetings & smart mixes",
-                                        color = OnboardSoftGold,
-                                        fontSize = 12.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(24.dp))
-
                         Text(
-                            text = "Tell us about yourself",
-                            color = OnboardPearlWhite,
-                            fontSize = 24.sp,
-                            fontFamily = SyneFontFamily,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        Text(
-                            text = "Your name and age tailor your time-of-day home greetings and regional music shelves.",
-                            color = OnboardSlateMuted,
-                            fontSize = 14.sp,
+                            text = "Name",
+                            color = MinimalTextPrimary,
+                            fontSize = 13.sp,
                             fontFamily = OutfitFontFamily,
-                            lineHeight = 20.sp
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(bottom = 6.dp)
                         )
-
-                        Spacer(modifier = Modifier.height(22.dp))
 
                         OutlinedTextField(
                             value = name,
                             onValueChange = { name = it },
-                            label = { Text("Your Name", color = OnboardSlateMuted) },
-                            placeholder = { Text("Enter your name", color = OnboardSlateMuted.copy(alpha = 0.6f)) },
+                            placeholder = {
+                                Text(
+                                    text = "Enter your name",
+                                    color = MinimalTextSecondary.copy(alpha = 0.6f),
+                                    fontFamily = OutfitFontFamily
+                                )
+                            },
                             singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = OnboardChampagneGold,
-                                unfocusedBorderColor = OnboardBorderSubtle,
-                                focusedTextColor = OnboardPearlWhite,
-                                unfocusedTextColor = OnboardPearlWhite,
-                                cursorColor = OnboardChampagneGold,
-                                focusedContainerColor = OnboardCardSurface,
-                                unfocusedContainerColor = OnboardCardSurface
+                                focusedBorderColor = MinimalGold,
+                                unfocusedBorderColor = MinimalBorder,
+                                focusedContainerColor = MinimalSurface,
+                                unfocusedContainerColor = MinimalSurface,
+                                focusedTextColor = MinimalTextPrimary,
+                                unfocusedTextColor = MinimalTextPrimary,
+                                cursorColor = MinimalGold
                             ),
-                            shape = RoundedCornerShape(14.dp),
                             modifier = Modifier.fillMaxWidth()
                         )
 
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(18.dp))
+
+                        Text(
+                            text = "Age (Optional)",
+                            color = MinimalTextPrimary,
+                            fontSize = 13.sp,
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(bottom = 6.dp)
+                        )
 
                         OutlinedTextField(
                             value = age,
-                            onValueChange = { if (it.all { ch -> ch.isDigit() } && it.length <= 3) age = it },
-                            label = { Text("Your Age", color = OnboardSlateMuted) },
-                            placeholder = { Text("Enter your age", color = OnboardSlateMuted.copy(alpha = 0.6f)) },
-                            singleLine = true,
+                            onValueChange = { input ->
+                                if (input.all { it.isDigit() } && input.length <= 3) {
+                                    age = input
+                                }
+                            },
+                            placeholder = {
+                                Text(
+                                    text = "e.g., 21",
+                                    color = MinimalTextSecondary.copy(alpha = 0.6f),
+                                    fontFamily = OutfitFontFamily
+                                )
+                            },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = OnboardChampagneGold,
-                                unfocusedBorderColor = OnboardBorderSubtle,
-                                focusedTextColor = OnboardPearlWhite,
-                                unfocusedTextColor = OnboardPearlWhite,
-                                cursorColor = OnboardChampagneGold,
-                                focusedContainerColor = OnboardCardSurface,
-                                unfocusedContainerColor = OnboardCardSurface
+                                focusedBorderColor = MinimalGold,
+                                unfocusedBorderColor = MinimalBorder,
+                                focusedContainerColor = MinimalSurface,
+                                unfocusedContainerColor = MinimalSurface,
+                                focusedTextColor = MinimalTextPrimary,
+                                unfocusedTextColor = MinimalTextPrimary,
+                                cursorColor = MinimalGold
                             ),
-                            shape = RoundedCornerShape(14.dp),
                             modifier = Modifier.fillMaxWidth()
                         )
 
-                        Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(18.dp))
 
-                        // On-Device Privacy Shield Card
+                        // Compact Local Privacy Note
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .border(
-                                    width = 1.dp,
-                                    color = OnboardLuminousTeal.copy(alpha = 0.28f),
-                                    shape = RoundedCornerShape(14.dp)
-                                ),
-                            shape = RoundedCornerShape(14.dp),
-                            color = OnboardCardElevated
+                                .border(1.dp, MinimalBorder, RoundedCornerShape(12.dp)),
+                            shape = RoundedCornerShape(12.dp),
+                            color = MinimalSurface
                         ) {
                             Row(
-                                modifier = Modifier.padding(14.dp),
-                                verticalAlignment = Alignment.Top
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Outlined.Lock,
-                                    contentDescription = "Privacy",
-                                    tint = OnboardLuminousTeal,
-                                    modifier = Modifier
-                                        .size(18.dp)
-                                        .padding(top = 2.dp)
+                                    contentDescription = null,
+                                    tint = MinimalTeal,
+                                    modifier = Modifier.size(18.dp)
                                 )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column {
-                                    Text(
-                                        text = "100% On-Device Privacy Guarantee",
-                                        color = OnboardPearlWhite,
-                                        fontSize = 13.sp,
-                                        fontFamily = SyneFontFamily,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = "This information is never uploaded to any external server or shared with third parties. It stays locally on your device solely to personalize your music experience.",
-                                        color = OnboardSlateMuted,
-                                        fontSize = 12.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        lineHeight = 17.sp
-                                    )
-                                }
+                                Text(
+                                    text = "Saved locally on your device. No account required.",
+                                    color = MinimalTextSecondary,
+                                    fontSize = 12.sp,
+                                    fontFamily = OutfitFontFamily
+                                )
                             }
                         }
+                    }
 
-                        Spacer(modifier = Modifier.height(32.dp))
+                    Spacer(modifier = Modifier.height(24.dp))
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { currentStep = 1 },
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MinimalTextPrimary),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MinimalBorder),
+                            modifier = Modifier
+                                .weight(0.38f)
+                                .height(52.dp)
                         ) {
-                            OutlinedButton(
-                                onClick = { currentStep = 1 },
-                                shape = RoundedCornerShape(16.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = OnboardPearlWhite
-                                ),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, OnboardBorderSubtle),
-                                modifier = Modifier
-                                    .weight(0.36f)
-                                    .height(54.dp)
-                            ) {
-                                Text(
-                                    text = "Back",
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = OnboardPearlWhite
-                                )
-                            }
+                            Text(
+                                text = "Back",
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 15.sp
+                            )
+                        }
 
-                            val canContinue = name.isNotBlank() && age.isNotBlank()
-                            Button(
-                                onClick = {
-                                    if (canContinue) {
-                                        onContinue(name.trim(), age.trim())
-                                    }
-                                },
-                                enabled = canContinue,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = OnboardChampagneGold,
-                                    contentColor = OnboardDeepInk,
-                                    disabledContainerColor = OnboardChampagneGold.copy(alpha = 0.28f),
-                                    disabledContentColor = OnboardPearlWhite.copy(alpha = 0.45f)
-                                ),
-                                shape = RoundedCornerShape(16.dp),
-                                modifier = Modifier
-                                    .weight(0.64f)
-                                    .height(54.dp)
-                            ) {
-                                Text(
-                                    text = "Start Listening",
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    fontSize = 16.sp
-                                )
-                            }
+                        Button(
+                            onClick = {
+                                val finalName = name.trim().ifBlank { "Music Lover" }
+                                val finalAge = age.trim().ifBlank { "18" }
+                                onContinue(finalName, finalAge)
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MinimalGold,
+                                contentColor = MinimalInk
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .weight(0.62f)
+                                .height(52.dp)
+                        ) {
+                            Text(
+                                text = "Start Listening",
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp
+                            )
                         }
                     }
                 }
@@ -708,91 +448,135 @@ fun OnboardingScreen(
 }
 
 @Composable
-private fun OnboardingBentoSvgIcon(
+private fun MinimalFeatureRow(
+    iconIndex: Int,
+    accent: Color,
+    title: String,
+    subtitle: String
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, MinimalBorder, RoundedCornerShape(14.dp)),
+        shape = RoundedCornerShape(14.dp),
+        color = MinimalSurface
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(accent.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center
+            ) {
+                MinimalFeatureSvgIcon(
+                    index = iconIndex,
+                    tint = accent,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    color = MinimalTextPrimary,
+                    fontSize = 14.sp,
+                    fontFamily = SyneFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    color = MinimalTextSecondary,
+                    fontSize = 12.sp,
+                    fontFamily = OutfitFontFamily,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MinimalFeatureSvgIcon(
     index: Int,
     tint: Color,
     modifier: Modifier = Modifier.size(18.dp)
 ) {
     Canvas(modifier = modifier) {
-        val sx = size.width / 24f
-        val sy = size.height / 24f
-        val stroke = Stroke(width = 2.0f * sx, cap = StrokeCap.Round)
+        val w = size.width
+        val h = size.height
+        val stroke = Stroke(width = w * 0.10f, cap = StrokeCap.Round)
         when (index) {
             0 -> {
-                // Equalizer / Studio Waveform SVG
-                drawLine(tint, Offset(4f * sx, 15f * sy), Offset(4f * sx, 9f * sy), stroke.width, StrokeCap.Round)
-                drawLine(tint, Offset(9f * sx, 19f * sy), Offset(9f * sx, 5f * sy), stroke.width, StrokeCap.Round)
-                drawLine(tint, Offset(14f * sx, 16f * sy), Offset(14f * sx, 8f * sy), stroke.width, StrokeCap.Round)
-                drawLine(tint, Offset(19f * sx, 13f * sy), Offset(19f * sx, 11f * sy), stroke.width, StrokeCap.Round)
+                val bars = listOf(0.35f, 0.70f, 0.95f, 0.60f, 0.40f)
+                bars.forEachIndexed { idx, ratio ->
+                    val x = w * (0.18f + idx * 0.16f)
+                    val barH = h * ratio
+                    val topY = (h - barH) / 2f
+                    drawLine(
+                        color = tint,
+                        start = Offset(x, topY),
+                        end = Offset(x, topY + barH),
+                        strokeWidth = w * 0.10f,
+                        cap = StrokeCap.Round
+                    )
+                }
             }
             1 -> {
-                // Lyrics Alignment Lines SVG
-                drawLine(tint, Offset(4f * sx, 7f * sy), Offset(20f * sx, 7f * sy), stroke.width, StrokeCap.Round)
-                drawLine(tint, Offset(4f * sx, 12f * sy), Offset(16f * sx, 12f * sy), stroke.width, StrokeCap.Round)
-                drawLine(tint, Offset(4f * sx, 17f * sy), Offset(12f * sx, 17f * sy), stroke.width, StrokeCap.Round)
-            }
-            2 -> {
-                // Offline Shield / Download Vault SVG
-                drawLine(tint, Offset(12f * sx, 4f * sy), Offset(12f * sx, 15f * sy), stroke.width, StrokeCap.Round)
-                drawLine(tint, Offset(8f * sx, 11f * sy), Offset(12f * sx, 15f * sy), stroke.width, StrokeCap.Round)
-                drawLine(tint, Offset(16f * sx, 11f * sy), Offset(12f * sx, 15f * sy), stroke.width, StrokeCap.Round)
-                drawLine(tint, Offset(5f * sx, 19f * sy), Offset(19f * sx, 19f * sy), stroke.width, StrokeCap.Round)
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(w * 0.12f, h * 0.16f),
+                    size = Size(w * 0.76f, h * 0.68f),
+                    cornerRadius = CornerRadius(w * 0.14f, w * 0.14f),
+                    style = stroke
+                )
+                drawLine(
+                    color = tint,
+                    start = Offset(w * 0.28f, h * 0.40f),
+                    end = Offset(w * 0.72f, h * 0.40f),
+                    strokeWidth = w * 0.09f,
+                    cap = StrokeCap.Round
+                )
+                drawLine(
+                    color = tint,
+                    start = Offset(w * 0.28f, h * 0.60f),
+                    end = Offset(w * 0.56f, h * 0.60f),
+                    strokeWidth = w * 0.09f,
+                    cap = StrokeCap.Round
+                )
             }
             else -> {
-                // Sparkle / Cultural Star SVG
-                val path = Path().apply {
-                    moveTo(12f * sx, 3f * sy)
-                    lineTo(14.5f * sx, 9.5f * sy)
-                    lineTo(21f * sx, 12f * sy)
-                    lineTo(14.5f * sx, 14.5f * sy)
-                    lineTo(12f * sx, 21f * sy)
-                    lineTo(9.5f * sx, 14.5f * sy)
-                    lineTo(3f * sx, 12f * sy)
-                    lineTo(9.5f * sx, 9.5f * sy)
-                    close()
+                drawLine(
+                    color = tint,
+                    start = Offset(w * 0.50f, h * 0.16f),
+                    end = Offset(w * 0.50f, h * 0.66f),
+                    strokeWidth = w * 0.10f,
+                    cap = StrokeCap.Round
+                )
+                val arrow = Path().apply {
+                    moveTo(w * 0.30f, h * 0.48f)
+                    lineTo(w * 0.50f, h * 0.68f)
+                    lineTo(w * 0.70f, h * 0.48f)
                 }
-                drawPath(path, color = tint, style = stroke)
+                drawPath(arrow, color = tint, style = stroke)
+                drawLine(
+                    color = tint,
+                    start = Offset(w * 0.22f, h * 0.84f),
+                    end = Offset(w * 0.78f, h * 0.84f),
+                    strokeWidth = w * 0.10f,
+                    cap = StrokeCap.Round
+                )
             }
         }
-    }
-}
-
-@Composable
-fun PlusSvgIcon(
-    tint: Color,
-    modifier: Modifier = Modifier.size(16.dp)
-) {
-    Canvas(modifier = modifier) {
-        val stroke = Stroke(width = size.width * 0.14f, cap = StrokeCap.Round)
-        drawLine(
-            color = tint,
-            start = Offset(size.width * 0.5f, size.height * 0.18f),
-            end = Offset(size.width * 0.5f, size.height * 0.82f),
-            strokeWidth = stroke.width,
-            cap = StrokeCap.Round
-        )
-        drawLine(
-            color = tint,
-            start = Offset(size.width * 0.18f, size.height * 0.5f),
-            end = Offset(size.width * 0.82f, size.height * 0.5f),
-            strokeWidth = stroke.width,
-            cap = StrokeCap.Round
-        )
-    }
-}
-
-@Composable
-fun InvertedTriangleSvgIcon(
-    tint: Color,
-    modifier: Modifier = Modifier.size(14.dp)
-) {
-    Canvas(modifier = modifier) {
-        val path = Path().apply {
-            moveTo(size.width * 0.15f, size.height * 0.25f)
-            lineTo(size.width * 0.85f, size.height * 0.25f)
-            lineTo(size.width * 0.50f, size.height * 0.80f)
-            close()
-        }
-        drawPath(path = path, color = tint, style = Fill)
     }
 }

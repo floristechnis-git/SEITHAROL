@@ -314,7 +314,7 @@ object ManipurCalendarNotificationEngine {
             storedMap[todayEvent.id] = unreadToday
             newlyTriggeredEvent = unreadToday
         } else if (todayEvent != null) {
-            val existing = storedMap[todayEvent.id]!!
+            val existing = storedMap[todayEvent.id] ?: todayEvent
             storedMap[todayEvent.id] = existing.copy(isToday = true, dateLabel = todayEvent.dateLabel)
         }
 
@@ -335,7 +335,7 @@ object ManipurCalendarNotificationEngine {
             if (pastEv != null && !storedMap.containsKey(pastEv.id)) {
                 storedMap[pastEv.id] = pastEv.copy(isUnread = false)
             } else if (pastEv != null) {
-                val existing = storedMap[pastEv.id]!!
+                val existing = storedMap[pastEv.id] ?: pastEv
                 if (existing.isToday) {
                     storedMap[pastEv.id] = existing.copy(isToday = false, dateLabel = pastEv.dateLabel)
                 }

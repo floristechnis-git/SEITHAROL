@@ -161,10 +161,10 @@ class CascadeViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val activeDownloads: StateFlow<List<DownloadItem>> = downloadRepository.getAllDownloads()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val totalDownloadedBytes: StateFlow<Long> = downloadRepository.getTotalDownloadedBytes()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0L)
 
     val playerState: StateFlow<PlayerState> = playerManager.state
     val resolverNodes: StateFlow<List<ResolverNode>> = resolverEngine.activeNodes
@@ -293,7 +293,6 @@ class CascadeViewModel(
         val clean = query.trim()
         activeSearchJob?.cancel()
 
-        // If the user pasted a shared Seitharol or YouTube Music link into Search, open it directly!
         SeitharolDeepLinkHelper.parseSharedTextOrUrl(clean)?.let { target ->
             when (target) {
                 is SeitharolDeepLinkHelper.DeepLinkTarget.TrackTarget -> {
@@ -454,7 +453,6 @@ class CascadeViewModel(
             }
         }
 
-        // Keep Home & Discover shelves reactively synced with liked/downloaded state
         viewModelScope.launch(vmExceptionHandler) {
             combine(likedTrackIds, downloadedTracksById) { likedIds, downloadedMap ->
                 likedIds to downloadedMap
@@ -978,6 +976,10 @@ class CascadeViewModel(
 
     fun startDownload(track: Track, tier: DownloadTier = DownloadTier.STANDARD) {
         viewModelScope.launch(vmExceptionHandler) { runCatching { downloadRepository.startDownload(track, tier) } }
+    }
+
+    fun cancelDownload(trackId: String) {
+        downloadRepository.cancelDownload(trackId)
     }
 
     fun retryDownload(trackId: String) {

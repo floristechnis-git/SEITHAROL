@@ -16,17 +16,45 @@ import javax.net.ssl.SSLException
 object ErrorFormatter {
 
     /**
-     * Checks whether the device currently has an active, validated internet connection.
+     * Checks whether the device currently has an active internet connection.
+     * Checks both activeNetwork and allNetworks/legacy NetworkInfo so cold-start
+     * network handoffs never trigger a false "No internet connection" popup.
      */
     fun isOnline(context: Context?): Boolean {
         if (context == null) return true
         return try {
             val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
                 ?: return true
-            val activeNetwork = cm.activeNetwork ?: return false
-            val capabilities = cm.getNetworkCapabilities(activeNetwork) ?: return false
-            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-        } catch (_: Exception) {
+            val activeNetwork = cm.activeNetwork
+            if (activeNetwork != null) {
+                val capabilities = cm.getNetworkCapabilities(activeNetwork)
+                if (capabilities != null && (
+                        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+                            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
+                            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+                        )
+                ) {
+                    return true
+                }
+            }
+            @Suppress("DEPRECATION")
+            val anyConnected = cm.allNetworks.any { net ->
+                val caps = cm.getNetworkCapabilities(net)
+                caps != null && (
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+                        caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                        caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+                    )
+            }
+            if (anyConnected) return true
+
+            @Suppress("DEPRECATION")
+            val legacyInfo = cm.activeNetworkInfo
+            @Suppress("DEPRECATION")
+            legacyInfo?.isConnectedOrConnecting == true
+        } catch (_: Throwable) {
             true
         }
     }
@@ -117,7 +145,7 @@ object ErrorFormatter {
     fun sanitizeNotice(rawMessage: String, context: Context? = null): String {
         val lower = rawMessage.lowercase()
 
-        // 1. Always pass through legitimate non-error user notifications even when in Airplane Mode
+        // 1. Always pass through legitimate non-error user notifications
         if (lower.startsWith("sleep timer") ||
             lower.startsWith("added to") ||
             lower.startsWith("removed from") ||
@@ -127,13 +155,10 @@ object ErrorFormatter {
             lower.startsWith("airplane mode") ||
             lower.startsWith("track not available offline") ||
             lower.startsWith("sponsorblock: skipped") ||
-            lower.startsWith("skipped sponsor")
+            lower.startsWith("skipped sponsor") ||
+            lower.startsWith("download")
         ) {
             return rawMessage
-        }
-
-        if (context != null && !isOnline(context)) {
-            return "No internet connection. Please check your network."
         }
 
         // Detect and sanitize any dev-mode reports, stack traces, or fallback messages

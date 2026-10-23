@@ -265,7 +265,7 @@ fun PlaybackQueueModal(
                         val isDragging = draggingFromIndex == index
 
                         // Landing indicator line above this item
-                        if (draggingFromIndex != null && targetDropIndex == index && targetDropIndex <= draggingFromIndex!!) {
+                        if ((draggingFromIndex?.let { targetDropIndex == index && targetDropIndex <= it } == true)) {
                             LandingDropIndicatorLine()
                         }
 
@@ -444,7 +444,7 @@ fun PlaybackQueueModal(
                         }
 
                         // Landing indicator line below this item
-                        if (draggingFromIndex != null && targetDropIndex == index && targetDropIndex > draggingFromIndex!!) {
+                        if ((draggingFromIndex?.let { targetDropIndex == index && targetDropIndex > it } == true)) {
                             LandingDropIndicatorLine()
                         }
                     }

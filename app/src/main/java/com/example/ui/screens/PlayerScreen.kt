@@ -72,12 +72,10 @@ fun SvgChevronIcon(
         val h = size.height
         val path = Path().apply {
             if (isExpanded) {
-                // Downward collapse chevron
                 moveTo(w * 0.22f, h * 0.36f)
                 lineTo(w * 0.50f, h * 0.64f)
                 lineTo(w * 0.78f, h * 0.36f)
             } else {
-                // Upward expand chevron
                 moveTo(w * 0.22f, h * 0.64f)
                 lineTo(w * 0.50f, h * 0.36f)
                 lineTo(w * 0.78f, h * 0.64f)
@@ -91,15 +89,6 @@ fun SvgChevronIcon(
     }
 }
 
-/**
- * YouTube Music & YouTube mobile app inspired Full Player Screen:
- * 1. Holding/dragging down from the top area smoothly minimizes the Player into MiniPlayer.
- * 2. Lyrics / Artwork Toggle Swap: "Show Artwork" toggles back to album cover;
- *    Fullscreen Expand SVG Maximize button opens the immersive Fullscreen Expanded Lyrics view.
- * 3. Fullscreen Expanded Lyrics view with top bar (artwork, title, artist, "><" minimize button),
- *    time-synced scrolling lyrics with active-line glow and scale, and bottom playback bar.
- * 4. Dark theme palette: #1B1C1C background, #232526 elevated surfaces, #E3E4E2 primary text, #FFB74D accent.
- */
 @Composable
 fun PlayerScreen(
     viewModel: CascadeViewModel,
@@ -119,10 +108,6 @@ fun PlayerScreen(
     var showQueue by remember { mutableStateOf(false) }
     var showAudioAdjustSheet by remember { mutableStateOf(false) }
 
-    // Conditional "Up Next" bottom bar:
-    // Never pops up automatically unless the playing track is part of an active playlist.
-    // When playing a single song (from Search, Home, Discover, or recommendations), it remains hidden
-    // unless the user explicitly clicks the Queue button. Can be swiped down to hide.
     var hasClickedQueueButton by remember(track.id, playerState.isPartOfPlaylist) {
         mutableStateOf(playerState.isPartOfPlaylist && !playerState.isSingleTrackPlayback)
     }
@@ -134,7 +119,6 @@ fun PlayerScreen(
     val scope = rememberCoroutineScope()
     val dragOffsetY = remember { Animatable(0f) }
 
-    // Smooth auto-scroll inline lyrics with 2500ms idle debounce on user touch/drag
     var isUserScrollingInlineLyrics by remember { mutableStateOf(false) }
     LaunchedEffect(inlineLyricListState.isScrollInProgress) {
         if (inlineLyricListState.isScrollInProgress) {
@@ -146,34 +130,37 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(playerState.activeLyricIndex, showLyrics, isUserScrollingInlineLyrics) {
-        if (showLyrics && !isUserScrollingInlineLyrics && playerState.activeLyricIndex in 0 until playerState.lyricLines.size) {
-            val activeIdx = playerState.activeLyricIndex
-            val layoutInfo = inlineLyricListState.layoutInfo
-            val viewportHeight = layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset
-            val visibleItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == activeIdx }
-            if (visibleItem != null && viewportHeight > 0) {
-                val itemCenter = visibleItem.offset + (visibleItem.size / 2f)
-                val viewportCenter = viewportHeight / 2f
-                val delta = itemCenter - viewportCenter
-                inlineLyricListState.animateScrollBy(
-                    value = delta,
-                    animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing)
-                )
-            } else if (viewportHeight > 0) {
-                inlineLyricListState.animateScrollToItem(
-                    index = activeIdx,
-                    scrollOffset = -(viewportHeight / 2) + 40
-                )
-            } else {
-                inlineLyricListState.animateScrollToItem((activeIdx - 2).coerceAtLeast(0))
+        runCatching {
+            if (showLyrics && !isUserScrollingInlineLyrics && playerState.activeLyricIndex in 0 until playerState.lyricLines.size) {
+                val activeIdx = playerState.activeLyricIndex
+                val layoutInfo = inlineLyricListState.layoutInfo
+                val viewportHeight = layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset
+                val visibleItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == activeIdx }
+                if (visibleItem != null && viewportHeight > 0) {
+                    val itemCenter = visibleItem.offset + (visibleItem.size / 2f)
+                    val viewportCenter = viewportHeight / 2f
+                    val delta = itemCenter - viewportCenter
+                    inlineLyricListState.animateScrollBy(
+                        value = delta,
+                        animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing)
+                    )
+                } else if (viewportHeight > 0) {
+                    inlineLyricListState.animateScrollToItem(
+                        index = activeIdx,
+                        scrollOffset = -(viewportHeight / 2) + 40
+                    )
+                } else {
+                    inlineLyricListState.animateScrollToItem((activeIdx - 2).coerceAtLeast(0))
+                }
             }
         }
     }
 
     val displayPosition = (if (isUserDraggingSlider) userSeekingPosition?.toLong() else null)
         ?: playerState.currentPositionMs.coerceAtLeast(0L)
-    val totalDuration = if (playerState.durationMs > 0L) playerState.durationMs else (track.durationMs.takeIf { it > 0 } ?: 210000L)
-    val sliderProgress = (displayPosition.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
+    val totalDuration = (if (playerState.durationMs > 0L) playerState.durationMs else (track.durationMs.takeIf { it > 0 } ?: 210000L)).coerceAtLeast(1000L)
+    val rawSliderProgress = displayPosition.toFloat() / totalDuration.toFloat()
+    val sliderProgress = if (rawSliderProgress.isNaN() || rawSliderProgress.isInfinite()) 0f else rawSliderProgress.coerceIn(0f, 1f)
 
     val likedTrackIds by viewModel.likedTrackIds.collectAsState()
     val isLiked = track.id in likedTrackIds || track.isLiked
@@ -293,14 +280,12 @@ fun PlayerScreen(
         // Middle Area: Album Cover Artwork OR Inline Lyrics View
         // ────────────────────────────────────────────────────────────
         if (showLyrics) {
-            // Inline Lyrics Mode
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp)
             ) {
-                // Header with "Show Artwork" (left) & "<>" Maximize button (right)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -308,7 +293,6 @@ fun PlayerScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Replaced "Synchronized Lyrics" button text with "Show Artwork"
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -337,7 +321,6 @@ fun PlayerScreen(
                         }
                     }
 
-                    // Fullscreen Expand SVG Maximize Button (opens full-screen Expanded Lyrics)
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -385,7 +368,6 @@ fun PlayerScreen(
                             itemsIndexed(playerState.lyricLines) { index, line ->
                                 val isCurrent = index == playerState.activeLyricIndex
                                 if (line.isInstrumental) {
-                                    // Instrumental gap — show animated pulsing Music Note SVG indicator
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -426,7 +408,6 @@ fun PlayerScreen(
                             }
                         }
 
-                        // Top Cloudy Gradient Mask (soft atmospheric fog)
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -444,7 +425,6 @@ fun PlayerScreen(
                                 )
                         )
 
-                        // Bottom Cloudy Gradient Mask (soft atmospheric fog)
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -465,7 +445,6 @@ fun PlayerScreen(
                 }
             }
         } else {
-            // High-Resolution Rounded Album Artwork Container (No circle div!)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -507,16 +486,11 @@ fun PlayerScreen(
         }
 
         // ────────────────────────────────────────────────────────────
-        // Track Title & Artist Details (Isolated Touch Targets: consumes stray taps so they never hit Slider/Queue)
+        // Track Title & Artist Details
         // ────────────────────────────────────────────────────────────
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .pointerInput(track.id) {
-                    awaitPointerEventScope {
-                        // Consume stray background taps in the title/artist block so they never leak to adjacent controls
-                    }
-                }
                 .padding(horizontal = 24.dp, vertical = 8.dp)
         ) {
             Text(
@@ -530,7 +504,6 @@ fun PlayerScreen(
                 modifier = Modifier.testTag("player_song_title")
             )
             Spacer(modifier = Modifier.height(6.dp))
-            // Artist name is clickable — strictly isolated touch target so clicking song title NEVER triggers it
             @OptIn(ExperimentalMaterial3Api::class)
             CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
                 Row(
@@ -573,13 +546,14 @@ fun PlayerScreen(
         }
 
         // ────────────────────────────────────────────────────────────
-        // Secondary Actions Row (EQ, Timer, Download, Share, Lyrics, Queue)
+        // Secondary Actions Row (EQ, Timer, Download / Cancel, Share, Lyrics, Queue)
         // ────────────────────────────────────────────────────────────
         val downloads by viewModel.activeDownloads.collectAsState()
         val trackDownload = downloads.firstOrNull { it.trackId == track.id }
         val isDownloaded = track.isDownloaded || trackDownload?.state == com.example.data.model.DownloadState.COMPLETED
         val isDownloading = trackDownload?.state == com.example.data.model.DownloadState.DOWNLOADING || trackDownload?.state == com.example.data.model.DownloadState.FINALIZING
-        val downloadProgress = trackDownload?.progress ?: 0f
+        val rawDownloadProgress = trackDownload?.progress ?: 0f
+        val downloadProgress = if (rawDownloadProgress.isNaN() || rawDownloadProgress.isInfinite()) 0f else rawDownloadProgress.coerceIn(0f, 1f)
 
         Row(
             modifier = Modifier
@@ -595,10 +569,12 @@ fun PlayerScreen(
                 Icon(Icons.Outlined.Timer, contentDescription = "Sleep Timer", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
-            // Real Download Button
+            // Real Download Button (tap while downloading to cancel)
             IconButton(
                 onClick = {
-                    if (!isDownloaded && !isDownloading) {
+                    if (isDownloading) {
+                        viewModel.cancelDownload(track.id)
+                    } else if (!isDownloaded) {
                         viewModel.startDownload(track, com.example.data.model.DownloadTier.STANDARD)
                     }
                 },
@@ -622,12 +598,11 @@ fun PlayerScreen(
                                 color = MaterialTheme.colorScheme.primary,
                                 trackColor = MaterialTheme.colorScheme.surfaceVariant
                             )
-                            Text(
-                                text = "${(downloadProgress * 100).toInt()}%",
-                                fontSize = 8.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontFamily = OutfitFontFamily
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Cancel download",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(12.dp)
                             )
                         }
                     }
@@ -728,7 +703,6 @@ fun PlayerScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            // Shuffle
             IconButton(
                 onClick = { viewModel.toggleShuffle() },
                 modifier = Modifier.size(44.dp)
@@ -740,7 +714,6 @@ fun PlayerScreen(
                 )
             }
 
-            // Previous
             IconButton(
                 onClick = { viewModel.previous() },
                 modifier = Modifier.size(48.dp)
@@ -753,7 +726,6 @@ fun PlayerScreen(
                 )
             }
 
-            // Big Play / Pause FAB (64.dp circle)
             Surface(
                 modifier = Modifier
                     .size(64.dp)
@@ -782,7 +754,6 @@ fun PlayerScreen(
                 }
             }
 
-            // Next
             IconButton(
                 onClick = { viewModel.next() },
                 modifier = Modifier.size(48.dp)
@@ -795,7 +766,6 @@ fun PlayerScreen(
                 )
             }
 
-            // Repeat Mode
             IconButton(
                 onClick = { viewModel.cycleRepeatMode() },
                 modifier = Modifier.size(44.dp)
@@ -931,9 +901,6 @@ fun PlayerScreen(
         Spacer(modifier = Modifier.height(8.dp))
     }
 
-    // ────────────────────────────────────────────────────────────
-    // Playback Queue Modal
-    // ────────────────────────────────────────────────────────────
     if (showQueue) {
         PlaybackQueueModal(
             viewModel = viewModel,
@@ -954,9 +921,6 @@ fun PlayerScreen(
         )
     }
 
-    // ────────────────────────────────────────────────────────────
-    // Fullscreen Expanded Lyrics Modal ("<>" Maximize Mode)
-    // ────────────────────────────────────────────────────────────
     if (showExpandedLyrics) {
         ExpandedLyricsModal(
             viewModel = viewModel,
@@ -966,12 +930,6 @@ fun PlayerScreen(
     }
 }
 
-/**
- * Fullscreen Immersive Expanded Lyrics View ("<>" View):
- * - Top bar: song artwork, title, artist, and "><" minimize button to return to PlayerScreen.
- * - Time-synced scrolling lyrics with active-line glow and 1.08x scale.
- * - Bottom playback bar with seekable slider and playback controls (Prev, Play/Pause, Next).
- */
 @Composable
 fun ExpandedLyricsModal(
     viewModel: CascadeViewModel,
@@ -985,9 +943,9 @@ fun ExpandedLyricsModal(
 
     val displayPosition = (userSeekingPosition?.toLong() ?: playerState.currentPositionMs).coerceAtLeast(0L)
     val totalDuration = playerState.durationMs.coerceAtLeast(1000L)
-    val sliderProgress = (displayPosition.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
+    val rawSliderProgress = displayPosition.toFloat() / totalDuration.toFloat()
+    val sliderProgress = if (rawSliderProgress.isNaN() || rawSliderProgress.isInfinite()) 0f else rawSliderProgress.coerceIn(0f, 1f)
 
-    // Smooth auto-scroll expanded lyrics with 2500ms idle debounce on user drag
     var isUserScrollingExpandedLyrics by remember { mutableStateOf(false) }
     LaunchedEffect(lyricListState.isScrollInProgress) {
         if (lyricListState.isScrollInProgress) {
@@ -999,26 +957,28 @@ fun ExpandedLyricsModal(
     }
 
     LaunchedEffect(playerState.activeLyricIndex, isUserScrollingExpandedLyrics) {
-        if (!isUserScrollingExpandedLyrics && playerState.activeLyricIndex in 0 until playerState.lyricLines.size) {
-            val activeIdx = playerState.activeLyricIndex
-            val layoutInfo = lyricListState.layoutInfo
-            val viewportHeight = layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset
-            val visibleItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == activeIdx }
-            if (visibleItem != null && viewportHeight > 0) {
-                val itemCenter = visibleItem.offset + (visibleItem.size / 2f)
-                val viewportCenter = viewportHeight / 2f
-                val delta = itemCenter - viewportCenter
-                lyricListState.animateScrollBy(
-                    value = delta,
-                    animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing)
-                )
-            } else if (viewportHeight > 0) {
-                lyricListState.animateScrollToItem(
-                    index = activeIdx,
-                    scrollOffset = -(viewportHeight / 2) + 48
-                )
-            } else {
-                lyricListState.animateScrollToItem((activeIdx - 2).coerceAtLeast(0))
+        runCatching {
+            if (!isUserScrollingExpandedLyrics && playerState.activeLyricIndex in 0 until playerState.lyricLines.size) {
+                val activeIdx = playerState.activeLyricIndex
+                val layoutInfo = lyricListState.layoutInfo
+                val viewportHeight = layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset
+                val visibleItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == activeIdx }
+                if (visibleItem != null && viewportHeight > 0) {
+                    val itemCenter = visibleItem.offset + (visibleItem.size / 2f)
+                    val viewportCenter = viewportHeight / 2f
+                    val delta = itemCenter - viewportCenter
+                    lyricListState.animateScrollBy(
+                        value = delta,
+                        animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing)
+                    )
+                } else if (viewportHeight > 0) {
+                    lyricListState.animateScrollToItem(
+                        index = activeIdx,
+                        scrollOffset = -(viewportHeight / 2) + 48
+                    )
+                } else {
+                    lyricListState.animateScrollToItem((activeIdx - 2).coerceAtLeast(0))
+                }
             }
         }
     }
@@ -1039,9 +999,6 @@ fun ExpandedLyricsModal(
                     .statusBarsPadding()
                     .navigationBarsPadding()
             ) {
-                // ────────────────────────────────────────────────────────────
-                // Top Bar: Artwork, Title, Artist, & "><" Minimize Button
-                // ────────────────────────────────────────────────────────────
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1089,7 +1046,6 @@ fun ExpandedLyricsModal(
                         }
                     }
 
-                    // Upgraded Minimize SVG Button (FullscreenMinimizeSvgIcon)
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -1118,9 +1074,6 @@ fun ExpandedLyricsModal(
                     }
                 }
 
-                // ────────────────────────────────────────────────────────────
-                // Time-Synced Scrolling Lyrics with Active-Line Glow & Scale
-                // ────────────────────────────────────────────────────────────
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -1195,7 +1148,6 @@ fun ExpandedLyricsModal(
                             }
                         }
 
-                        // Top Cloudy Gradient Mask (soft atmospheric fog)
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1213,7 +1165,6 @@ fun ExpandedLyricsModal(
                                 )
                         )
 
-                        // Bottom Cloudy Gradient Mask (soft atmospheric fog)
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1233,9 +1184,6 @@ fun ExpandedLyricsModal(
                     }
                 }
 
-                // ────────────────────────────────────────────────────────────
-                // Bottom Playback Bar (Curved Aesthetic Container with Top Border Glow)
-                // ────────────────────────────────────────────────────────────
                 Surface(
                     shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant,
@@ -1412,7 +1360,6 @@ fun PlayerAudioAdjustmentSheet(
                 uncheckedBorderColor = MaterialTheme.colorScheme.outline
             )
 
-            // Equalizer Master Switch
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1437,7 +1384,7 @@ fun PlayerAudioAdjustmentSheet(
                         Text("${"%.1f".format(gain)} dB", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Slider(
-                        value = gain,
+                        value = gain.coerceIn(-12f, 12f),
                         onValueChange = { settingsManager.setEqBand(idx, it) },
                         valueRange = -12f..12f,
                         enabled = state.eqEnabled
@@ -1447,7 +1394,6 @@ fun PlayerAudioAdjustmentSheet(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-            // Normalize Volume & Gapless Toggles
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1475,7 +1421,6 @@ fun PlayerAudioAdjustmentSheet(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-            // Current Track Audio Quality Selector
             Text(
                 text = "Track Quality (Current Song)",
                 fontWeight = FontWeight.SemiBold,
@@ -1521,4 +1466,3 @@ fun PlayerAudioAdjustmentSheet(
         }
     }
 }
-

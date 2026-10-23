@@ -17,7 +17,16 @@ import java.util.concurrent.ConcurrentHashMap
 @OptIn(UnstableApi::class)
 object OuterTuneResolvingDataSource {
 
+    const val VISIONOS_USER_AGENT =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
+
+    const val VR_161_USER_AGENT =
+        "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
+
     const val VR_USER_AGENT =
+        "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
+
+    const val VR_160_USER_AGENT =
         "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
 
     const val VR_QUEST2_USER_AGENT =
@@ -41,7 +50,7 @@ object OuterTuneResolvingDataSource {
     const val WEB_REMIX_USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
-    const val MEDIA_HTTP_USER_AGENT = VR_USER_AGENT
+    const val MEDIA_HTTP_USER_AGENT = VISIONOS_USER_AGENT
 
     private const val STREAM_TTL_MS = 3 * 60 * 60 * 1000L // 3 hours
 
@@ -88,9 +97,9 @@ object OuterTuneResolvingDataSource {
      * Inspects the signed `c=` and `cver=` parameters on googlevideo.com stream URLs and returns
      * the exact matching headers required by GoogleVideo CDN.
      *
-     * CRITICAL: Native mobile/VR clients (`ANDROID_VR`, `IOS`, `ANDROID_TESTSUITE`, `ANDROID_MUSIC`)
-     * must NEVER send browser `Origin` or `Referer` headers to `googlevideo.com`, or the CDN
-     * flags the request as spoofed and returns HTTP 403 Forbidden.
+     * - `VISIONOS` (c=VISIONOS): requires Apple Vision Pro Safari User-Agent + Origin & Referer
+     *   headers (`https://www.youtube.com`) so googlevideo serves the entire stream without 1MB cutoff.
+     * - `ANDROID_VR`, `IOS`, `ANDROID_TESTSUITE`: require their exact native app User-Agent without Origin/Referer.
      */
     fun resolveClientHeadersForUrl(streamUrl: String): Map<String, String> {
         val lower = streamUrl.lowercase()
@@ -104,11 +113,18 @@ object OuterTuneResolvingDataSource {
         val clientVer = Regex("[?&]cver=([^&]+)").find(streamUrl)?.groupValues?.get(1).orEmpty()
 
         return when {
+            clientParam.contains("VISIONOS") -> mapOf(
+                "User-Agent" to VISIONOS_USER_AGENT,
+                "Origin" to "https://www.youtube.com",
+                "Referer" to "https://www.youtube.com/"
+            )
             clientParam.contains("ANDROID_VR") -> {
                 val vrUa = when {
+                    clientVer.startsWith("1.61") -> VR_161_USER_AGENT
+                    clientVer.startsWith("1.60") -> VR_160_USER_AGENT
                     clientVer.startsWith("1.56") -> VR_QUEST2_USER_AGENT
                     clientVer.startsWith("1.43") -> VR_143_USER_AGENT
-                    else -> VR_USER_AGENT
+                    else -> VR_161_USER_AGENT
                 }
                 mapOf("User-Agent" to vrUa)
             }
@@ -137,7 +153,9 @@ object OuterTuneResolvingDataSource {
                 "Referer" to "https://www.youtube.com/"
             )
             else -> mapOf(
-                "User-Agent" to VR_USER_AGENT
+                "User-Agent" to VISIONOS_USER_AGENT,
+                "Origin" to "https://www.youtube.com",
+                "Referer" to "https://www.youtube.com/"
             )
         }
     }
@@ -146,7 +164,7 @@ object OuterTuneResolvingDataSource {
         qualityProvider: () -> AudioQuality = { AudioQuality.NORMAL }
     ): DataSource.Factory {
         val baseHttpFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent(VR_USER_AGENT)
+            .setUserAgent(VISIONOS_USER_AGENT)
             .setConnectTimeoutMs(6_000)
             .setReadTimeoutMs(8_000)
             .setAllowCrossProtocolRedirects(true)
@@ -160,7 +178,7 @@ object OuterTuneResolvingDataSource {
             }
 
             // Already-resolved HTTP(S) CDN URLs (e.g. googlevideo.com or saavncdn.com):
-            // Attach exact client-matching User-Agent & headers (without Origin/Referer on native clients)
+            // Attach exact client-matching User-Agent, Origin & Referer headers via withRequestHeaders
             if (rawUri.startsWith("http") &&
                 !rawUri.contains("youtube.com/watch") &&
                 !rawUri.contains("music.youtube.com/watch") &&
@@ -171,7 +189,7 @@ object OuterTuneResolvingDataSource {
                 mergedHeaders.remove("Origin")
                 mergedHeaders.remove("Referer")
                 mergedHeaders.putAll(extraHeaders)
-                return@Factory dataSpec.withAdditionalHeaders(mergedHeaders)
+                return@Factory dataSpec.withRequestHeaders(mergedHeaders)
             }
 
             val targetQuality = qualityProvider()
@@ -188,7 +206,7 @@ object OuterTuneResolvingDataSource {
 
                 return@Factory dataSpec
                     .withUri(Uri.parse(resolvedSaavn))
-                    .withAdditionalHeaders(resolveClientHeadersForUrl(resolvedSaavn))
+                    .withRequestHeaders(resolveClientHeadersForUrl(resolvedSaavn))
             }
 
             val cleanYtId = when {
@@ -217,7 +235,7 @@ object OuterTuneResolvingDataSource {
 
                 return@Factory dataSpec
                     .withUri(Uri.parse(resolvedUrl))
-                    .withAdditionalHeaders(mergedHeaders)
+                    .withRequestHeaders(mergedHeaders)
             }
 
             dataSpec

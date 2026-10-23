@@ -53,14 +53,12 @@ object StreamResolver {
             return@withContext track.directStreamUrl
         }
 
-        // 2. Direct videoId Passthrough (unless caller explicitly requested JIOSAAVN_ONLY fallback)
-        if (!track.source.equals("JIOSAAVN_ONLY", ignoreCase = true)) {
-            val extractedYtId = InnerTubeStreamExtractor.extractVideoId(track.id)
-            if (!extractedYtId.isNullOrBlank()) {
-                InnerTubeStreamExtractor.resolveExactYoutubeStreamById(extractedYtId, quality)
-                    .getOrNull()
-                    ?.let { return@withContext it }
-            }
+        // 2. Strict Original YouTube videoId Passthrough — NEVER fall back to JioSaavn search for a YouTube track!
+        val extractedYtId = InnerTubeStreamExtractor.extractVideoId(track.id)
+        if (!extractedYtId.isNullOrBlank()) {
+            return@withContext InnerTubeStreamExtractor
+                .resolveExactYoutubeStreamById(extractedYtId, quality)
+                .getOrNull()
         }
 
         // 3. If encryptedMediaUrl from JioSaavn is present, decrypt it directly

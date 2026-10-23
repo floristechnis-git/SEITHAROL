@@ -666,21 +666,6 @@ class CascadeViewModel(
         automixFetchJob = viewModelScope.launch {
             musicRepository.insertTrack(track)
             musicRepository.recordPlayHistory(track)
-            if (!isOffline && track.id.length == 11) {
-                // Delay background Automix fetch by 1.5s so it never competes with primary audio stream extraction
-                delay(1500L)
-                runCatching {
-                    val automix = InnerTubeStreamExtractor.fetchAutomixQueue(track.id, limit = 30)
-                    if (automix.isNotEmpty() && playerState.value.currentTrack?.id == track.id) {
-                        val likedIds = likedTrackIds.value
-                        val dlMap = downloadedTracksById.value
-                        val mixTracks = listOf(track) + automix.filter { it.videoId != track.id }
-                            .map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
-                        personalizedTracks.value = mixTracks
-                        playerManager.updateQueuePreservingPlayback(mixTracks)
-                    }
-                }
-            }
         }
     }
 

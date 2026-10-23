@@ -396,17 +396,14 @@ class AudioPlayerManager(
                             delay(150L)
                             if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
                             try {
-                                val isYtVideoId = InnerTubeStreamExtractor.isValidYoutubeVideoId(current.id)
-                                // On Retry #1 for a valid YouTube videoId, rotate to the next verified InnerTube client
-                                // for that EXACT videoId (`preferNonYoutubeFallback = false`) so we NEVER replace a valid YouTube song
-                                // with a different song or remix! Only on Retry #2 try strict canonical fallback (`preferNonYoutubeFallback = true`).
-                                val useNonYoutubeFallback = if (isYtVideoId) (trackRetryCount >= 2) else (trackRetryCount == 1)
+                                // Strictly re-resolve the exact original track ID (rotating to the next verified InnerTube client)
+                                // with ZERO cross-provider or remix fallback searches!
                                 val freshStream = withTimeout(10_000L) {
                                     resolverEngine.resolveTrack(
                                         track = current.copy(audioUrl = ""),
                                         preferredQuality = getPreferredAudioQuality(),
                                         forceRefresh = true,
-                                        preferNonYoutubeFallback = useNonYoutubeFallback
+                                        preferNonYoutubeFallback = false
                                     )
                                 }
                                 if (!isActive || _state.value.currentTrack?.id != current.id) return@launch
@@ -423,7 +420,7 @@ class AudioPlayerManager(
                                                 track = current.copy(audioUrl = ""),
                                                 preferredQuality = com.seitharol.data.resolver.AudioQuality.LOW,
                                                 forceRefresh = true,
-                                                preferNonYoutubeFallback = true
+                                                preferNonYoutubeFallback = false
                                             )
                                         }
                                         if (isActive && _state.value.currentTrack?.id == current.id) {

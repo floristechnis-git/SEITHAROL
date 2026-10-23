@@ -357,6 +357,11 @@ class DownloadPreferencesAndService(private val context: Context) {
         provider: DownloadProvider,
         preferredQuality: AudioQuality = AppSettingsManager.getInstance(context).state.value.downloadQuality
     ): String? {
+        val cleanYtId = InnerTubeStreamExtractor.extractVideoId(track.sourceId)
+        if (!cleanYtId.isNullOrBlank()) {
+            // Strictly download the exact original YouTube videoId without searching for alternate tracks
+            return InnerTubeStreamExtractor.resolveWorkingStreamUrl(cleanYtId, preferredQuality).getOrNull()
+        }
         val metadata = TrackMetadata(
             id = track.sourceId,
             title = track.title,
@@ -365,25 +370,6 @@ class DownloadPreferencesAndService(private val context: Context) {
             durationSeconds = (track.durationMs / 1000L).toInt(),
             thumbnailUrl = track.artUrl
         )
-        val cleanYtId = InnerTubeStreamExtractor.extractVideoId(track.sourceId)
-        if (!cleanYtId.isNullOrBlank() && provider != DownloadProvider.JIOSAAVN) {
-            InnerTubeStreamExtractor.resolveWorkingStreamUrl(cleanYtId, preferredQuality)
-                .getOrNull()?.let { return it }
-        }
-        if (provider == DownloadProvider.JIOSAAVN) {
-            StreamResolver.resolveExactStreamUrl(metadata, preferredQuality)?.let { return it }
-        }
-        val ytCandidates = InnerTubeStreamExtractor.searchOfficialYtmSongs("${track.title} $primaryArtist", limit = 6)
-        val bestYt = CanonicalAudioResolver.selectBestCanonicalMatch(
-            queryTitle = track.title,
-            queryArtist = primaryArtist,
-            targetDurationSeconds = metadata.durationSeconds,
-            candidates = ytCandidates
-        )
-        if (bestYt != null) {
-            InnerTubeStreamExtractor.resolveWorkingStreamUrl(bestYt.videoId, preferredQuality)
-                .getOrNull()?.let { return it }
-        }
         return StreamResolver.resolveExactStreamUrl(metadata, preferredQuality)
     }
 

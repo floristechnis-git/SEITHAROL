@@ -131,7 +131,7 @@ class ResolverEngine {
         val rawId = track.id.trim()
         val cacheKey = "${rawId}_${preferredQuality.name}"
 
-        if ((forceRefresh || preferNonYoutubeFallback) && rawId.isNotBlank()) {
+        if (forceRefresh && rawId.isNotBlank()) {
             invalidateTrack(rawId)
         }
 
@@ -175,7 +175,7 @@ class ResolverEngine {
         }
 
         // 2. Lookup in In-Memory Stream Cache (quality-aware)
-        if (!forceRefresh && !preferNonYoutubeFallback && rawId.isNotBlank()) {
+        if (!forceRefresh && rawId.isNotBlank()) {
             val cached = streamCache[cacheKey]
             if (cached != null && now < cached.expiresAtMs - 120000L) {
                 return@withContext cached
@@ -183,7 +183,7 @@ class ResolverEngine {
         }
 
         // 3. Direct verified stream if provided and non-placeholder
-        if (!forceRefresh && !preferNonYoutubeFallback && track.audioUrl.isNotBlank() && !track.audioUrl.contains("SoundHelix")) {
+        if (!forceRefresh && track.audioUrl.isNotBlank() && !track.audioUrl.contains("SoundHelix")) {
             val resolved = ResolvedStream(
                 videoId = rawId.ifBlank { "direct_stream" },
                 streamUrl = track.audioUrl,
@@ -203,9 +203,11 @@ class ResolverEngine {
         val isYouTubeId = !cleanYtId.isNullOrBlank()
         val targetVideoId = cleanYtId ?: rawId
         val targetKbps = preferredQuality.maxBitrateKbps
+        val failures = mutableListOf<String>()
 
-        // 4. Primary Fast Path: Verified multi-client YouTube InnerTube resolution
-        if (isYouTubeId && !preferNonYoutubeFallback) {
+        // 4. STRICT ORIGINAL YOUTUBE VIDEO_ID RESOLUTION — ZERO BACKGROUND SEARCHES OR REMIX FALLBACKS!
+        if (isYouTubeId) {
+            // 4a. Primary Fast Path: Direct multi-client InnerTube extraction for this exact videoId
             val directResult = com.seitharol.data.resolver.InnerTubeStreamExtractor
                 .resolveExactYoutubeStreamById(targetVideoId, preferredQuality, forceRefresh = forceRefresh)
             if (directResult.isSuccess) {
@@ -218,80 +220,78 @@ class ResolverEngine {
                     bitrate = "${targetKbps} kbps",
                     expiresAtMs = now + (6 * 3600 * 1000L),
                     isLocal = false,
-                    resolvedBy = "YouTube Music InnerTube (Verified)",
+                    resolvedBy = "YouTube Music InnerTube (Original)",
                     latencyMs = 10
                 )
                 streamCache[cacheKey] = resolved
                 return@withContext resolved
             } else {
-                Log.w(TAG, "Direct YouTube extraction for $targetVideoId failed: ${directResult.exceptionOrNull()?.message}, trying fallback resolvers")
+                failures.add("InnerTubeDirect: ${directResult.exceptionOrNull()?.message}")
             }
+
+            // 4b. Secondary Path for the EXACT SAME videoId (DeviceInnerTubeResolver + Piped + Invidious)
+            val req = ResolveRequest(videoId = targetVideoId, title = track.title, artist = track.artist)
+            for (directNode in listOf(deviceInnerTubeResolver, pipedResolver, invidiousResolver)) {
+                try {
+                    val res = withTimeoutOrNull(4500L) { directNode.resolve(req) } ?: continue
+                    val candidateFormats = res.formats.filter { it.url.isNotBlank() }
+                    val fmt = if (preferredQuality == com.seitharol.data.resolver.AudioQuality.LOW) {
+                        candidateFormats.minByOrNull { it.bitrate } ?: candidateFormats.firstOrNull()
+                    } else {
+                        candidateFormats.firstOrNull()
+                    }
+                    if (fmt != null) {
+                        val resolved = ResolvedStream(
+                            videoId = targetVideoId,
+                            streamUrl = fmt.url,
+                            itag = fmt.id.toIntOrNull() ?: 140,
+                            codec = fmt.codec.uppercase(),
+                            bitrate = "${fmt.bitrate / 1000} kbps",
+                            expiresAtMs = res.expiresAt,
+                            isLocal = false,
+                            resolvedBy = res.resolverId,
+                            latencyMs = 20
+                        )
+                        streamCache[cacheKey] = resolved
+                        return@withContext resolved
+                    }
+                } catch (e: Exception) {
+                    failures.add("${directNode.id}: ${e.message}")
+                }
+            }
+
+            val failureSummary = failures.joinToString(" | ")
+            Log.w(TAG, "Original YouTube videoId resolution failed for '${track.title}' ($targetVideoId): [$failureSummary]")
+            throw IllegalStateException("Unable to resolve original stream for '${track.title}' ($targetVideoId)")
         }
 
-        var effectiveTitle = track.title.trim()
-        var effectiveArtist = track.artist.trim()
+        // 5. Non-YouTube Track IDs (Direct JioSaavn ID or Spotify 22-char ID only)
         val isSpotify = rawId.length == 22 && !rawId.contains("_") && !rawId.contains("-")
         val cleanSaavnId = rawId.removePrefix("saavn_")
         val isSaavn = rawId.startsWith("saavn_") ||
             track.audioUrl.contains("saavncdn.com") ||
-            (!isYouTubeId && !isSpotify && (cleanSaavnId.all { it.isDigit() } || (cleanSaavnId.length in 6..16 && !cleanSaavnId.contains(" ") && !cleanSaavnId.contains("-")))) ||
-            track.genre.contains("Indian", ignoreCase = true) ||
-            track.genre.contains("Bollywood", ignoreCase = true)
+            (!isSpotify && (cleanSaavnId.all { it.isDigit() } || (cleanSaavnId.length in 6..16 && !cleanSaavnId.contains(" ") && !cleanSaavnId.contains("-"))))
 
-        // 5. Auto-hydrate blank title/artist from ID so search fallbacks are never skipped
-        if (effectiveTitle.isBlank() && effectiveArtist.isBlank() && rawId.isNotBlank()) {
-            when {
-                isSpotify -> {
-                    fetchSpotifyOEmbedMetadata(rawId)?.let { (t, a) ->
-                        effectiveTitle = t
-                        effectiveArtist = a
-                    }
-                }
-                isSaavn -> {
-                    jioSaavnProvider.getTrackInfo(cleanSaavnId)?.let { info ->
-                        effectiveTitle = info.title
-                        effectiveArtist = info.artist
-                    }
-                }
-                isYouTubeId -> {
-                    youtubeInnerTubeProvider.fetchMetadataById(targetVideoId)?.let { (t, a) ->
-                        effectiveTitle = t
-                        effectiveArtist = a
-                    }
-                }
-                else -> {
-                    youtubeInnerTubeProvider.fetchMetadataById(rawId)?.let { (t, a) ->
-                        effectiveTitle = t
-                        effectiveArtist = a
-                    }
-                }
-            }
-            if (effectiveTitle.isBlank() && !isSpotify && !isSaavn && !isYouTubeId) {
-                val cleanedSlug = rawId
-                    .removePrefix("pl_")
-                    .replace(Regex("[_\\-]+"), " ")
-                    .trim()
-                if (cleanedSlug.any { it.isLetter() }) {
-                    effectiveTitle = cleanedSlug
-                }
-            }
-        }
-
-        val failures = mutableListOf<String>()
-        var resolvedStream: ResolvedStream? = null
-
-        // 6. Direct JioSaavn ID resolution
-        if (resolvedStream == null && isSaavn && cleanSaavnId.isNotBlank() && !isSpotify && !isYouTubeId) {
+        if (isSaavn && cleanSaavnId.isNotBlank()) {
             try {
-                resolvedStream = jioSaavnProvider.resolveStream(cleanSaavnId, preferredKbps = targetKbps)
+                val resolved = jioSaavnProvider.resolveStream(cleanSaavnId, preferredKbps = targetKbps)
+                streamCache[cacheKey] = resolved
+                return@withContext resolved
             } catch (e: Exception) {
                 failures.add("JioSaavnDirect: ${e.message}")
             }
         }
 
-        // 7. Spotify TrackMatcher
-        if (resolvedStream == null && isSpotify && (effectiveTitle.isNotBlank() || effectiveArtist.isNotBlank())) {
+        if (isSpotify) {
             try {
+                var effectiveTitle = track.title.trim()
+                var effectiveArtist = track.artist.trim()
+                if (effectiveTitle.isBlank()) {
+                    fetchSpotifyOEmbedMetadata(rawId)?.let { (t, a) ->
+                        effectiveTitle = t
+                        effectiveArtist = a
+                    }
+                }
                 val normalized = NormalizedTrack(
                     source = SourceType.SPOTIFY,
                     sourceId = rawId,
@@ -302,215 +302,15 @@ class ResolverEngine {
                     artUrl = track.artUrl,
                     isPlayableNatively = false
                 )
-                resolvedStream = trackMatcher.matchAndResolve(normalized, preferredKbps = targetKbps)
+                val resolved = trackMatcher.matchAndResolve(normalized, preferredKbps = targetKbps)
+                streamCache[cacheKey] = resolved
+                return@withContext resolved
             } catch (e: Exception) {
                 failures.add("SpotifyMatcher: ${e.message}")
             }
         }
 
-        val cleanArtist = effectiveArtist
-            .removeSuffix(" - Topic")
-            .removeSuffix("- Topic")
-            .split(",", "&", "feat.", "ft.")
-            .firstOrNull()
-            ?.trim()
-            .orEmpty()
-
-        val baseQuery = when {
-            effectiveTitle.isNotBlank() && cleanArtist.isNotBlank() &&
-                !cleanArtist.equals("Unknown Artist", ignoreCase = true) &&
-                !cleanArtist.equals("Various Artists", ignoreCase = true) -> "$effectiveTitle $cleanArtist"
-            effectiveTitle.isNotBlank() -> effectiveTitle
-            cleanArtist.isNotBlank() -> cleanArtist
-            else -> ""
-        }
-
-        // 8. Verified JioSaavn Ranked Match & StreamResolver Fallback (Strictly gated by Artist + Title + Duration + No-Remix)
-        if (resolvedStream == null && effectiveTitle.isNotBlank()) {
-            try {
-                // Only search with Artist + Title when artist is known — NEVER title-only, so a different artist's song is never matched!
-                val saavnQueries = listOfNotNull(baseQuery.takeIf { it.isNotBlank() })
-                for (sq in saavnQueries) {
-                    val results = jioSaavnProvider.searchTracks(sq, limit = 8)
-                    val targetTrack = NormalizedTrack(
-                        source = SourceType.JIOSAAVN,
-                        sourceId = rawId,
-                        title = effectiveTitle,
-                        artists = listOf(cleanArtist.ifBlank { "Various Artists" }),
-                        album = track.album,
-                        durationMs = track.durationMs,
-                        artUrl = track.artUrl,
-                        isPlayableNatively = true
-                    )
-                    val rankedSaavn = trackMatcher.rankCandidates(targetTrack, results)
-                    for (candidate in rankedSaavn) {
-                        if (candidate.sourceId.isBlank()) continue
-                        try {
-                            resolvedStream = jioSaavnProvider.resolveStream(candidate.sourceId, preferredKbps = targetKbps)
-                            if (resolvedStream != null) break
-                        } catch (_: Exception) {}
-                    }
-                    if (resolvedStream != null) break
-                }
-
-                if (resolvedStream == null) {
-                    val directSaavnUrl = com.seitharol.data.resolver.StreamResolver.resolveExactStreamUrl(
-                        com.seitharol.data.resolver.TrackMetadata(
-                            id = rawId,
-                            title = effectiveTitle,
-                            artist = cleanArtist,
-                            durationSeconds = (track.durationMs / 1000L).toInt(),
-                            source = "JIOSAAVN_ONLY"
-                        ),
-                        preferredQuality
-                    )
-                    if (!directSaavnUrl.isNullOrBlank()) {
-                        resolvedStream = ResolvedStream(
-                            videoId = rawId,
-                            streamUrl = directSaavnUrl,
-                            itag = 140,
-                            codec = "AAC",
-                            bitrate = "${targetKbps} kbps",
-                            expiresAtMs = now + (12 * 3600 * 1000L),
-                            isLocal = false,
-                            resolvedBy = "JioSaavn Direct AAC",
-                            latencyMs = 12
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                failures.add("JioSaavnSearch: ${e.message}")
-            }
-        }
-
-        // 9. Secondary YouTube Fallback: Federated Piped & Invidious nodes (fast 2.5s cap for the EXACT targetVideoId)
-        if (resolvedStream == null && isYouTubeId) {
-            val req = ResolveRequest(videoId = targetVideoId, title = effectiveTitle, artist = effectiveArtist)
-            withTimeoutOrNull(2500L) {
-                for (federated in listOf(deviceInnerTubeResolver, pipedResolver, invidiousResolver)) {
-                    try {
-                        val res = federated.resolve(req)
-                        val candidateFormats = res.formats.filter { it.url.isNotBlank() }
-                        val fmt = if (preferredQuality == com.seitharol.data.resolver.AudioQuality.LOW) {
-                            candidateFormats.minByOrNull { it.bitrate } ?: candidateFormats.firstOrNull()
-                        } else {
-                            candidateFormats.firstOrNull()
-                        }
-                        if (fmt != null) {
-                            resolvedStream = ResolvedStream(
-                                videoId = targetVideoId,
-                                streamUrl = fmt.url,
-                                itag = fmt.id.toIntOrNull() ?: 140,
-                                codec = fmt.codec.uppercase(),
-                                bitrate = "${fmt.bitrate / 1000} kbps",
-                                expiresAtMs = res.expiresAt,
-                                isLocal = false,
-                                resolvedBy = res.resolverId,
-                                latencyMs = 25
-                            )
-                            break
-                        }
-                    } catch (e: Exception) {
-                        failures.add("${federated.id}: ${e.message}")
-                    }
-                }
-            }
-        }
-
-        val searchQuery = if (baseQuery.isNotBlank() && !baseQuery.contains("official", ignoreCase = true) && !baseQuery.contains("remix", ignoreCase = true)) {
-            "$baseQuery official audio"
-        } else {
-            baseQuery
-        }
-
-        // 10. Canonical Alternate YouTube Art-Track Fallback (strictly gated by Artist + Title + Duration + No-Remix)
-        if (resolvedStream == null && searchQuery.isNotBlank()) {
-            try {
-                val ytResults = youtubeInnerTubeProvider.searchTracks(searchQuery, limit = 8)
-                val targetTrack = NormalizedTrack(
-                    source = SourceType.YOUTUBE,
-                    sourceId = rawId,
-                    title = effectiveTitle,
-                    artists = listOf(effectiveArtist.ifBlank { "Various Artists" }),
-                    album = track.album,
-                    durationMs = track.durationMs,
-                    artUrl = track.artUrl,
-                    isPlayableNatively = true
-                )
-                val ranked = trackMatcher.rankCandidates(targetTrack, ytResults)
-                for (candidate in ranked.take(2)) {
-                    if (candidate.sourceId.isBlank() || candidate.sourceId == targetVideoId) continue
-                    val altResult = com.seitharol.data.resolver.InnerTubeStreamExtractor
-                        .resolveExactYoutubeStreamById(candidate.sourceId, preferredQuality)
-                    if (altResult.isSuccess) {
-                        val altUrl = altResult.getOrThrow()
-                        resolvedStream = ResolvedStream(
-                            videoId = candidate.sourceId,
-                            streamUrl = altUrl,
-                            itag = if (altUrl.contains("opus")) 251 else 140,
-                            codec = if (altUrl.contains("opus")) "Opus" else "AAC",
-                            bitrate = "${targetKbps} kbps",
-                            expiresAtMs = now + (6 * 3600 * 1000L),
-                            isLocal = false,
-                            resolvedBy = "YouTube Canonical ATV Match",
-                            latencyMs = 18
-                        )
-                        break
-                    }
-                }
-            } catch (e: Exception) {
-                failures.add("YouTubeCanonicalSearch: ${e.message}")
-            }
-        }
-
-        // 11. StudioMasterResolver
-        if (resolvedStream == null && effectiveTitle.isNotBlank()) {
-            try {
-                val req = ResolveRequest(
-                    videoId = rawId.ifBlank { "studio_master" },
-                    title = effectiveTitle,
-                    artist = effectiveArtist
-                )
-                val masterResult = studioResolver.resolve(req)
-                val fmt = masterResult.formats.firstOrNull { it.url.isNotBlank() }
-                if (fmt != null) {
-                    resolvedStream = ResolvedStream(
-                        videoId = rawId.ifBlank { masterResult.videoId },
-                        streamUrl = fmt.url,
-                        itag = 140,
-                        codec = "AAC 256k",
-                        bitrate = "256 kbps",
-                        expiresAtMs = masterResult.expiresAt,
-                        isLocal = false,
-                        resolvedBy = "Studio Master CDN",
-                        latencyMs = 14
-                    )
-                }
-            } catch (e: Exception) {
-                failures.add("StudioMaster: ${e.message}")
-            }
-        }
-
-        val finalStream = resolvedStream ?: run {
-            val failureSummary = failures.joinToString(" | ")
-            Log.w(TAG, "Resolution failed for '$effectiveTitle' ($rawId): [$failureSummary]")
-            val isNetworkIssue = failures.any { f ->
-                f.contains("UnknownHost", ignoreCase = true) ||
-                f.contains("No address associated", ignoreCase = true) ||
-                f.contains("unreachable", ignoreCase = true) ||
-                f.contains("failed to connect", ignoreCase = true)
-            }
-            if (isNetworkIssue) {
-                throw java.net.UnknownHostException("No internet connection")
-            }
-            throw IllegalStateException("Unable to resolve audio stream for '$effectiveTitle'")
-        }
-
-        _circuitBreakerState.value = CircuitBreakerState.CLOSED
-        if (rawId.isNotBlank()) {
-            streamCache[cacheKey] = finalStream
-        }
-        return@withContext finalStream
+        throw IllegalStateException("Unable to resolve audio stream for '${track.title}' ($rawId)")
     }
 
     private suspend fun fetchSpotifyOEmbedMetadata(spotifyId: String): Pair<String, String>? =

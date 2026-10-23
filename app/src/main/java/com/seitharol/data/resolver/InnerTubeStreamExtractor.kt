@@ -102,9 +102,21 @@ object InnerTubeStreamExtractor {
      */
     val VERIFIED_CLIENTS = listOf(
         InnerTubeClientConfig(
+            clientName = "VISIONOS",
+            clientVersion = "0.1",
+            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+            clientId = "101",
+            deviceMake = "Apple",
+            deviceModel = "RealityDevice14,1",
+            osName = "visionOS",
+            osVersion = "1.3.21O771",
+            glOverride = null, // Uses device/regional GL ("IN")
+            sendOriginHeaders = true
+        ),
+        InnerTubeClientConfig(
             clientName = "ANDROID_VR",
-            clientVersion = "1.60.19",
-            userAgent = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+            clientVersion = "1.61.48",
+            userAgent = "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
             clientId = "28",
             deviceMake = "Oculus",
             deviceModel = "Quest 3",
@@ -115,6 +127,18 @@ object InnerTubeStreamExtractor {
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
+            clientName = "VISIONOS",
+            clientVersion = "0.1",
+            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+            clientId = "101",
+            deviceMake = "Apple",
+            deviceModel = "RealityDevice14,1",
+            osName = "visionOS",
+            osVersion = "1.3.21O771",
+            glOverride = "US",
+            sendOriginHeaders = true
+        ),
+        InnerTubeClientConfig(
             clientName = "IOS",
             clientVersion = "20.10.4",
             userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)",
@@ -123,7 +147,7 @@ object InnerTubeStreamExtractor {
             deviceModel = "iPhone16,2",
             osName = "iOS",
             osVersion = "18.3.1.22D72",
-            glOverride = null, // Uses device/regional GL ("IN")
+            glOverride = null,
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
@@ -150,7 +174,7 @@ object InnerTubeStreamExtractor {
             osVersion = "12L",
             androidSdkVersion = 32,
             params = "CgIIAQ==",
-            glOverride = null,
+            glOverride = "US",
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
@@ -274,39 +298,13 @@ object InnerTubeStreamExtractor {
      * bound to `Range: bytes=0-1023`), so ExoPlayer's `DefaultHttpDataSource` can follow the redirect cleanly
      * with its own `Range: bytes=0-` request!
      */
+    /**
+     * Returns the direct signed streamUrl without opening a competing pre-probe connection.
+     * Pre-probing googlevideo.com with a separate Range request + disconnect adds 2-4s latency
+     * and causes edge nodes to reject or throttle ExoPlayer's subsequent connection.
+     */
     fun verifyStreamPlayable(streamUrl: String): String? {
-        if (streamUrl.isBlank()) return null
-        if (streamUrl.contains(".m3u8")) return streamUrl
-        return runCatching {
-            val headers = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(streamUrl)
-            var currentUrl = streamUrl
-            for (redirect in 0..3) {
-                val conn = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    connectTimeout = 1800
-                    readTimeout = 1800
-                    instanceFollowRedirects = false
-                    headers.forEach { (k, v) -> setRequestProperty(k, v) }
-                    setRequestProperty("Range", "bytes=0-1023")
-                }
-                val code = conn.responseCode
-                if (code in 300..399) {
-                    val loc = conn.getHeaderField("Location")
-                    conn.disconnect()
-                    if (loc.isNullOrBlank()) return@runCatching null
-                    currentUrl = URL(URL(currentUrl), loc).toString()
-                    continue
-                }
-                val isOk = code in 200..299
-                if (isOk) {
-                    conn.inputStream.use { it.read() }
-                }
-                conn.disconnect()
-                // Return the original primary streamUrl so ExoPlayer's full-file Range request is never rejected by edge redirect binding
-                return@runCatching if (isOk) streamUrl else null
-            }
-            null
-        }.getOrNull()
+        return streamUrl.takeIf { it.isNotBlank() && it.startsWith("http") }
     }
 
     private fun extractStreamWithConfig(
@@ -345,25 +343,18 @@ object InnerTubeStreamExtractor {
                 put("racyCheckOk", true)
                 client.params?.let { put("params", it) }
                 if (client.isEmbedded) {
-                    com.example.resolver.KotlinJsInterp.ensurePlayerJsLoaded(forceRefresh = false)
-                    val sts = com.example.resolver.KotlinJsInterp.getSignatureTimestamp()
                     put("playbackContext", JSONObject().apply {
                         put("contentPlaybackContext", JSONObject().apply {
                             put("html5Preference", "HTML5_PREF_WANTS")
-                            put("signatureTimestamp", sts)
+                            put("signatureTimestamp", 20073)
                         })
                     })
-                    val poToken = com.example.resolver.KotlinJsInterp.generatePoToken(visData)
-                    if (!poToken.isNullOrBlank()) {
-                        put("serviceIntegrityDimensions", JSONObject().apply {
-                            put("poToken", poToken)
-                        })
-                    }
                 }
                 put("context", JSONObject().apply {
                     put("client", JSONObject().apply {
                         put("clientName", client.clientName)
                         put("clientVersion", client.clientVersion)
+                        put("userAgent", client.userAgent)
                         put("hl", "en")
                         put("gl", effectiveGl)
                         client.deviceMake?.let { put("deviceMake", it) }
@@ -486,17 +477,12 @@ object InnerTubeStreamExtractor {
                     .thenBy { kotlin.math.abs(it.kbps - preferredQuality.maxBitrateKbps) }
             )
 
-            // Probe at most 2 distinct candidates per client (best AAC and best Opus/Progressive) for fast <1.5s turnaround
-            val candidatesToProbe = buildList {
-                sortedCandidates.firstOrNull { it.isAacMp4 }?.let { add(it) }
-                sortedCandidates.firstOrNull { !it.isAacMp4 }?.let { add(it) }
-            }.distinctBy { it.itag }.take(2)
-
-            for (candidate in candidatesToProbe) {
-                val verifiedUrl = verifyStreamPlayable(candidate.url)
-                if (!verifiedUrl.isNullOrBlank()) {
-                    return@runCatching verifiedUrl
-                }
+            // Return the best direct stream URL immediately (M4A AAC itag 140 first, then Opus 251/250)
+            // without opening a competing pre-probe connection!
+            val bestCandidate = sortedCandidates.firstOrNull { it.isAacMp4 }
+                ?: sortedCandidates.firstOrNull()
+            if (bestCandidate != null && bestCandidate.url.isNotBlank()) {
+                return@runCatching bestCandidate.url
             }
 
             // Fallback to HLS manifest if present (e.g. on iOS client)
@@ -528,7 +514,7 @@ object InnerTubeStreamExtractor {
         }
 
         if (cachedVisitorData.isNullOrBlank()) {
-            ensureVisitorData(forceFresh = false)
+            bgScope.launch { ensureVisitorData(forceFresh = false) }
         }
 
         val cpn = generateCpn()

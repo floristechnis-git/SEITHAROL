@@ -14,8 +14,8 @@ import java.net.URLDecoder
 import java.util.Locale
 
 /**
- * Zone 1 Device Resolver: Direct on-device InnerTube transport + dynamic `base.js` JS decipher,
- * `n`-parameter de-throttling, and PoToken/VisitorData attestation (§A.3 & §A.4).
+ * Zone 1 Device Resolver: Direct on-device InnerTube transport for the exact original videoId.
+ * Never blocks ANDROID_VR / IOS native extraction on base.js downloads or pre-probe HTTP connections.
  */
 class DeviceInnerTubeResolver : Resolver {
     override val id: String = "resolver_device_innertube"
@@ -32,28 +32,49 @@ class DeviceInnerTubeResolver : Resolver {
     override suspend fun resolve(req: ResolveRequest): ResolveResult = withContext(Dispatchers.IO) {
         val cleanVideoId = InnerTubeStreamExtractor.extractVideoId(req.videoId) ?: req.videoId.trim()
         val userGl = Locale.getDefault().country.takeIf { it.length == 2 } ?: "IN"
-
-        // 1. Pre-load YouTube's active base.js player script so signatureTimestamp (sts),
-        //    structural cipher operations (REVERSE, SPLICE, SWAP), and the n-parameter JS
-        //    function are ready before invoking /youtubei/v1/player.
-        KotlinJsInterp.ensurePlayerJsLoaded(forceRefresh = false)
-        val sts = KotlinJsInterp.getSignatureTimestamp()
-        val visitorData = InnerTubeStreamExtractor.ensureVisitorData(forceFresh = false)
-        val poToken = KotlinJsInterp.generatePoToken(visitorData)
         val cpn = (1..16).map { "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_".random() }.joinToString("")
 
-        // Try ANDROID_VR (direct unciphered high-bitrate streams) first, then WEB_REMIX with
-        // full PoToken + visitorData attestation + dynamic base.js signature deciphering & n-param transformation.
         val clientConfigs = listOf(
             ClientAttempt(
                 endpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+                clientName = "VISIONOS",
+                clientVersion = "0.1",
+                clientId = "101",
+                userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+                gl = userGl,
+                sendOrigin = true,
+                includePoToken = false
+            ),
+            ClientAttempt(
+                endpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
                 clientName = "ANDROID_VR",
-                clientVersion = "1.60.19",
+                clientVersion = "1.61.48",
                 clientId = "28",
-                userAgent = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+                userAgent = "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
                 gl = userGl,
                 sendOrigin = false,
                 includePoToken = false
+            ),
+            ClientAttempt(
+                endpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+                clientName = "IOS",
+                clientVersion = "20.10.4",
+                clientId = "5",
+                userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)",
+                gl = userGl,
+                sendOrigin = false,
+                includePoToken = false
+            ),
+            ClientAttempt(
+                endpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+                clientName = "ANDROID_TESTSUITE",
+                clientVersion = "1.9",
+                clientId = "30",
+                userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 12L; US) gzip",
+                gl = "US",
+                sendOrigin = false,
+                includePoToken = false,
+                params = "CgIIAQ=="
             ),
             ClientAttempt(
                 endpoint = "https://music.youtube.com/youtubei/v1/player?prettyPrint=false",
@@ -64,17 +85,6 @@ class DeviceInnerTubeResolver : Resolver {
                 gl = userGl,
                 sendOrigin = true,
                 includePoToken = true
-            ),
-            ClientAttempt(
-                endpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-                clientName = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
-                clientVersion = "2.0",
-                clientId = "85",
-                userAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/11.50) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.0 Safari/605.1.15",
-                gl = userGl,
-                sendOrigin = true,
-                includePoToken = true,
-                isEmbedded = true
             )
         )
 
@@ -85,9 +95,6 @@ class DeviceInnerTubeResolver : Resolver {
                     req = req,
                     videoId = cleanVideoId,
                     attempt = attempt,
-                    sts = sts,
-                    visitorData = visitorData,
-                    poToken = poToken,
                     cpn = cpn
                 )
                 if (result != null) return@withContext result
@@ -109,6 +116,7 @@ class DeviceInnerTubeResolver : Resolver {
         val gl: String,
         val sendOrigin: Boolean,
         val includePoToken: Boolean,
+        val params: String? = null,
         val isEmbedded: Boolean = false
     )
 
@@ -116,22 +124,26 @@ class DeviceInnerTubeResolver : Resolver {
         req: ResolveRequest,
         videoId: String,
         attempt: ClientAttempt,
-        sts: Int,
-        visitorData: String?,
-        poToken: String?,
         cpn: String
     ): ResolveResult? {
+        val sts = if (attempt.includePoToken) KotlinJsInterp.getSignatureTimestamp() else 20073
+        val visitorData = if (attempt.includePoToken) InnerTubeStreamExtractor.ensureVisitorData(forceFresh = false) else null
+        val poToken = if (attempt.includePoToken) KotlinJsInterp.generatePoToken(visitorData) else null
+
         val payload = JSONObject().apply {
             put("videoId", videoId)
             put("cpn", cpn)
             put("contentCheckOk", true)
             put("racyCheckOk", true)
-            put("playbackContext", JSONObject().apply {
-                put("contentPlaybackContext", JSONObject().apply {
-                    put("html5Preference", "HTML5_PREF_WANTS")
-                    put("signatureTimestamp", sts)
+            attempt.params?.let { put("params", it) }
+            if (attempt.includePoToken || attempt.isEmbedded) {
+                put("playbackContext", JSONObject().apply {
+                    put("contentPlaybackContext", JSONObject().apply {
+                        put("html5Preference", "HTML5_PREF_WANTS")
+                        put("signatureTimestamp", sts)
+                    })
                 })
-            })
+            }
             if (attempt.includePoToken && !poToken.isNullOrBlank()) {
                 put("serviceIntegrityDimensions", JSONObject().apply {
                     put("poToken", poToken)
@@ -141,17 +153,39 @@ class DeviceInnerTubeResolver : Resolver {
                 put("client", JSONObject().apply {
                     put("clientName", attempt.clientName)
                     put("clientVersion", attempt.clientVersion)
+                    put("userAgent", attempt.userAgent)
                     put("hl", "en")
                     put("gl", attempt.gl)
                     if (!visitorData.isNullOrBlank()) {
                         put("visitorData", visitorData)
                     }
-                    if (attempt.clientName == "ANDROID_VR") {
-                        put("deviceMake", "Oculus")
-                        put("deviceModel", "Quest 3")
-                        put("osName", "Android")
-                        put("osVersion", "12L")
-                        put("androidSdkVersion", 32)
+                    when (attempt.clientName) {
+                        "VISIONOS" -> {
+                            put("deviceMake", "Apple")
+                            put("deviceModel", "RealityDevice14,1")
+                            put("osName", "visionOS")
+                            put("osVersion", "1.3.21O771")
+                        }
+                        "ANDROID_VR" -> {
+                            put("deviceMake", "Oculus")
+                            put("deviceModel", "Quest 3")
+                            put("osName", "Android")
+                            put("osVersion", "12L")
+                            put("androidSdkVersion", 32)
+                        }
+                        "IOS" -> {
+                            put("deviceMake", "Apple")
+                            put("deviceModel", "iPhone16,2")
+                            put("osName", "iOS")
+                            put("osVersion", "18.3.1.22D72")
+                        }
+                        "ANDROID_TESTSUITE" -> {
+                            put("deviceMake", "Google")
+                            put("deviceModel", "Pixel 7")
+                            put("osName", "Android")
+                            put("osVersion", "12L")
+                            put("androidSdkVersion", 32)
+                        }
                     }
                 })
                 if (attempt.isEmbedded) {
@@ -201,7 +235,6 @@ class DeviceInnerTubeResolver : Resolver {
             val adaptiveFormats = streamingData.optJSONArray("adaptiveFormats") ?: JSONArray()
             val legacyFormats = streamingData.optJSONArray("formats") ?: JSONArray()
 
-            val activeCipherOps = KotlinJsInterp.getActiveCipherOperations()
             val candidateFormats = mutableListOf<FormatItem>()
 
             fun processFormatArray(formats: JSONArray) {
@@ -215,13 +248,15 @@ class DeviceInnerTubeResolver : Resolver {
                     val cipher = f.optString("signatureCipher", "").ifBlank { f.optString("cipher", "") }
                     val itag = f.optString("itag", "140")
                     val bitrate = f.optInt("bitrate", 160000)
+                    val wasCiphered = directUrl.isBlank() && cipher.isNotBlank()
 
-                    if (directUrl.isBlank() && cipher.isNotBlank()) {
+                    if (wasCiphered) {
                         val params = parseQueryString(cipher)
                         val s = params["s"] ?: ""
                         val sp = params["sp"] ?: "sig"
                         val baseUrl = params["url"] ?: ""
                         if (baseUrl.isNotBlank() && s.isNotBlank()) {
+                            val activeCipherOps = KotlinJsInterp.getActiveCipherOperations()
                             val decipheredSig = KotlinJsInterp.decipherSignature(s, activeCipherOps)
                             if (decipheredSig.isNotBlank() && decipheredSig != s) {
                                 val sep = if (baseUrl.contains("?")) "&" else "?"
@@ -231,8 +266,8 @@ class DeviceInnerTubeResolver : Resolver {
                     }
 
                     if (directUrl.isNotBlank()) {
-                        // Transform 'n' throttling challenge parameter using base.js JS engine
-                        if (directUrl.contains("&n=") || directUrl.contains("?n=")) {
+                        // Only run n-param JS transformation on web/ciphered streams, never on native ANDROID_VR / IOS / TESTSUITE
+                        if (wasCiphered && (directUrl.contains("&n=") || directUrl.contains("?n="))) {
                             val nMatch = Regex("[?&]n=([^&]+)").find(directUrl)
                             if (nMatch != null) {
                                 val originalN = nMatch.groupValues[1]
@@ -278,20 +313,6 @@ class DeviceInnerTubeResolver : Resolver {
                     .thenByDescending { it.bitrate }
             )
 
-            // Verify playability on the top candidate before returning
-            val verifiedFormats = mutableListOf<FormatItem>()
-            for (fmt in candidateFormats.distinctBy { it.id }.take(2)) {
-                val verifiedUrl = InnerTubeStreamExtractor.verifyStreamPlayable(fmt.url)
-                if (!verifiedUrl.isNullOrBlank()) {
-                    verifiedFormats.add(fmt.copy(url = verifiedUrl))
-                    break
-                }
-            }
-
-            if (verifiedFormats.isEmpty()) {
-                throw IllegalStateException("Stream URL failed HTTP byte-range verification")
-            }
-
             val videoDetails = json.optJSONObject("videoDetails")
             val title = videoDetails?.optString("title", req.title ?: "Track") ?: "Track"
             val artist = videoDetails?.optString("author", req.artist ?: "Artist") ?: "Artist"
@@ -305,7 +326,7 @@ class DeviceInnerTubeResolver : Resolver {
                 title = title,
                 artist = artist,
                 artUrl = "https://i.ytimg.com/vi/$videoId/hqdefault.jpg",
-                formats = verifiedFormats,
+                formats = candidateFormats.distinctBy { it.id }.take(2),
                 resolverId = id,
                 packVersion = "device-v2026.10-js"
             )

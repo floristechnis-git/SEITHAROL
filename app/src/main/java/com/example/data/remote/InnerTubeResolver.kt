@@ -52,17 +52,7 @@ object InnerTubeResolver {
             if (!pipedStream.isNullOrBlank()) return@withContext pipedStream
         }
 
-        // 4. JioSaavn exact title + artist fallback
-        if (title.isNotBlank()) {
-            com.seitharol.data.resolver.StreamResolver.resolveExactStreamUrl(
-                com.seitharol.data.resolver.TrackMetadata(
-                    id = validVideoId.orEmpty(),
-                    title = title,
-                    artist = artist,
-                    source = "JIOSAAVN_ONLY"
-                )
-            )?.let { return@withContext it }
-        }
+        // Stick strictly to the original YouTube videoId without JioSaavn fallback
 
         null
     }

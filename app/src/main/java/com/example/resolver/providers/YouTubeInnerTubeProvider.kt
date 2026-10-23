@@ -43,14 +43,36 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             val deviceGl = resolveDeviceGl()
             return listOf(
                 ClientProfile(
+                    name = "VISIONOS",
+                    version = "0.1",
+                    clientId = "101",
+                    userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+                    playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+                    sendOriginHeaders = true,
+                    clientJson = JSONObject().apply {
+                        put("clientName", "VISIONOS")
+                        put("clientVersion", "0.1")
+                        put("userAgent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15")
+                        put("deviceMake", "Apple")
+                        put("deviceModel", "RealityDevice14,1")
+                        put("osName", "visionOS")
+                        put("osVersion", "1.3.21O771")
+                        put("hl", "en")
+                        put("gl", deviceGl)
+                        put("timeZone", "UTC")
+                        put("utcOffsetMinutes", 0)
+                    }
+                ),
+                ClientProfile(
                     name = "ANDROID_VR",
-                    version = "1.60.19",
+                    version = "1.61.48",
                     clientId = "28",
-                    userAgent = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+                    userAgent = "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
                     playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
                     clientJson = JSONObject().apply {
                         put("clientName", "ANDROID_VR")
-                        put("clientVersion", "1.60.19")
+                        put("clientVersion", "1.61.48")
+                        put("userAgent", "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip")
                         put("deviceMake", "Oculus")
                         put("deviceModel", "Quest 3")
                         put("androidSdkVersion", 32)
@@ -311,6 +333,7 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
         val visitorData = com.seitharol.data.resolver.InnerTubeStreamExtractor.ensureVisitorData()
 
         val clientObj = JSONObject(profile.clientJson.toString()).apply {
+            put("userAgent", profile.userAgent)
             if (!visitorData.isNullOrBlank()) {
                 put("visitorData", visitorData)
             }
@@ -411,7 +434,8 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                     if (!isAudio) continue
 
                     var streamUrl = f.optString("url", "")
-                    if (streamUrl.isBlank()) {
+                    val wasCiphered = streamUrl.isBlank()
+                    if (wasCiphered) {
                         val cipherStr = f.optString("signatureCipher").ifBlank { f.optString("cipher") }
                         if (cipherStr.isNotBlank()) {
                             streamUrl = extractAndDecipherSignatureCipher(cipherStr) ?: ""
@@ -419,7 +443,7 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                     }
                     if (streamUrl.isBlank()) continue
 
-                    if (streamUrl.contains("&n=")) {
+                    if (wasCiphered && streamUrl.contains("&n=")) {
                         val nMatch = Regex("&n=([^&]+)").find(streamUrl)
                         if (nMatch != null) {
                             val origN = nMatch.groupValues[1]

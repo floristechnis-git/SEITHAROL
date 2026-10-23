@@ -92,8 +92,8 @@ fun ArtistScreen(
                                 .background(
                                     Brush.verticalGradient(
                                         colors = listOf(
-                                            Color.Black.copy(alpha = 0.35f),
-                                            Color.Black.copy(alpha = 0.55f),
+                                            Color.Black.copy(alpha = 0.25f),
+                                            Color.Black.copy(alpha = 0.45f),
                                             MaterialTheme.colorScheme.background
                                         )
                                     )
@@ -173,7 +173,7 @@ fun ArtistScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = page.name,
-                                    color = Color.White,
+                                    color = MaterialTheme.colorScheme.onBackground,
                                     fontSize = 26.sp,
                                     fontWeight = FontWeight.ExtraBold,
                                     maxLines = 1,
@@ -259,11 +259,27 @@ fun ArtistScreen(
                     }
                     items(domainTopSongs.distinctBy { it.id }.take(10), key = { "art_song_${it.id}" }) { track ->
                         ListItem(
+                            colors = ListItemDefaults.colors(
+                                containerColor = Color.Transparent,
+                                headlineColor = MaterialTheme.colorScheme.onBackground,
+                                supportingColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            ),
                             headlineContent = {
-                                Text(track.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    text = track.title,
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             },
                             supportingContent = {
-                                Text(track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    text = track.artist,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             },
                             leadingContent = {
                                 AsyncImage(
@@ -299,11 +315,11 @@ fun ArtistScreen(
                             horizontalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
                             items(allReleases.distinctBy { it.browseId }, key = { "rel_${it.browseId}" }) { release ->
-                                val isSingle = release.type.equals("SINGLE", true) || 
-                                               release.subtitle.contains("Single", true) ||
-                                               release.subtitle.contains("1 song", true) ||
-                                               release.subtitle.contains("1 track", true) ||
-                                               page.singles.any { it.browseId == release.browseId }
+                                val isSingle = release.type.equals("SINGLE", true) ||
+                                    release.subtitle.contains("Single", true) ||
+                                    release.subtitle.contains("1 song", true) ||
+                                    release.subtitle.contains("1 track", true) ||
+                                    page.singles.any { it.browseId == release.browseId }
 
                                 Column(
                                     modifier = Modifier
@@ -365,7 +381,7 @@ fun ArtistScreen(
                     }
                 }
 
-                // 5. Artist Playlists & Featured On Carousel
+                // 5. Artist Playlists & Mixes Carousel
                 if (page.playlists.isNotEmpty()) {
                     item {
                         Spacer(modifier = Modifier.height(18.dp))
@@ -395,7 +411,7 @@ fun ArtistScreen(
                                                 .clip(RoundedCornerShape(14.dp))
                                                 .background(MaterialTheme.colorScheme.surfaceVariant)
                                         )
-                                        val tag = if (pl.title.contains("Mix", true) || pl.browseId.startsWith("RD")) "MIX" else "PLAYLIST"
+                                        val tag = if (pl.type.equals("MIX", true) || pl.title.contains("Mix", true) || pl.browseId.startsWith("RD")) "MIX" else "PLAYLIST"
                                         Surface(
                                             color = Color(0xFF1B1C1C).copy(alpha = 0.85f),
                                             shape = RoundedCornerShape(6.dp),

@@ -31,7 +31,8 @@ fun SleepTimerModal(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = modalSheetState,
-        containerColor = SeitharolBg,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         dragHandle = {
             Box(
@@ -40,7 +41,7 @@ fun SleepTimerModal(
                     .width(40.dp)
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(SeitharolHandleBar)
+                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
             )
         }
     ) {
@@ -56,7 +57,7 @@ fun SleepTimerModal(
                 fontFamily = SyneFontFamily,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 18.sp,
-                color = SeitharolDark
+                color = MaterialTheme.colorScheme.onSurface
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -70,12 +71,12 @@ fun SleepTimerModal(
                     val isSelected = selectedMinutes == mins
                     Surface(
                         modifier = Modifier
-                            .fillMaxWidth(0.7f)
-                            .height(38.dp)
-                            .clip(RoundedCornerShape(19.dp))
+                            .fillMaxWidth(0.75f)
+                            .height(40.dp)
+                            .clip(RoundedCornerShape(20.dp))
                             .clickable { selectedMinutes = mins },
-                        shape = RoundedCornerShape(19.dp),
-                        color = if (isSelected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
+                        shape = RoundedCornerShape(20.dp),
+                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Text(
@@ -84,8 +85,8 @@ fun SleepTimerModal(
                                     isSelected -> "$mins minutes"
                                     else -> "$mins min"
                                 },
-                                color = if (isSelected) SeitharolDark else SeitharolTextSecondary,
-                                fontSize = if (isSelected) 17.sp else 15.sp,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = if (isSelected) 16.sp else 15.sp,
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
                             )
@@ -96,7 +97,7 @@ fun SleepTimerModal(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Start / Turn Off Button (uses primary accent so text is never white-on-white in Dark Mode)
+            // Start / Turn Off Button (uses primary accent so text is never white-on-white in Light or Dark Mode)
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -108,12 +109,12 @@ fun SleepTimerModal(
                     }
                     .testTag("sleep_timer_start_btn"),
                 shape = RoundedCornerShape(24.dp),
-                color = SeitharolPillBg
+                color = MaterialTheme.colorScheme.primary
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Text(
                         text = if (selectedMinutes == 0) "Turn Off Timer" else "Start Timer",
-                        color = SeitharolPillText,
+                        color = MaterialTheme.colorScheme.onPrimary,
                         fontSize = 15.sp,
                         fontFamily = OutfitFontFamily,
                         fontWeight = FontWeight.SemiBold

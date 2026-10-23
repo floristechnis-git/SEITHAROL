@@ -66,6 +66,7 @@ fun SearchScreen(
     val query by viewModel.searchQuery.collectAsState()
     val searchResults by viewModel.searchResults.collectAsState()
     val isSearchingOnline by viewModel.isSearchingOnline.collectAsState()
+    val hasCompletedOnlineSearch by viewModel.hasCompletedOnlineSearch.collectAsState()
     val searchSuggestions by viewModel.searchSuggestions.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
     val currentProvider by viewModel.selectedProviderFilter.collectAsState()
@@ -808,8 +809,8 @@ fun SearchScreen(
                 }
             }
 
-            if (filteredTracks.isEmpty() && (!isSearchingOnline || currentProvider == com.example.ui.ProviderFilter.LOCAL)) {
-                if (query.isNotBlank() || currentProvider == com.example.ui.ProviderFilter.LOCAL) {
+            if (filteredTracks.isEmpty() && ((!isSearchingOnline && hasCompletedOnlineSearch && query.trim().length >= 2) || currentProvider == com.example.ui.ProviderFilter.LOCAL)) {
+                if (query.trim().length >= 2 || currentProvider == com.example.ui.ProviderFilter.LOCAL) {
                     item {
                         Box(
                             modifier = Modifier

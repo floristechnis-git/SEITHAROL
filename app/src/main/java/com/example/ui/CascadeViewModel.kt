@@ -174,6 +174,8 @@ class CascadeViewModel(
     val selectedProviderFilter = MutableStateFlow(ProviderFilter.ALL)
     private val onlineSearchResults = MutableStateFlow<List<Track>>(emptyList())
     val isSearchingOnline = MutableStateFlow(false)
+    val hasCompletedOnlineSearch = MutableStateFlow(false)
+    private var searchRequestToken = 0
     val searchSuggestions = MutableStateFlow<List<String>>(emptyList())
 
     fun selectProviderFilter(filter: ProviderFilter) {
@@ -185,13 +187,18 @@ class CascadeViewModel(
         val clean = query.trim()
         activeSearchJob?.cancel()
         if (clean.length < 2 || isOfflineMode.value) {
+            searchRequestToken++
             onlineSearchResults.value = emptyList()
             isSearchingOnline.value = false
+            hasCompletedOnlineSearch.value = false
             return
         }
 
+        val token = ++searchRequestToken
+        isSearchingOnline.value = true
+        hasCompletedOnlineSearch.value = false
+
         activeSearchJob = viewModelScope.launch {
-            isSearchingOnline.value = true
             try {
                 val rawCandidates = when (filter) {
                     ProviderFilter.ALL -> {
@@ -244,10 +251,18 @@ class CascadeViewModel(
                         artUrl = c.thumbnailUrl
                     )
                 }
+                if (token == searchRequestToken) {
+                    isSearchingOnline.value = false
+                    hasCompletedOnlineSearch.value = true
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w("CascadeViewModel", "Search failed: ${e.message}")
-            } finally {
-                isSearchingOnline.value = false
+                if (token == searchRequestToken) {
+                    isSearchingOnline.value = false
+                    hasCompletedOnlineSearch.value = true
+                }
             }
         }
     }
@@ -283,19 +298,24 @@ class CascadeViewModel(
 
         viewModelScope.launch {
             searchQuery
-                .debounce(280L)
-                .distinctUntilChanged()
                 .collectLatest { query ->
                     val clean = query.trim()
                     if (clean.length >= 2 && !isOfflineMode.value) {
+                        // Immediately set loading state before debounce so "No songs found" never flashes while typing
+                        isSearchingOnline.value = true
+                        hasCompletedOnlineSearch.value = false
+                        delay(320L)
                         executeRankedSearch(clean, selectedProviderFilter.value)
                         runCatching { NetworkClients.getSearchSuggestions(clean) }
                             .onSuccess { searchSuggestions.value = it }
                             .onFailure { searchSuggestions.value = emptyList() }
                     } else {
+                        activeSearchJob?.cancel()
+                        searchRequestToken++
                         onlineSearchResults.value = emptyList()
                         searchSuggestions.value = emptyList()
                         isSearchingOnline.value = false
+                        hasCompletedOnlineSearch.value = false
                     }
                 }
         }

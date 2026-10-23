@@ -147,8 +147,8 @@ object OuterTuneResolvingDataSource {
     ): DataSource.Factory {
         val baseHttpFactory = DefaultHttpDataSource.Factory()
             .setUserAgent(VR_USER_AGENT)
-            .setConnectTimeoutMs(10_000)
-            .setReadTimeoutMs(15_000)
+            .setConnectTimeoutMs(6_000)
+            .setReadTimeoutMs(8_000)
             .setAllowCrossProtocolRedirects(true)
 
         return ResolvingDataSource.Factory(baseHttpFactory) { dataSpec: DataSpec ->

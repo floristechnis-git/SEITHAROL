@@ -1,7 +1,5 @@
 package com.seitharol.ui.discover
 
-import android.content.Intent
-import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -39,6 +37,7 @@ import com.seitharol.ui.search.CloseCrossSvgIcon
 import com.seitharol.ui.search.DownloadSvgIcon
 import com.seitharol.util.ThumbnailTargetSize
 import com.seitharol.util.ThumbnailUrlOptimizer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -60,6 +59,8 @@ fun InDiscoverSearchSurface(
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<NormalizedTrack>>(emptyList()) }
     var isLoading by remember { mutableStateOf(false) }
+    var hasCompletedSearchForQuery by remember { mutableStateOf(false) }
+    var latestSearchToken by remember { mutableIntStateOf(0) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
 
     val activePreviewId by audioPlayerManager.activePreviewTrackId.collectAsState()
@@ -72,6 +73,7 @@ fun InDiscoverSearchSurface(
 
     Surface(
         color = MaterialTheme.colorScheme.background,
+        contentColor = MaterialTheme.colorScheme.onBackground,
         modifier = Modifier.fillMaxSize()
     ) {
         Column(
@@ -86,22 +88,32 @@ fun InDiscoverSearchSurface(
                 onValueChange = { newText ->
                     query = newText
                     searchJob?.cancel()
-                    if (newText.isBlank()) {
+                    val clean = newText.trim()
+                    if (clean.length < 2) {
                         results = emptyList()
                         isLoading = false
+                        hasCompletedSearchForQuery = false
                     } else {
+                        // Immediately enter loading state BEFORE debounce so "No songs found" NEVER flashes while typing!
+                        val token = ++latestSearchToken
+                        isLoading = true
+                        hasCompletedSearchForQuery = false
                         searchJob = scope.launch {
-                            delay(280L)
-                            isLoading = true
                             try {
-                                val fetched = onSearch(newText.trim())
-                                results = fetched
-                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                delay(350L)
+                                val fetched = onSearch(clean)
+                                if (token == latestSearchToken) {
+                                    results = fetched
+                                    isLoading = false
+                                    hasCompletedSearchForQuery = true
+                                }
+                            } catch (e: CancellationException) {
                                 throw e
                             } catch (_: Exception) {
-                                // Keep previous results or empty if none
-                            } finally {
-                                isLoading = false
+                                if (token == latestSearchToken) {
+                                    isLoading = false
+                                    hasCompletedSearchForQuery = true
+                                }
                             }
                         }
                     }
@@ -131,7 +143,16 @@ fun InDiscoverSearchSurface(
                 },
                 trailingIcon = {
                     if (query.isNotEmpty()) {
-                        IconButton(onClick = { query = ""; results = emptyList() }) {
+                        IconButton(
+                            onClick = {
+                                searchJob?.cancel()
+                                latestSearchToken++
+                                query = ""
+                                results = emptyList()
+                                isLoading = false
+                                hasCompletedSearchForQuery = false
+                            }
+                        ) {
                             CloseCrossSvgIcon(tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
                         }
                     }
@@ -149,12 +170,18 @@ fun InDiscoverSearchSurface(
                 keyboardActions = KeyboardActions(onSearch = {
                     focusManager.clearFocus()
                     val clean = query.trim()
-                    if (clean.isNotBlank()) {
+                    if (clean.length >= 2) {
                         searchJob?.cancel()
+                        val token = ++latestSearchToken
+                        isLoading = true
+                        hasCompletedSearchForQuery = false
                         searchJob = scope.launch {
-                            isLoading = true
-                            results = runCatching { onSearch(clean) }.getOrDefault(emptyList())
-                            isLoading = false
+                            val fetched = runCatching { onSearch(clean) }.getOrDefault(emptyList())
+                            if (token == latestSearchToken) {
+                                results = fetched
+                                isLoading = false
+                                hasCompletedSearchForQuery = true
+                            }
                         }
                     }
                 }),
@@ -172,7 +199,7 @@ fun InDiscoverSearchSurface(
                 )
             }
 
-            if (!isLoading && query.isNotBlank() && results.isEmpty()) {
+            if (!isLoading && hasCompletedSearchForQuery && query.trim().length >= 2 && results.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -186,7 +213,7 @@ fun InDiscoverSearchSurface(
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            text = "No songs found for \"$query\"",
+                            text = "No songs found for \"${query.trim()}\"",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 14.sp
                         )
@@ -221,12 +248,14 @@ fun InDiscoverSearchSurface(
 
                     Surface(
                         shape = RoundedCornerShape(20.dp),
-                        color = if (isThisPlaying) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        color = if (isThisPlaying) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surface,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        tonalElevation = 2.dp,
                         modifier = Modifier
                             .fillMaxWidth()
                             .border(
                                 width = 1.dp,
-                                color = if (isThisPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                color = if (isThisPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
                                 shape = RoundedCornerShape(20.dp)
                             )
                             .clickable {
@@ -358,7 +387,7 @@ fun InDiscoverSearchSurface(
                                     shape = RoundedCornerShape(50),
                                     contentPadding = PaddingValues(horizontal = 14.dp),
                                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                                 ) {
                                     Icon(
                                         painter = painterResource(id = R.drawable.ic_play),
@@ -367,7 +396,7 @@ fun InDiscoverSearchSurface(
                                         modifier = Modifier.size(14.dp)
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Play", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    Text("Play", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                                 }
                             }
                         }

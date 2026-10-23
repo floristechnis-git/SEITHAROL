@@ -9,7 +9,7 @@ import kotlin.math.abs
 /**
  * Cross-Source Audio Matcher.
  * Matches metadata-only or fallback tracks to verified on-device playable audio streams
- * from YouTubeInnerTubeProvider or JioSaavnProvider.
+ * from YouTubeInnerTubeProvider or JioSaavnProvider with strict Title + Artist + Duration + No-Remix gates.
  */
 class TrackMatcher(
     private val youtubeProvider: YouTubeInnerTubeProvider,
@@ -60,11 +60,16 @@ class TrackMatcher(
                 Log.w(TAG, "YouTube text search match failed: ${e.message}")
             }
 
-            // 3. Fallback: Query JioSaavn Provider (try artist + title, then title-only)
-            val saavnQueries = listOfNotNull(
-                query.takeIf { it.isNotBlank() },
-                cleanTitle.takeIf { it.isNotBlank() && it != query }
-            )
+            // 3. Fallback: Query JioSaavn Provider using artist + title (never title-only when artist is known!)
+            val saavnQueries = if (cleanArtist.isNotBlank() &&
+                !cleanArtist.equals("Unknown Artist", ignoreCase = true) &&
+                !cleanArtist.equals("Various Artists", ignoreCase = true)
+            ) {
+                listOfNotNull(query.takeIf { it.isNotBlank() })
+            } else {
+                listOfNotNull(cleanTitle.takeIf { it.isNotBlank() })
+            }
+
             for (sq in saavnQueries) {
                 try {
                     val saavnCandidates = jioSaavnProvider.searchTracks(sq, limit = 6)
@@ -81,23 +86,12 @@ class TrackMatcher(
                 }
             }
 
-            // 4. Last resort: title-only YouTube search
-            val fallbackCandidates = youtubeProvider.searchTracks(cleanTitle.ifBlank { track.title }, limit = 5)
-            val rankedFallback = rankCandidates(track, fallbackCandidates)
-            for (cand in rankedFallback) {
-                try {
-                    return@withContext youtubeProvider.resolveStream(cand.sourceId, preferredKbps)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Fallback candidate ${cand.sourceId} failed: ${e.message}")
-                }
-            }
-
-            throw IllegalStateException("Could not match stream for track '${track.title}' by '${track.primaryArtist}'")
+            throw IllegalStateException("Could not match verified stream for track '${track.title}' by '${track.primaryArtist}'")
         }
 
     private val BANNED_MODIFIERS = listOf(
-        "loop", "extended", "1 hour", "10 hours", "hour version",
-        "slowed", "reverb", "cover", "live", "tribute", "karaoke",
+        "remix", "loop", "extended", "1 hour", "10 hours", "hour version",
+        "slowed", "reverb", "cover", "live", "unplugged", "tribute", "karaoke",
         "instrumental", "parody", "sped up", "nightcore", "8d", "mashup",
         "dj", "status", "ringtone", "lofi", "lo-fi",
         "bass boosted", "fan made", "unofficial"
@@ -127,7 +121,7 @@ class TrackMatcher(
             .map { candidate ->
                 candidate to scoreCandidate(candidate, normQueryTitle, normQueryArtist, targetQueryLower, targetDurationSec)
             }
-            .filter { it.second > 0 }
+            .filter { it.second >= 120 }
             .sortedWith(
                 compareByDescending<Pair<NormalizedTrack, Int>> {
                     it.first.source == SourceType.JIOSAAVN || it.first.isArtTrack || it.first.artists.any { a -> a.contains("Topic", ignoreCase = true) }
@@ -155,29 +149,17 @@ class TrackMatcher(
             return -1000
         }
 
-        // HARD GATE: Reject candidate if title does not share words with query title
+        // HARD GATE 1: Reject candidate if title does not share core words with query title
         if (normQueryTitle.isNotBlank()) {
             val titleTokens = normQueryTitle.split(" ").filter { it.length >= 2 }
             val matchedTitleTokens = titleTokens.count { normCandTitle.contains(it) }
             val titleMatchRatio = if (titleTokens.isNotEmpty()) matchedTitleTokens.toFloat() / titleTokens.size else 1f
-            if (normCandTitle != normQueryTitle && !normCandTitle.contains(normQueryTitle) && !normQueryTitle.contains(normCandTitle) && titleMatchRatio < 0.5f) {
+            if (normCandTitle != normQueryTitle && !normCandTitle.contains(normQueryTitle) && titleMatchRatio < 0.70f) {
                 return -1000
             }
         }
 
-        // 2. Prioritize Official Art Tracks / Studio Releases (JioSaavn & YouTube ATV)
-        when {
-            isOfficialSource -> score += 120
-            candTitleLower.contains("official audio") || candTitleLower.contains("official video") -> score += 80
-            else -> score += 20
-        }
-
-        // 3. Official Album Metadata Presence
-        if (c.album.isNotBlank() && !c.album.equals("Single", ignoreCase = true)) {
-            score += 20
-        }
-
-        // 4. Strict Unrequested Loop / Edit Filtering
+        // HARD GATE 2: Strict Unrequested Remix / Loop / Edit Filtering
         for (keyword in BANNED_MODIFIERS) {
             val requestedInQuery = rawQueryLower.contains(keyword)
             val presentInCandidate = candTitleLower.contains(keyword) || c.artists.any { it.contains(keyword, ignoreCase = true) }
@@ -186,39 +168,57 @@ class TrackMatcher(
             }
         }
 
-        // 5. Title & Artist Matching
+        // HARD GATE 3: Strict Artist Ownership Gate
+        // If target artist is known, candidate artist or title MUST share the artist name or core artist token!
+        val cleanChannel = normalizeText(c.primaryArtist.removeSuffix("- Topic").trim())
+        if (normQueryArtist.isNotBlank() &&
+            !normQueryArtist.equals("unknown artist", ignoreCase = true) &&
+            !normQueryArtist.equals("various artists", ignoreCase = true)
+        ) {
+            val artistTokens = normQueryArtist.split(" ").filter { it.length >= 3 }
+                .ifEmpty { normQueryArtist.split(" ").filter { it.length >= 2 } }
+            val artistMatches = normCandArtist == normQueryArtist ||
+                cleanChannel == normQueryArtist ||
+                normCandArtist.contains(normQueryArtist) ||
+                normQueryArtist.contains(normCandArtist).takeIf { normCandArtist.length >= 3 } == true ||
+                normCandTitle.contains(normQueryArtist) ||
+                (artistTokens.isNotEmpty() && artistTokens.any { normCandArtist.contains(it) || normCandTitle.contains(it) })
+
+            if (!artistMatches) {
+                return -1000
+            }
+            score += if (normCandArtist == normQueryArtist || cleanChannel == normQueryArtist) 70 else 45
+        }
+
+        // HARD GATE 4: Duration Proximity Gate (rejects candidates >15s off from targetDurationSec)
+        if (targetDurationSec > 45 && c.durationMs > 0 && targetDurationSec != 210) {
+            val candDurationSec = (c.durationMs / 1000L).toInt()
+            val diff = abs(candDurationSec - targetDurationSec)
+            if (diff > 15) {
+                return -1000
+            }
+            score += when {
+                diff <= 5 -> 50
+                diff <= 15 -> 30
+                else -> -1000
+            }
+        }
+
+        // Prioritize Official Art Tracks / Studio Releases (JioSaavn & YouTube ATV)
+        when {
+            isOfficialSource -> score += 100
+            candTitleLower.contains("official audio") || candTitleLower.contains("official video") -> score += 70
+            else -> score += 20
+        }
+
+        if (c.album.isNotBlank() && !c.album.equals("Single", ignoreCase = true)) {
+            score += 20
+        }
+
         if (normCandTitle == normQueryTitle) {
             score += 80
         } else if (normCandTitle.contains(normQueryTitle) || normQueryTitle.contains(normCandTitle)) {
             score += 45
-        }
-
-        val cleanChannel = normalizeText(c.primaryArtist.removeSuffix("- Topic").trim())
-        if (normQueryArtist.isNotBlank() && !normQueryArtist.equals("unknown artist", ignoreCase = true) && !normQueryArtist.equals("various artists", ignoreCase = true)) {
-            val artistTokens = normQueryArtist.split(" ").filter { it.length >= 3 }
-            if (normCandArtist == normQueryArtist || cleanChannel == normQueryArtist) {
-                score += 70
-            } else if (
-                normCandArtist.contains(normQueryArtist) ||
-                normQueryArtist.contains(normCandArtist) ||
-                artistTokens.any { normCandArtist.contains(it) }
-            ) {
-                score += 40
-            } else if (normCandTitle != normQueryTitle) {
-                score -= 25
-            }
-        }
-
-        // 6. Duration Proximity Scoring (tolerant of music-video vs studio-audio intro/outro differences)
-        if (targetDurationSec > 45 && c.durationMs > 0 && targetDurationSec != 210) {
-            val candDurationSec = (c.durationMs / 1000L).toInt()
-            val diff = abs(candDurationSec - targetDurationSec)
-            score += when {
-                diff <= 5 -> 50
-                diff <= 15 -> 30
-                diff <= 40 -> 5
-                else -> -60
-            }
         }
 
         return score

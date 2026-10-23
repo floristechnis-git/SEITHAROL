@@ -19,8 +19,9 @@ data class CandidateStream(
 object CanonicalAudioResolver {
 
     private val BANNED_MODIFIERS = listOf(
-        "loop", "extended", "1 hour", "10 hours", "slowed", "reverb",
-        "sped up", "nightcore", "cover", "live", "8d", "mashup", "instrumental", "karaoke",
+        "remix", "loop", "extended", "1 hour", "10 hours", "slowed", "reverb",
+        "sped up", "nightcore", "cover", "live", "unplugged", "8d", "mashup",
+        "instrumental", "karaoke", "lofi", "lo-fi", "bass boosted",
         "ringtone", "status", "dj "
     )
 
@@ -39,7 +40,13 @@ object CanonicalAudioResolver {
         if (candidates.isEmpty()) return null
         val rawQueryLower = "$queryTitle $queryArtist".lowercase()
         val normTitle = normalizeText(queryTitle)
-        val normArtist = normalizeText(queryArtist.split(",", "&", "feat.", "ft.").first())
+        val normArtist = normalizeText(
+            queryArtist
+                .removeSuffix(" - Topic")
+                .removeSuffix("- Topic")
+                .split(",", "&", "feat.", "ft.")
+                .first()
+        )
 
         return candidates
             .mapNotNull { candidate ->
@@ -51,22 +58,34 @@ object CanonicalAudioResolver {
                 val titleTokens = normTitle.split(" ").filter { it.length >= 2 }
                 val matchedTitleTokens = titleTokens.count { candTitle.contains(it) }
                 val titleMatchRatio = if (titleTokens.isNotEmpty()) matchedTitleTokens.toFloat() / titleTokens.size else 1f
-                if (candTitle != normTitle && !candTitle.contains(normTitle) && titleMatchRatio < 0.65f) {
+                if (candTitle != normTitle && !candTitle.contains(normTitle) && titleMatchRatio < 0.70f) {
                     return@mapNotNull null
                 }
 
-                // HARD GATE 2: Reject unrequested covers/slowed/live/loops
+                // HARD GATE 2: Reject unrequested remixes/covers/slowed/live/loops
                 if (containsBannedModifier(rawQueryLower, "${candidate.title} ${candidate.channelName}")) {
                     return@mapNotNull null
                 }
 
-                // HARD GATE 3: Artist must match or be contained in candidate artist/channel/title
+                // HARD GATE 3: Artist must match or share core artist token with candidate artist/channel/title
+                val artistTokens = normArtist.split(" ").filter { it.length >= 3 }
+                    .ifEmpty { normArtist.split(" ").filter { it.length >= 2 } }
                 val artistMatches = normArtist.isBlank() ||
+                    normArtist == "unknown artist" ||
+                    normArtist == "various artists" ||
                     candArtist.contains(normArtist) ||
-                    normArtist.contains(candArtist) ||
+                    normArtist.contains(candArtist).takeIf { candArtist.length >= 3 } == true ||
                     candChannel.contains(normArtist) ||
-                    candTitle.contains(normArtist)
+                    candTitle.contains(normArtist) ||
+                    (artistTokens.isNotEmpty() && artistTokens.any { candArtist.contains(it) || candChannel.contains(it) })
                 if (!artistMatches) return@mapNotNull null
+
+                // HARD GATE 4: Duration must be within 15s when known
+                if (targetDurationSeconds != null && targetDurationSeconds > 45 && targetDurationSeconds != 210 && candidate.durationSeconds > 0) {
+                    if (abs(candidate.durationSeconds - targetDurationSeconds) > 15) {
+                        return@mapNotNull null
+                    }
+                }
 
                 val score = scoreCandidate(candidate, normTitle, normArtist, rawQueryLower, targetDurationSeconds)
                 if (score >= 120) candidate to score else null
@@ -101,7 +120,7 @@ object CanonicalAudioResolver {
 
         if (!c.albumName.isNullOrBlank()) score += 20
 
-        // 2. Hard-penalize unrequested slowed/reverb, covers, loops
+        // 2. Hard-penalize unrequested remixes, slowed/reverb, covers, loops
         for (keyword in BANNED_MODIFIERS) {
             val requestedInQuery = rawQueryLower.contains(keyword)
             val presentInCandidate = candTitleLower.contains(keyword) || candChannelLower.contains(keyword)
@@ -135,19 +154,18 @@ object CanonicalAudioResolver {
             ) {
                 score += 40
             } else {
-                score -= 55
+                return -1000
             }
         }
 
         // 5. Duration proximity
-        if (targetDurationSeconds != null && targetDurationSeconds > 0 && c.durationSeconds > 0) {
+        if (targetDurationSeconds != null && targetDurationSeconds > 45 && targetDurationSeconds != 210 && c.durationSeconds > 0) {
             val diff = abs(c.durationSeconds - targetDurationSeconds)
             score += when {
                 diff <= 2 -> 55
                 diff <= 5 -> 35
-                diff <= 12 -> 5
-                diff <= 25 -> -60
-                else -> -160
+                diff <= 15 -> 10
+                else -> return -1000
             }
         }
 
@@ -238,7 +256,6 @@ object CanonicalAudioResolver {
                     if (normQuery.isNotBlank() && !normArtist.contains(normQuery) && !normQuery.contains(normArtist)) {
                         null
                     } else {
-                        // Only attach track.artistBrowseId if this artist was the sole/primary artist
                         val validBrowseId = if (index == 0 && parts.size == 1) track.artistBrowseId else null
                         singleArtist to validBrowseId
                     }

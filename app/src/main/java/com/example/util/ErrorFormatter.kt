@@ -37,8 +37,11 @@ object ErrorFormatter {
     fun toUserFriendlyMessage(
         throwable: Throwable?,
         context: Context? = null,
-        trackTitle: String? = null
+        trackTitle: String? = null,
+        hasNextTrack: Boolean = false
     ): String {
+        val nextSuffix = if (hasNextTrack) " Playing next song." else " Please try again."
+
         // 1. Check network connectivity first
         if (context != null && !isOnline(context)) {
             return "No internet connection. Please check your network."
@@ -46,7 +49,7 @@ object ErrorFormatter {
 
         if (throwable == null) {
             return if (!trackTitle.isNullOrBlank()) {
-                "Unable to play \"$trackTitle\". Playing next song."
+                "Unable to play \"$trackTitle\".$nextSuffix"
             } else {
                 "Unable to load audio. Please check your connection."
             }
@@ -91,27 +94,25 @@ object ErrorFormatter {
                 "Track not available offline. Connect to internet or download first."
             }
             lower.contains("403") || lower.contains("forbidden") || lower.contains("unauthorized") -> {
-                "Playback source temporarily restricted. Playing next song."
+                "Playback source temporarily restricted.$nextSuffix"
             }
             lower.contains("404") || lower.contains("not found") -> {
-                "Track is currently unavailable. Playing next song."
+                "Track is currently unavailable.$nextSuffix"
             }
             lower.contains("500") || lower.contains("502") || lower.contains("503") || lower.contains("bad gateway") -> {
                 "Server is temporarily busy. Please try again shortly."
             }
             !trackTitle.isNullOrBlank() -> {
-                "Unable to play \"$trackTitle\". Playing next song."
+                "Unable to play \"$trackTitle\".$nextSuffix"
             }
             else -> {
-                "Unable to play this track. Playing next song."
+                "Unable to play this track.$nextSuffix"
             }
         }
     }
 
     /**
      * Sanitizes any raw notification string before presenting it to the user.
-     * Intercepts developer-mode text such as retry attempts, internal fallback chains,
-     * provider names, or exception dumps.
      */
     fun sanitizeNotice(rawMessage: String, context: Context? = null): String {
         if (context != null && !isOnline(context)) {
@@ -166,7 +167,7 @@ object ErrorFormatter {
                     "Reconnecting audio stream..."
                 }
                 else -> {
-                    "Unable to play track. Playing next song."
+                    "Unable to play track. Please try again."
                 }
             }
         }

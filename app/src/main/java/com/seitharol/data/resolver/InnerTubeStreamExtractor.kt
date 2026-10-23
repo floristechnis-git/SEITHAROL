@@ -12,7 +12,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLDecoder
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 
 enum class AudioQuality(val label: String, val maxBitrateKbps: Int) {
@@ -32,6 +32,7 @@ data class InnerTubeClientConfig(
     val osVersion: String? = null,
     val androidSdkVersion: Int? = null,
     val params: String? = null,
+    val glOverride: String? = null,
     val origin: String = "https://www.youtube.com",
     val playerEndpoint: String = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
     val isEmbedded: Boolean = false,
@@ -85,13 +86,18 @@ object InnerTubeStreamExtractor {
     private val bgScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val clientRotationOffset = AtomicInteger(0)
 
+    private fun resolveDeviceGl(): String {
+        val country = runCatching { Locale.getDefault().country }.getOrNull().orEmpty()
+        return if (country.length == 2) country.uppercase(Locale.US) else "IN"
+    }
+
     /**
      * Verified multi-client InnerTube pipeline:
-     * 1. ANDROID_VR (1.60.19, Quest 3) — Native VR client, no PoToken or JS cipher required.
-     * 2. IOS (20.10.4, iPhone16,2) — Native iOS client with M4A (140), Opus, and HLS manifest support.
-     * 3. ANDROID_VR (1.43.32, Quest 3) — Classic OuterTune VR profile.
+     * 1. ANDROID_VR (1.60.19, Quest 3, regional gl="IN"/device) — Native VR client, unciphered direct URLs, supports Indian/Manipuri regional catalog.
+     * 2. IOS (20.10.4, iPhone16,2, regional gl="IN"/device) — Native iOS client with M4A (140), Opus, and HLS manifest support.
+     * 3. ANDROID_VR (1.43.32, Quest 3, gl="US") — Global US fallback VR profile.
      * 4. ANDROID_TESTSUITE (1.9, params="CgIIAQ==") — Unciphered direct audio streams.
-     * 5. TVHTML5_SIMPLY_EMBEDDED_PLAYER (2.0) — Embedded player fallback for restricted music videos.
+     * 5. TVHTML5_SIMPLY_EMBEDDED_PLAYER (2.0) — Embedded player fallback.
      */
     val VERIFIED_CLIENTS = listOf(
         InnerTubeClientConfig(
@@ -104,6 +110,7 @@ object InnerTubeStreamExtractor {
             osName = "Android",
             osVersion = "12L",
             androidSdkVersion = 32,
+            glOverride = null, // Uses device/regional GL ("IN")
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
@@ -115,6 +122,7 @@ object InnerTubeStreamExtractor {
             deviceModel = "iPhone16,2",
             osName = "iOS",
             osVersion = "18.3.1.22D72",
+            glOverride = null, // Uses device/regional GL ("IN")
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
@@ -127,6 +135,7 @@ object InnerTubeStreamExtractor {
             osName = "Android",
             osVersion = "12L",
             androidSdkVersion = 32,
+            glOverride = "US",
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
@@ -140,6 +149,7 @@ object InnerTubeStreamExtractor {
             osVersion = "12L",
             androidSdkVersion = 32,
             params = "CgIIAQ==",
+            glOverride = null,
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
@@ -147,6 +157,7 @@ object InnerTubeStreamExtractor {
             clientVersion = "2.0",
             userAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/11.50) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.0 Safari/605.1.15",
             clientId = "85",
+            glOverride = null,
             isEmbedded = true,
             sendOriginHeaders = true
         )
@@ -166,16 +177,12 @@ object InnerTubeStreamExtractor {
         return fetchVisitorDataSync()
     }
 
-    /**
-     * Fetches a clean YouTube visitorData token matching the US/EN player context
-     * (first from sw.js_data like NewPipe/OuterTune/Metrolist, then fallback to visitor_id).
-     */
     private fun fetchVisitorDataSync(): String? {
         runCatching {
             val conn = (URL("https://www.youtube.com/sw.js_data").openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
-                connectTimeout = 2500
-                readTimeout = 2500
+                connectTimeout = 2000
+                readTimeout = 2000
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
                 setRequestProperty("Accept-Language", "en-US,en;q=0.9")
             }
@@ -193,8 +200,8 @@ object InnerTubeStreamExtractor {
         return runCatching {
             val conn = (URL("https://www.youtube.com/youtubei/v1/visitor_id?prettyPrint=false").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 2500
-                readTimeout = 2500
+                connectTimeout = 2000
+                readTimeout = 2000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("User-Agent", VERIFIED_CLIENTS[0].userAgent)
@@ -207,7 +214,7 @@ object InnerTubeStreamExtractor {
                         put("clientName", VERIFIED_CLIENTS[0].clientName)
                         put("clientVersion", VERIFIED_CLIENTS[0].clientVersion)
                         put("hl", "en")
-                        put("gl", "US")
+                        put("gl", resolveDeviceGl())
                     })
                 })
             }
@@ -258,9 +265,13 @@ object InnerTubeStreamExtractor {
     }
 
     /**
-     * Performs a lightweight HTTP byte-range probe (`Range: bytes=0-1023`) with the exact
+     * Performs a fast HTTP byte-range probe (`Range: bytes=0-1023`) with the exact
      * client-matched headers to verify that `googlevideo.com` actually serves audio bytes (HTTP 200/206)
      * and does NOT reject the stream with HTTP 403 Forbidden.
+     *
+     * CRITICAL: Returns the ORIGINAL `streamUrl` (not the one-time redirected `rr*---sn-*.googlevideo.com` URL
+     * bound to `Range: bytes=0-1023`), so ExoPlayer's `DefaultHttpDataSource` can follow the redirect cleanly
+     * with its own `Range: bytes=0-` request!
      */
     fun verifyStreamPlayable(streamUrl: String): String? {
         if (streamUrl.isBlank()) return null
@@ -271,8 +282,8 @@ object InnerTubeStreamExtractor {
             for (redirect in 0..3) {
                 val conn = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
-                    connectTimeout = 2500
-                    readTimeout = 2500
+                    connectTimeout = 1800
+                    readTimeout = 1800
                     instanceFollowRedirects = false
                     headers.forEach { (k, v) -> setRequestProperty(k, v) }
                     setRequestProperty("Range", "bytes=0-1023")
@@ -290,7 +301,8 @@ object InnerTubeStreamExtractor {
                     conn.inputStream.use { it.read() }
                 }
                 conn.disconnect()
-                return@runCatching if (isOk) currentUrl else null
+                // Return the original primary streamUrl so ExoPlayer's full-file Range request is never rejected by edge redirect binding
+                return@runCatching if (isOk) streamUrl else null
             }
             null
         }.getOrNull()
@@ -304,11 +316,12 @@ object InnerTubeStreamExtractor {
     ): String? {
         return runCatching {
             val visData = cachedVisitorData?.takeIf { it.isNotBlank() }
+            val effectiveGl = client.glOverride ?: resolveDeviceGl()
             val endpoint = URL(client.playerEndpoint)
             val conn = (endpoint.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 3000
-                readTimeout = 3500
+                connectTimeout = 2500
+                readTimeout = 3000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("User-Agent", client.userAgent)
@@ -331,19 +344,27 @@ object InnerTubeStreamExtractor {
                 put("racyCheckOk", true)
                 client.params?.let { put("params", it) }
                 if (client.isEmbedded) {
+                    com.example.resolver.KotlinJsInterp.ensurePlayerJsLoaded(forceRefresh = false)
+                    val sts = com.example.resolver.KotlinJsInterp.getSignatureTimestamp()
                     put("playbackContext", JSONObject().apply {
                         put("contentPlaybackContext", JSONObject().apply {
                             put("html5Preference", "HTML5_PREF_WANTS")
-                            put("signatureTimestamp", 20073)
+                            put("signatureTimestamp", sts)
                         })
                     })
+                    val poToken = com.example.resolver.KotlinJsInterp.generatePoToken(visData)
+                    if (!poToken.isNullOrBlank()) {
+                        put("serviceIntegrityDimensions", JSONObject().apply {
+                            put("poToken", poToken)
+                        })
+                    }
                 }
                 put("context", JSONObject().apply {
                     put("client", JSONObject().apply {
                         put("clientName", client.clientName)
                         put("clientVersion", client.clientVersion)
                         put("hl", "en")
-                        put("gl", "US")
+                        put("gl", effectiveGl)
                         client.deviceMake?.let { put("deviceMake", it) }
                         client.deviceModel?.let { put("deviceModel", it) }
                         client.osName?.let { put("osName", it) }
@@ -394,22 +415,6 @@ object InnerTubeStreamExtractor {
             )
             val audioStreams = mutableListOf<AudioStreamCandidate>()
 
-            fun decodeCipherUrl(cipherStr: String): String? {
-                val params = mutableMapOf<String, String>()
-                for (part in cipherStr.split("&")) {
-                    val idx = part.indexOf('=')
-                    if (idx > 0) {
-                        val k = URLDecoder.decode(part.substring(0, idx), "UTF-8")
-                        val v = URLDecoder.decode(part.substring(idx + 1), "UTF-8")
-                        params[k] = v
-                    }
-                }
-                val baseUrl = params["url"] ?: return null
-                val sig = params["s"]
-                val sp = params["sp"] ?: "sig"
-                return if (sig.isNullOrBlank()) baseUrl else "$baseUrl&$sp=$sig"
-            }
-
             fun collectStreams(arr: JSONArray?, isLegacy: Boolean) {
                 if (arr == null) return
                 for (i in 0 until arr.length()) {
@@ -421,9 +426,27 @@ object InnerTubeStreamExtractor {
 
                     var rawUrl = fmt.optString("url", "")
                     if (rawUrl.isBlank()) {
-                        val cipher = fmt.optString("signatureCipher").ifBlank { fmt.optString("cipher") }
-                        if (cipher.isNotBlank()) {
-                            rawUrl = decodeCipherUrl(cipher).orEmpty()
+                        val cipherStr = fmt.optString("signatureCipher").ifBlank { fmt.optString("cipher") }
+                        if (cipherStr.isNotBlank()) {
+                            val params = mutableMapOf<String, String>()
+                            for (part in cipherStr.split("&")) {
+                                val idx = part.indexOf('=')
+                                if (idx > 0) {
+                                    params[URLDecoder.decode(part.substring(0, idx), "UTF-8")] =
+                                        URLDecoder.decode(part.substring(idx + 1), "UTF-8")
+                                }
+                            }
+                            val baseUrl = params["url"].orEmpty()
+                            val sig = params["s"].orEmpty()
+                            val sp = params["sp"] ?: "sig"
+                            if (baseUrl.isNotBlank() && sig.isNotBlank()) {
+                                val ops = com.example.resolver.KotlinJsInterp.getActiveCipherOperations()
+                                val deciphered = com.example.resolver.KotlinJsInterp.decipherSignature(sig, ops)
+                                if (deciphered.isNotBlank() && deciphered != sig) {
+                                    val sep = if (baseUrl.contains("?")) "&" else "?"
+                                    rawUrl = "$baseUrl$sep$sp=$deciphered"
+                                }
+                            }
                         }
                     }
                     if (rawUrl.isBlank()) continue
@@ -462,13 +485,11 @@ object InnerTubeStreamExtractor {
                     .thenBy { kotlin.math.abs(it.kbps - preferredQuality.maxBitrateKbps) }
             )
 
-            // Probe top distinct candidates (e.g. best AAC and best Opus/Progressive) to guarantee HTTP 200/206
+            // Probe at most 2 distinct candidates per client (best AAC and best Opus/Progressive) for fast <1.5s turnaround
             val candidatesToProbe = buildList {
                 sortedCandidates.firstOrNull { it.isAacMp4 }?.let { add(it) }
-                sortedCandidates.firstOrNull { it.isOpus }?.let { add(it) }
-                sortedCandidates.firstOrNull { it.isProgressiveMp4 }?.let { add(it) }
-                sortedCandidates.firstOrNull()?.let { add(it) }
-            }.distinctBy { it.itag }
+                sortedCandidates.firstOrNull { !it.isAacMp4 }?.let { add(it) }
+            }.distinctBy { it.itag }.take(2)
 
             for (candidate in candidatesToProbe) {
                 val verifiedUrl = verifyStreamPlayable(candidate.url)
@@ -738,6 +759,47 @@ object InnerTubeStreamExtractor {
         out
     }
 
+    /**
+     * Verifies whether a candidate song, album, single, or playlist genuinely belongs to [targetArtist].
+     * Prevents unrelated compilations, other artists' albums, or random user playlists from appearing on the Artist Profile page.
+     */
+    fun belongsToArtist(
+        targetArtist: String,
+        itemTitle: String,
+        itemSubtitle: String = "",
+        itemArtist: String = ""
+    ): Boolean {
+        val normTarget = CanonicalAudioResolver.normalizeText(
+            targetArtist.removeSuffix(" - Topic").removeSuffix("- Topic").trim()
+        )
+        if (normTarget.isBlank()) return true
+
+        val normTitle = CanonicalAudioResolver.normalizeText(itemTitle)
+        val normSub = CanonicalAudioResolver.normalizeText(itemSubtitle)
+        val normArt = CanonicalAudioResolver.normalizeText(
+            itemArtist.removeSuffix(" - Topic").removeSuffix("- Topic").trim()
+        )
+
+        // Check direct containment of the full normalized artist name
+        if (normArt.contains(normTarget) || normTarget.contains(normArt).takeIf { normArt.length >= 3 } == true) {
+            return true
+        }
+        if (normSub.contains(normTarget) || normTitle.contains(normTarget)) {
+            return true
+        }
+
+        // Token-level check for multi-word artist names
+        val targetTokens = normTarget.split(" ").filter { it.length >= 3 }
+        if (targetTokens.isEmpty()) return true
+        val combinedCandidate = "$normArt $normSub $normTitle"
+        val matchedCount = targetTokens.count { token -> combinedCandidate.contains(token) }
+        return if (targetTokens.size == 1) {
+            matchedCount == 1
+        } else {
+            matchedCount >= targetTokens.size
+        }
+    }
+
     suspend fun fetchArtistPage(
         artistName: String,
         artistBrowseId: String? = null
@@ -758,28 +820,43 @@ object InnerTubeStreamExtractor {
             val root = postWebRemix("https://music.youtube.com/youtubei/v1/browse?prettyPrint=false", payload)
             if (root != null) {
                 val parsed = parseArtistBrowseResponse(root, browseId, artistName, fallbackAvatar)
-                if (parsed.topSongs.isNotEmpty() || parsed.albums.isNotEmpty()) {
+                if (parsed.topSongs.isNotEmpty() || parsed.albums.isNotEmpty() || parsed.singles.isNotEmpty()) {
                     return@withContext parsed
                 }
             }
         }
 
-        val topSongs = searchOfficialYtmSongs(artistName, limit = 15)
-        val playlists = searchYtmCollections(artistName, "EgWKAQIoAWoKEAkQChADEAUQBA==", "PLAYLIST", 6)
-        val rawCollections = searchYtmCollections(artistName, "EgWKAQIYAWoKEAkQChADEAUQBA==", "ALBUM", 6)
+        val rawSongs = searchOfficialYtmSongs(artistName, limit = 24)
+        val verifiedSongs = rawSongs.filter { belongsToArtist(artistName, it.title, itemArtist = it.artist) }
+        val topSongs = verifiedSongs.ifEmpty { rawSongs.take(12) }
+
+        val rawCollections = searchYtmCollections(artistName, "EgWKAQIYAWoKEAkQChADEAUQBA==", "ALBUM", 16)
+            .filter { belongsToArtist(artistName, it.title, it.subtitle) }
         val albums = rawCollections.filterNot {
             it.type == "SINGLE" || it.subtitle.contains("Single", true) || it.subtitle.contains("1 song", true) || it.subtitle.contains("1 track", true)
-        }
+        }.distinctBy { it.browseId }
         val singles = rawCollections.filter {
             it.type == "SINGLE" || it.subtitle.contains("Single", true) || it.subtitle.contains("1 song", true) || it.subtitle.contains("1 track", true)
-        }.map { it.copy(type = "SINGLE") }
+        }.map { it.copy(type = "SINGLE") }.distinctBy { it.browseId }
+
         val verifiedAvatar = if (isAuthenticArtistAvatar(fallbackAvatar)) fallbackAvatar
         else resolveJioSaavnArtistAvatar(artistName)
+
+        val searchedPlaylists = searchYtmCollections(artistName, "EgWKAQIoAWoKEAkQChADEAUQBA==", "PLAYLIST", 10)
+            .filter { belongsToArtist(artistName, it.title, it.subtitle) }
+
+        val authenticMixes = buildAuthenticArtistMixes(
+            artistName = artistName,
+            avatarUrl = verifiedAvatar,
+            radioId = topSongs.firstOrNull()?.videoId?.let { "RDAMVM$it" },
+            shuffleId = topSongs.getOrElse(1) { topSongs.firstOrNull() }?.videoId?.let { "RDAMVM$it" },
+            topSongs = topSongs
+        )
 
         YtmArtistPageData(
             browseId = browseId.ifBlank { artistName },
             name = artistName,
-            description = "Official tracks, albums, and playlists by $artistName on YouTube Music.",
+            description = "Official tracks, albums, singles, and artist mixes by $artistName.",
             subscriberCountText = "Verified Artist",
             avatarUrl = verifiedAvatar,
             bannerUrl = verifiedAvatar,
@@ -788,9 +865,52 @@ object InnerTubeStreamExtractor {
             topSongs = topSongs,
             albums = albums,
             singles = singles,
-            playlists = playlists,
+            playlists = (authenticMixes + searchedPlaylists).distinctBy { it.browseId },
             similarArtists = emptyList()
         )
+    }
+
+    private fun buildAuthenticArtistMixes(
+        artistName: String,
+        avatarUrl: String,
+        radioId: String?,
+        shuffleId: String?,
+        topSongs: List<CandidateStream>
+    ): List<YtmCollectionSummary> {
+        val mixes = mutableListOf<YtmCollectionSummary>()
+        val firstSong = topSongs.firstOrNull()
+        val secondSong = topSongs.getOrElse(1) { firstSong }
+        val primaryRadioId = radioId?.takeIf { it.isNotBlank() } ?: firstSong?.videoId?.let { "RDAMVM$it" }
+        val primaryThumb = avatarUrl.ifBlank { firstSong?.thumbnailUrl.orEmpty() }
+
+        if (!primaryRadioId.isNullOrBlank()) {
+            mixes.add(
+                YtmCollectionSummary(
+                    browseId = primaryRadioId,
+                    playlistId = primaryRadioId,
+                    title = "$artistName Radio",
+                    subtitle = "Official $artistName artist radio",
+                    thumbnailUrl = primaryThumb,
+                    type = "MIX"
+                )
+            )
+        }
+
+        val secondaryMixId = shuffleId?.takeIf { it.isNotBlank() && it != primaryRadioId }
+            ?: secondSong?.videoId?.let { "RDAMVM$it" }?.takeIf { it != primaryRadioId }
+        if (!secondaryMixId.isNullOrBlank()) {
+            mixes.add(
+                YtmCollectionSummary(
+                    browseId = secondaryMixId,
+                    playlistId = secondaryMixId,
+                    title = "Best of $artistName Mix",
+                    subtitle = "Continuous $artistName hits",
+                    thumbnailUrl = secondSong?.thumbnailUrl?.ifBlank { primaryThumb } ?: primaryThumb,
+                    type = "MIX"
+                )
+            )
+        }
+        return mixes
     }
 
     fun isAuthenticArtistAvatar(url: String?): Boolean {
@@ -964,8 +1084,10 @@ object InnerTubeStreamExtractor {
                 for (i in 0 until contents.length()) {
                     val item = contents.getJSONObject(i)
                         .optJSONObject("musicResponsiveListItemRenderer") ?: continue
-                    parseSingleResponsiveSongItem(item, defaultArtist = name, defaultArt = avatarUrl)?.let {
-                        topSongs.add(it)
+                    parseSingleResponsiveSongItem(item, defaultArtist = name, defaultArt = avatarUrl)?.let { song ->
+                        if (belongsToArtist(name, song.title, itemArtist = song.artist)) {
+                            topSongs.add(song)
+                        }
                     }
                 }
             }
@@ -1015,7 +1137,12 @@ object InnerTubeStreamExtractor {
                         ?.optString("playlistId")
 
                     when {
-                        shelfTitle.contains("fan") || shelfTitle.contains("similar") || navBrowseId.startsWith("UC") -> {
+                        // Ignore music videos shelf so videos are never dumped into Playlists
+                        shelfTitle.contains("video") || shelfTitle.contains("live performance") -> Unit
+
+                        // Similar / Fans Also Like artists
+                        shelfTitle.contains("fan") || shelfTitle.contains("similar") || shelfTitle.contains("like") ||
+                            navBrowseId.startsWith("UC") || navBrowseId.startsWith("MPLA") -> {
                             if (navBrowseId.isNotBlank()) {
                                 similarArtists.add(
                                     YtmArtistPreview(
@@ -1027,21 +1154,57 @@ object InnerTubeStreamExtractor {
                                 )
                             }
                         }
+
+                        // Official Singles & EPs shelf
                         shelfTitle.contains("single") || shelfTitle.contains("ep") -> {
-                            albumsOrSinglesAdd(singles, navBrowseId, watchPlaylistId, itemTitle, itemSubtitle, itemThumb, "SINGLE")
+                            albumsOrSinglesAdd(
+                                singles,
+                                navBrowseId,
+                                watchPlaylistId,
+                                itemTitle,
+                                itemSubtitle.ifBlank { "Single • $name" },
+                                itemThumb,
+                                "SINGLE"
+                            )
                         }
-                        shelfTitle.contains("album") || navBrowseId.startsWith("MPREb_") -> {
+
+                        // Official Albums shelf (excluding "Featured on" third-party compilations unless explicitly by this artist)
+                        (shelfTitle.contains("album") || shelfTitle.contains("release") || navBrowseId.startsWith("MPREb_")) &&
+                            !shelfTitle.contains("featured") -> {
                             val isSingleRelease = itemSubtitle.contains("Single", ignoreCase = true) ||
+                                itemSubtitle.contains("EP", ignoreCase = true) ||
                                 itemSubtitle.contains("1 song", ignoreCase = true) ||
                                 itemSubtitle.contains("1 track", ignoreCase = true)
                             if (isSingleRelease) {
-                                albumsOrSinglesAdd(singles, navBrowseId, watchPlaylistId, itemTitle, itemSubtitle, itemThumb, "SINGLE")
+                                albumsOrSinglesAdd(
+                                    singles,
+                                    navBrowseId,
+                                    watchPlaylistId,
+                                    itemTitle,
+                                    itemSubtitle.ifBlank { "Single • $name" },
+                                    itemThumb,
+                                    "SINGLE"
+                                )
                             } else {
-                                albumsOrSinglesAdd(albums, navBrowseId, watchPlaylistId, itemTitle, itemSubtitle, itemThumb, "ALBUM")
+                                albumsOrSinglesAdd(
+                                    albums,
+                                    navBrowseId,
+                                    watchPlaylistId,
+                                    itemTitle,
+                                    itemSubtitle.ifBlank { "Album • $name" },
+                                    itemThumb,
+                                    "ALBUM"
+                                )
                             }
                         }
-                        else -> {
-                            albumsOrSinglesAdd(playlists, navBrowseId, watchPlaylistId, itemTitle, itemSubtitle, itemThumb, "PLAYLIST")
+
+                        // Playlists / Artist Mixes — ONLY include if it genuinely belongs to this artist!
+                        (shelfTitle.contains("playlist") || shelfTitle.contains("mix") || shelfTitle.contains("artist") || shelfTitle.contains("featured")) &&
+                            (navBrowseId.startsWith("VL") || navBrowseId.startsWith("PL") || navBrowseId.startsWith("RD") || !watchPlaylistId.isNullOrBlank()) -> {
+                            if (belongsToArtist(name, itemTitle, itemSubtitle)) {
+                                val effectiveType = if (itemTitle.contains("Mix", true) || itemTitle.contains("Radio", true) || navBrowseId.startsWith("RD")) "MIX" else "PLAYLIST"
+                                albumsOrSinglesAdd(playlists, navBrowseId, watchPlaylistId, itemTitle, itemSubtitle, itemThumb, effectiveType)
+                            }
                         }
                     }
                 }
@@ -1049,11 +1212,43 @@ object InnerTubeStreamExtractor {
         }
 
         if (topSongs.isEmpty()) {
-            topSongs.addAll(searchOfficialYtmSongs(name, limit = 12))
+            val searchedSongs = searchOfficialYtmSongs(name, limit = 18)
+            val verified = searchedSongs.filter { belongsToArtist(name, it.title, itemArtist = it.artist) }
+            topSongs.addAll(verified.ifEmpty { searchedSongs.take(10) })
         }
+
+        // If the artist browse page did not inline Albums or Singles, fetch and strictly verify them by artist ownership
+        if (albums.isEmpty() || singles.isEmpty()) {
+            val searchedReleases = searchYtmCollections(name, "EgWKAQIYAWoKEAkQChADEAUQBA==", "ALBUM", 16)
+                .filter { belongsToArtist(name, it.title, it.subtitle) }
+            for (rel in searchedReleases) {
+                val isSingle = rel.type == "SINGLE" ||
+                    rel.subtitle.contains("Single", true) ||
+                    rel.subtitle.contains("EP", true) ||
+                    rel.subtitle.contains("1 song", true) ||
+                    rel.subtitle.contains("1 track", true)
+                if (isSingle) {
+                    singles.add(rel.copy(type = "SINGLE"))
+                } else {
+                    albums.add(rel.copy(type = "ALBUM"))
+                }
+            }
+        }
+
+        // Always prepend authentic Artist Radio & Best-of Artist Mix, then append only verified artist playlists
+        val authenticMixes = buildAuthenticArtistMixes(
+            artistName = name,
+            avatarUrl = avatarUrl,
+            radioId = radioId,
+            shuffleId = shuffleId,
+            topSongs = topSongs
+        )
         if (playlists.isEmpty()) {
-            playlists.addAll(searchYtmCollections("$name mix", "EgWKAQIoAWoKEAkQChADEAUQBA==", "PLAYLIST", 5))
+            val searchedPlaylists = searchYtmCollections(name, "EgWKAQIoAWoKEAkQChADEAUQBA==", "PLAYLIST", 10)
+                .filter { belongsToArtist(name, it.title, it.subtitle) }
+            playlists.addAll(searchedPlaylists)
         }
+        val combinedPlaylists = (authenticMixes + playlists).distinctBy { it.browseId }
 
         val cleanedAlbums = albums.filterNot {
             it.type == "SINGLE" || it.subtitle.contains("Single", true) || it.subtitle.contains("1 song", true) || it.subtitle.contains("1 track", true)
@@ -1075,7 +1270,7 @@ object InnerTubeStreamExtractor {
             topSongs = CanonicalAudioResolver.deduplicateTracks(topSongs),
             albums = cleanedAlbums,
             singles = cleanedSingles,
-            playlists = playlists.distinctBy { it.browseId },
+            playlists = combinedPlaylists,
             similarArtists = similarArtists.distinctBy { it.browseId }
         )
     }
@@ -1487,7 +1682,7 @@ object InnerTubeStreamExtractor {
                 put("clientName", "WEB_REMIX")
                 put("clientVersion", "1.20250310.01.00")
                 put("hl", "en")
-                put("gl", "IN")
+                put("gl", resolveDeviceGl())
             })
         })
     }

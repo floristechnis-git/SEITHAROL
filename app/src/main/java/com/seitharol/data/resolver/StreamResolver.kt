@@ -34,15 +34,15 @@ data class TrackMetadata(
 object StreamResolver {
 
     private val BANNED_REMIX_KEYWORDS = listOf(
-        "slowed", "reverb", "lofi", "lo-fi", "cover", "karaoke",
+        "remix", "slowed", "reverb", "lofi", "lo-fi", "cover", "karaoke",
         "instrumental", "mashup", "nightcore", "8d", "bass boosted",
-        "ringtone", "whatsapp status", "reaction", "live performance", "dj "
+        "ringtone", "whatsapp status", "status", "reaction", "live performance",
+        "live", "unplugged", "sped up", "dj ", "dj"
     )
 
     /**
      * Resolves the exact canonical audio stream for [track].
-     * If YouTube extraction fails on a 11-char videoId, falls through cleanly to JioSaavn
-     * instead of returning null prematurely.
+     * Strictly verifies Title + Artist + Duration + No-Remix before accepting any JioSaavn stream.
      */
     suspend fun resolveExactStreamUrl(
         track: TrackMetadata,
@@ -68,7 +68,7 @@ object StreamResolver {
             decryptJioSaavnUrl(track.encryptedMediaUrl, quality)?.let { return@withContext it }
         }
 
-        // 4. Resolve from JioSaavn (using v4 search.getResults + autocomplete fallback)
+        // 4. Resolve from JioSaavn with strict Title + Artist + Duration verification
         resolveFromJioSaavnExact(track, quality)
     }
 
@@ -102,11 +102,16 @@ object StreamResolver {
             ?.trim()
             .orEmpty()
 
+        // NEVER query title-only when the artist is known, preventing JioSaavn from returning a different artist's song!
         val searchQueries = buildList {
-            if (primaryArtist.isNotBlank() && !primaryArtist.equals("Unknown Artist", ignoreCase = true)) {
+            if (primaryArtist.isNotBlank() &&
+                !primaryArtist.equals("Unknown Artist", ignoreCase = true) &&
+                !primaryArtist.equals("Various Artists", ignoreCase = true)
+            ) {
                 add("$cleanTitle $primaryArtist")
+            } else {
+                add(cleanTitle)
             }
-            add(cleanTitle)
         }.distinct()
 
         for (rawQuery in searchQueries) {
@@ -137,7 +142,7 @@ object StreamResolver {
                                 moreInfo?.optString("encrypted_media_url").orEmpty()
                             }
                             if (encrypted.isBlank()) continue
-                            if (containsUnwantedVariant(track.title, candTitle)) continue
+                            if (containsUnwantedVariant(track.title, "$candTitle $candArtist")) continue
 
                             val score = computeMatchScore(
                                 targetTitle = track.title,
@@ -153,7 +158,7 @@ object StreamResolver {
                             }
                         }
 
-                        if (!bestEncrypted.isNullOrBlank() && bestScore >= 30) {
+                        if (!bestEncrypted.isNullOrBlank() && bestScore >= 110) {
                             decryptJioSaavnUrl(bestEncrypted, quality)?.let { return it }
                         }
                     }
@@ -181,43 +186,51 @@ object StreamResolver {
         candidateDuration: Int
     ): Int {
         var score = 0
-        val cleanTargetTitle = cleanTitleForMatch(targetTitle).lowercase()
-        val cleanCandTitle = cleanTitleForMatch(candidateTitle).lowercase()
-        val targetArtistLower = targetArtist.lowercase()
-        val candArtistLower = candidateArtist.lowercase()
+        val cleanTargetTitle = CanonicalAudioResolver.normalizeText(cleanTitleForMatch(targetTitle))
+        val cleanCandTitle = CanonicalAudioResolver.normalizeText(cleanTitleForMatch(candidateTitle))
+        val targetArtistLower = CanonicalAudioResolver.normalizeText(targetArtist)
+        val candArtistLower = CanonicalAudioResolver.normalizeText(candidateArtist)
 
         val targetTokens = cleanTargetTitle.split(" ").filter { it.length >= 2 }
         val matchedTokens = targetTokens.count { cleanCandTitle.contains(it) }
         val titleMatchRatio = if (targetTokens.isNotEmpty()) matchedTokens.toFloat() / targetTokens.size else 1f
-        if (cleanCandTitle != cleanTargetTitle && !cleanCandTitle.contains(cleanTargetTitle) && titleMatchRatio < 0.6f) {
+        if (cleanCandTitle != cleanTargetTitle && !cleanCandTitle.contains(cleanTargetTitle) && titleMatchRatio < 0.75f) {
             return -1000
+        }
+
+        // HARD ARTIST GATE: If targetArtist is known, candidate MUST share the artist name or core artist token!
+        // Prevents playing a completely different song that happens to share the same title on JioSaavn.
+        if (targetArtistLower.isNotBlank() &&
+            !targetArtistLower.equals("unknown artist", ignoreCase = true) &&
+            !targetArtistLower.equals("various artists", ignoreCase = true)
+        ) {
+            val artistTokens = targetArtistLower.split(" ").filter { it.length >= 3 }
+                .ifEmpty { targetArtistLower.split(" ").filter { it.length >= 2 } }
+            val artistMatches = candArtistLower.contains(targetArtistLower) ||
+                cleanCandTitle.contains(targetArtistLower) ||
+                (artistTokens.isNotEmpty() && artistTokens.any { candArtistLower.contains(it) || cleanCandTitle.contains(it) })
+            if (!artistMatches) {
+                return -1000
+            }
+            score += 55
+        }
+
+        // HARD DURATION GATE: Reject candidates whose duration differs by >15s when targetDuration is known (>45s)
+        if (targetDuration > 45 && candidateDuration > 0 && targetDuration != 210) {
+            val diff = abs(targetDuration - candidateDuration)
+            if (diff > 15) {
+                return -1000
+            }
+            score += when {
+                diff <= 5 -> 35
+                diff <= 15 -> 15
+                else -> -1000
+            }
         }
 
         score += (titleMatchRatio * 80).toInt()
         if (cleanCandTitle == cleanTargetTitle) score += 60
 
-        if (targetArtistLower.isNotBlank()) {
-            val artistTokens = targetArtistLower.split(" ").filter { it.length >= 3 }
-            val artistMatches = candArtistLower.contains(targetArtistLower) ||
-                cleanCandTitle.contains(targetArtistLower) ||
-                artistTokens.any { candArtistLower.contains(it) }
-            if (artistMatches) {
-                score += 45
-            } else if (cleanCandTitle != cleanTargetTitle) {
-                // Only penalize artist mismatch when title isn't an exact match (since YouTube artist may be a label channel)
-                score -= 25
-            }
-        }
-
-        if (targetDuration > 0 && candidateDuration > 0) {
-            val diff = abs(targetDuration - candidateDuration)
-            score += when {
-                diff <= 5 -> 35
-                diff <= 15 -> 15
-                diff <= 35 -> 0
-                else -> -40
-            }
-        }
         return score
     }
 
@@ -236,8 +249,8 @@ object StreamResolver {
     private fun httpGet(urlStr: String): String? {
         val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
-            connectTimeout = 5000
-            readTimeout = 5000
+            connectTimeout = 4000
+            readTimeout = 4000
             setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
             setRequestProperty("Referer", "https://www.jiosaavn.com/")
         }

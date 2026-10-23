@@ -1,12 +1,18 @@
 package com.seitharol.ui.theme
 
+import android.app.Activity
+import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 import com.example.ui.theme.LocalIsDarkTheme
 import com.seitharol.data.preferences.ThemeMode
 
@@ -30,8 +36,17 @@ private val DarkColorPalette = darkColorScheme(
     surfaceVariant = Color(0xFF262727),
     onSurfaceVariant = Color(0xFFB3B3B3),
     surfaceTint = Color.Transparent,
+    inverseSurface = Color.White,
+    inverseOnSurface = Color(0xFF121212),
     outline = Color(0xFF3A3B3C),
-    outlineVariant = Color(0xFF28292A)
+    outlineVariant = Color(0xFF28292A),
+    surfaceBright = Color(0xFF2C2D2E),
+    surfaceDim = Color(0xFF0F0F0F),
+    surfaceContainerLowest = Color(0xFF0A0A0A),
+    surfaceContainerLow = Color(0xFF161717),
+    surfaceContainer = Color(0xFF1B1C1C),
+    surfaceContainerHigh = Color(0xFF242526),
+    surfaceContainerHighest = Color(0xFF2E3031)
 )
 
 private val LightColorPalette = lightColorScheme(
@@ -54,8 +69,17 @@ private val LightColorPalette = lightColorScheme(
     surfaceVariant = Color(0xFFE8EAED),
     onSurfaceVariant = Color(0xFF3C4043),
     surfaceTint = Color.Transparent,
+    inverseSurface = Color(0xFF1B1C1C),
+    inverseOnSurface = Color.White,
     outline = Color(0xFFC4C7C5),
-    outlineVariant = Color(0xFFDADCE0)
+    outlineVariant = Color(0xFFDADCE0),
+    surfaceBright = Color(0xFFFFFFFF),
+    surfaceDim = Color(0xFFDADCE0),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFF6F7F9),
+    surfaceContainer = Color(0xFFF1F3F5),
+    surfaceContainerHigh = Color(0xFFE8EAED),
+    surfaceContainerHighest = Color(0xFFE0E3E7)
 )
 
 @Composable
@@ -68,10 +92,31 @@ fun SeitharolTheme(
         ThemeMode.DARK -> true
         ThemeMode.LIGHT -> false
     }
+    val colorScheme = if (isDark) DarkColorPalette else LightColorPalette
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                view.isForceDarkAllowed = false
+            }
+            val window = (view.context as? Activity)?.window
+            if (window != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    window.decorView.isForceDarkAllowed = false
+                }
+                val insetsController = WindowCompat.getInsetsController(window, view)
+                insetsController.isAppearanceLightStatusBars = !isDark
+                insetsController.isAppearanceLightNavigationBars = !isDark
+            }
+        }
+    }
 
-    CompositionLocalProvider(LocalIsDarkTheme provides isDark) {
+    CompositionLocalProvider(
+        LocalIsDarkTheme provides isDark,
+        LocalContentColor provides colorScheme.onBackground
+    ) {
         MaterialTheme(
-            colorScheme = if (isDark) DarkColorPalette else LightColorPalette,
+            colorScheme = colorScheme,
             content = content
         )
     }

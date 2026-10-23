@@ -11,7 +11,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.URLDecoder
+import java.util.Locale
 
 class YouTubeInnerTubeProvider : AudioStreamProvider {
 
@@ -19,6 +19,11 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
 
     private val TAG = "YouTubeInnerTubeProvider"
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+
+    private fun resolveDeviceGl(): String {
+        val country = runCatching { Locale.getDefault().country }.getOrNull().orEmpty()
+        return if (country.length == 2) country.uppercase(Locale.US) else "IN"
+    }
 
     private data class ClientProfile(
         val name: String,
@@ -32,115 +37,111 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
         val sendOriginHeaders: Boolean = false
     )
 
-    private val CLIENT_PROFILES = listOf(
-        ClientProfile(
-            name = "ANDROID_VR",
-            version = "1.60.19",
-            clientId = "28",
-            userAgent = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
-            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-            clientJson = JSONObject().apply {
-                put("clientName", "ANDROID_VR")
-                put("clientVersion", "1.60.19")
-                put("deviceMake", "Oculus")
-                put("deviceModel", "Quest 3")
-                put("androidSdkVersion", 32)
-                put("osName", "Android")
-                put("osVersion", "12L")
-                put("hl", "en")
-                put("gl", "US")
-                put("timeZone", "UTC")
-                put("utcOffsetMinutes", 0)
-            }
-        ),
-        ClientProfile(
-            name = "IOS",
-            version = "20.10.4",
-            clientId = "5",
-            userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)",
-            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-            clientJson = JSONObject().apply {
-                put("clientName", "IOS")
-                put("clientVersion", "20.10.4")
-                put("deviceMake", "Apple")
-                put("deviceModel", "iPhone16,2")
-                put("osName", "iOS")
-                put("osVersion", "18.3.1.22D72")
-                put("hl", "en")
-                put("gl", "US")
-                put("timeZone", "UTC")
-                put("utcOffsetMinutes", 0)
-            }
-        ),
-        ClientProfile(
-            name = "ANDROID_VR_143",
-            version = "1.43.32",
-            clientId = "28",
-            userAgent = "com.google.android.apps.youtube.vr.oculus/1.43.32 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
-            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-            clientJson = JSONObject().apply {
-                put("clientName", "ANDROID_VR")
-                put("clientVersion", "1.43.32")
-                put("deviceMake", "Oculus")
-                put("deviceModel", "Quest 3")
-                put("androidSdkVersion", 32)
-                put("osName", "Android")
-                put("osVersion", "12L")
-                put("hl", "en")
-                put("gl", "US")
-                put("timeZone", "UTC")
-                put("utcOffsetMinutes", 0)
-            }
-        ),
-        ClientProfile(
-            name = "ANDROID_TESTSUITE",
-            version = "1.9",
-            clientId = "30",
-            userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 12L; US) gzip",
-            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-            params = "CgIIAQ==",
-            clientJson = JSONObject().apply {
-                put("clientName", "ANDROID_TESTSUITE")
-                put("clientVersion", "1.9")
-                put("androidSdkVersion", 32)
-                put("osName", "Android")
-                put("osVersion", "12L")
-                put("hl", "en")
-                put("gl", "US")
-            }
-        ),
-        ClientProfile(
-            name = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
-            version = "2.0",
-            clientId = "85",
-            userAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/11.50) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.0 Safari/605.1.15",
-            playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-            isEmbedded = true,
-            sendOriginHeaders = true,
-            clientJson = JSONObject().apply {
-                put("clientName", "TVHTML5_SIMPLY_EMBEDDED_PLAYER")
-                put("clientVersion", "2.0")
-                put("hl", "en")
-                put("gl", "US")
-            }
-        ),
-        ClientProfile(
-            name = "WEB_REMIX",
-            version = "1.20250310.01.00",
-            clientId = "67",
-            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            playerEndpoint = "https://music.youtube.com/youtubei/v1/player?prettyPrint=false",
-            sendOriginHeaders = true,
-            clientJson = JSONObject().apply {
-                put("clientName", "WEB_REMIX")
-                put("clientVersion", "1.20250310.01.00")
-                put("hl", "en")
-                put("gl", "US")
-            }
-        )
-    )
+    private val CLIENT_PROFILES: List<ClientProfile>
+        get() {
+            val deviceGl = resolveDeviceGl()
+            return listOf(
+                ClientProfile(
+                    name = "ANDROID_VR",
+                    version = "1.60.19",
+                    clientId = "28",
+                    userAgent = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+                    playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+                    clientJson = JSONObject().apply {
+                        put("clientName", "ANDROID_VR")
+                        put("clientVersion", "1.60.19")
+                        put("deviceMake", "Oculus")
+                        put("deviceModel", "Quest 3")
+                        put("androidSdkVersion", 32)
+                        put("osName", "Android")
+                        put("osVersion", "12L")
+                        put("hl", "en")
+                        put("gl", deviceGl)
+                        put("timeZone", "UTC")
+                        put("utcOffsetMinutes", 0)
+                    }
+                ),
+                ClientProfile(
+                    name = "IOS",
+                    version = "20.10.4",
+                    clientId = "5",
+                    userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)",
+                    playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+                    clientJson = JSONObject().apply {
+                        put("clientName", "IOS")
+                        put("clientVersion", "20.10.4")
+                        put("deviceMake", "Apple")
+                        put("deviceModel", "iPhone16,2")
+                        put("osName", "iOS")
+                        put("osVersion", "18.3.1.22D72")
+                        put("hl", "en")
+                        put("gl", deviceGl)
+                        put("timeZone", "UTC")
+                        put("utcOffsetMinutes", 0)
+                    }
+                ),
+                ClientProfile(
+                    name = "ANDROID_VR_143",
+                    version = "1.43.32",
+                    clientId = "28",
+                    userAgent = "com.google.android.apps.youtube.vr.oculus/1.43.32 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+                    playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+                    clientJson = JSONObject().apply {
+                        put("clientName", "ANDROID_VR")
+                        put("clientVersion", "1.43.32")
+                        put("deviceMake", "Oculus")
+                        put("deviceModel", "Quest 3")
+                        put("androidSdkVersion", 32)
+                        put("osName", "Android")
+                        put("osVersion", "12L")
+                        put("hl", "en")
+                        put("gl", "US")
+                        put("timeZone", "UTC")
+                        put("utcOffsetMinutes", 0)
+                    }
+                ),
+                ClientProfile(
+                    name = "ANDROID_TESTSUITE",
+                    version = "1.9",
+                    clientId = "30",
+                    userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 12L; US) gzip",
+                    playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+                    params = "CgIIAQ==",
+                    clientJson = JSONObject().apply {
+                        put("clientName", "ANDROID_TESTSUITE")
+                        put("clientVersion", "1.9")
+                        put("androidSdkVersion", 32)
+                        put("osName", "Android")
+                        put("osVersion", "12L")
+                        put("hl", "en")
+                        put("gl", deviceGl)
+                    }
+                ),
+                ClientProfile(
+                    name = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+                    version = "2.0",
+                    clientId = "85",
+                    userAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/11.50) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.0 Safari/605.1.15",
+                    playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+                    isEmbedded = true,
+                    sendOriginHeaders = true,
+                    clientJson = JSONObject().apply {
+                        put("clientName", "TVHTML5_SIMPLY_EMBEDDED_PLAYER")
+                        put("clientVersion", "2.0")
+                        put("hl", "en")
+                        put("gl", deviceGl)
+                    }
+                )
+            )
+        }
 
-    private val CLIENT_WEB_REMIX = CLIENT_PROFILES.first { it.name == "WEB_REMIX" }.clientJson
+    private fun webRemixClientJson(): JSONObject = JSONObject().apply {
+        put("clientName", "WEB_REMIX")
+        put("clientVersion", "1.20250310.01.00")
+        put("hl", "en")
+        put("gl", resolveDeviceGl())
+    }
+
     private val SEARCH_PARAMS_SONGS = "EgWKAQIIAWoKEAkQBRAKEAMQBA=="
 
     suspend fun fetchMetadataById(videoId: String): Pair<String, String>? = withContext(Dispatchers.IO) {
@@ -183,7 +184,7 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
     private fun executeSearch(query: String, params: String?, limit: Int): List<NormalizedTrack> {
         val url = "https://music.youtube.com/youtubei/v1/search?prettyPrint=false"
         val payload = JSONObject().apply {
-            put("context", JSONObject().apply { put("client", CLIENT_WEB_REMIX) })
+            put("context", JSONObject().apply { put("client", webRemixClientJson()) })
             put("query", query)
             if (params != null) put("params", params)
         }
@@ -211,7 +212,7 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             try {
                 val url = "https://music.youtube.com/youtubei/v1/browse?prettyPrint=false"
                 val payload = JSONObject().apply {
-                    put("context", JSONObject().apply { put("client", CLIENT_WEB_REMIX) })
+                    put("context", JSONObject().apply { put("client", webRemixClientJson()) })
                     put("browseId", cleanId)
                 }
 
@@ -322,12 +323,20 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                 }
             })
             if (profile.isEmbedded || profile.sendOriginHeaders) {
+                KotlinJsInterp.ensurePlayerJsLoaded(forceRefresh = false)
+                val sts = KotlinJsInterp.getSignatureTimestamp()
                 put("playbackContext", JSONObject().apply {
                     put("contentPlaybackContext", JSONObject().apply {
                         put("html5Preference", "HTML5_PREF_WANTS")
-                        put("signatureTimestamp", 20073)
+                        put("signatureTimestamp", sts)
                     })
                 })
+                val poToken = KotlinJsInterp.generatePoToken(visitorData)
+                if (!poToken.isNullOrBlank()) {
+                    put("serviceIntegrityDimensions", JSONObject().apply {
+                        put("poToken", poToken)
+                    })
+                }
             }
             profile.params?.let { put("params", it) }
             put("videoId", videoId)
@@ -433,14 +442,13 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             inspectFormats(adaptiveFormats)
             inspectFormats(legacyFormats)
 
-            // Prioritize M4A AAC (itag 140) first for hardware MediaCodec reliability, then Opus
             val sorted = candidates.sortedWith(
                 compareByDescending<CandidateFmt> { it.itag == 140 || it.isAac }
                     .thenByDescending { it.bitrate }
             )
 
             var verifiedCandidate: CandidateFmt? = null
-            for (cand in sorted.distinctBy { it.itag }.take(3)) {
+            for (cand in sorted.distinctBy { it.itag }.take(2)) {
                 val verifiedUrl = com.seitharol.data.resolver.InnerTubeStreamExtractor.verifyStreamPlayable(cand.url)
                 if (!verifiedUrl.isNullOrBlank()) {
                     verifiedCandidate = cand.copy(url = verifiedUrl)
@@ -472,35 +480,6 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                 resolvedBy = "On-Device InnerTube (${profile.name})",
                 latencyMs = 15
             )
-        }
-    }
-
-    private fun extractAndDecipherSignatureCipher(cipherStr: String): String? {
-        return try {
-            val params = mutableMapOf<String, String>()
-            for (param in cipherStr.split("&")) {
-                val idx = param.indexOf('=')
-                if (idx != -1) {
-                    val key = URLDecoder.decode(param.substring(0, idx), "UTF-8")
-                    val value = URLDecoder.decode(param.substring(idx + 1), "UTF-8")
-                    params[key] = value
-                }
-            }
-
-            val rawUrl = params["url"] ?: return null
-            val sig = params["s"]
-            val sigParam = params["sp"] ?: "sig"
-
-            if (sig.isNullOrBlank()) {
-                return rawUrl
-            }
-
-            val decipheredSig = KotlinJsInterp.decipherSignature(sig, emptyList())
-            val separator = if (rawUrl.contains("?")) "&" else "?"
-            "$rawUrl$separator$sigParam=$decipheredSig"
-        } catch (e: Exception) {
-            Log.w(TAG, "extractAndDecipherSignatureCipher failed: ${e.message}")
-            null
         }
     }
 

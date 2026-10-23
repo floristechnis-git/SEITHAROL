@@ -13,7 +13,7 @@ import kotlinx.coroutines.withContext
 /**
  * Studio Master Audio Resolver (Zone 1 Direct Resolver).
  * Strictly verifies title & artist match before resolving JioSaavn or InnerTube streams,
- * never returning an unverified random track.
+ * never returning an unverified random track or remix.
  */
 class StudioMasterResolver : Resolver {
     override val id: String = "resolver_studio_master"
@@ -76,7 +76,7 @@ class StudioMasterResolver : Resolver {
             }
         }
 
-        // 2. Try InnerTube official song search & canonical match stream resolution (FULL SONG)
+        // 2. Try InnerTube official song search & strict canonical match stream resolution (NEVER fall back to ytmTracks.firstOrNull()!)
         try {
             val ytmTracks = InnerTubeStreamExtractor.searchOfficialYtmSongs(query, limit = 6)
             val bestYt = if (cleanTitle.isNotBlank()) {
@@ -85,9 +85,9 @@ class StudioMasterResolver : Resolver {
                     queryArtist = cleanArtist,
                     targetDurationSeconds = null,
                     candidates = ytmTracks
-                ) ?: ytmTracks.firstOrNull()
+                )
             } else {
-                ytmTracks.firstOrNull()
+                null
             }
 
             if (bestYt != null && bestYt.videoId.isNotBlank()) {

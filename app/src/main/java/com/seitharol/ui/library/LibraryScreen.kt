@@ -487,6 +487,11 @@ fun LibrarySubPageScreen(
                 }
                 ClampedSwipeToDeleteRow(onDelete = { onRemoveTrack(track.videoId) }) {
                     ListItem(
+                        colors = ListItemDefaults.colors(
+                            containerColor = Color.Transparent,
+                            headlineColor = MaterialTheme.colorScheme.onSurface,
+                            supportingColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
                         headlineContent = { Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         supportingContent = { Text(track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         leadingContent = {

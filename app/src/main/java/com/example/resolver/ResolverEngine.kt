@@ -37,6 +37,7 @@ class ResolverEngine {
     val jioSaavnProvider = JioSaavnProvider()
     val spotifyProvider = SpotifyMetadataProvider()
     val trackMatcher = TrackMatcher(youtubeInnerTubeProvider, jioSaavnProvider)
+    val deviceInnerTubeResolver = DeviceInnerTubeResolver()
     val studioResolver = StudioMasterResolver()
     private val pipedResolver = PipedResolver()
     private val invidiousResolver = InvidiousResolver()
@@ -203,7 +204,7 @@ class ResolverEngine {
         val targetVideoId = cleanYtId ?: rawId
         val targetKbps = preferredQuality.maxBitrateKbps
 
-        // 4. Primary Fast Path: Verified multi-client YouTube InnerTube resolution (skipped if preferNonYoutubeFallback is true)
+        // 4. Primary Fast Path: Verified multi-client YouTube InnerTube resolution
         if (isYouTubeId && !preferNonYoutubeFallback) {
             val directResult = com.seitharol.data.resolver.InnerTubeStreamExtractor
                 .resolveExactYoutubeStreamById(targetVideoId, preferredQuality, forceRefresh = forceRefresh)
@@ -324,13 +325,11 @@ class ResolverEngine {
             else -> ""
         }
 
-        // 8. Verified JioSaavn Ranked Match & StreamResolver Fallback (Direct 320k/160k AAC MP4 — immune to YouTube 403s!)
+        // 8. Verified JioSaavn Ranked Match & StreamResolver Fallback (Strictly gated by Artist + Title + Duration + No-Remix)
         if (resolvedStream == null && effectiveTitle.isNotBlank()) {
             try {
-                val saavnQueries = listOfNotNull(
-                    baseQuery.takeIf { it.isNotBlank() },
-                    effectiveTitle.takeIf { it.isNotBlank() && it != baseQuery }
-                )
+                // Only search with Artist + Title when artist is known — NEVER title-only, so a different artist's song is never matched!
+                val saavnQueries = listOfNotNull(baseQuery.takeIf { it.isNotBlank() })
                 for (sq in saavnQueries) {
                     val results = jioSaavnProvider.searchTracks(sq, limit = 8)
                     val targetTrack = NormalizedTrack(
@@ -384,11 +383,11 @@ class ResolverEngine {
             }
         }
 
-        // 9. Secondary YouTube Fallback: Federated Piped & Invidious nodes (fast 2.5s cap)
+        // 9. Secondary YouTube Fallback: Federated Piped & Invidious nodes (fast 2.5s cap for the EXACT targetVideoId)
         if (resolvedStream == null && isYouTubeId) {
             val req = ResolveRequest(videoId = targetVideoId, title = effectiveTitle, artist = effectiveArtist)
             withTimeoutOrNull(2500L) {
-                for (federated in listOf(pipedResolver, invidiousResolver)) {
+                for (federated in listOf(deviceInnerTubeResolver, pipedResolver, invidiousResolver)) {
                     try {
                         val res = federated.resolve(req)
                         val candidateFormats = res.formats.filter { it.url.isNotBlank() }
@@ -424,7 +423,7 @@ class ResolverEngine {
             baseQuery
         }
 
-        // 10. Canonical Alternate YouTube Art-Track Fallback
+        // 10. Canonical Alternate YouTube Art-Track Fallback (strictly gated by Artist + Title + Duration + No-Remix)
         if (resolvedStream == null && searchQuery.isNotBlank()) {
             try {
                 val ytResults = youtubeInnerTubeProvider.searchTracks(searchQuery, limit = 8)
@@ -439,7 +438,7 @@ class ResolverEngine {
                     isPlayableNatively = true
                 )
                 val ranked = trackMatcher.rankCandidates(targetTrack, ytResults)
-                for (candidate in ranked.take(3)) {
+                for (candidate in ranked.take(2)) {
                     if (candidate.sourceId.isBlank() || candidate.sourceId == targetVideoId) continue
                     val altResult = com.seitharol.data.resolver.InnerTubeStreamExtractor
                         .resolveExactYoutubeStreamById(candidate.sourceId, preferredQuality)

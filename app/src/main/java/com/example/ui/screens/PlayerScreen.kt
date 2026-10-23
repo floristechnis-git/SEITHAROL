@@ -11,10 +11,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -39,6 +37,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -49,7 +48,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -119,6 +117,10 @@ fun PlayerScreen(
     var showFullscreenVideo by remember { mutableStateOf(false) }
     var isVideoZoomCrop by remember { mutableStateOf(false) }
 
+    val isVideoTrack = playerState.isVideoMode ||
+        track.genre.equals("YouTube Video", ignoreCase = true) ||
+        track.album.equals("YouTube Video", ignoreCase = true)
+
     var hasClickedQueueButton by remember(track.id, playerState.isPartOfPlaylist) {
         mutableStateOf(playerState.isPartOfPlaylist && !playerState.isSingleTrackPlayback)
     }
@@ -184,12 +186,17 @@ fun PlayerScreen(
                 alpha = (1f - (dragOffsetY.value / 1200f)).coerceIn(0.2f, 1f)
             }
             .background(MaterialTheme.colorScheme.background)
+            // Consume all taps on PlayerScreen background/containers so touches NEVER pass through
+            // to underlying HomeScreen / SearchScreen / PlaylistScreen TrackCards!
+            .pointerInput(Unit) {
+                detectTapGestures { /* consume background taps */ }
+            }
             .statusBarsPadding()
             .navigationBarsPadding()
             .testTag("full_player_screen")
     ) {
         // ────────────────────────────────────────────────────────────
-        // Top Header with Collapse, Song | Video Switcher, and Like
+        // Top Header with Collapse, Playing From Status, and Like
         // ────────────────────────────────────────────────────────────
         Row(
             modifier = Modifier
@@ -243,96 +250,29 @@ fun PlayerScreen(
                 SvgChevronIcon(isExpanded = true, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
-            // Segmented Song | Video Switcher (like YouTube Music, powered by raw googlevideo stream)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(horizontal = 8.dp)
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
             ) {
-                Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                ) {
-                    Row(
-                        modifier = Modifier.padding(3.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        val isVideo = playerState.isVideoMode
-                        Surface(
-                            shape = RoundedCornerShape(999.dp),
-                            color = if (!isVideo) MaterialTheme.colorScheme.primary else Color.Transparent,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(999.dp))
-                                .clickable {
-                                    if (isVideo) viewModel.setVideoMode(false)
-                                }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.MusicNote,
-                                    contentDescription = "Song mode",
-                                    tint = if (!isVideo) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Text(
-                                    text = "Song",
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 12.sp,
-                                    color = if (!isVideo) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-
-                        Surface(
-                            shape = RoundedCornerShape(999.dp),
-                            color = if (isVideo) MaterialTheme.colorScheme.primary else Color.Transparent,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(999.dp))
-                                .clickable {
-                                    showLyrics = false
-                                    if (!isVideo) viewModel.setVideoMode(true)
-                                }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.PlayCircleOutline,
-                                    contentDescription = "Video mode",
-                                    tint = if (isVideo) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Text(
-                                    text = "Video",
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 12.sp,
-                                    color = if (isVideo) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(3.dp))
+                Text(
+                    text = "PLAYING FROM SEITHAROL",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    fontSize = 11.sp,
+                    fontFamily = OutfitFontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 1.sp
+                )
                 val currentTempQuality = viewModel.getTemporaryTrackQuality()
                 val qualityText = when {
-                    playerState.isVideoMode -> "Direct GoogleVideo Raw Stream"
-                    track.isDownloaded -> "Offline • Direct Audio"
-                    currentTempQuality != null -> "Quality: ${currentTempQuality.label}"
+                    isVideoTrack -> "YouTube Video • Direct Stream"
+                    track.isDownloaded -> "Offline Opus • Direct Audio"
+                    currentTempQuality != null -> "Quality: ${currentTempQuality.label} (Temp)"
                     else -> "Online Pure Stream"
                 }
                 Text(
                     text = qualityText,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
-                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontSize = 12.sp,
                     fontFamily = OutfitFontFamily,
                     fontWeight = FontWeight.Medium
                 )
@@ -356,7 +296,7 @@ fun PlayerScreen(
         }
 
         // ────────────────────────────────────────────────────────────
-        // Middle Area: Lyrics OR Raw GoogleVideo Player OR Album Artwork
+        // Middle Area: Lyrics OR 100%-Width Video Player (for YouTube Video tracks) OR Album Artwork
         // ────────────────────────────────────────────────────────────
         if (showLyrics) {
             Column(
@@ -391,7 +331,7 @@ fun PlayerScreen(
                                 modifier = Modifier.size(16.dp)
                             )
                             Text(
-                                text = if (playerState.isVideoMode) "Show Video" else "Show Artwork",
+                                text = if (isVideoTrack) "Show Video" else "Show Artwork",
                                 fontFamily = SyneFontFamily,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 14.sp,
@@ -523,13 +463,12 @@ fun PlayerScreen(
                     }
                 }
             }
-        } else if (playerState.isVideoMode && !showFullscreenVideo) {
-            // Custom Raw GoogleVideo Surface (zero YouTube branding/iframe, custom controls, Fullscreen & PiP)
+        } else if (isVideoTrack && !showFullscreenVideo) {
+            // 100% Full-Width Custom Video Surface (for YouTube Video search results & their playlists)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                    .weight(1f),
                 contentAlignment = Alignment.Center
             ) {
                 SeitharolRawVideoSurface(
@@ -539,7 +478,6 @@ fun PlayerScreen(
                     onToggleZoomCrop = { isVideoZoomCrop = !isVideoZoomCrop },
                     onEnterFullscreen = { showFullscreenVideo = true },
                     onEnterPiP = {
-                        // Minimize full player into in-app floating PiP (and enter OS PiP if user leaves app)
                         onDismiss()
                     }
                 )
@@ -1047,8 +985,9 @@ fun PlayerScreen(
 }
 
 /**
- * Custom Raw GoogleVideo Surface — renders the direct googlevideo.com stream inside a TextureView
- * with zero YouTube branding/iframe, custom double-tap ±10s seek, playback speed selector,
+ * 100% Full-Width Custom Video Surface — renders the direct stream inside a TextureView
+ * with zero YouTube branding/iframe, no "RAW VIDEO" badge, automatic control hiding when playing,
+ * instant tap-to-hide / tap-to-unhide controls, double-tap ±10s seek, playback speed selector,
  * Fit/Zoom toggle, Picture-in-Picture (PiP) toggle, and Fullscreen toggle.
  */
 @Composable
@@ -1063,13 +1002,22 @@ fun SeitharolRawVideoSurface(
 ) {
     val context = LocalContext.current
     val track = playerState.currentTrack
-    var showOverlayControls by remember { mutableStateOf(true) }
+    // Controls hide automatically when video plays, and toggle immediately on click
+    var showOverlayControls by remember(track?.id) { mutableStateOf(false) }
     var seekFeedbackText by remember { mutableStateOf<String?>(null) }
     val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+    val latestState by rememberUpdatedState(playerState)
+
+    // Auto-hide controls when playback starts or after 3s of being shown while playing
+    LaunchedEffect(playerState.isPlaying) {
+        if (playerState.isPlaying) {
+            showOverlayControls = false
+        }
+    }
 
     LaunchedEffect(showOverlayControls, playerState.isPlaying) {
         if (showOverlayControls && playerState.isPlaying) {
-            delay(3500L)
+            delay(3000L)
             showOverlayControls = false
         }
     }
@@ -1084,17 +1032,15 @@ fun SeitharolRawVideoSurface(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .aspectRatio(16f / 9f)
-            .shadow(18.dp, RoundedCornerShape(22.dp))
-            .clip(RoundedCornerShape(22.dp))
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f), RoundedCornerShape(22.dp)),
-        shape = RoundedCornerShape(22.dp),
+            .aspectRatio(16f / 9f),
+        shape = RectangleShape,
         color = Color.Black
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(playerState.currentPositionMs, playerState.durationMs) {
+                // Keyed to Unit so 200ms position updates never cancel tap / double-tap detection!
+                .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = {
                             showOverlayControls = !showOverlayControls
@@ -1102,9 +1048,9 @@ fun SeitharolRawVideoSurface(
                         onDoubleTap = { offset ->
                             val isLeftHalf = offset.x < size.width / 2f
                             val delta = if (isLeftHalf) -10_000L else 10_000L
-                            val target = (playerState.currentPositionMs + delta).coerceIn(
+                            val target = (latestState.currentPositionMs + delta).coerceIn(
                                 0L,
-                                playerState.durationMs.coerceAtLeast(1000L)
+                                latestState.durationMs.coerceAtLeast(1000L)
                             )
                             viewModel.seekTo(target)
                             seekFeedbackText = if (isLeftHalf) "⏪ -10s" else "+10s ⏩"
@@ -1113,27 +1059,24 @@ fun SeitharolRawVideoSurface(
                 },
             contentAlignment = Alignment.Center
         ) {
-            // Subtle blurred/dimmed artwork backdrop while buffering or before first video frame
-            if (track != null) {
+            // Subtle dimmed artwork backdrop only while initial stream is buffering
+            if (track != null && playerState.isBuffering) {
                 AsyncImage(
                     model = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxSize()
-                        .graphicsLayer { alpha = 0.22f }
+                        .graphicsLayer { alpha = 0.25f }
                 )
             }
 
-            // Raw googlevideo.com TextureView bound directly to ExoPlayer
+            // Raw TextureView bound once on creation (never re-bound on 200ms recompositions)
             AndroidView(
                 factory = { ctx ->
                     TextureView(ctx).also { tv ->
                         viewModel.attachVideoTextureView(tv)
                     }
-                },
-                update = { tv ->
-                    viewModel.attachVideoTextureView(tv)
                 },
                 modifier = Modifier
                     .fillMaxSize()
@@ -1143,6 +1086,15 @@ fun SeitharolRawVideoSurface(
                         scaleY = s
                     }
             )
+
+            // Subtle loading indicator while buffering when controls are hidden
+            if (playerState.isBuffering && !showOverlayControls) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(32.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    strokeWidth = 2.5.dp
+                )
+            }
 
             // Double-tap ±10s indicator pill
             AnimatedVisibility(
@@ -1165,9 +1117,9 @@ fun SeitharolRawVideoSurface(
                 }
             }
 
-            // Custom Seitharol Overlay Controls
+            // Custom Seitharol Overlay Controls — strictly controlled by showOverlayControls (click to hide/unhide)
             AnimatedVisibility(
-                visible = showOverlayControls || playerState.isBuffering || !playerState.isPlaying,
+                visible = showOverlayControls,
                 enter = fadeIn(),
                 exit = fadeOut()
             ) {
@@ -1178,55 +1130,29 @@ fun SeitharolRawVideoSurface(
                             Brush.verticalGradient(
                                 listOf(
                                     Color.Black.copy(alpha = 0.55f),
-                                    Color.Black.copy(alpha = 0.18f),
+                                    Color.Black.copy(alpha = 0.20f),
                                     Color.Black.copy(alpha = 0.62f)
                                 )
                             )
                         )
                 ) {
-                    // Top Bar: Badge + Speed + Fit/Zoom + PiP + Fullscreen
+                    // Top Bar: Speed + Fit/Zoom + PiP + Fullscreen (aligned to top-right, no RAW VIDEO tag)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .align(Alignment.TopCenter)
+                            .align(Alignment.TopEnd)
                             .padding(horizontal = 12.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(999.dp),
-                            color = Color.Black.copy(alpha = 0.55f)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.primary)
-                                )
-                                Text(
-                                    text = "RAW VIDEO",
-                                    color = Color.White,
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 10.sp,
-                                    letterSpacing = 0.8.sp
-                                )
-                            }
-                        }
-
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             // Speed selector pill
                             Surface(
                                 shape = RoundedCornerShape(999.dp),
-                                color = Color.Black.copy(alpha = 0.55f),
+                                color = Color.Black.copy(alpha = 0.58f),
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(999.dp))
                                     .clickable {
@@ -1240,14 +1166,14 @@ fun SeitharolRawVideoSurface(
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 11.sp,
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                                 )
                             }
 
                             // Fit / Zoom toggle pill
                             Surface(
                                 shape = RoundedCornerShape(999.dp),
-                                color = Color.Black.copy(alpha = 0.55f),
+                                color = Color.Black.copy(alpha = 0.58f),
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(999.dp))
                                     .clickable { onToggleZoomCrop() }
@@ -1258,19 +1184,18 @@ fun SeitharolRawVideoSurface(
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 11.sp,
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                                 )
                             }
 
                             // Picture-in-Picture (PiP) button
                             Surface(
                                 shape = CircleShape,
-                                color = Color.Black.copy(alpha = 0.55f),
+                                color = Color.Black.copy(alpha = 0.58f),
                                 modifier = Modifier
-                                    .size(30.dp)
+                                    .size(32.dp)
                                     .clip(CircleShape)
                                     .clickable {
-                                        // Trigger in-app floating PiP window (and OS PiP if supported)
                                         runCatching {
                                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                                 val activity = context as? Activity
@@ -1297,9 +1222,9 @@ fun SeitharolRawVideoSurface(
                             // Fullscreen toggle button
                             Surface(
                                 shape = CircleShape,
-                                color = Color.Black.copy(alpha = 0.55f),
+                                color = Color.Black.copy(alpha = 0.58f),
                                 modifier = Modifier
-                                    .size(30.dp)
+                                    .size(32.dp)
                                     .clip(CircleShape)
                                     .clickable { onEnterFullscreen() }
                             ) {
@@ -1385,7 +1310,7 @@ fun SeitharolRawVideoSurface(
                         }
                     }
 
-                    // Bottom hint bar inside video frame
+                    // Bottom timestamp inside video frame
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1395,7 +1320,7 @@ fun SeitharolRawVideoSurface(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Double-tap left/right to seek 10s",
+                            text = "Tap to hide controls • Double-tap ±10s",
                             color = Color.White.copy(alpha = 0.72f),
                             fontFamily = OutfitFontFamily,
                             fontSize = 11.sp
@@ -1415,8 +1340,8 @@ fun SeitharolRawVideoSurface(
 }
 
 /**
- * Fullscreen Custom Raw Video Modal — zero YouTube UI, custom Seitharol controls,
- * Fit/Zoom toggle, Playback Speed, Picture-in-Picture, and Scrubber.
+ * Fullscreen Custom Video Modal — zero YouTube UI, custom Seitharol controls,
+ * instant tap-to-hide/unhide controls, Fit/Zoom toggle, Playback Speed, Picture-in-Picture, and Scrubber.
  */
 @Composable
 fun SeitharolFullscreenVideoModal(
@@ -1428,19 +1353,20 @@ fun SeitharolFullscreenVideoModal(
     onDismiss: () -> Unit
 ) {
     val track = playerState.currentTrack ?: return
-    var showControls by remember { mutableStateOf(true) }
+    var showControls by remember { mutableStateOf(false) }
     var isDraggingSlider by remember { mutableStateOf(false) }
     var seekingPosition by remember { mutableStateOf<Float?>(null) }
     val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+    val latestState by rememberUpdatedState(playerState)
 
     val displayPosition = (if (isDraggingSlider) seekingPosition?.toLong() else null)
         ?: playerState.currentPositionMs.coerceAtLeast(0L)
     val totalDuration = playerState.durationMs.coerceAtLeast(1000L)
     val progress = (displayPosition.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
 
-    LaunchedEffect(showControls, playerState.isPlaying) {
+    LaunchedEffect(showControls, playerState.isPlaying, isDraggingSlider) {
         if (showControls && playerState.isPlaying && !isDraggingSlider) {
-            delay(3800L)
+            delay(3200L)
             showControls = false
         }
     }
@@ -1458,14 +1384,15 @@ fun SeitharolFullscreenVideoModal(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(playerState.currentPositionMs, playerState.durationMs) {
+                    .pointerInput(Unit) {
                         detectTapGestures(
                             onTap = { showControls = !showControls },
                             onDoubleTap = { offset ->
                                 val isLeft = offset.x < size.width / 2f
                                 val delta = if (isLeft) -10_000L else 10_000L
+                                val dur = latestState.durationMs.coerceAtLeast(1000L)
                                 viewModel.seekTo(
-                                    (playerState.currentPositionMs + delta).coerceIn(0L, totalDuration)
+                                    (latestState.currentPositionMs + delta).coerceIn(0L, dur)
                                 )
                             }
                         )
@@ -1478,9 +1405,6 @@ fun SeitharolFullscreenVideoModal(
                             viewModel.attachVideoTextureView(tv)
                         }
                     },
-                    update = { tv ->
-                        viewModel.attachVideoTextureView(tv)
-                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(16f / 9f)
@@ -1492,7 +1416,7 @@ fun SeitharolFullscreenVideoModal(
                 )
 
                 AnimatedVisibility(
-                    visible = showControls || playerState.isBuffering || !playerState.isPlaying,
+                    visible = showControls,
                     enter = fadeIn(),
                     exit = fadeOut()
                 ) {

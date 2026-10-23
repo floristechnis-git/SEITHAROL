@@ -73,11 +73,11 @@ class MediaPlaybackService : Service() {
         @Volatile var isRunning: Boolean = false
 
         fun startService(context: Context) {
+            // If service is already running and collecting playerManager.state, do not re-trigger startForegroundService!
+            if (isRunning) return
             val appCtx = context.applicationContext
             val intent = Intent(appCtx, MediaPlaybackService::class.java)
             try {
-                // Use startService first so Android never arms a fatal 5s ForegroundServiceDidNotStartInTimeException
-                // bomb during activity transitions; onCreate/onStartCommand still promote to foreground safely.
                 appCtx.startService(intent)
             } catch (e: Throwable) {
                 try {
@@ -206,10 +206,10 @@ class MediaPlaybackService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun promoteOrNotifySafely(notification: Notification) {
+    private fun promoteOrNotifySafely(notification: Notification, forceStartForeground: Boolean = false) {
         if (isTerminating) return
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-        if (!isInForeground) {
+        if (!isInForeground || forceStartForeground) {
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     ServiceCompat.startForeground(
@@ -246,7 +246,7 @@ class MediaPlaybackService : Service() {
 
             if (currentTrack != null) {
                 val notification = buildMediaNotification(currentTrack, isPlaying, isBuffering)
-                promoteOrNotifySafely(notification)
+                promoteOrNotifySafely(notification, forceStartForeground = true)
                 return
             }
 
@@ -270,7 +270,7 @@ class MediaPlaybackService : Service() {
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .build()
 
-            promoteOrNotifySafely(notification)
+            promoteOrNotifySafely(notification, forceStartForeground = true)
         } catch (t: Throwable) {
             Log.e(TAG, "Failed startForegroundSynchronously: ${t.message}", t)
         }

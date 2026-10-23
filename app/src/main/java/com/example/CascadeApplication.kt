@@ -24,6 +24,24 @@ class CascadeApplication : Application() {
         super.onCreate()
         instance = this
 
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            android.util.Log.e("CascadeApplication", "Uncaught exception on thread ${thread.name}: ${throwable.message}", throwable)
+            // Never let background worker/IO/network/media thread exceptions kill the app process
+            if (thread.name != "main") {
+                return@setDefaultUncaughtExceptionHandler
+            }
+            val msg = throwable.message.orEmpty()
+            val className = throwable.javaClass.name
+            if (className.contains("ForegroundService") ||
+                className.contains("RemoteServiceException") ||
+                msg.contains("startForeground")
+            ) {
+                return@setDefaultUncaughtExceptionHandler
+            }
+            defaultHandler?.uncaughtException(thread, throwable)
+        }
+
         database = CascadeDatabase.getInstance(this)
         musicRepository = MusicRepository(database)
         resolverEngine = ResolverEngine()

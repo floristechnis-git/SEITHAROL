@@ -148,7 +148,8 @@ class MainActivity : ComponentActivity() {
                                     title = target.title,
                                     artist = target.artist,
                                     durationMs = target.durationMs,
-                                    album = target.album
+                                    album = target.album,
+                                    isVideo = target.isVideo
                                 )
                             }
                             null -> Unit

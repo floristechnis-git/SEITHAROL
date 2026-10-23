@@ -25,6 +25,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -150,7 +151,7 @@ class MusicRepository(
                 isLiked = it.isLiked
             )
         }
-    }
+    }.flowOn(Dispatchers.IO)
 
     suspend fun togglePlaylistLike(playlist: Playlist) = withContext(Dispatchers.IO) {
         val existing = playlistDao.getPlaylistById(playlist.id)
@@ -476,6 +477,7 @@ class DownloadRepository(
                     "Data Saver" -> DownloadTier.DATA_SAVER
                     "High", "Lossless / Master" -> DownloadTier.HIGH
                     "Original" -> DownloadTier.ORIGINAL
+                    "MP4 Video" -> DownloadTier.VIDEO_MP4
                     else -> DownloadTier.STANDARD
                 },
                 progress = entity.progress,
@@ -545,15 +547,22 @@ class DownloadRepository(
     fun enqueueDownload(track: Track, tier: DownloadTier = DownloadTier.STANDARD): Job {
         activeDownloadJobs[track.id]?.cancel()
         activeTrackTitles[track.id] = track.title
+        val effectiveTier = if (track.isVideoTrack) DownloadTier.VIDEO_MP4 else tier
         val job = repoScope.launch {
             val downloadDir = File(appContext.filesDir, "downloads").apply { if (!exists()) mkdirs() }
-            val ext = if (tier.codec.contains("Opus", ignoreCase = true)) "opus" else "m4a"
+            val ext = when {
+                effectiveTier == DownloadTier.VIDEO_MP4 || track.isVideoTrack -> "mp4"
+                effectiveTier.codec.contains("Opus", ignoreCase = true) -> "opus"
+                else -> "m4a"
+            }
             val safeFileId = track.id.replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { "track_${track.title.hashCode()}" }
-            val destFile = File(downloadDir, "${safeFileId}_${tier.name.lowercase()}.$ext")
+            val destFile = File(downloadDir, "${safeFileId}_${effectiveTier.name.lowercase()}.$ext")
             runCatching {
                 val existing = trackDao.getTrackById(track.id)
                 trackDao.insertTrack(
                     track.copy(
+                        genre = if (track.isVideoTrack) "YouTube Video" else track.genre,
+                        codec = if (track.isVideoTrack) "MP4" else track.codec,
                         isLiked = existing?.isLiked ?: track.isLiked,
                         isDownloaded = existing?.isDownloaded ?: false,
                         localPath = existing?.localPath ?: destFile.absolutePath
@@ -562,18 +571,18 @@ class DownloadRepository(
                 downloadDao.insertDownload(
                     DownloadEntity(
                         trackId = track.id,
-                        tier = tier.label,
+                        tier = effectiveTier.label,
                         state = "QUEUED",
                         localPath = destFile.absolutePath,
                         progress = 0.01f,
                         bytesDownloaded = 0L,
-                        totalBytes = 4_000_000L
+                        totalBytes = if (track.isVideoTrack) 18_000_000L else 4_000_000L
                     )
                 )
             }
             downloadSemaphore.withPermit {
                 coroutineContext.ensureActive()
-                executeDownload(track, tier)
+                executeDownload(track, effectiveTier)
             }
         }
         activeDownloadJobs[track.id] = job
@@ -587,8 +596,13 @@ class DownloadRepository(
     }
 
     private suspend fun executeDownload(track: Track, tier: DownloadTier) = withContext(Dispatchers.IO) {
+        val isVideo = track.isVideoTrack || tier == DownloadTier.VIDEO_MP4
         val downloadDir = File(appContext.filesDir, "downloads").apply { if (!exists()) mkdirs() }
-        val ext = if (tier.codec.contains("Opus", ignoreCase = true)) "opus" else "m4a"
+        val ext = when {
+            isVideo -> "mp4"
+            tier.codec.contains("Opus", ignoreCase = true) -> "opus"
+            else -> "m4a"
+        }
         val safeFileId = track.id.replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { "track_${track.title.hashCode()}" }
         val destFile = File(downloadDir, "${safeFileId}_${tier.name.lowercase()}.$ext")
         val tempFile = File(downloadDir, "${safeFileId}_${tier.name.lowercase()}.tmp")
@@ -597,6 +611,8 @@ class DownloadRepository(
             val existing = trackDao.getTrackById(track.id)
             trackDao.insertTrack(
                 track.copy(
+                    genre = if (isVideo) "YouTube Video" else track.genre,
+                    codec = if (isVideo) "MP4" else track.codec,
                     isLiked = existing?.isLiked ?: track.isLiked,
                     isDownloaded = false,
                     localPath = destFile.absolutePath
@@ -610,34 +626,49 @@ class DownloadRepository(
                     localPath = destFile.absolutePath,
                     progress = 0.05f,
                     bytesDownloaded = 0L,
-                    totalBytes = 4_000_000L
+                    totalBytes = if (isVideo) 18_000_000L else 4_000_000L
                 )
             )
             updateDownloadNotification(track.id, track.title, 5)
 
-            val quality = when (tier) {
-                DownloadTier.DATA_SAVER -> com.seitharol.data.resolver.AudioQuality.LOW
-                DownloadTier.HIGH, DownloadTier.ORIGINAL -> com.seitharol.data.resolver.AudioQuality.HIGH
-                else -> com.seitharol.data.resolver.AudioQuality.NORMAL
-            }
-
-            val candidateUrls = buildList {
-                com.seitharol.data.resolver.InnerTubeStreamExtractor.resolveDownloadableStreamCandidates(
-                    videoId = track.id,
-                    title = track.title,
-                    artist = track.artist,
-                    preferredQuality = quality
-                ).forEach { add(it) }
-                runCatching {
-                    val resolved = resolverEngine.resolveTrack(track, quality, forceRefresh = isEmpty()).streamUrl
-                    if (resolved.isNotBlank() && !resolved.contains(".m3u8", true) && !contains(resolved)) {
-                        add(resolved)
+            val candidateUrls = if (isVideo) {
+                buildList {
+                    val ytId = com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(track.id) ?: track.id
+                    com.seitharol.data.resolver.InnerTubeStreamExtractor
+                        .resolveRawVideoStreamById(ytId, forceRefresh = false)
+                        .getOrNull()
+                        ?.let { if (!it.contains(".m3u8", true)) add(it) }
+                    if (isEmpty()) {
+                        com.seitharol.data.resolver.InnerTubeStreamExtractor
+                            .resolveRawVideoStreamById(ytId, forceRefresh = true)
+                            .getOrNull()
+                            ?.let { if (!it.contains(".m3u8", true)) add(it) }
+                    }
+                }
+            } else {
+                val quality = when (tier) {
+                    DownloadTier.DATA_SAVER -> com.seitharol.data.resolver.AudioQuality.LOW
+                    DownloadTier.HIGH, DownloadTier.ORIGINAL -> com.seitharol.data.resolver.AudioQuality.HIGH
+                    else -> com.seitharol.data.resolver.AudioQuality.NORMAL
+                }
+                buildList {
+                    com.seitharol.data.resolver.InnerTubeStreamExtractor.resolveDownloadableStreamCandidates(
+                        videoId = track.id,
+                        title = track.title,
+                        artist = track.artist,
+                        preferredQuality = quality
+                    ).forEach { add(it) }
+                    runCatching {
+                        val resolved = resolverEngine.resolveTrack(track, quality, forceRefresh = isEmpty()).streamUrl
+                        if (resolved.isNotBlank() && !resolved.contains(".m3u8", true) && !contains(resolved)) {
+                            add(resolved)
+                        }
                     }
                 }
             }
 
             if (candidateUrls.isEmpty()) {
-                throw IllegalStateException("Could not resolve downloadable stream for ${track.title}")
+                throw IllegalStateException("Could not resolve downloadable ${if (isVideo) "MP4 video" else "audio"} stream for ${track.title}")
             }
 
             var downloadedOk = false
@@ -672,42 +703,44 @@ class DownloadRepository(
                 }
             }
 
-            if (downloadedOk) {
+            if (downloadedOk && tempFile.exists() && tempFile.length() > 10_240L) {
+                if (destFile.exists()) destFile.delete()
+                val renamed = tempFile.renameTo(destFile)
+                val finalFile = if (renamed) destFile else tempFile
 
-                if (tempFile.exists() && tempFile.length() > 10_240L) {
-                    if (destFile.exists()) destFile.delete()
-                    val renamed = tempFile.renameTo(destFile)
-                    val finalFile = if (renamed) destFile else tempFile
-
-                    downloadDao.updateDownload(
-                        DownloadEntity(
-                            trackId = track.id,
-                            tier = tier.label,
-                            state = "COMPLETED",
-                            localPath = finalFile.absolutePath,
-                            progress = 1.0f,
-                            bytesDownloaded = finalFile.length(),
-                            totalBytes = finalFile.length()
-                        )
-                    )
-                    val currentDb = trackDao.getTrackById(track.id)
-                    val completedTrack = track.copy(
-                        isLiked = currentDb?.isLiked ?: track.isLiked,
-                        isDownloaded = true,
-                        localPath = finalFile.absolutePath
-                    )
-                    trackDao.insertTrack(completedTrack.toEntity())
-                    trackDao.setDownloaded(track.id, true, finalFile.absolutePath)
-                    activeDownloadJobs.remove(track.id)
-                    activeTrackTitles.remove(track.id)
-                    updateDownloadNotification(track.id, track.title, 100, isCompleted = true)
-                } else {
-                    if (tempFile.exists()) tempFile.delete()
-                    throw IllegalStateException("Downloaded file was corrupt or smaller than 10KB (${tempFile.length()} bytes)")
+                // Export directly to public device storage so user can open/play from File Explorer or Device Scanner
+                runCatching {
+                    exportMediaFileToPublicDeviceStorage(finalFile, track, isVideo)
                 }
+
+                downloadDao.updateDownload(
+                    DownloadEntity(
+                        trackId = track.id,
+                        tier = tier.label,
+                        state = "COMPLETED",
+                        localPath = finalFile.absolutePath,
+                        progress = 1.0f,
+                        bytesDownloaded = finalFile.length(),
+                        totalBytes = finalFile.length()
+                    )
+                )
+                val currentDb = trackDao.getTrackById(track.id)
+                val completedTrack = track.copy(
+                    genre = if (isVideo) "YouTube Video" else track.genre,
+                    album = if (isVideo) "YouTube Video" else track.album,
+                    codec = if (isVideo) "MP4" else track.codec,
+                    isLiked = currentDb?.isLiked ?: track.isLiked,
+                    isDownloaded = true,
+                    localPath = finalFile.absolutePath
+                )
+                trackDao.insertTrack(completedTrack.toEntity())
+                trackDao.setDownloaded(track.id, true, finalFile.absolutePath)
+                activeDownloadJobs.remove(track.id)
+                activeTrackTitles.remove(track.id)
+                updateDownloadNotification(track.id, track.title, 100, isCompleted = true)
             } else {
                 if (tempFile.exists()) tempFile.delete()
-                throw IllegalStateException("Unable to download audio stream for ${track.title}")
+                throw IllegalStateException("Unable to download ${if (isVideo) "MP4 video" else "audio"} stream for ${track.title}")
             }
         } catch (e: CancellationException) {
             activeDownloadJobs.remove(track.id)
@@ -737,6 +770,75 @@ class DownloadRepository(
         }
     }
 
+    private fun exportMediaFileToPublicDeviceStorage(sourceFile: File, track: Track, isVideo: Boolean) {
+        val cleanTitle = track.title.replace(Regex("[\\/:*?\"<>|]"), "_").trim().ifBlank { track.id }
+        val cleanArtist = track.artist.replace(Regex("[\\/:*?\"<>|]"), "_").trim().ifBlank { "Seitharol" }
+        val ext = if (isVideo) "mp4" else sourceFile.extension.ifBlank { "m4a" }
+        val fileName = "$cleanArtist - $cleanTitle.$ext"
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = appContext.contentResolver
+            if (isVideo) {
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Video.Media.DISPLAY_NAME, fileName)
+                    put(android.provider.MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    put(android.provider.MediaStore.Video.Media.TITLE, track.title)
+                    put(android.provider.MediaStore.Video.Media.ARTIST, track.artist)
+                    put(android.provider.MediaStore.Video.Media.ALBUM, "YouTube Video")
+                    put(android.provider.MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/Seitharol")
+                    put(android.provider.MediaStore.Video.Media.IS_PENDING, 1)
+                }
+                val uri = resolver.insert(android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return
+                try {
+                    resolver.openOutputStream(uri)?.use { out ->
+                        sourceFile.inputStream().use { input -> input.copyTo(out) }
+                    }
+                    values.clear()
+                    values.put(android.provider.MediaStore.Video.Media.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                } catch (_: Throwable) {
+                    runCatching { resolver.delete(uri, null, null) }
+                }
+            } else {
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Audio.Media.DISPLAY_NAME, fileName)
+                    put(android.provider.MediaStore.Audio.Media.MIME_TYPE, "audio/mp4")
+                    put(android.provider.MediaStore.Audio.Media.TITLE, track.title)
+                    put(android.provider.MediaStore.Audio.Media.ARTIST, track.artist)
+                    put(android.provider.MediaStore.Audio.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MUSIC}/Seitharol")
+                    put(android.provider.MediaStore.Audio.Media.IS_MUSIC, 1)
+                    put(android.provider.MediaStore.Audio.Media.IS_PENDING, 1)
+                }
+                val uri = resolver.insert(android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values) ?: return
+                try {
+                    resolver.openOutputStream(uri)?.use { out ->
+                        sourceFile.inputStream().use { input -> input.copyTo(out) }
+                    }
+                    values.clear()
+                    values.put(android.provider.MediaStore.Audio.Media.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                } catch (_: Throwable) {
+                    runCatching { resolver.delete(uri, null, null) }
+                }
+            }
+        } else {
+            val baseDir = Environment.getExternalStoragePublicDirectory(
+                if (isVideo) Environment.DIRECTORY_MOVIES else Environment.DIRECTORY_MUSIC
+            )
+            val targetDir = File(baseDir, "Seitharol").apply { if (!exists()) mkdirs() }
+            val dest = File(targetDir, fileName)
+            sourceFile.inputStream().use { input ->
+                FileOutputStream(dest).use { out -> input.copyTo(out) }
+            }
+            android.media.MediaScannerConnection.scanFile(
+                appContext,
+                arrayOf(dest.absolutePath),
+                arrayOf(if (isVideo) "video/mp4" else "audio/mp4"),
+                null
+            )
+        }
+    }
+
     suspend fun retryDownload(trackId: String) = withContext(Dispatchers.IO) {
         val track = trackDao.getTrackById(trackId)
         val existingDl = downloadDao.getDownload(trackId)
@@ -744,6 +846,7 @@ class DownloadRepository(
             "Data Saver" -> DownloadTier.DATA_SAVER
             "High" -> DownloadTier.HIGH
             "Original" -> DownloadTier.ORIGINAL
+            "MP4 Video" -> DownloadTier.VIDEO_MP4
             else -> DownloadTier.STANDARD
         }
         if (track != null) {

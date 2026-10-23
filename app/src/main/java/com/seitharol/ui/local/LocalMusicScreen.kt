@@ -301,5 +301,48 @@ private suspend fun scanDeviceAudioFiles(context: Context): List<CandidateStream
                 )
             }
         }
+        // Scan device MP4 Video files in Movies/Seitharol & device storage
+        runCatching {
+            val videoProjection = arrayOf(
+                MediaStore.Video.Media._ID,
+                MediaStore.Video.Media.TITLE,
+                MediaStore.Video.Media.ARTIST,
+                MediaStore.Video.Media.DURATION
+            )
+            val videoSelection = "${MediaStore.Video.Media.DURATION} >= 10000"
+            context.contentResolver.query(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                videoProjection,
+                videoSelection,
+                null,
+                "${MediaStore.Video.Media.DATE_ADDED} DESC"
+            )?.use { cursor ->
+                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                val titleCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.TITLE)
+                val artistCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.ARTIST)
+                val durCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
+
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(idCol)
+                    val contentUri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id).toString()
+                    val title = cursor.getString(titleCol).orEmpty().ifBlank { "Local MP4 Video" }
+                    val artist = cursor.getString(artistCol).orEmpty().replace("<unknown>", "").trim().ifBlank { "Local Video" }
+                    val durationSec = (cursor.getLong(durCol) / 1000L).toInt()
+                    list.add(
+                        CandidateStream(
+                            videoId = contentUri,
+                            title = title,
+                            artist = artist,
+                            channelName = "Device Video Storage",
+                            albumName = "YouTube Video",
+                            durationSeconds = durationSec,
+                            videoType = "MUSIC_VIDEO_TYPE_OMV",
+                            thumbnailUrl = "",
+                            isVerifiedArtist = false
+                        )
+                    )
+                }
+            }
+        }
         list
     }

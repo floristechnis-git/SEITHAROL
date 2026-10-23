@@ -166,13 +166,7 @@ class AudioPlayerManager(
                     exoPlayer?.play()
                 }
             }
-            AudioManager.AUDIOFOCUS_LOSS -> {
-                wasPlayingBeforeCall = false
-                userRequestedPlay = false
-                exoPlayer?.pause()
-                _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
-                persistCurrentPlaybackState()
-            }
+            AudioManager.AUDIOFOCUS_LOSS,
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
                 if (isPhoneCallActive()) {
                     if (exoPlayer?.isPlaying == true || _state.value.isPlaying) {
@@ -183,36 +177,41 @@ class AudioPlayerManager(
                         persistCurrentPlaybackState()
                     }
                 } else {
-                    exoPlayer?.volume = 0.5f
+                    // Never pause playback on screen lock/unlock chimes or transient system sounds
+                    exoPlayer?.volume = 1.0f
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                exoPlayer?.volume = 0.4f
+                exoPlayer?.volume = 0.6f
             }
         }
     }
 
     private fun isPhoneCallActive(): Boolean {
-        val am = audioManager ?: return false
-        return am.mode == AudioManager.MODE_IN_CALL ||
-            am.mode == AudioManager.MODE_IN_COMMUNICATION ||
-            am.mode == AudioManager.MODE_RINGTONE
+        return runCatching {
+            val am = audioManager ?: return false
+            am.mode == AudioManager.MODE_IN_CALL ||
+                am.mode == AudioManager.MODE_IN_COMMUNICATION ||
+                am.mode == AudioManager.MODE_RINGTONE
+        }.getOrDefault(false)
     }
 
     private fun requestAudioFocus(): Boolean {
         val am = audioManager ?: return true
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val playbackAttributes = android.media.AudioAttributes.Builder()
-                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build()
-                val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                    .setAudioAttributes(playbackAttributes)
+                // Reuse the exact same AudioFocusRequest instance so AudioManager never revokes focus from our own listener
+                val request = audioFocusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                    .setAudioAttributes(
+                        android.media.AudioAttributes.Builder()
+                            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build()
+                    )
                     .setAcceptsDelayedFocusGain(true)
                     .setOnAudioFocusChangeListener(audioFocusChangeListener)
                     .build()
-                audioFocusRequest = request
+                    .also { audioFocusRequest = it }
                 am.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
             } else {
                 @Suppress("DEPRECATION")
@@ -410,7 +409,9 @@ class AudioPlayerManager(
                 lyricLines = localLyrics,
                 activeLyricIndex = activeIdx,
                 isSingleTrackPlayback = root.optBoolean("isSingleTrackPlayback", false),
-                isPartOfPlaylist = root.optBoolean("isPartOfPlaylist", true)
+                isPartOfPlaylist = root.optBoolean("isPartOfPlaylist", true),
+                isVideoMode = restoredTrack.genre.equals("YouTube Video", ignoreCase = true) ||
+                    restoredTrack.album.equals("YouTube Video", ignoreCase = true)
             )
         }
     }
@@ -504,7 +505,7 @@ class AudioPlayerManager(
     private fun startBufferingWatchdog(expectedTrackId: String) {
         bufferingWatchdogJob?.cancel()
         bufferingWatchdogJob = coroutineScope.launch {
-            delay(14_000L)
+            delay(6_500L)
             if (!isActive || !userRequestedPlay) return@launch
             val current = _state.value.currentTrack ?: return@launch
             val player = exoPlayer ?: return@launch
@@ -1202,7 +1203,7 @@ class AudioPlayerManager(
                 val localLyrics = parseLrc(current.lyrics)
                 val expectedDuration = if (current.durationMs > 0L) current.durationMs else 210000L
                 val initialPos = resumePositionMs.coerceAtLeast(0L)
-                val initialLyricIdx = localLyrics.indexOfLast { it.timestampMs <= initialPos + _state.value.lyricOffsetMs }
+                val isVideoTrack = current.isVideoTrack
 
                 _state.value = _state.value.copy(
                     currentTrack = current,
@@ -1210,7 +1211,8 @@ class AudioPlayerManager(
                     durationMs = expectedDuration,
                     currentPositionMs = initialPos,
                     lyricLines = localLyrics,
-                    activeLyricIndex = initialLyricIdx
+                    activeLyricIndex = initialLyricIdx,
+                    isVideoMode = isVideoTrack
                 )
 
                 // Fetch synchronized lyrics asynchronously when online
@@ -1246,8 +1248,30 @@ class AudioPlayerManager(
                         }
                     }
 
-                    val resolvedStream = withTimeout(12_000L) {
-                        resolverEngine.resolveTrack(resolvedLocalTrack, preferredQuality)
+                    val resolvedStream = withTimeout(10_000L) {
+                        if (isVideoTrack && !resolvedLocalTrack.isDownloaded && resolvedLocalTrack.localPath.isNullOrBlank()) {
+                            val ytId = InnerTubeStreamExtractor.extractVideoId(resolvedLocalTrack.id)
+                            val videoUrl = if (!ytId.isNullOrBlank()) {
+                                InnerTubeStreamExtractor.resolveRawVideoStreamById(ytId).getOrNull()
+                            } else null
+                            if (!videoUrl.isNullOrBlank()) {
+                                ResolvedStream(
+                                    videoId = ytId ?: resolvedLocalTrack.id,
+                                    streamUrl = videoUrl,
+                                    itag = 18,
+                                    codec = "MP4 Video",
+                                    bitrate = "720p",
+                                    expiresAtMs = System.currentTimeMillis() + 6 * 3600 * 1000L,
+                                    isLocal = false,
+                                    resolvedBy = "Direct Video Stream",
+                                    latencyMs = 10
+                                )
+                            } else {
+                                resolverEngine.resolveTrack(resolvedLocalTrack, preferredQuality)
+                            }
+                        } else {
+                            resolverEngine.resolveTrack(resolvedLocalTrack, preferredQuality)
+                        }
                     }
                     resolvedLocalTrack to resolvedStream
                 }
@@ -1357,6 +1381,10 @@ class AudioPlayerManager(
             android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC),
             "Seitharol"
         )
+        val moviesDir = File(
+            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES),
+            "Seitharol"
+        )
 
         val localCandidates = mutableListOf<File>()
         listOfNotNull(current.localPath, dbPath, downloadEntityPath, discoverDownloadPath)
@@ -1369,6 +1397,8 @@ class AudioPlayerManager(
             }
 
         for (idCandidate in listOfNotNull(current.id, canonicalId, cleanYtId, safeId).distinct()) {
+            localCandidates.add(File(downloadDir, "${idCandidate}_video_mp4.mp4"))
+            localCandidates.add(File(downloadDir, "$idCandidate.mp4"))
             localCandidates.add(File(downloadDir, "$idCandidate.audio"))
             localCandidates.add(File(downloadDir, "${idCandidate}_high.opus"))
             localCandidates.add(File(downloadDir, "${idCandidate}_high.m4a"))
@@ -1376,7 +1406,6 @@ class AudioPlayerManager(
             localCandidates.add(File(downloadDir, "${idCandidate}_original.m4a"))
             localCandidates.add(File(downloadDir, "${idCandidate}_standard.opus"))
             localCandidates.add(File(downloadDir, "${idCandidate}_standard.m4a"))
-            localCandidates.add(File(downloadDir, "${idCandidate}_data saver.m4a"))
             localCandidates.add(File(downloadDir, "${idCandidate}_data_saver.opus"))
             localCandidates.add(File(downloadDir, "${idCandidate}_data_saver.m4a"))
             localCandidates.add(File(downloadDir, "${idCandidate}_discover.m4a"))
@@ -1399,6 +1428,19 @@ class AudioPlayerManager(
 
         if (discoverDir.exists() && discoverDir.isDirectory) {
             discoverDir.listFiles()?.forEach { f ->
+                if (f.isFile && f.length() > 10_240L && !f.name.endsWith(".tmp")) {
+                    if ((cleanYtId != null && f.name.contains(cleanYtId)) ||
+                        f.name.contains(canonicalId, ignoreCase = true) ||
+                        (current.title.isNotBlank() && f.nameWithoutExtension.contains(current.title, ignoreCase = true))
+                    ) {
+                        localCandidates.add(f)
+                    }
+                }
+            }
+        }
+
+        if (moviesDir.exists() && moviesDir.isDirectory) {
+            moviesDir.listFiles()?.forEach { f ->
                 if (f.isFile && f.length() > 10_240L && !f.name.endsWith(".tmp")) {
                     if ((cleanYtId != null && f.name.contains(cleanYtId)) ||
                         f.name.contains(canonicalId, ignoreCase = true) ||
@@ -1502,7 +1544,6 @@ class AudioPlayerManager(
             currentPositionMs = currentPos.coerceAtLeast(0L)
         )
         persistCurrentPlaybackState()
-        abandonAudioFocus()
     }
 
     fun togglePlayPause() {
@@ -1917,7 +1958,7 @@ class AudioPlayerManager(
             if (textureView == null) {
                 attachedTextureView?.let { player.clearVideoTextureView(it) }
                 attachedTextureView = null
-            } else {
+            } else if (attachedTextureView !== textureView) {
                 attachedTextureView = textureView
                 player.setVideoTextureView(textureView)
             }

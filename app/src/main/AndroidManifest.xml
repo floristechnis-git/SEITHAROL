@@ -10,6 +10,7 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
@@ -57,7 +58,7 @@
                 <data android:scheme="http" android:host="seitharol.app" android:pathPrefix="/share/artist/" />
             </intent-filter>
 
-            <!-- Open With: Audio Files from File Explorer & Managers -->
+            <!-- Open With: Audio & Video Files from File Explorer & Managers -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -65,19 +66,18 @@
                 <data android:scheme="content" />
                 <data android:scheme="file" />
                 <data android:mimeType="audio/*" />
+                <data android:mimeType="application/ogg" />
+                <data android:mimeType="application/flac" />
+                <data android:mimeType="video/mp4" />
+                <data android:mimeType="video/*" />
             </intent-filter>
 
             <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="content" />
-                <data android:scheme="file" />
-                <data android:mimeType="application/ogg" />
-                <data android:mimeType="application/x-ogg" />
-                <data android:mimeType="application/flac" />
-                <data android:mimeType="application/x-flac" />
-                <data android:mimeType="application/itunes" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="video/mp4" />
+                <data android:mimeType="video/*" />
             </intent-filter>
 
             <intent-filter>
@@ -93,6 +93,9 @@
                 <data android:pathPattern=".*\\.ogg" />
                 <data android:pathPattern=".*\\.opus" />
                 <data android:pathPattern=".*\\.aac" />
+                <data android:pathPattern=".*\\.mp4" />
+                <data android:pathPattern=".*\\.mkv" />
+                <data android:pathPattern=".*\\.webm" />
             </intent-filter>
         </activity>
 

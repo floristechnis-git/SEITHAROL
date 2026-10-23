@@ -23,6 +23,7 @@ import com.seitharol.data.resolver.AudioQuality
 import com.seitharol.data.resolver.CanonicalAudioResolver
 import com.seitharol.data.resolver.InnerTubeStreamExtractor
 import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -127,7 +128,7 @@ class CascadeViewModel(
             }
         }
         trackMap.values.distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    }.flowOn(Dispatchers.IO).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val downloadedTracksById: StateFlow<Map<String, Track>> = downloadedTracks
         .map { list -> list.associateBy { it.id } }
@@ -138,7 +139,8 @@ class CascadeViewModel(
         return track.copy(
             isLiked = likedIds.contains(track.id),
             isDownloaded = dl != null || track.isDownloaded,
-            localPath = dl?.localPath ?: track.localPath
+            localPath = dl?.localPath ?: track.localPath,
+            genre = if (track.genre.equals("YouTube Video", ignoreCase = true) || track.album.equals("YouTube Video", ignoreCase = true)) "YouTube Video" else track.genre
         )
     }
 
@@ -227,26 +229,64 @@ class CascadeViewModel(
         }
     }
 
+    // Secondary Video Source: Dynamic Queue Suggestions (includes YouTube Video suggestions)
+    private val _queueVideoSuggestions = MutableStateFlow<List<Track>>(emptyList())
+    val queueVideoSuggestions: StateFlow<List<Track>> = _queueVideoSuggestions.asStateFlow()
+
+    fun refreshQueueSuggestions(seedTrack: Track?) {
+        val seed = seedTrack ?: playerState.value.currentTrack ?: return
+        if (isOfflineMode.value) return
+        viewModelScope.launch(vmExceptionHandler) {
+            runCatching {
+                val query = "${seed.title} ${seed.artist}".trim()
+                val videos = InnerTubeStreamExtractor.searchAllYoutubeVideos("$query official video", limit = 6)
+                    .map { c ->
+                        Track(
+                            id = c.videoId,
+                            title = c.title,
+                            artist = c.artist,
+                            album = "YouTube Video",
+                            durationMs = c.durationSeconds * 1000L,
+                            artUrl = c.thumbnailUrl,
+                            genre = "YouTube Video",
+                            itag = 18,
+                            codec = "MP4"
+                        )
+                    }
+                _queueVideoSuggestions.value = videos
+            }
+        }
+    }
+
     fun playExternalAudioUri(
         uri: android.net.Uri,
         title: String,
         artist: String,
         durationMs: Long = 0L,
-        album: String = "Local Audio"
+        album: String = "Local Media",
+        isVideo: Boolean = false
     ) {
         viewModelScope.launch(vmExceptionHandler) {
             runCatching {
-                val trackId = "file_${uri.hashCode()}"
+                val uriStr = uri.toString()
+                val detectedVideo = isVideo ||
+                    uriStr.lowercase().endsWith(".mp4") ||
+                    uriStr.lowercase().contains("video") ||
+                    album.equals("YouTube Video", ignoreCase = true)
+
+                val trackId = if (detectedVideo) "vidfile_${uri.hashCode()}" else "file_${uri.hashCode()}"
                 val track = Track(
                     id = trackId,
-                    title = title.ifBlank { "Audio File" },
-                    artist = artist.ifBlank { "Local Audio" },
-                    album = album.ifBlank { "Local Audio" },
+                    title = title.ifBlank { if (detectedVideo) "Video File" else "Audio File" },
+                    artist = artist.ifBlank { if (detectedVideo) "Local Video" else "Local Audio" },
+                    album = if (detectedVideo) "YouTube Video" else album.ifBlank { "Local Audio" },
                     durationMs = durationMs,
                     artUrl = "",
-                    genre = "Local Audio",
+                    genre = if (detectedVideo) "YouTube Video" else "Local Audio",
                     isDownloaded = true,
-                    localPath = uri.toString()
+                    localPath = uriStr,
+                    itag = if (detectedVideo) 18 else 251,
+                    codec = if (detectedVideo) "MP4" else "Opus"
                 )
                 playTrack(track)
                 _playerExpandEvent.emit(Unit)
@@ -328,7 +368,11 @@ class CascadeViewModel(
             try {
                 val rawCandidates = when (filter) {
                     ProviderFilter.ALL -> {
-                        val ytDeferred = async { InnerTubeStreamExtractor.searchOfficialYtmSongs(clean, limit = 18) }
+                        // STRICTLY AUDIO SONGS ONLY — Never include YouTube Videos in "All"
+                        val ytDeferred = async {
+                            InnerTubeStreamExtractor.searchOfficialYtmSongs(clean, limit = 18)
+                                .filterNot { it.videoType == "MUSIC_VIDEO_TYPE_OMV" || it.albumName == "YouTube Video" }
+                        }
                         val saavnDeferred = async {
                             resolverEngine.jioSaavnProvider.searchTracks(clean, limit = 8).map {
                                 com.seitharol.data.resolver.CandidateStream(
@@ -346,7 +390,10 @@ class CascadeViewModel(
                         }
                         ytDeferred.await() + saavnDeferred.await()
                     }
-                    ProviderFilter.MUSIC -> InnerTubeStreamExtractor.searchOfficialYtmSongs(clean, limit = 25)
+                    ProviderFilter.MUSIC -> {
+                        InnerTubeStreamExtractor.searchOfficialYtmSongs(clean, limit = 25)
+                            .filterNot { it.videoType == "MUSIC_VIDEO_TYPE_OMV" || it.albumName == "YouTube Video" }
+                    }
                     ProviderFilter.JIOSAAVN -> {
                         resolverEngine.jioSaavnProvider.searchTracks(clean, limit = 25).map {
                             com.seitharol.data.resolver.CandidateStream(
@@ -371,15 +418,19 @@ class CascadeViewModel(
                 } else {
                     CanonicalAudioResolver.rankSearchResultsByRelevance(clean, rawCandidates)
                 }
+
                 onlineSearchResults.value = ranked.map { c ->
+                    val isYtVideo = filter == ProviderFilter.YOUTUBE || c.videoType == "MUSIC_VIDEO_TYPE_OMV"
                     Track(
                         id = c.videoId,
                         title = c.title,
                         artist = c.artist,
-                        album = c.albumName.orEmpty(),
+                        album = if (isYtVideo) "YouTube Video" else c.albumName.orEmpty(),
                         durationMs = c.durationSeconds * 1000L,
                         artUrl = c.thumbnailUrl,
-                        genre = if (c.videoType == "MUSIC_VIDEO_TYPE_OMV" || filter == ProviderFilter.YOUTUBE) "YouTube Video" else "Music"
+                        genre = if (isYtVideo) "YouTube Video" else "Music",
+                        itag = if (isYtVideo) 18 else 251,
+                        codec = if (isYtVideo) "MP4" else "Opus"
                     )
                 }
                 if (token == searchRequestToken) {
@@ -806,22 +857,39 @@ class CascadeViewModel(
         val dlMap = downloaded.associateBy { it.id }
         val deviceOffline = offline || !com.example.util.ErrorFormatter.isOnline(com.example.CascadeApplication.instance)
 
-        val baseList: List<Track> = if (provider == ProviderFilter.LOCAL || deviceOffline) {
-            if (cleanQuery.isBlank()) downloaded
-            else downloaded.filter {
-                it.title.contains(cleanQuery, ignoreCase = true) ||
-                    it.artist.contains(cleanQuery, ignoreCase = true) ||
-                    it.album.contains(cleanQuery, ignoreCase = true)
-            }
-        } else {
-            if (cleanQuery.isBlank()) emptyList()
-            else {
-                val matchingLocal = downloaded.filter {
+        val baseList: List<Track> = when {
+            provider == ProviderFilter.LOCAL || deviceOffline -> {
+                if (cleanQuery.isBlank()) downloaded
+                else downloaded.filter {
                     it.title.contains(cleanQuery, ignoreCase = true) ||
-                        it.artist.contains(cleanQuery, ignoreCase = true)
+                        it.artist.contains(cleanQuery, ignoreCase = true) ||
+                        it.album.contains(cleanQuery, ignoreCase = true)
                 }
-                val enrichedOnline = onlineTracks.map { enrichTrackStatus(it, likedIds, dlMap) }
-                (matchingLocal + enrichedOnline).distinctBy { it.id }
+            }
+            provider == ProviderFilter.YOUTUBE -> {
+                if (cleanQuery.isBlank()) {
+                    // Show downloaded MP4 videos when YouTube tab has an empty query
+                    downloaded.filter { it.isVideoTrack }
+                } else {
+                    val matchingLocalVideos = downloaded.filter {
+                        it.isVideoTrack && (it.title.contains(cleanQuery, ignoreCase = true) || it.artist.contains(cleanQuery, ignoreCase = true))
+                    }
+                    val enrichedOnline = onlineTracks.map { enrichTrackStatus(it, likedIds, dlMap) }
+                    (matchingLocalVideos + enrichedOnline).distinctBy { it.id }
+                }
+            }
+            else -> {
+                // ALL, MUSIC, JIOSAAVN: Strictly exclude YouTube Videos!
+                if (cleanQuery.isBlank()) emptyList()
+                else {
+                    val matchingLocalAudio = downloaded.filter {
+                        !it.isVideoTrack && (it.title.contains(cleanQuery, ignoreCase = true) || it.artist.contains(cleanQuery, ignoreCase = true))
+                    }
+                    val enrichedOnline = onlineTracks
+                        .filterNot { it.isVideoTrack }
+                        .map { enrichTrackStatus(it, likedIds, dlMap) }
+                    (matchingLocalAudio + enrichedOnline).distinctBy { it.id }
+                }
             }
         }
 
@@ -1019,7 +1087,8 @@ class CascadeViewModel(
     }
 
     fun startDownload(track: Track, tier: DownloadTier = DownloadTier.STANDARD) {
-        runCatching { downloadRepository.enqueueDownload(track, tier) }
+        val effectiveTier = if (track.isVideoTrack) DownloadTier.VIDEO_MP4 else tier
+        runCatching { downloadRepository.enqueueDownload(track, effectiveTier) }
     }
 
     fun downloadAllTracks(tracks: List<Track>, tier: DownloadTier = DownloadTier.STANDARD) {

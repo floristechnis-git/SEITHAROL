@@ -77,11 +77,22 @@ fun PlaybackQueueModal(
     val isAutoSuggest by viewModel.isAutoSuggestEnabled.collectAsState()
     val personalizedTracks by viewModel.personalizedTracks.collectAsState()
     val trendingHits by viewModel.trendingHits.collectAsState()
+    val videoSuggestions by viewModel.queueVideoSuggestions.collectAsState()
 
-    val suggestedTracks = remember(queue, personalizedTracks, trendingHits) {
+    LaunchedEffect(playerState.currentTrack?.id) {
+        viewModel.refreshQueueSuggestions(playerState.currentTrack)
+    }
+
+    val suggestedTracks = remember(queue, personalizedTracks, trendingHits, videoSuggestions, playerState.currentTrack) {
         val queueIds = queue.map { it.id }.toSet()
-        val pool = (personalizedTracks + trendingHits).distinctBy { it.id }
-        pool.filter { it.id !in queueIds }.take(10)
+        val isCurrentVideo = playerState.currentTrack?.isVideoTrack == true
+        val combinedPool = if (isCurrentVideo) {
+            (videoSuggestions + personalizedTracks + trendingHits).distinctBy { it.id }
+        } else {
+            // Interleave video suggestions as secondary source for video discovery in queue
+            (videoSuggestions.take(4) + personalizedTracks + trendingHits).distinctBy { it.id }
+        }
+        combinedPool.filter { it.id !in queueIds }.take(12)
     }
 
     androidx.activity.compose.BackHandler(onBack = onDismiss)
@@ -515,13 +526,18 @@ fun PlaybackQueueModal(
                         }
 
                         itemsIndexed(suggestedTracks, key = { idx, track -> "suggested_${track.id}_$idx" }) { _, track ->
+                            val isSuggestedVideo = track.isVideoTrack
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
                                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
-                                    .clickable { viewModel.addToQueue(track) }
+                                    .clickable {
+                                        // Tapping a suggested track in queue plays it immediately (including Video Mode for video suggestions)
+                                        viewModel.playTrack(track)
+                                        onDismiss()
+                                    }
                             ) {
                                 Row(
                                     modifier = Modifier
@@ -531,7 +547,7 @@ fun PlaybackQueueModal(
                                 ) {
                                     Box(
                                         modifier = Modifier
-                                            .size(42.dp)
+                                            .size(width = if (isSuggestedVideo) 64.dp else 42.dp, height = 42.dp)
                                             .clip(RoundedCornerShape(6.dp))
                                     ) {
                                         AsyncImage(
@@ -545,17 +561,34 @@ fun PlaybackQueueModal(
                                     Spacer(modifier = Modifier.width(12.dp))
 
                                     Column(modifier = Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            if (isSuggestedVideo) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                                                    modifier = Modifier.padding(end = 6.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "VIDEO",
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                                    )
+                                                }
+                                            }
+                                            Text(
+                                                text = track.title,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                fontSize = 13.sp,
+                                                fontFamily = OutfitFontFamily,
+                                                fontWeight = FontWeight.Medium,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
                                         Text(
-                                            text = track.title,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            fontSize = 13.sp,
-                                            fontFamily = OutfitFontFamily,
-                                            fontWeight = FontWeight.Medium,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = track.artist,
+                                            text = if (isSuggestedVideo) "${track.artist} • YouTube Video" else track.artist,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             fontSize = 11.sp,
                                             fontFamily = OutfitFontFamily,

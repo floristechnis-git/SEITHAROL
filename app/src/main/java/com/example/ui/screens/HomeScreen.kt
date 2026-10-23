@@ -156,7 +156,9 @@ fun HomeScreen(
     val recentSearches by appPreferences.recentSearches.collectAsState()
 
     LaunchedEffect(Unit) {
-        runCatching { ManipurCalendarNotificationEngine.checkAndDispatchDailyNotification(context) }
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { ManipurCalendarNotificationEngine.checkAndDispatchDailyNotification(context) }
+        }
     }
 
     // Deduplicate pools to ensure no duplicate songs appear; in Offline Mode filter strictly to downloaded tracks
@@ -178,8 +180,8 @@ fun HomeScreen(
     }
 
     val currentlyPlayingSongId = playerState.currentTrack?.id
-    val excludedHeroIds = remember(currentlyPlayingSongId) {
-        setOfNotNull(currentlyPlayingSongId)
+    val excludedHeroIds = remember {
+        emptySet<String>()
     }
 
     // Prepare Trending Items (Deduplicated, excluding Hero & Currently Playing)

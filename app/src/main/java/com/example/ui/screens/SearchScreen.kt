@@ -135,14 +135,19 @@ fun SearchScreen(
             .distinctBy { it.lowercase() }
     }
 
-    val displayedTracks = remember(searchResults, query, currentProvider, personalizedTracks, trendingHits, historyTracks) {
-        if (query.isNotBlank() || currentProvider == com.example.ui.ProviderFilter.LOCAL) {
-            searchResults
-        } else {
-            (personalizedTracks + trendingHits + historyTracks)
-                .filterNot { it.id.startsWith("RD") || it.id.startsWith("VL") || it.id.startsWith("PL") }
-                .distinctBy { it.id }
-                .take(10)
+    val displayedTracks = remember(searchResults, query, currentProvider, personalizedTracks, trendingHits, historyTracks, downloadedTracks) {
+        when {
+            currentProvider == com.example.ui.ProviderFilter.LOCAL -> searchResults
+            currentProvider == com.example.ui.ProviderFilter.YOUTUBE -> searchResults
+            query.isNotBlank() -> searchResults.filterNot { it.isVideoTrack }
+            else -> {
+                (personalizedTracks + trendingHits + historyTracks)
+                    .filterNot {
+                        it.isVideoTrack || it.id.startsWith("RD") || it.id.startsWith("VL") || it.id.startsWith("PL")
+                    }
+                    .distinctBy { it.id }
+                    .take(10)
+            }
         }
     }
 
@@ -347,7 +352,14 @@ fun SearchScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.padding(bottom = 12.dp)
                 ) {
-                    items(com.example.ui.ProviderFilter.values()) { provider ->
+                    val orderedProviders = listOf(
+                        com.example.ui.ProviderFilter.ALL,
+                        com.example.ui.ProviderFilter.MUSIC,
+                        com.example.ui.ProviderFilter.JIOSAAVN,
+                        com.example.ui.ProviderFilter.YOUTUBE,
+                        com.example.ui.ProviderFilter.LOCAL
+                    )
+                    items(orderedProviders) { provider ->
                         val isSelected = currentProvider == provider
                         FilterChip(
                             selected = isSelected,
@@ -363,6 +375,14 @@ fun SearchScreen(
                             ),
                             leadingIcon = {
                                 when (provider) {
+                                    com.example.ui.ProviderFilter.ALL -> {
+                                        Icon(
+                                            imageVector = Icons.Default.Public,
+                                            contentDescription = "All Sources",
+                                            tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                     com.example.ui.ProviderFilter.MUSIC -> {
                                         Icon(
                                             imageVector = Icons.Default.MusicNote,
@@ -382,21 +402,13 @@ fun SearchScreen(
                                         Image(
                                             painter = painterResource(id = R.drawable.ic_youtube),
                                             contentDescription = "YouTube",
-                                            modifier = Modifier.size(16.dp)
+                                            modifier = Modifier.size(18.dp)
                                         )
                                     }
                                     com.example.ui.ProviderFilter.LOCAL -> {
                                         Icon(
                                             imageVector = Icons.Default.CloudDownload,
                                             contentDescription = "Downloaded",
-                                            tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                    com.example.ui.ProviderFilter.ALL -> {
-                                        Icon(
-                                            imageVector = Icons.Default.Public,
-                                            contentDescription = "All Sources",
                                             tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.size(16.dp)
                                         )
@@ -860,19 +872,24 @@ fun SearchScreen(
                             }
                         }
                     }
-                } else {
-                    items(displayedTracks) { track ->
+                    items(displayedTracks, key = { "search_item_${it.id}" }) { track ->
+                        val isVideo = track.isVideoTrack
                         TrackCard(
                             track = track,
                             isPlaying = playerState.currentTrack?.id == track.id,
-                            subtitleText = if (track.genre == "YouTube Video") "${track.artist} • Video & Audio • ${track.durationFormatted}" else null,
+                            subtitleText = if (isVideo) {
+                                "${track.artist} • MP4 Video • ${track.durationFormatted}"
+                            } else null,
                             onTrackClick = {
                                 focusManager.clearFocus()
                                 keyboardController?.hide()
                                 onPlayTrackAndMaximize(track)
                             },
                             onLikeClick = { viewModel.toggleLike(track) },
-                            onDownloadClick = { tier: DownloadTier -> viewModel.startDownload(track, tier) },
+                            onDownloadClick = { tier: DownloadTier ->
+                                val effectiveTier = if (isVideo) DownloadTier.VIDEO_MP4 else tier
+                                viewModel.startDownload(track, effectiveTier)
+                            },
                             onPlayNextClick = { viewModel.playNext(track) },
                             onAddToQueueClick = { viewModel.addToQueue(track) },
                             onAddToPlaylistClick = { trackToAddToPlaylist = track },

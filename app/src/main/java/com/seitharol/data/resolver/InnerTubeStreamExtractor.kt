@@ -102,6 +102,30 @@ object InnerTubeStreamExtractor {
      */
     val VERIFIED_CLIENTS = listOf(
         InnerTubeClientConfig(
+            clientName = "VISIONOS",
+            clientVersion = "0.1",
+            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+            clientId = "101",
+            deviceMake = "Apple",
+            deviceModel = "RealityDevice14,1",
+            osName = "visionOS",
+            osVersion = "1.3.21O771",
+            glOverride = null,
+            sendOriginHeaders = true
+        ),
+        InnerTubeClientConfig(
+            clientName = "IOS",
+            clientVersion = "20.10.4",
+            userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)",
+            clientId = "5",
+            deviceMake = "Apple",
+            deviceModel = "iPhone16,2",
+            osName = "iOS",
+            osVersion = "18.3.1.22D72",
+            glOverride = null,
+            sendOriginHeaders = false
+        ),
+        InnerTubeClientConfig(
             clientName = "ANDROID_VR",
             clientVersion = "1.61.48",
             userAgent = "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
@@ -112,19 +136,6 @@ object InnerTubeStreamExtractor {
             osVersion = "12L",
             androidSdkVersion = 32,
             glOverride = null,
-            sendOriginHeaders = false
-        ),
-        InnerTubeClientConfig(
-            clientName = "ANDROID_VR",
-            clientVersion = "1.43.32",
-            userAgent = "com.google.android.apps.youtube.vr.oculus/1.43.32 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
-            clientId = "28",
-            deviceMake = "Oculus",
-            deviceModel = "Quest 3",
-            osName = "Android",
-            osVersion = "12L",
-            androidSdkVersion = 32,
-            glOverride = "US",
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
@@ -142,28 +153,17 @@ object InnerTubeStreamExtractor {
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
-            clientName = "IOS",
-            clientVersion = "20.10.4",
-            userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)",
-            clientId = "5",
-            deviceMake = "Apple",
-            deviceModel = "iPhone16,2",
-            osName = "iOS",
-            osVersion = "18.3.1.22D72",
-            glOverride = null,
+            clientName = "ANDROID_VR",
+            clientVersion = "1.43.32",
+            userAgent = "com.google.android.apps.youtube.vr.oculus/1.43.32 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+            clientId = "28",
+            deviceMake = "Oculus",
+            deviceModel = "Quest 3",
+            osName = "Android",
+            osVersion = "12L",
+            androidSdkVersion = 32,
+            glOverride = "US",
             sendOriginHeaders = false
-        ),
-        InnerTubeClientConfig(
-            clientName = "VISIONOS",
-            clientVersion = "0.1",
-            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
-            clientId = "101",
-            deviceMake = "Apple",
-            deviceModel = "RealityDevice14,1",
-            osName = "visionOS",
-            osVersion = "1.3.21O771",
-            glOverride = null,
-            sendOriginHeaders = true
         ),
         InnerTubeClientConfig(
             clientName = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
@@ -300,7 +300,7 @@ object InnerTubeStreamExtractor {
         client: InnerTubeClientConfig,
         preferredQuality: AudioQuality,
         cpn: String,
-        allowHls: Boolean = false
+        allowHls: Boolean = true
     ): String? {
         return runCatching {
             val visData = cachedVisitorData?.takeIf { it.isNotBlank() }
@@ -1745,6 +1745,8 @@ object InnerTubeStreamExtractor {
                     }
                     if (!bestUrl.isNullOrBlank()) return@runCatching bestUrl
                 }
+                val hlsUrl = streamingData.optString("hlsManifestUrl", "")
+                if (hlsUrl.isNotBlank()) return@runCatching hlsUrl
                 null
             }.getOrNull()
             if (!videoUrl.isNullOrBlank()) {
@@ -1788,8 +1790,10 @@ object InnerTubeStreamExtractor {
             // Try cached non-HLS URL first
             addCandidate(com.seitharol.player.OuterTuneResolvingDataSource.getCachedUrl(targetYtId, preferredQuality))
 
-            // Query all verified binary clients (ANDROID_VR 1.61, ANDROID_VR 1.43, ANDROID_TESTSUITE, IOS)
-            for (client in VERIFIED_CLIENTS.take(4)) {
+            // Query all verified binary clients (ANDROID_VR, ANDROID_TESTSUITE, IOS, VISIONOS non-HLS)
+            val binaryOrderedClients = VERIFIED_CLIENTS.filter { it.clientName != "VISIONOS" } +
+                VERIFIED_CLIENTS.filter { it.clientName == "VISIONOS" }
+            for (client in binaryOrderedClients) {
                 val url = extractStreamWithConfig(
                     videoId = targetYtId,
                     client = client,

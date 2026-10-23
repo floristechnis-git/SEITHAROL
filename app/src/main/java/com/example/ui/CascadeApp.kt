@@ -344,18 +344,24 @@ fun CascadeApp(
                                 },
                                 availablePlaylists = playlists.map { it.id to it.title },
                                 onPlayLocalTrack = { candidate ->
+                                    val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
+                                        candidate.albumName == "YouTube Video" ||
+                                        candidate.videoId.lowercase().endsWith(".mp4")
                                     val localTrack = Track(
                                         id = "local_${candidate.videoId.hashCode()}",
                                         title = candidate.title,
                                         artist = candidate.artist,
-                                        album = candidate.albumName ?: "Local Storage",
+                                        album = if (isVideo) "YouTube Video" else (candidate.albumName ?: "Local Storage"),
                                         durationMs = candidate.durationSeconds * 1000L,
                                         artUrl = candidate.thumbnailUrl,
-                                        genre = "Local Audio",
+                                        genre = if (isVideo) "YouTube Video" else "Local Audio",
                                         isDownloaded = true,
-                                        localPath = candidate.videoId
+                                        localPath = candidate.videoId,
+                                        itag = if (isVideo) 18 else 251,
+                                        codec = if (isVideo) "MP4" else "Opus"
                                     )
                                     viewModel.playTrack(localTrack)
+                                    isPlayerExpanded = true
                                 },
                                 onAddLocalTrackToPlaylist = { plId, candidate ->
                                     val localTrack = Track(
@@ -585,18 +591,24 @@ fun CascadeApp(
                             },
                             availablePlaylists = playlists.map { it.id to it.title },
                             onPlayLocalTrack = { candidate ->
+                                val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
+                                    candidate.albumName == "YouTube Video" ||
+                                    candidate.videoId.lowercase().endsWith(".mp4")
                                 val localTrack = Track(
                                     id = "local_${candidate.videoId.hashCode()}",
                                     title = candidate.title,
                                     artist = candidate.artist,
-                                    album = candidate.albumName ?: "Local Storage",
+                                    album = if (isVideo) "YouTube Video" else (candidate.albumName ?: "Local Storage"),
                                     durationMs = candidate.durationSeconds * 1000L,
                                     artUrl = candidate.thumbnailUrl,
-                                    genre = "Local Audio",
+                                    genre = if (isVideo) "YouTube Video" else "Local Audio",
                                     isDownloaded = true,
-                                    localPath = candidate.videoId
+                                    localPath = candidate.videoId,
+                                    itag = if (isVideo) 18 else 251,
+                                    codec = if (isVideo) "MP4" else "Opus"
                                 )
                                 viewModel.playTrack(localTrack)
+                                isPlayerExpanded = true
                             },
                             onAddLocalTrackToPlaylist = { plId, candidate ->
                                 val localTrack = Track(
@@ -720,7 +732,8 @@ fun CascadeApp(
                         .navigationBarsPadding(),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    if (playerState.isVideoMode && playerState.currentTrack != null && !isPlayerExpanded && currentSubScreen !is SubScreen.Discover) {
+                    var isPipHidden by remember(playerState.currentTrack?.id, isPlayerExpanded) { mutableStateOf(false) }
+                    if (playerState.isVideoMode && !isPipHidden && playerState.currentTrack != null && !isPlayerExpanded && currentSubScreen !is SubScreen.Discover) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -747,9 +760,6 @@ fun CascadeApp(
                                             android.view.TextureView(ctx).also { tv ->
                                                 viewModel.attachVideoTextureView(tv)
                                             }
-                                        },
-                                        update = { tv ->
-                                            viewModel.attachVideoTextureView(tv)
                                         },
                                         modifier = Modifier.fillMaxSize()
                                     )
@@ -783,12 +793,12 @@ fun CascadeApp(
                                             modifier = Modifier
                                                 .size(26.dp)
                                                 .clip(CircleShape)
-                                                .clickable { viewModel.setVideoMode(false) }
+                                                .clickable { isPipHidden = true }
                                         ) {
                                             Box(contentAlignment = Alignment.Center) {
                                                 Icon(
                                                     imageVector = Icons.Default.Close,
-                                                    contentDescription = "Switch to Audio",
+                                                    contentDescription = "Hide Mini Video",
                                                     tint = Color.White,
                                                     modifier = Modifier.size(14.dp)
                                                 )

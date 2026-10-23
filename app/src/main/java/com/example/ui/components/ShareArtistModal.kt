@@ -101,7 +101,8 @@ object SeitharolDeepLinkHelper {
             val title: String,
             val artist: String,
             val durationMs: Long = 0L,
-            val album: String = "Local Audio"
+            val album: String = "Local Audio",
+            val isVideo: Boolean = false
         ) : DeepLinkTarget
     }
 
@@ -125,36 +126,51 @@ object SeitharolDeepLinkHelper {
         val action = intent.action
         val mimeType = intent.type?.lowercase().orEmpty()
 
-        // Support "Share -> Seitharol" from WhatsApp, Telegram, Browser, or YouTube Music
         if (action == Intent.ACTION_SEND && mimeType.startsWith("text/")) {
             val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
             parseSharedTextOrUrl(sharedText)?.let { return it }
         }
 
-        val uri: Uri = intent.data ?: return null
-        val scheme = uri.scheme?.lowercase().orEmpty()
+        val uri: Uri = intent.data ?: if (action == Intent.ACTION_SEND) {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
+            }
+        } else null ?: return null
 
-        // 1. Audio file "Open With" from file explorer or content providers
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        val lowerPath = uri.toString().lowercase()
+
+        val isVideoMime = mimeType.startsWith("video/") || mimeType == "application/mp4"
+        val isVideoExtension = lowerPath.endsWith(".mp4") || lowerPath.endsWith(".m4v") ||
+            lowerPath.endsWith(".mkv") || lowerPath.endsWith(".webm") || lowerPath.endsWith(".mov")
+
         val isAudioMime = mimeType.startsWith("audio/") ||
             mimeType == "application/ogg" ||
             mimeType == "application/x-ogg" ||
             mimeType == "application/flac" ||
             mimeType == "application/x-flac" ||
             mimeType == "application/itunes"
-        val isAudioExtension = uri.lastPathSegment?.lowercase()?.let { name ->
-            name.endsWith(".mp3") || name.endsWith(".flac") || name.endsWith(".m4a") ||
-                name.endsWith(".wav") || name.endsWith(".ogg") || name.endsWith(".opus") ||
-                name.endsWith(".aac") || name.endsWith(".wma") || name.endsWith(".m4b")
-        } == true
+        val isAudioExtension = lowerPath.endsWith(".mp3") || lowerPath.endsWith(".flac") ||
+            lowerPath.endsWith(".m4a") || lowerPath.endsWith(".wav") || lowerPath.endsWith(".ogg") ||
+            lowerPath.endsWith(".opus") || lowerPath.endsWith(".aac") || lowerPath.endsWith(".wma") ||
+            lowerPath.endsWith(".m4b")
 
-        if (action == Intent.ACTION_VIEW && (isAudioMime || isAudioExtension || (scheme == "content" && isAudioMime))) {
+        if ((action == Intent.ACTION_VIEW || action == Intent.ACTION_SEND) &&
+            (isVideoMime || isVideoExtension || isAudioMime || isAudioExtension ||
+                (scheme == "content" && (isVideoMime || isAudioMime)))
+        ) {
+            val isVideo = isVideoMime || isVideoExtension
             val resolved = extractAudioMetadata(uri, context)
             return DeepLinkTarget.AudioFileTarget(
                 uri = uri,
                 title = resolved.title,
                 artist = resolved.artist,
                 durationMs = resolved.durationMs,
-                album = resolved.album
+                album = if (isVideo) "YouTube Video" else resolved.album,
+                isVideo = isVideo
             )
         }
 

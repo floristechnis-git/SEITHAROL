@@ -26,6 +26,13 @@ data class Track(
             val seconds = totalSeconds % 60
             return "%d:%02d".format(minutes, seconds)
         }
+
+    val isVideoTrack: Boolean
+        get() = genre.equals("YouTube Video", ignoreCase = true) ||
+            genre.equals("Local Video", ignoreCase = true) ||
+            album.equals("YouTube Video", ignoreCase = true) ||
+            codec.equals("MP4", ignoreCase = true) ||
+            localPath?.lowercase()?.endsWith(".mp4") == true
 }
 
 data class LyricsLine(
@@ -39,7 +46,8 @@ enum class DownloadTier(val label: String, val bitrate: String, val codec: Strin
     DATA_SAVER("Data Saver", "64 kbps", "Opus"),
     STANDARD("Standard", "128 kbps", "AAC"),
     HIGH("High", "160 kbps", "Opus"),
-    ORIGINAL("Original", "256 kbps", "AAC")
+    ORIGINAL("Original", "256 kbps", "AAC"),
+    VIDEO_MP4("MP4 Video", "720p / 360p", "MP4")
 }
 
 enum class DownloadState {

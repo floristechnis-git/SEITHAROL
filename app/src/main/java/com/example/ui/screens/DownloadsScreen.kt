@@ -46,6 +46,18 @@ fun DownloadsScreen(
     val totalMb = totalBytes / (1024 * 1024)
     var showQualitySheet by remember { mutableStateOf(false) }
 
+    val standaloneIds = remember(standaloneDownloads) {
+        standaloneDownloads.map { downloadService.canonicalTrackId(it.sourceId) }.toSet()
+    }
+    val deduplicatedQueueDownloads = remember(downloads, standaloneIds, standaloneDownloads) {
+        downloads.filterNot { item ->
+            val canon = downloadService.canonicalTrackId(item.trackId)
+            canon in standaloneIds || standaloneDownloads.any { s ->
+                s.title.equals(item.title, ignoreCase = true)
+            }
+        }
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -170,18 +182,6 @@ fun DownloadsScreen(
                             }
                         }
                     }
-                }
-            }
-        }
-
-        val standaloneIds = remember(standaloneDownloads) {
-            standaloneDownloads.map { downloadService.canonicalTrackId(it.sourceId) }.toSet()
-        }
-        val deduplicatedQueueDownloads = remember(downloads, standaloneIds, standaloneDownloads) {
-            downloads.filterNot { item ->
-                val canon = downloadService.canonicalTrackId(item.trackId)
-                canon in standaloneIds || standaloneDownloads.any { s ->
-                    s.title.equals(item.title, ignoreCase = true)
                 }
             }
         }

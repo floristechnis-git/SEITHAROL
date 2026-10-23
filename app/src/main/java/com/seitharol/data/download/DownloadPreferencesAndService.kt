@@ -363,6 +363,7 @@ class DownloadPreferencesAndService(private val context: Context) {
             // Strictly download the exact original YouTube videoId without searching for alternate tracks
             return InnerTubeStreamExtractor.resolveWorkingStreamUrl(cleanYtId, preferredQuality).getOrNull()
         }
+        val canonicalId = canonicalTrackId(track.sourceId)
         val metadata = TrackMetadata(
             id = canonicalId,
             title = track.title,

@@ -94,7 +94,9 @@ class AudioPlayerManager(
 ) {
     private val TAG = "AudioPlayerManager"
     private var exoPlayer: ExoPlayer? = null
+    private var videoExoPlayer: ExoPlayer? = null
     private var exoMediaSourceFactory: DefaultMediaSourceFactory? = null
+    private var videoRetryCount: Int = 0
     private var equalizer: Equalizer? = null
     private var loudnessEnhancer: LoudnessEnhancer? = null
     private var boundAudioSessionId: Int = -1
@@ -745,6 +747,16 @@ class AudioPlayerManager(
                         if (isPlaying) {
                             bufferingWatchdogJob?.cancel()
                             isRetryingOrLoading = false
+                            if (_state.value.isVideoMode || _state.value.currentTrack?.isVideoTrack == true) {
+                                videoExoPlayer?.let { vp ->
+                                    val audioPos = exoPlayer?.currentPosition?.coerceAtLeast(0L) ?: 0L
+                                    if (vp.playbackState == Player.STATE_READY && kotlin.math.abs(vp.currentPosition - audioPos) > 450L) {
+                                        vp.seekTo(audioPos)
+                                    }
+                                    vp.playWhenReady = true
+                                    vp.play()
+                                }
+                            }
                             _state.value = _state.value.copy(
                                 isPlaying = true,
                                 isBuffering = false,
@@ -761,6 +773,10 @@ class AudioPlayerManager(
                         if (!userRequestedPlay) {
                             bufferingWatchdogJob?.cancel()
                             isRetryingOrLoading = false
+                            runCatching {
+                                videoExoPlayer?.playWhenReady = false
+                                videoExoPlayer?.pause()
+                            }
                             _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
                             persistCurrentPlaybackState()
                             return
@@ -918,15 +934,132 @@ class AudioPlayerManager(
                         }
                     }
                 })
-                attachedTextureView?.let { tv ->
-                    runCatching {
-                        setVideoTextureView(tv)
-                        attachedTexturePlayer = this
-                    }
+                runCatching {
+                    trackSelectionParameters = trackSelectionParameters
+                        .buildUpon()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true)
+                        .build()
                 }
             }
         } catch (e: Throwable) {
             Log.e(TAG, "Failed to initialize ExoPlayer", e)
+        }
+    }
+
+    private fun ensureVideoPlayerInitialized(): ExoPlayer? {
+        if (videoExoPlayer != null) return videoExoPlayer
+        return try {
+            val resolvingFactory = com.seitharol.player.OuterTuneResolvingDataSource.createFactory {
+                getPreferredAudioQuality()
+            }
+            val dataSourceFactory = DefaultDataSource.Factory(context, resolvingFactory)
+            val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
+                .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(/* minimumLoadableRetryCount = */ 1))
+
+            val videoLoadControl = DefaultLoadControl.Builder()
+                .setBufferDurationsMs(
+                    /* minBufferMs = */ 6_000,
+                    /* maxBufferMs = */ 20_000,
+                    /* bufferForPlaybackMs = */ 400,
+                    /* bufferForPlaybackAfterRebufferMs = */ 900
+                )
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .setBackBuffer(0, false)
+                .build()
+
+            videoExoPlayer = ExoPlayer.Builder(context)
+                .setMediaSourceFactory(mediaSourceFactory)
+                .setLoadControl(videoLoadControl)
+                .build()
+                .apply {
+                    volume = 0f
+                    runCatching {
+                        trackSelectionParameters = trackSelectionParameters
+                            .buildUpon()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
+                            .build()
+                    }
+                    addListener(object : Player.Listener {
+                        override fun onRenderedFirstFrame() {
+                            if (!_state.value.isVideoFrameRendered) {
+                                _state.value = _state.value.copy(isVideoFrameRendered = true)
+                            }
+                        }
+
+                        override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                            if (videoSize.width > 0 && videoSize.height > 0 && !_state.value.isVideoFrameRendered) {
+                                _state.value = _state.value.copy(isVideoFrameRendered = true)
+                            }
+                        }
+
+                        override fun onPlaybackStateChanged(playbackState: Int) {
+                            if (playbackState == Player.STATE_READY) {
+                                videoRetryCount = 0
+                                val audioP = exoPlayer
+                                if (userRequestedPlay && audioP != null) {
+                                    val targetPos = audioP.currentPosition.coerceAtLeast(0L)
+                                    if (kotlin.math.abs(currentPosition - targetPos) > 450L) {
+                                        seekTo(targetPos)
+                                    }
+                                    if (audioP.isPlaying || audioP.playWhenReady) {
+                                        playWhenReady = true
+                                        play()
+                                    }
+                                }
+                            }
+                        }
+
+                        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                            Log.w(TAG, "videoExoPlayer error: ${error.errorCodeName} - ${error.message}")
+                            val current = _state.value.currentTrack ?: return
+                            if (!userRequestedPlay || (!_state.value.isVideoMode && !current.isVideoTrack)) return
+                            if (videoRetryCount >= 2) return
+                            videoRetryCount++
+                            coroutineScope.launch {
+                                val ytId = InnerTubeStreamExtractor.extractVideoId(current.id) ?: current.id
+                                InnerTubeStreamExtractor.invalidateVideoStreamCache(ytId)
+                                val altRaw = withContext(Dispatchers.IO) {
+                                    InnerTubeStreamExtractor.resolveRawVideoStreamById(
+                                        videoId = ytId,
+                                        forceRefresh = true,
+                                        allowHlsFallback = true
+                                    ).getOrNull()
+                                }
+                                if (!altRaw.isNullOrBlank() && isActive && _state.value.currentTrack?.id == current.id) {
+                                    val vidUrl = if (altRaw.startsWith("merged_av::")) {
+                                        altRaw.removePrefix("merged_av::").substringBefore("|||")
+                                    } else altRaw
+                                    val vp = videoExoPlayer ?: return@launch
+                                    val syncPos = (exoPlayer?.currentPosition ?: _state.value.currentPositionMs).coerceAtLeast(0L)
+                                    val item = current.toMediaItem(Uri.parse(vidUrl))
+                                    if (syncPos > 0L) vp.setMediaItem(item, syncPos) else vp.setMediaItem(item)
+                                    vp.playWhenReady = userRequestedPlay
+                                    vp.prepare()
+                                    if (userRequestedPlay) vp.play()
+                                }
+                            }
+                        }
+                    })
+                    attachedTextureView?.let { tv ->
+                        runCatching {
+                            setVideoTextureView(tv)
+                            attachedTexturePlayer = this
+                        }
+                    }
+                }
+            videoExoPlayer
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to initialize videoExoPlayer: ${t.message}", t)
+            null
+        }
+    }
+
+    private fun stopVideoPlayer() {
+        runCatching {
+            videoExoPlayer?.playWhenReady = false
+            videoExoPlayer?.pause()
+            videoExoPlayer?.stop()
+            videoExoPlayer?.clearMediaItems()
         }
     }
 
@@ -957,70 +1090,72 @@ class AudioPlayerManager(
 
             requestAudioFocus()
             player.volume = if (_state.value.isMuted) 0f else 1.0f
-            val factory = exoMediaSourceFactory
-            if (sourceUrl.startsWith("merged_av::") && factory != null) {
+
+            val isVideo = track.isVideoTrack || _state.value.isVideoMode
+            val videoRawUrl: String?
+            val audioRawUrl: String
+            if (sourceUrl.startsWith("merged_av::")) {
                 val parts = sourceUrl.removePrefix("merged_av::").split("|||")
-                val videoUri = Uri.parse(parts[0])
-                val audioUri = Uri.parse(parts.getOrElse(1) { parts[0] })
-                val videoMime = if (videoUri.toString().contains("webm", ignoreCase = true) ||
-                    videoUri.toString().contains("vp9", ignoreCase = true) ||
-                    videoUri.toString().contains("itag=24", ignoreCase = true)
-                ) {
-                    androidx.media3.common.MimeTypes.VIDEO_WEBM
-                } else {
-                    androidx.media3.common.MimeTypes.VIDEO_MP4
-                }
-                val videoItem = track.toMediaItem(videoUri).buildUpon()
-                    .setMimeType(videoMime)
-                    .build()
-                val audioMime = if (audioUri.toString().contains("opus", ignoreCase = true) ||
-                    audioUri.toString().contains("webm", ignoreCase = true)
-                ) {
-                    androidx.media3.common.MimeTypes.AUDIO_WEBM
-                } else {
-                    androidx.media3.common.MimeTypes.AUDIO_MP4
-                }
-                val audioItem = MediaItem.Builder()
-                    .setMediaId("${track.id}_audio")
-                    .setUri(audioUri)
-                    .setMimeType(audioMime)
-                    .build()
-                val videoSource = factory.createMediaSource(videoItem)
-                val audioSource = factory.createMediaSource(audioItem)
-                val mergedSource = androidx.media3.exoplayer.source.MergingMediaSource(videoSource, audioSource)
-                if (startPositionMs > 0L) {
-                    player.setMediaSource(mergedSource, startPositionMs)
-                } else {
-                    player.setMediaSource(mergedSource)
-                }
+                videoRawUrl = parts[0]
+                audioRawUrl = parts.getOrElse(1) { parts[0] }
             } else {
-                val parsedUri = when {
-                    sourceUrl.startsWith("content://") -> Uri.parse(sourceUrl)
-                    sourceUrl.startsWith("file://") -> {
-                        val rawPath = Uri.parse(sourceUrl).path ?: sourceUrl.removePrefix("file://")
-                        val f = File(rawPath)
-                        if (f.exists()) Uri.fromFile(f) else Uri.fromFile(File(sourceUrl.removePrefix("file://")))
-                    }
-                    sourceUrl.startsWith("/") -> Uri.fromFile(File(sourceUrl))
-                    else -> Uri.parse(sourceUrl)
-                }
-                val mediaItem = track.toMediaItem(parsedUri)
-                if (startPositionMs > 0L) {
-                    player.setMediaItem(mediaItem, startPositionMs)
-                } else {
-                    player.setMediaItem(mediaItem)
-                }
+                videoRawUrl = if (isVideo) sourceUrl else null
+                audioRawUrl = sourceUrl
             }
-            attachedTextureView?.let { tv ->
-                if (attachedTexturePlayer !== player) {
-                    attachedTexturePlayer = player
-                    runCatching { player.setVideoTextureView(tv) }
+
+            fun parseSourceUri(raw: String): Uri = when {
+                raw.startsWith("content://") -> Uri.parse(raw)
+                raw.startsWith("file://") -> {
+                    val rawPath = Uri.parse(raw).path ?: raw.removePrefix("file://")
+                    val f = File(rawPath)
+                    if (f.exists()) Uri.fromFile(f) else Uri.fromFile(File(raw.removePrefix("file://")))
                 }
+                raw.startsWith("/") -> Uri.fromFile(File(raw))
+                else -> Uri.parse(raw)
+            }
+
+            // 1. Setup Audio on main exoPlayer (100% single MediaItem, zero MergingMediaSource deadlock!)
+            val parsedAudioUri = parseSourceUri(audioRawUrl)
+            val audioMediaItem = track.toMediaItem(parsedAudioUri)
+            if (startPositionMs > 0L) {
+                player.setMediaItem(audioMediaItem, startPositionMs)
+            } else {
+                player.setMediaItem(audioMediaItem)
             }
             player.playWhenReady = userRequestedPlay
             player.prepare()
             if (userRequestedPlay) {
                 player.play()
+            }
+
+            // 2. Setup Video on dedicated videoExoPlayer (or stop videoExoPlayer when playing audio-only song)
+            if (isVideo && !videoRawUrl.isNullOrBlank()) {
+                videoRetryCount = 0
+                val vp = ensureVideoPlayerInitialized()
+                if (vp != null) {
+                    attachedTextureView?.let { tv ->
+                        if (attachedTexturePlayer !== vp) {
+                            attachedTexturePlayer = vp
+                            runCatching { vp.setVideoTextureView(tv) }
+                        }
+                    }
+                    vp.volume = 0f
+                    vp.repeatMode = player.repeatMode
+                    val parsedVideoUri = parseSourceUri(videoRawUrl)
+                    val videoMediaItem = track.toMediaItem(parsedVideoUri)
+                    if (startPositionMs > 0L) {
+                        vp.setMediaItem(videoMediaItem, startPositionMs)
+                    } else {
+                        vp.setMediaItem(videoMediaItem)
+                    }
+                    vp.playWhenReady = userRequestedPlay
+                    vp.prepare()
+                    if (userRequestedPlay) {
+                        vp.play()
+                    }
+                }
+            } else {
+                stopVideoPlayer()
             }
 
             startPositionTracker()
@@ -1056,7 +1191,20 @@ class AudioPlayerManager(
                     val adjustedPos = pos + _state.value.lyricOffsetMs
                     val activeIdx = currentLyrics.indexOfLast { it.timestampMs <= adjustedPos }
 
-                    val hasVideoSize = player.videoSize.width > 0 && player.videoSize.height > 0
+                    val vp = videoExoPlayer
+                    val hasVideoSize = (vp != null && vp.videoSize.width > 0 && vp.videoSize.height > 0) ||
+                        (player.videoSize.width > 0 && player.videoSize.height > 0)
+                    if (vp != null && (_state.value.isVideoMode || _state.value.currentTrack?.isVideoTrack == true)) {
+                        if (vp.playbackState == Player.STATE_READY) {
+                            if (!vp.isPlaying && player.isPlaying) {
+                                vp.playWhenReady = true
+                                vp.play()
+                            }
+                            if (kotlin.math.abs(vp.currentPosition - pos) > 550L) {
+                                vp.seekTo(pos)
+                            }
+                        }
+                    }
                     _state.value = _state.value.copy(
                         currentPositionMs = pos,
                         durationMs = if (safeDur > 0L) safeDur else _state.value.durationMs,
@@ -1299,6 +1447,7 @@ class AudioPlayerManager(
             exoPlayer?.playWhenReady = false
             exoPlayer?.stop()
             exoPlayer?.clearMediaItems()
+            stopVideoPlayer()
         } catch (_: Throwable) {}
         _state.value = _state.value.copy(
             isPlaying = false,
@@ -1334,6 +1483,7 @@ class AudioPlayerManager(
             exoPlayer?.playWhenReady = false
             exoPlayer?.pause()
             exoPlayer?.stop()
+            stopVideoPlayer()
         } catch (_: Throwable) {}
         _state.value = _state.value.copy(
             isPlaying = false,
@@ -1749,6 +1899,8 @@ class AudioPlayerManager(
         try {
             player?.playWhenReady = false
             player?.pause()
+            videoExoPlayer?.playWhenReady = false
+            videoExoPlayer?.pause()
         } catch (_: Throwable) {}
         _state.value = _state.value.copy(
             isPlaying = false,
@@ -1796,6 +1948,13 @@ class AudioPlayerManager(
                     }
                     player.playWhenReady = true
                     player.play()
+                    if (_state.value.isVideoMode || current.isVideoTrack) {
+                        videoExoPlayer?.let { vp ->
+                            vp.seekTo(player.currentPosition.coerceAtLeast(0L))
+                            vp.playWhenReady = true
+                            vp.play()
+                        }
+                    }
                     _state.value = _state.value.copy(isPlaying = true, isBuffering = false)
                     persistCurrentPlaybackState()
                     MediaPlaybackService.startService(context)
@@ -1810,6 +1969,7 @@ class AudioPlayerManager(
         val clamped = positionMs.coerceAtLeast(0L)
         lastUserSeekTimestamp = System.currentTimeMillis()
         exoPlayer?.seekTo(clamped)
+        runCatching { videoExoPlayer?.seekTo(clamped) }
         val activeIdx = _state.value.lyricLines.indexOfLast { it.timestampMs <= clamped + _state.value.lyricOffsetMs }
         _state.value = _state.value.copy(currentPositionMs = clamped, activeLyricIndex = activeIdx)
         persistCurrentPlaybackState()
@@ -1875,11 +2035,13 @@ class AudioPlayerManager(
 
     fun setRepeatMode(mode: RepeatMode) {
         _state.value = _state.value.copy(repeatMode = mode)
-        exoPlayer?.repeatMode = when (mode) {
+        val exoRepeat = when (mode) {
             RepeatMode.OFF -> Player.REPEAT_MODE_OFF
             RepeatMode.ONE -> Player.REPEAT_MODE_ONE
             RepeatMode.ALL -> Player.REPEAT_MODE_ALL
         }
+        exoPlayer?.repeatMode = exoRepeat
+        videoExoPlayer?.repeatMode = exoRepeat
         persistCurrentPlaybackState()
     }
 
@@ -2218,16 +2380,15 @@ class AudioPlayerManager(
 
     fun attachVideoTextureView(textureView: android.view.TextureView?) {
         try {
-            ensurePlayerInitialized()
-            val player = exoPlayer ?: return
+            val vp = ensureVideoPlayerInitialized() ?: return
             if (textureView == null) {
-                attachedTextureView?.let { player.clearVideoTextureView(it) }
+                attachedTextureView?.let { vp.clearVideoTextureView(it) }
                 attachedTextureView = null
                 attachedTexturePlayer = null
-            } else if (attachedTextureView !== textureView || attachedTexturePlayer !== player) {
+            } else if (attachedTextureView !== textureView || attachedTexturePlayer !== vp) {
                 attachedTextureView = textureView
-                attachedTexturePlayer = player
-                player.setVideoTextureView(textureView)
+                attachedTexturePlayer = vp
+                vp.setVideoTextureView(textureView)
             }
         } catch (t: Throwable) {
             Log.w(TAG, "attachVideoTextureView error: ${t.message}")
@@ -2250,6 +2411,7 @@ class AudioPlayerManager(
         _state.value = _state.value.copy(playbackSpeed = clamped)
         try {
             exoPlayer?.setPlaybackSpeed(clamped)
+            videoExoPlayer?.setPlaybackSpeed(clamped)
         } catch (_: Throwable) {}
     }
 
@@ -2347,6 +2509,8 @@ class AudioPlayerManager(
             context.unregisterReceiver(telephonyReceiver)
         } catch (_: Throwable) {}
         abandonAudioFocus()
+        runCatching { videoExoPlayer?.release() }
+        videoExoPlayer = null
         runCatching { exoPlayer?.release() }
         exoPlayer = null
         coroutineScope.cancel()

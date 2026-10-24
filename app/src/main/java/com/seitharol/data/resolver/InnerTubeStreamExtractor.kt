@@ -314,19 +314,6 @@ object InnerTubeStreamExtractor {
 
     val VIDEO_CLIENTS = listOf(
         InnerTubeClientConfig(
-            clientName = "VISIONOS",
-            clientVersion = "0.1",
-            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
-            clientId = "101",
-            deviceMake = "Apple",
-            deviceModel = "RealityDevice14,1",
-            osName = "visionOS",
-            osVersion = "1.3.21O771",
-            params = null,
-            glOverride = null,
-            sendOriginHeaders = true
-        ),
-        InnerTubeClientConfig(
             clientName = "ANDROID_VR",
             clientVersion = "1.61.48",
             userAgent = "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
@@ -339,6 +326,19 @@ object InnerTubeStreamExtractor {
             params = null,
             glOverride = null,
             sendOriginHeaders = false
+        ),
+        InnerTubeClientConfig(
+            clientName = "VISIONOS",
+            clientVersion = "0.1",
+            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+            clientId = "101",
+            deviceMake = "Apple",
+            deviceModel = "RealityDevice14,1",
+            osName = "visionOS",
+            osVersion = "1.3.21O771",
+            params = null,
+            glOverride = null,
+            sendOriginHeaders = true
         ),
         InnerTubeClientConfig(
             clientName = "ANDROID",
@@ -505,7 +505,7 @@ object InnerTubeStreamExtractor {
             // Only send visitorData when explicitly requested or on VISIONOS/embedded clients;
             // keeping ANDROID_VR, IOS, and ANDROID_TESTSUITE stateless prevents YouTube from
             // throttling or blocking subsequent songs/videos after the first playback!
-            val visData = cachedVisitorData?.takeIf { it.isNotBlank() }
+            val visData = if (client.isEmbedded) cachedVisitorData?.takeIf { it.isNotBlank() } else null
             val effectiveGl = client.glOverride ?: resolveDeviceGl()
             val endpoint = URL(client.playerEndpoint)
             val conn = (endpoint.openConnection() as HttpURLConnection).apply {
@@ -659,8 +659,8 @@ object InnerTubeStreamExtractor {
             collectStreams(adaptiveFormats, isLegacy = false, allowCipher = false)
             collectStreams(legacyFormats, isLegacy = true, allowCipher = false)
 
-            // Pass 2: Inspect ciphered streams if the client returned zero direct URLs
-            if (audioStreams.isEmpty()) {
+            // Pass 2: Inspect ciphered streams on embedded clients if Pass 1 returned zero direct URLs
+            if (audioStreams.isEmpty() && client.isEmbedded) {
                 collectStreams(adaptiveFormats, isLegacy = false, allowCipher = true)
                 collectStreams(legacyFormats, isLegacy = true, allowCipher = true)
             }
@@ -732,28 +732,23 @@ object InnerTubeStreamExtractor {
             return@withContext Result.success(fastUrl)
         }
 
-        // Parallel Race: Query remaining top clients concurrently so fallback completes in < 1s
+        // Sequential Client Failover: avoids burst rate-limiting on YouTube InnerTube
         val remainingClients = VERIFIED_CLIENTS.indices
             .filter { it != (startOffset % VERIFIED_CLIENTS.size) }
             .map { VERIFIED_CLIENTS[it] }
-        val parallelUrls = coroutineScope {
-            remainingClients.take(4).map { client ->
-                async {
-                    extractStreamWithConfig(
-                        videoId = cleanVideoId,
-                        client = client,
-                        preferredQuality = preferredQuality,
-                        cpn = generateCpn(),
-                        allowHls = false,
-                        includeVisitorData = true
-                    )
-                }
-            }.awaitAll()
-        }
-        val winnerUrl = parallelUrls.firstOrNull { !it.isNullOrBlank() }
-        if (!winnerUrl.isNullOrBlank()) {
-            com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, winnerUrl)
-            return@withContext Result.success(winnerUrl)
+        for (client in remainingClients) {
+            val nextUrl = extractStreamWithConfig(
+                videoId = cleanVideoId,
+                client = client,
+                preferredQuality = preferredQuality,
+                cpn = generateCpn(),
+                allowHls = false,
+                includeVisitorData = false
+            )
+            if (!nextUrl.isNullOrBlank()) {
+                com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, nextUrl)
+                return@withContext Result.success(nextUrl)
+            }
         }
 
         Result.failure(IllegalStateException("Failed to resolve verified YouTube stream for videoId=$cleanVideoId"))
@@ -2301,6 +2296,7 @@ object InnerTubeStreamExtractor {
     }
 
     private val failedVideoStreamsByVideoId = java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>>()
+    private val videoClientRotation = java.util.concurrent.atomic.AtomicInteger(0)
 
     suspend fun resolveRawVideoStreamById(
         videoId: String,
@@ -2337,89 +2333,60 @@ object InnerTubeStreamExtractor {
             }
         }
 
+        val preferMuxedOnly = !allowHlsFallback || failedSet.contains("TYPE_MERGED_AV")
+        val startIdx = if (forceRefresh) {
+            videoClientRotation.incrementAndGet() % VIDEO_CLIENTS.size
+        } else {
+            0
+        }
+
         var hlsFallbackCandidate: String? = null
 
-        // Pass 1: Parallel race across top clients (VISIONOS, ANDROID_VR 1.61.48, ANDROID 20.10.38, ANDROID_VR 1.43.32, TVHTML5, WEB_EMBEDDED)
-        val batch1 = VIDEO_CLIENTS.take(6)
-        val results1 = coroutineScope {
-            batch1.map { client ->
-                async {
-                    extractProgressiveVideoWithClient(
-                        cleanVideoId = cleanVideoId,
-                        client = client,
-                        cpn = generateCpn(),
-                        includeVisitorData = true,
-                        allowAdaptiveMerge = allowHlsFallback
-                    ) { hls ->
-                        if (isHlsSupported && hlsFallbackCandidate.isNullOrBlank() && hls.isNotBlank()) {
-                            hlsFallbackCandidate = hls
-                        }
-                    }
-                }
-            }.awaitAll()
-        }.filterNotNull().filter { it.isNotBlank() && !failedSet.contains(it) }
-
-        val mergedCandidates = results1.filter { it.startsWith("merged_av::") }
-        val directMp4Candidates = results1.filter { !it.startsWith("merged_av::") && !it.contains(".m3u8", true) }
-
-        // If forceRefresh blacklisted TYPE_MERGED_AV, prefer directMp4Candidates first;
-        // If forceRefresh blacklisted TYPE_PROGRESSIVE_MP4, prefer mergedCandidates first;
-        // Otherwise prefer ANDROID_VR/VISIONOS merged_av:: (which uses the exact same un-gated adaptiveFormats CDN as working audio songs!)
-        // followed immediately by directMp4Candidates (VISIONOS / ANDROID 20.10.38 itag 18).
-        val orderedWinners = when {
-            !allowHlsFallback -> directMp4Candidates
-            failedSet.contains("TYPE_MERGED_AV") && !failedSet.contains("TYPE_PROGRESSIVE_MP4") ->
-                directMp4Candidates + mergedCandidates
-            failedSet.contains("TYPE_PROGRESSIVE_MP4") && !failedSet.contains("TYPE_MERGED_AV") ->
-                mergedCandidates + directMp4Candidates
-            else -> mergedCandidates + directMp4Candidates
-        }
-
-        val pass1Winner = orderedWinners.firstOrNull()
-        if (!pass1Winner.isNullOrBlank()) {
-            videoStreamCache[cleanVideoId] = pass1Winner to now
-            return@withContext Result.success(pass1Winner)
-        }
-
-        // Pass 2: Race remaining VIDEO_CLIENTS + Piped/Invidious federated video nodes concurrently
-        val remainingClients = VIDEO_CLIENTS.drop(6)
-        val fallbackWinner = coroutineScope {
-            val clientJobs = remainingClients.map { client ->
-                async {
-                    extractProgressiveVideoWithClient(
-                        cleanVideoId = cleanVideoId,
-                        client = client,
-                        cpn = generateCpn(),
-                        includeVisitorData = true,
-                        allowAdaptiveMerge = allowHlsFallback
-                    ) { hls ->
-                        if (isHlsSupported && hlsFallbackCandidate.isNullOrBlank() && hls.isNotBlank()) {
-                            hlsFallbackCandidate = hls
-                        }
-                    }
+        // Single-Request Fast Path (identical to audio song resolution — zero burst rate-limiting!):
+        // Try VIDEO_CLIENTS one by one starting at startIdx (ANDROID_VR 1.61.48 first on initial play).
+        // As soon as the first client returns a valid stream (~300ms), return immediately!
+        for (offset in VIDEO_CLIENTS.indices) {
+            val client = VIDEO_CLIENTS[(startIdx + offset) % VIDEO_CLIENTS.size]
+            val candidate = extractProgressiveVideoWithClient(
+                cleanVideoId = cleanVideoId,
+                client = client,
+                cpn = generateCpn(),
+                includeVisitorData = false,
+                allowAdaptiveMerge = !preferMuxedOnly
+            ) { hls ->
+                if (isHlsSupported && hlsFallbackCandidate.isNullOrBlank() && hls.isNotBlank()) {
+                    hlsFallbackCandidate = hls
                 }
             }
-            val federatedJob = async { resolvePipedOrInvidiousMuxedVideo(cleanVideoId) }
-            val all = (clientJobs.awaitAll() + listOf(federatedJob.await()))
-                .filterNotNull()
-                .filter { it.isNotBlank() && !failedSet.contains(it) }
-            all.firstOrNull()
+            if (!candidate.isNullOrBlank() && !failedSet.contains(candidate)) {
+                videoStreamCache[cleanVideoId] = candidate to now
+                return@withContext Result.success(candidate)
+            }
         }
 
-        if (!fallbackWinner.isNullOrBlank()) {
-            videoStreamCache[cleanVideoId] = fallbackWinner to now
-            return@withContext Result.success(fallbackWinner)
-        }
-
-        // Pass 3: If all failedSet entries exhausted, clear failedSet and return any available candidate
-        if (results1.isNotEmpty()) {
+        // If preferMuxedOnly was true (because TYPE_MERGED_AV was blacklisted), try once with allowAdaptiveMerge = allowHlsFallback
+        if (preferMuxedOnly && allowHlsFallback) {
             failedSet.clear()
-            val anyWinner = results1.first()
-            videoStreamCache[cleanVideoId] = anyWinner to now
-            return@withContext Result.success(anyWinner)
+            val retryUrl = extractProgressiveVideoWithClient(
+                cleanVideoId = cleanVideoId,
+                client = VIDEO_CLIENTS[0],
+                cpn = generateCpn(),
+                includeVisitorData = false,
+                allowAdaptiveMerge = true
+            )
+            if (!retryUrl.isNullOrBlank()) {
+                videoStreamCache[cleanVideoId] = retryUrl to now
+                return@withContext Result.success(retryUrl)
+            }
         }
 
-        // Pass 4: Only use HLS manifest if HlsMediaSource is compiled into the app
+        // Final Fallback: Federated Piped / Invidious muxed MP4
+        val federatedMp4 = resolvePipedOrInvidiousMuxedVideo(cleanVideoId)
+        if (!federatedMp4.isNullOrBlank()) {
+            videoStreamCache[cleanVideoId] = federatedMp4 to now
+            return@withContext Result.success(federatedMp4)
+        }
+
         if (allowHlsFallback && isHlsSupported && !hlsFallbackCandidate.isNullOrBlank()) {
             val hls = hlsFallbackCandidate!!
             videoStreamCache[cleanVideoId] = hls to now
@@ -2438,12 +2405,13 @@ object InnerTubeStreamExtractor {
         onHlsDiscovered: (String) -> Unit = {}
     ): String? {
         return runCatching {
-            val visData = cachedVisitorData?.takeIf { it.isNotBlank() }
+            // Keep ANDROID_VR, ANDROID, IOS, VISIONOS, and ANDROID_TESTSUITE 100% stateless
+            val visData = if (client.isEmbedded && includeVisitorData) cachedVisitorData?.takeIf { it.isNotBlank() } else null
             val effectiveGl = client.glOverride ?: resolveDeviceGl()
             val conn = (URL(client.playerEndpoint).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 2200
-                readTimeout = 2500
+                connectTimeout = 2000
+                readTimeout = 2200
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("User-Agent", client.userAgent)
@@ -2498,9 +2466,6 @@ object InnerTubeStreamExtractor {
             conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
             if (conn.responseCode != 200) return@runCatching null
             val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-            json.optJSONObject("responseContext")?.optString("visitorData")?.takeIf { it.isNotBlank() }?.let {
-                cachedVisitorData = it
-            }
 
             val status = json.optJSONObject("playabilityStatus")?.optString("status")
             if (status != "OK") return@runCatching null
@@ -2544,17 +2509,19 @@ object InnerTubeStreamExtractor {
                 return rawUrl
             }
 
+            // Only attempt JS cipher deciphering on embedded clients; non-embedded clients return direct unciphered URLs
+            val cipherPasses = if (client.isEmbedded) listOf(false, true) else listOf(false)
+
             fun findMuxedMp4(): String? {
                 val formats = streamingData.optJSONArray("formats") ?: return null
                 val candidates = mutableListOf<Pair<Int, String>>()
-                for (allowCipher in listOf(false, true)) {
+                for (allowCipher in cipherPasses) {
                     for (i in 0 until formats.length()) {
                         val fmt = formats.optJSONObject(i) ?: continue
                         val mime = fmt.optString("mimeType", "")
                         val itag = fmt.optInt("itag", 0)
                         if (!mime.startsWith("video/") && itag !in listOf(18, 22, 37, 59, 78)) continue
                         var rawUrl = resolveFormatUrl(fmt, allowCipher = allowCipher)
-                        // If contentLength is in the JSON object but clen= is missing from URL, append clen= so HTTP Range chunker knows exact size
                         val jsonClen = fmt.optString("contentLength", "").toLongOrNull() ?: -1L
                         if (rawUrl.isNotBlank() && jsonClen > 0L && !rawUrl.contains("clen=")) {
                             val sep = if (rawUrl.contains("?")) "&" else "?"
@@ -2572,13 +2539,11 @@ object InnerTubeStreamExtractor {
 
             fun findAdaptiveMergedAv(): String? {
                 if (!allowAdaptiveMerge) return null
-                // Note: ANDROID (20.10.38) and IOS adaptiveFormats are PO-token gated at 64KB,
-                // whereas ANDROID_VR and VISIONOS adaptiveFormats are un-gated!
                 if (client.clientName == "ANDROID" || client.clientName == "IOS") return null
                 val adaptive = streamingData.optJSONArray("adaptiveFormats") ?: return null
                 val videoCandidates = mutableListOf<Pair<Int, String>>()
                 val audioCandidates = mutableListOf<Pair<Int, String>>()
-                for (allowCipher in listOf(false, true)) {
+                for (allowCipher in cipherPasses) {
                     for (i in 0 until adaptive.length()) {
                         val fmt = adaptive.optJSONObject(i) ?: continue
                         val mime = fmt.optString("mimeType", "")
@@ -2616,14 +2581,10 @@ object InnerTubeStreamExtractor {
                 } else null
             }
 
-            // On ANDROID_VR: format 18 in `formats` frequently 403s, whereas `adaptiveFormats` (merged_av::)
-            // uses the exact same un-gated CDN pipeline that plays normal audio songs!
             if (client.clientName == "ANDROID_VR" && allowAdaptiveMerge) {
                 findAdaptiveMergedAv()?.let { return@runCatching it }
                 findMuxedMp4()?.let { return@runCatching it }
             } else {
-                // On VISIONOS, ANDROID (20.10.38), TVHTML5, WEB_EMBEDDED, or when downloading MP4 (allowAdaptiveMerge=false):
-                // prefer single-file muxed MP4 (`itag 18`) first!
                 findMuxedMp4()?.let { return@runCatching it }
                 findAdaptiveMergedAv()?.let { return@runCatching it }
             }
@@ -2893,9 +2854,6 @@ object InnerTubeStreamExtractor {
                 conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
                 if (conn.responseCode == 200) {
                     val root = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-                    root.optJSONObject("responseContext")?.optString("visitorData")?.takeIf { it.isNotBlank() }?.let {
-                        cachedVisitorData = it
-                    }
                     val videoRenderers = mutableListOf<JSONObject>()
                     collectVideoRenderers(root, videoRenderers)
                     for (vr in videoRenderers) {

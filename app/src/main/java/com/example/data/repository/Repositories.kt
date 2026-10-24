@@ -635,15 +635,9 @@ class DownloadRepository(
                 buildList {
                     val ytId = com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(track.id) ?: track.id
                     com.seitharol.data.resolver.InnerTubeStreamExtractor
-                        .resolveRawVideoStreamById(ytId, forceRefresh = false)
+                        .resolveRawVideoStreamById(ytId)
                         .getOrNull()
                         ?.let { if (!it.contains(".m3u8", true)) add(it) }
-                    if (isEmpty()) {
-                        com.seitharol.data.resolver.InnerTubeStreamExtractor
-                            .resolveRawVideoStreamById(ytId, forceRefresh = true)
-                            .getOrNull()
-                            ?.let { if (!it.contains(".m3u8", true)) add(it) }
-                    }
                 }
             } else {
                 val quality = when (tier) {

@@ -1203,6 +1203,7 @@ class AudioPlayerManager(
                 val localLyrics = parseLrc(current.lyrics)
                 val expectedDuration = if (current.durationMs > 0L) current.durationMs else 210000L
                 val initialPos = resumePositionMs.coerceAtLeast(0L)
+                val initialLyricIdx = localLyrics.indexOfLast { it.timestampMs <= initialPos + _state.value.lyricOffsetMs }
                 val isVideoTrack = current.isVideoTrack
 
                 _state.value = _state.value.copy(

@@ -131,14 +131,15 @@ object SeitharolDeepLinkHelper {
             parseSharedTextOrUrl(sharedText)?.let { return it }
         }
 
-        val uri: Uri = intent.data ?: if (action == Intent.ACTION_SEND) {
+        val streamUri = if (action == Intent.ACTION_SEND) {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                 intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
             } else {
                 @Suppress("DEPRECATION")
                 intent.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
             }
-        } else null ?: return null
+        } else null
+        val uri: Uri = intent.data ?: streamUri ?: return null
 
         val scheme = uri.scheme?.lowercase().orEmpty()
         val lowerPath = uri.toString().lowercase()

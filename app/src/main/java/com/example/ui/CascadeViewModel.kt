@@ -235,7 +235,10 @@ class CascadeViewModel(
 
     fun refreshQueueSuggestions(seedTrack: Track?) {
         val seed = seedTrack ?: playerState.value.currentTrack ?: return
-        if (isOfflineMode.value) return
+        if (isOfflineMode.value || !seed.isVideoTrack) {
+            _queueVideoSuggestions.value = emptyList()
+            return
+        }
         viewModelScope.launch(vmExceptionHandler) {
             runCatching {
                 val query = "${seed.title} ${seed.artist}".trim()

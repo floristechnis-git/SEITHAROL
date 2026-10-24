@@ -55,12 +55,15 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.example.MainActivity
 import com.example.data.remote.InnerTubeResolver
 import com.example.player.PlayerState
 import com.example.player.RepeatMode
 import com.example.ui.CascadeViewModel
 import com.example.ui.components.PlaybackQueueModal
 import com.example.ui.theme.*
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import com.seitharol.data.preferences.AppSettingsManager
 import com.seitharol.ui.components.FullscreenExpandSvgIcon
 import com.seitharol.ui.components.FullscreenMinimizeSvgIcon
@@ -478,6 +481,7 @@ fun PlayerScreen(
                     onToggleZoomCrop = { isVideoZoomCrop = !isVideoZoomCrop },
                     onEnterFullscreen = { showFullscreenVideo = true },
                     onEnterPiP = {
+                        (context as? MainActivity)?.enterPiPMode()
                         onDismiss()
                     }
                 )
@@ -949,6 +953,7 @@ fun PlayerScreen(
             onToggleZoomCrop = { isVideoZoomCrop = !isVideoZoomCrop },
             onEnterPiP = {
                 showFullscreenVideo = false
+                (context as? MainActivity)?.enterPiPMode()
                 onDismiss()
             },
             onDismiss = { showFullscreenVideo = false }
@@ -1071,20 +1076,22 @@ fun SeitharolRawVideoSurface(
                 )
             }
 
-            // Raw TextureView bound once on creation (never re-bound on 200ms recompositions)
+            // Media3 PlayerView bound to ExoPlayer singleton instance
             AndroidView(
                 factory = { ctx ->
-                    TextureView(ctx).also { tv ->
-                        viewModel.attachVideoTextureView(tv)
+                    PlayerView(ctx).apply {
+                        useController = false
+                        resizeMode = if (isZoomCrop) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        player = viewModel.playerInstance
                     }
                 },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        val s = if (isZoomCrop) 1.18f else 1.0f
-                        scaleX = s
-                        scaleY = s
+                update = { pv ->
+                    if (pv.player !== viewModel.playerInstance) {
+                        pv.player = viewModel.playerInstance
                     }
+                    pv.resizeMode = if (isZoomCrop) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
+                },
+                modifier = Modifier.fillMaxSize()
             )
 
             // Subtle loading indicator while buffering when controls are hidden
@@ -1196,8 +1203,11 @@ fun SeitharolRawVideoSurface(
                                     .size(32.dp)
                                     .clip(CircleShape)
                                     .clickable {
-                                        runCatching {
-                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                        val mainActivity = context as? MainActivity
+                                        if (mainActivity != null) {
+                                            mainActivity.enterPiPMode()
+                                        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                            runCatching {
                                                 val activity = context as? Activity
                                                 activity?.enterPictureInPictureMode(
                                                     PictureInPictureParams.Builder()
@@ -1401,18 +1411,21 @@ fun SeitharolFullscreenVideoModal(
             ) {
                 AndroidView(
                     factory = { ctx ->
-                        TextureView(ctx).also { tv ->
-                            viewModel.attachVideoTextureView(tv)
+                        PlayerView(ctx).apply {
+                            useController = false
+                            resizeMode = if (isZoomCrop) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            player = viewModel.playerInstance
                         }
+                    },
+                    update = { pv ->
+                        if (pv.player !== viewModel.playerInstance) {
+                            pv.player = viewModel.playerInstance
+                        }
+                        pv.resizeMode = if (isZoomCrop) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
                     },
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(16f / 9f)
-                        .graphicsLayer {
-                            val s = if (isZoomCrop) 1.22f else 1.0f
-                            scaleX = s
-                            scaleY = s
-                        }
                 )
 
                 AnimatedVisibility(

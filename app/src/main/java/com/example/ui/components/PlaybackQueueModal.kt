@@ -89,8 +89,16 @@ fun PlaybackQueueModal(
         val combinedPool = if (isCurrentVideo) {
             (videoSuggestions + personalizedTracks + trendingHits).distinctBy { it.id }
         } else {
-            // Interleave video suggestions as secondary source for video discovery in queue
-            (videoSuggestions.take(4) + personalizedTracks + trendingHits).distinctBy { it.id }
+            (personalizedTracks + trendingHits)
+                .filterNot {
+                    it.isVideoTrack ||
+                    it.album.equals("YouTube Video", ignoreCase = true) ||
+                    it.genre.equals("YouTube Video", ignoreCase = true) ||
+                    it.codec.equals("MP4", ignoreCase = true) ||
+                    it.title.contains("official video", ignoreCase = true) ||
+                    it.title.contains("music video", ignoreCase = true)
+                }
+                .distinctBy { it.id }
         }
         combinedPool.filter { it.id !in queueIds }.take(12)
     }
@@ -526,7 +534,6 @@ fun PlaybackQueueModal(
                         }
 
                         itemsIndexed(suggestedTracks, key = { idx, track -> "suggested_${track.id}_$idx" }) { _, track ->
-                            val isSuggestedVideo = track.isVideoTrack
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
                                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -534,7 +541,6 @@ fun PlaybackQueueModal(
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
                                     .clickable {
-                                        // Tapping a suggested track in queue plays it immediately (including Video Mode for video suggestions)
                                         viewModel.playTrack(track)
                                         onDismiss()
                                     }
@@ -547,7 +553,7 @@ fun PlaybackQueueModal(
                                 ) {
                                     Box(
                                         modifier = Modifier
-                                            .size(width = if (isSuggestedVideo) 64.dp else 42.dp, height = 42.dp)
+                                            .size(42.dp)
                                             .clip(RoundedCornerShape(6.dp))
                                     ) {
                                         AsyncImage(
@@ -561,34 +567,17 @@ fun PlaybackQueueModal(
                                     Spacer(modifier = Modifier.width(12.dp))
 
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            if (isSuggestedVideo) {
-                                                Surface(
-                                                    shape = RoundedCornerShape(4.dp),
-                                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
-                                                    modifier = Modifier.padding(end = 6.dp)
-                                                ) {
-                                                    Text(
-                                                        text = "VIDEO",
-                                                        color = MaterialTheme.colorScheme.primary,
-                                                        fontSize = 9.sp,
-                                                        fontWeight = FontWeight.ExtraBold,
-                                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                                                    )
-                                                }
-                                            }
-                                            Text(
-                                                text = track.title,
-                                                color = MaterialTheme.colorScheme.onSurface,
-                                                fontSize = 13.sp,
-                                                fontFamily = OutfitFontFamily,
-                                                fontWeight = FontWeight.Medium,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
                                         Text(
-                                            text = if (isSuggestedVideo) "${track.artist} • YouTube Video" else track.artist,
+                                            text = track.title,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            fontSize = 13.sp,
+                                            fontFamily = OutfitFontFamily,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = track.artist,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             fontSize = 11.sp,
                                             fontFamily = OutfitFontFamily,

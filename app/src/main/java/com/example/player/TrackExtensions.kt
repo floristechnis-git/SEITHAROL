@@ -6,6 +6,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import com.example.data.model.Track
 
+import androidx.media3.common.MimeTypes
+
 fun Track.toMediaItem(streamUri: Uri? = null): MediaItem {
     val safeTitle = title.ifBlank { "Unknown Track" }
     val safeArtist = artist.ifBlank { "Unknown Artist" }
@@ -26,10 +28,20 @@ fun Track.toMediaItem(streamUri: Uri? = null): MediaItem {
         .setExtras(extras)
         .build()
 
-    return MediaItem.Builder()
+    val effectiveUri = streamUri ?: if (audioUrl.isNotBlank()) Uri.parse(audioUrl) else Uri.parse("resolver://track/$id")
+    val uriString = effectiveUri.toString().lowercase()
+
+    val builder = MediaItem.Builder()
         .setMediaId(id)
-        .setUri(streamUri ?: if (audioUrl.isNotBlank()) Uri.parse(audioUrl) else Uri.parse("resolver://track/$id"))
+        .setUri(effectiveUri)
         .setMediaMetadata(metadata)
-        .setTag(this) // Preserves full domain object
-        .build()
+        .setTag(this)
+
+    if (uriString.contains(".m3u8") || uriString.contains("manifest/hls")) {
+        builder.setMimeType(MimeTypes.APPLICATION_M3U8)
+    } else if (uriString.endsWith(".mp4") || codec.equals("MP4", ignoreCase = true)) {
+        builder.setMimeType(MimeTypes.VIDEO_MP4)
+    }
+
+    return builder.build()
 }

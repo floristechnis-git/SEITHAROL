@@ -162,8 +162,8 @@ object OuterTuneResolvingDataSource {
     ): DataSource.Factory {
         val baseHttpFactory = DefaultHttpDataSource.Factory()
             .setUserAgent(VISIONOS_USER_AGENT)
-            .setConnectTimeoutMs(6_000)
-            .setReadTimeoutMs(8_000)
+            .setConnectTimeoutMs(15_000)
+            .setReadTimeoutMs(20_000)
             .setAllowCrossProtocolRedirects(true)
 
         return ResolvingDataSource.Factory(baseHttpFactory) { dataSpec: DataSpec ->

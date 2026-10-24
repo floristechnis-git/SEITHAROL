@@ -384,11 +384,10 @@ fun SearchScreen(
                                         )
                                     }
                                     com.example.ui.ProviderFilter.MUSIC -> {
-                                        Icon(
-                                            imageVector = Icons.Default.MusicNote,
-                                            contentDescription = "Music",
-                                            tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(16.dp)
+                                        Image(
+                                            painter = painterResource(id = R.drawable.ic_youtube_music),
+                                            contentDescription = "YouTube Music",
+                                            modifier = Modifier.size(18.dp)
                                         )
                                     }
                                     com.example.ui.ProviderFilter.JIOSAAVN -> {
@@ -402,7 +401,7 @@ fun SearchScreen(
                                         Image(
                                             painter = painterResource(id = R.drawable.ic_youtube),
                                             contentDescription = "YouTube",
-                                            modifier = Modifier.size(18.dp)
+                                            modifier = Modifier.size(20.dp, 14.dp)
                                         )
                                     }
                                     com.example.ui.ProviderFilter.LOCAL -> {
@@ -715,7 +714,7 @@ fun SearchScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "Verified Artist",
+                                    text = "Artist",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 12.sp,
                                     fontFamily = OutfitFontFamily
@@ -872,32 +871,33 @@ fun SearchScreen(
                             }
                         }
                     }
-                    items(displayedTracks, key = { "search_item_${it.id}" }) { track ->
-                        val isVideo = track.isVideoTrack
-                        TrackCard(
-                            track = track,
-                            isPlaying = playerState.currentTrack?.id == track.id,
-                            subtitleText = if (isVideo) {
-                                "${track.artist} • MP4 Video • ${track.durationFormatted}"
-                            } else null,
-                            onTrackClick = {
-                                focusManager.clearFocus()
-                                keyboardController?.hide()
-                                onPlayTrackAndMaximize(track)
-                            },
-                            onLikeClick = { viewModel.toggleLike(track) },
-                            onDownloadClick = { tier: DownloadTier ->
-                                val effectiveTier = if (isVideo) DownloadTier.VIDEO_MP4 else tier
-                                viewModel.startDownload(track, effectiveTier)
-                            },
-                            onPlayNextClick = { viewModel.playNext(track) },
-                            onAddToQueueClick = { viewModel.addToQueue(track) },
-                            onAddToPlaylistClick = { trackToAddToPlaylist = track },
-                            onGoToArtistClick = onNavigateToArtist,
-                            onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
-                        )
-                    }
+                }
+
+                items(displayedTracks, key = { "search_item_${it.id}" }) { track ->
+                    val isVideo = track.isVideoTrack
+                    TrackCard(
+                        track = track,
+                        isPlaying = playerState.currentTrack?.id == track.id,
+                        subtitleText = if (isVideo) {
+                            "${track.artist} • MP4 Video • ${track.durationFormatted}"
+                        } else null,
+                        onTrackClick = {
+                            focusManager.clearFocus()
+                            keyboardController?.hide()
+                            onPlayTrackAndMaximize(track)
+                        },
+                        onLikeClick = { viewModel.toggleLike(track) },
+                        onDownloadClick = { tier: DownloadTier ->
+                            val effectiveTier = if (isVideo) DownloadTier.VIDEO_MP4 else tier
+                            viewModel.startDownload(track, effectiveTier)
+                        },
+                        onPlayNextClick = { viewModel.playNext(track) },
+                        onAddToQueueClick = { viewModel.addToQueue(track) },
+                        onAddToPlaylistClick = { trackToAddToPlaylist = track },
+                        onGoToArtistClick = onNavigateToArtist,
+                        onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
+                    )
                 }
             }
         }

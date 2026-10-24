@@ -273,11 +273,18 @@ fun ArtistScreen(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
+                                val isOfficial = page.browseId.startsWith("UC") || page.browseId.startsWith("MPLA")
+                                val subtitleText = when {
+                                    isOfficial && page.subscriberCountText.isNotBlank() -> "${page.subscriberCountText} • Official Artist"
+                                    isOfficial -> "Official Artist"
+                                    page.subscriberCountText.isNotBlank() -> page.subscriberCountText
+                                    else -> "Artist"
+                                }
                                 Text(
-                                    text = "${page.subscriberCountText} • YouTube Music Official",
-                                    color = MaterialTheme.colorScheme.primary,
+                                    text = subtitleText,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold
+                                    fontWeight = FontWeight.Medium
                                 )
                             }
                         }

@@ -459,13 +459,6 @@ fun InfoDetailScreen(
     val context = LocalContext.current
     val supportEmail = "floristechnis@proton.me"
 
-    val bodyContent = when (pageType) {
-        InfoPageType.ABOUT_APP -> "Seitharol is an advanced audio streaming and playback application engineered to deliver studio-grade canonical releases, synchronized lyric integration, and personalized discovery feeds with uncompromising acoustic fidelity."
-        InfoPageType.HELP -> "For technical assistance, playback optimization, bug reports, or collaboration inquiries, reach out directly to our developer support team below. Audio stream bitrates, offline storage, and thumbnail data usage can also be customized anytime in Settings."
-        InfoPageType.PRIVACY_POLICY -> "Your privacy is strictly preserved. All playback logs, customized playlists, and local application preferences are retained exclusively within on-device storage."
-        InfoPageType.TERMS_CONDITIONS -> "By accessing this service, you acknowledge that all streamed and cached media materials are intended solely for personal, non-commercial listening."
-    }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -491,157 +484,312 @@ fun InfoDetailScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        Surface(
-            shape = RoundedCornerShape(18.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 2.dp,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                text = bodyContent,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                lineHeight = 23.sp,
-                modifier = Modifier.padding(18.dp)
-            )
-        }
-
-        if (pageType == InfoPageType.HELP) {
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // Dedicated Developer & Support Email Contact Card (Moved here from Onboarding)
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(
-                        width = 1.dp,
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
-                        shape = RoundedCornerShape(20.dp)
-                    )
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp)
+        when (pageType) {
+            InfoPageType.ABOUT_APP -> {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 2.dp,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            modifier = Modifier.size(44.dp),
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Outlined.SupportAgent,
-                                    contentDescription = "Support",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text(
-                                text = "Developer & Support Contact",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = "Feedback, bug reports & collaboration inquiries",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surface,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Email,
-                                    contentDescription = "Email",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    text = supportEmail,
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-
-                            IconButton(
-                                onClick = {
-                                    runCatching {
-                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                        clipboard?.setPrimaryClip(ClipData.newPlainText("Support Email", supportEmail))
-                                        Toast.makeText(context, "Support email copied: $supportEmail", Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.ContentCopy,
-                                    contentDescription = "Copy Email",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    Button(
-                        onClick = {
-                            runCatching {
-                                val intent = Intent(Intent.ACTION_SENDTO).apply {
-                                    data = Uri.parse("mailto:$supportEmail?subject=${Uri.encode("Seitharol App Support / Feedback")}")
-                                }
-                                context.startActivity(intent)
-                            }.onFailure {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                clipboard?.setPrimaryClip(ClipData.newPlainText("Support Email", supportEmail))
-                                Toast.makeText(context, "Email copied: $supportEmail", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
-                        ),
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp)
+                            .padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Email,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Email floristechnis@proton.me",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
+                            text = "Seitharol is an advanced audio streaming and playback application engineered to deliver studio-grade canonical releases, synchronized lyric integration, and personalized discovery feeds with uncompromising acoustic fidelity.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            lineHeight = 24.sp
+                        )
+
+                        Text(
+                            text = "Key Engineering Highlights",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        Text(
+                            text = "• Pure Studio Audio: High-resolution audio stream extraction with configurable low/medium/high quality tiers and an integrated 5-band equalizer.\n\n" +
+                                "• Synchronized Lyrics Engine: Interactive real-time synchronized LRC lyrics with seamless tap-to-seek, offline caching, and sub-second timing offset adjustments.\n\n" +
+                                "• Unified Media Discovery: Seamlessly explore tracks, albums, artists, and playlists across streaming providers, trending charts, and local storage.\n\n" +
+                                "• Offline Downloads Vault: High-fidelity audio and MP4 video downloads saved directly to device storage with MediaStore registration for playback anywhere.\n\n" +
+                                "• Privacy by Architecture: Zero advertising frameworks, zero telemetry trackers, and zero user data harvesting. Your library stays yours.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 22.sp
+                        )
+
+                        HorizontalDivider(
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                            thickness = 0.6.dp
+                        )
+
+                        Text(
+                            text = "Version 1.0.0 • Crafted for Pure Listening",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            InfoPageType.HELP -> {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 2.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Text(
+                            text = "Welcome to Seitharol Support. Here you will find quick solutions to common playback questions, performance tips, and direct contact details for developer assistance.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            lineHeight = 24.sp
+                        )
+
+                        Text(
+                            text = "Frequently Asked Questions & Tips",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        Text(
+                            text = "• Background Playback Stopping: If playback stops when the screen is turned off, navigate to Android Settings > Apps > Seitharol > Battery, and select 'Unrestricted' or disable aggressive Battery Optimization.\n\n" +
+                                "• Audio & Video Downloads: Downloaded songs and videos are saved to your device's Music and Video folders and are immediately available in the 'Local' tab and your device's file manager.\n\n" +
+                                "• Lyrics Out of Sync: While viewing synchronized lyrics in the player screen, tap the +/- buttons to adjust timing offsets in 100ms increments for perfect vocal alignment.\n\n" +
+                                "• Streaming Bitrates: You can customize default streaming and download bitrates under Settings > Audio Quality.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 22.sp
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Developer & Support Contact Card (Theme-neutral, Zero Red)
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(
+                            width = 1.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                            shape = RoundedCornerShape(20.dp)
+                        )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                modifier = Modifier.size(44.dp),
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.surface
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.SupportAgent,
+                                        contentDescription = "Support",
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "Developer Support Contact",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "Direct bug reports, questions & feedback",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Email,
+                                        contentDescription = "Email",
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = supportEmail,
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+
+                                IconButton(
+                                    onClick = {
+                                        runCatching {
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                            clipboard?.setPrimaryClip(ClipData.newPlainText("Support Email", supportEmail))
+                                            Toast.makeText(context, "Support email copied: $supportEmail", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.ContentCopy,
+                                        contentDescription = "Copy Email",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Button(
+                            onClick = {
+                                runCatching {
+                                    val intent = Intent(Intent.ACTION_SENDTO).apply {
+                                        data = Uri.parse("mailto:$supportEmail?subject=${Uri.encode("Seitharol App Support / Feedback")}")
+                                    }
+                                    context.startActivity(intent)
+                                }.onFailure {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                    clipboard?.setPrimaryClip(ClipData.newPlainText("Support Email", supportEmail))
+                                    Toast.makeText(context, "Email copied: $supportEmail", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.onSurface,
+                                contentColor = MaterialTheme.colorScheme.surface
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Email,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.surface,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Send Support Email",
+                                color = MaterialTheme.colorScheme.surface,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            InfoPageType.PRIVACY_POLICY -> {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 2.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Text(
+                            text = "At Seitharol, privacy is not an afterthought—it is foundational to our design. We believe that your music listening habits and personal preferences belong solely to you.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            lineHeight = 24.sp
+                        )
+
+                        Text(
+                            text = "Our Privacy Commitments",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        Text(
+                            text = "• Zero Telemetry & Tracking: We do not log, track, sell, or transmit any user behavior or personally identifiable information.\n\n" +
+                                "• On-Device Exclusivity: All created playlists, playback queues, liked tracks, listening history, and local equalization settings remain strictly on your local device storage.\n\n" +
+                                "• Direct Content Resolution: When querying track information or streaming audio, requests communicate directly with source resolvers without intermediate proxy inspection.\n\n" +
+                                "• Full Data Control: You retain complete authority to clear recent searches, reset preferences, or wipe all cached metadata at any moment via Settings.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 22.sp
+                        )
+                    }
+                }
+            }
+
+            InfoPageType.TERMS_CONDITIONS -> {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 2.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Text(
+                            text = "By downloading, installing, or using Seitharol, you agree to these Terms & Conditions. Please read them carefully.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            lineHeight = 24.sp
+                        )
+
+                        Text(
+                            text = "Terms of Use",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        Text(
+                            text = "• Personal & Non-Commercial Use: Seitharol is licensed exclusively for private, personal, non-commercial listening.\n\n" +
+                                "• Intellectual Property: All track titles, artist identities, musical audio recordings, album artwork, and lyric texts are the exclusive intellectual property of their respective creators and copyright owners.\n\n" +
+                                "• User Responsibility: You agree to use streaming and offline caching in full compliance with all relevant copyright guidelines, intellectual property legislation, and local legal statutes.\n\n" +
+                                "• As-Is Availability: Seitharol is distributed on an 'as-is' and 'as-available' basis without warranties of uninterrupted service or third-party stream persistence.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 22.sp
                         )
                     }
                 }

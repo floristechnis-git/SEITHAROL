@@ -13,6 +13,8 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:name=".CascadeApplication"
@@ -32,7 +34,8 @@
             android:launchMode="singleTask"
             android:label="@string/app_name"
             android:theme="@style/Theme.App.Starting"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode">
+            android:supportsPictureInPicture="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -102,8 +105,21 @@
         <service
             android:name=".player.MediaPlaybackService"
             android:exported="false"
-            android:stopWithTask="false"
+            android:stopWithTask="true"
             android:foregroundServiceType="mediaPlayback" />
+
+        <receiver
+            android:name="com.example.notification.BirthdayNotificationReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name="com.example.notification.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

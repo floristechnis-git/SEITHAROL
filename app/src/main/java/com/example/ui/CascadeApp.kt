@@ -31,6 +31,9 @@ import com.example.ui.theme.*
 import com.seitharol.ui.components.HomeNavSvgIcon
 import com.seitharol.ui.settings.InfoDetailScreen
 import com.seitharol.ui.settings.InfoPageType
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.flow.collectLatest
 
 enum class AppDestination(val label: String, val icon: ImageVector) {
@@ -126,9 +129,39 @@ private fun DiscoverSubScreenHost(
 fun CascadeApp(
     viewModel: CascadeViewModel,
     openNotificationsRequest: Boolean = false,
-    onNotificationsOpened: () -> Unit = {}
+    onNotificationsOpened: () -> Unit = {},
+    isInPiPMode: Boolean = false
 ) {
     val playerState by viewModel.playerState.collectAsState()
+
+    // When Activity enters native Android Picture-in-Picture mode, display 100% video surface
+    // without status bar, navigation bar, or extra UI overlays so it floats cleanly outside the app.
+    if (isInPiPMode) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black),
+            contentAlignment = Alignment.Center
+        ) {
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        useController = false
+                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        player = viewModel.playerInstance
+                    }
+                },
+                update = { pv ->
+                    if (pv.player !== viewModel.playerInstance) {
+                        pv.player = viewModel.playerInstance
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        return
+    }
+
     val playlists by viewModel.playlists.collectAsState()
     val context = LocalContext.current
     val compositionStartMs = remember { System.currentTimeMillis() }
@@ -138,6 +171,14 @@ fun CascadeApp(
     var currentSubScreen by remember { mutableStateOf<SubScreen>(SubScreen.None) }
     var previousSubScreen by remember { mutableStateOf<SubScreen>(SubScreen.None) }
     var isPlayerExpanded by remember { mutableStateOf(false) }
+
+    // When user plays a video, automatically expand full video player screen so video is immediately visible
+    LaunchedEffect(playerState.currentTrack?.id, playerState.isVideoMode) {
+        val current = playerState.currentTrack
+        if (current != null && (current.isVideoTrack || playerState.isVideoMode)) {
+            isPlayerExpanded = true
+        }
+    }
 
     // Modals state
     var showSleepTimer by remember { mutableStateOf(false) }
@@ -731,86 +772,7 @@ fun CascadeApp(
                         .fillMaxWidth()
                         .navigationBarsPadding(),
                     horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    var isPipHidden by remember(playerState.currentTrack?.id, isPlayerExpanded) { mutableStateOf(false) }
-                    if (playerState.isVideoMode && !isPipHidden && playerState.currentTrack != null && !isPlayerExpanded && currentSubScreen !is SubScreen.Discover) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 6.dp),
-                            contentAlignment = Alignment.CenterEnd
-                        ) {
-                            Surface(
-                                modifier = Modifier
-                                    .width(196.dp)
-                                    .aspectRatio(16f / 9f)
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .clickable { isPlayerExpanded = true },
-                                shape = RoundedCornerShape(16.dp),
-                                color = Color.Black,
-                                shadowElevation = 14.dp,
-                                border = androidx.compose.foundation.BorderStroke(
-                                    1.dp,
-                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
-                                )
-                            ) {
-                                Box(modifier = Modifier.fillMaxSize()) {
-                                    androidx.compose.ui.viewinterop.AndroidView(
-                                        factory = { ctx ->
-                                            android.view.TextureView(ctx).also { tv ->
-                                                viewModel.attachVideoTextureView(tv)
-                                            }
-                                        },
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .align(Alignment.TopEnd)
-                                            .padding(6.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Surface(
-                                            shape = CircleShape,
-                                            color = Color.Black.copy(alpha = 0.6f),
-                                            modifier = Modifier
-                                                .size(26.dp)
-                                                .clip(CircleShape)
-                                                .clickable { isPlayerExpanded = true }
-                                        ) {
-                                            Box(contentAlignment = Alignment.Center) {
-                                                Icon(
-                                                    imageVector = Icons.Default.OpenInFull,
-                                                    contentDescription = "Expand Video",
-                                                    tint = Color.White,
-                                                    modifier = Modifier.size(14.dp)
-                                                )
-                                            }
-                                        }
-                                        Surface(
-                                            shape = CircleShape,
-                                            color = Color.Black.copy(alpha = 0.6f),
-                                            modifier = Modifier
-                                                .size(26.dp)
-                                                .clip(CircleShape)
-                                                .clickable { isPipHidden = true }
-                                        ) {
-                                            Box(contentAlignment = Alignment.Center) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Close,
-                                                    contentDescription = "Hide Mini Video",
-                                                    tint = Color.White,
-                                                    modifier = Modifier.size(14.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (playerState.currentTrack != null && !isPlayerExpanded && currentSubScreen !is SubScreen.Discover) {
+                    if (playerState.currentTrack != null && !isPlayerExpanded && currentSubScreen !is SubScreen.Discover && !playerState.isVideoMode && playerState.currentTrack?.isVideoTrack != true) {
                         MiniPlayer(
                             playerState = playerState,
                             onExpand = { isPlayerExpanded = true },

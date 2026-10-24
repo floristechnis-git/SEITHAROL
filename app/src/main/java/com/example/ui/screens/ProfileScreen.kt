@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.app.DatePickerDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -7,6 +8,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
@@ -625,14 +629,22 @@ fun ProfileScreen(
             )
         }
 
-        // Edit Name & Age Profile Dialog
+        // Edit Name, Age & Birthday Profile Dialog
         if (showEditProfileDialog) {
             EditProfileDialog(
                 initialName = userSettings.userName,
                 initialAge = userSettings.userAge,
+                initialBirthdate = userSettings.userBirthdate,
                 onDismiss = { showEditProfileDialog = false },
-                onSave = { name, age ->
-                    appPreferences.updateAccount(name, age)
+                onSave = { name, age, birthdate ->
+                    appPreferences.updateAccount(name, age, birthdate)
+                    if (birthdate.isNotBlank()) {
+                        com.example.notification.BirthdayNotificationScheduler.scheduleBirthdayAlarm(
+                            context = context,
+                            userName = name,
+                            birthdateIso = birthdate
+                        )
+                    }
                     coroutineScope.launch {
                         snackbarHostState.showSnackbar("Profile details saved successfully.")
                     }
@@ -653,11 +665,59 @@ fun ProfileScreen(
 fun EditProfileDialog(
     initialName: String,
     initialAge: String,
+    initialBirthdate: String = "",
     onDismiss: () -> Unit,
-    onSave: (name: String, age: String) -> Unit
+    onSave: (name: String, age: String, birthdate: String) -> Unit
 ) {
+    val context = LocalContext.current
     var name by remember { mutableStateOf(initialName) }
     var age by remember { mutableStateOf(initialAge) }
+    var birthdateIso by remember { mutableStateOf(initialBirthdate) }
+    var birthdateDisplay by remember {
+        mutableStateOf(
+            if (initialBirthdate.isNotBlank()) {
+                runCatching {
+                    val sdfIn = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                    val sdfOut = SimpleDateFormat("MMMM d, yyyy", Locale.US)
+                    sdfIn.parse(initialBirthdate)?.let { sdfOut.format(it) } ?: initialBirthdate
+                }.getOrDefault(initialBirthdate)
+            } else ""
+        )
+    }
+
+    val showDatePicker = {
+        val currentCal = Calendar.getInstance()
+        val defaultYear = currentCal.get(Calendar.YEAR) - (age.toIntOrNull() ?: 20)
+        val defaultMonth = currentCal.get(Calendar.MONTH)
+        val defaultDay = currentCal.get(Calendar.DAY_OF_MONTH)
+
+        val dpd = DatePickerDialog(
+            context,
+            { _, year, monthOfYear, dayOfMonth ->
+                val selectedCal = Calendar.getInstance().apply {
+                    set(Calendar.YEAR, year)
+                    set(Calendar.MONTH, monthOfYear)
+                    set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                }
+                val isoFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                val displayFormat = SimpleDateFormat("MMMM d, yyyy", Locale.US)
+                birthdateIso = isoFormat.format(selectedCal.time)
+                birthdateDisplay = displayFormat.format(selectedCal.time)
+
+                val today = Calendar.getInstance()
+                var ageYears = today.get(Calendar.YEAR) - year
+                if (today.get(Calendar.DAY_OF_YEAR) < selectedCal.get(Calendar.DAY_OF_YEAR)) {
+                    ageYears--
+                }
+                age = ageYears.coerceAtLeast(0).toString()
+            },
+            defaultYear,
+            defaultMonth,
+            defaultDay
+        )
+        dpd.datePicker.maxDate = System.currentTimeMillis()
+        dpd.show()
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -689,6 +749,45 @@ fun EditProfileDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { showDatePicker() }
+                ) {
+                    OutlinedTextField(
+                        value = birthdateDisplay,
+                        onValueChange = {},
+                        readOnly = true,
+                        enabled = false,
+                        label = { Text("Birthday (5:30 AM notification)", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                        placeholder = {
+                            Text(
+                                text = "Select your birthday",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                            )
+                        },
+                        trailingIcon = {
+                            IconButton(onClick = { showDatePicker() }) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Cake,
+                                    contentDescription = "Select Birthday",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                            disabledBorderColor = MaterialTheme.colorScheme.outline,
+                            disabledContainerColor = MaterialTheme.colorScheme.surface,
+                            disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            disabledPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
                 OutlinedTextField(
                     value = age,
                     onValueChange = { if (it.all { c -> c.isDigit() } && it.length <= 3) age = it },
@@ -709,7 +808,7 @@ fun EditProfileDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    onSave(name.trim(), age.trim())
+                    onSave(name.trim(), age.trim(), birthdateIso.trim())
                     onDismiss()
                 },
                 colors = ButtonDefaults.buttonColors(

@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
+import android.util.LruCache
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import coil.ImageLoader
@@ -44,6 +45,9 @@ import kotlinx.coroutines.launch
  *    merely loading/buffering without active audio streaming).
  * 3. Unconditionally stops playback and removes the notification in `onTaskRemoved` when the app
  *    is cleared from Recents.
+ * 4. Caches artwork per track ID in LruCache so pausing/resuming never glitches, flickers, or shows
+ *    a previous track's thumbnail.
+ * 5. Immediately acquires wake/wifi locks on user notification tap before Doze throttling occurs.
  */
 class MediaPlaybackService : Service() {
 
@@ -54,7 +58,9 @@ class MediaPlaybackService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var lockReleaseJob: Job? = null
+    private val artBitmapCache = LruCache<String, Bitmap>(20)
     private var currentArtBitmap: Bitmap? = null
+    private var currentTrackIdForArt: String? = null
     private var lastLoadedArtUrl: String? = null
     @Volatile private var isTerminating = false
     @Volatile private var isInForeground = false
@@ -78,15 +84,13 @@ class MediaPlaybackService : Service() {
             val appCtx = context.applicationContext
             val intent = Intent(appCtx, MediaPlaybackService::class.java)
             try {
-                appCtx.startService(intent)
-            } catch (e: Throwable) {
-                try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        appCtx.startForegroundService(intent)
-                    }
-                } catch (e2: Throwable) {
-                    Log.w(TAG, "Unable to start MediaPlaybackService: ${e2.message}")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    appCtx.startForegroundService(intent)
+                } else {
+                    appCtx.startService(intent)
                 }
+            } catch (e: Throwable) {
+                Log.w(TAG, "Unable to start MediaPlaybackService from background: ${e.message}")
             }
         }
 
@@ -104,6 +108,18 @@ class MediaPlaybackService : Service() {
 
     private fun resolveConsistentSmallIcon(): Int {
         return applicationInfo.icon.takeIf { it != 0 } ?: R.drawable.ic_stat_music_note
+    }
+
+    private fun acquireWakeAndWifiLocks() {
+        lockReleaseJob?.cancel()
+        try {
+            if (wakeLock?.isHeld != true) {
+                wakeLock?.acquire(4 * 60 * 60 * 1000L)
+            }
+            if (wifiLock?.isHeld != true) {
+                wifiLock?.acquire()
+            }
+        } catch (_: Throwable) {}
     }
 
     override fun onCreate() {
@@ -155,15 +171,7 @@ class MediaPlaybackService : Service() {
                     val activePlayback = state.isPlaying || state.isBuffering
                     if (track != null) {
                         if (activePlayback) {
-                            lockReleaseJob?.cancel()
-                            try {
-                                if (wakeLock?.isHeld != true) {
-                                    wakeLock?.acquire(4 * 60 * 60 * 1000L)
-                                }
-                                if (wifiLock?.isHeld != true) {
-                                    wifiLock?.acquire()
-                                }
-                            } catch (_: Throwable) {}
+                            acquireWakeAndWifiLocks()
                         } else {
                             lockReleaseJob?.cancel()
                             lockReleaseJob = serviceScope.launch {
@@ -191,17 +199,31 @@ class MediaPlaybackService : Service() {
         }
         playerManager?.ensurePlayerInitialized()
 
-        startForegroundSynchronously()
-
         when (intent?.action) {
-            ACTION_PLAY_PAUSE -> playerManager?.togglePlayPause()
-            ACTION_PREV -> playerManager?.previous()
-            ACTION_NEXT -> playerManager?.next()
+            ACTION_PLAY_PAUSE -> {
+                acquireWakeAndWifiLocks()
+                playerManager?.togglePlayPause()
+            }
+            ACTION_PREV -> {
+                acquireWakeAndWifiLocks()
+                playerManager?.previous()
+            }
+            ACTION_NEXT -> {
+                acquireWakeAndWifiLocks()
+                playerManager?.next()
+            }
             ACTION_STOP -> {
                 playerManager?.pause()
                 stopAndRemoveNotification()
                 return START_NOT_STICKY
             }
+            else -> {
+                startForegroundSynchronously()
+            }
+        }
+
+        if (!isInForeground) {
+            startForegroundSynchronously()
         }
         return START_NOT_STICKY
     }
@@ -280,35 +302,61 @@ class MediaPlaybackService : Service() {
 
     private fun loadArtAndNotify(track: Track, isPlaying: Boolean, isBuffering: Boolean) {
         if (isTerminating) return
-        if (track.artUrl != lastLoadedArtUrl && track.artUrl.isNotBlank()) {
+
+        val cached = (if (track.id.isNotBlank()) artBitmapCache.get(track.id) else null)
+            ?: (if (track.artUrl.isNotBlank()) artBitmapCache.get(track.artUrl) else null)
+
+        if (cached != null) {
+            currentArtBitmap = cached
+            currentTrackIdForArt = track.id
             lastLoadedArtUrl = track.artUrl
             updateNotification(track, isPlaying, isBuffering)
+            return
+        }
+
+        // When switching to a new track without a cached art bitmap, clear currentArtBitmap
+        // immediately so the previous song's thumbnail is NEVER displayed with the new song!
+        if (currentTrackIdForArt != track.id) {
+            currentArtBitmap = null
+            currentTrackIdForArt = track.id
+            lastLoadedArtUrl = null
+        }
+
+        updateNotification(track, isPlaying, isBuffering)
+
+        if (track.artUrl.isNotBlank() && track.artUrl != lastLoadedArtUrl) {
+            lastLoadedArtUrl = track.artUrl
             serviceScope.launch(Dispatchers.IO) {
                 if (isTerminating) return@launch
-                try {
-                    val loader = ImageLoader(this@MediaPlaybackService)
+                val loadedBitmap = try {
+                    val loader = coil.Coil.imageLoader(this@MediaPlaybackService)
                     val request = ImageRequest.Builder(this@MediaPlaybackService)
                         .data(track.artUrl)
-                        .size(256, 256)
+                        .size(128, 128)
                         .allowHardware(false)
                         .build()
                     val result = loader.execute(request).drawable
-                    if (result is BitmapDrawable) {
-                        currentArtBitmap = result.bitmap
-                    }
+                    (result as? BitmapDrawable)?.bitmap
                 } catch (_: Throwable) {
-                    currentArtBitmap = null
+                    null
                 }
+
+                if (loadedBitmap != null) {
+                    if (track.id.isNotBlank()) artBitmapCache.put(track.id, loadedBitmap)
+                    if (track.artUrl.isNotBlank()) artBitmapCache.put(track.artUrl, loadedBitmap)
+                }
+
                 val latestState = playerManager?.state?.value
                 val latestTrack = latestState?.currentTrack ?: track
                 val latestPlaying = latestState?.isPlaying ?: isPlaying
                 val latestBuffering = latestState?.isBuffering ?: isBuffering
+
                 if (!isTerminating && latestTrack.id == track.id) {
+                    currentArtBitmap = loadedBitmap
+                    currentTrackIdForArt = track.id
                     updateNotification(latestTrack, latestPlaying, latestBuffering)
                 }
             }
-        } else {
-            updateNotification(track, isPlaying, isBuffering)
         }
     }
 
@@ -380,8 +428,12 @@ class MediaPlaybackService : Service() {
                     .setShowActionsInCompactView(0, 1, 2)
             )
 
-        if (currentArtBitmap != null) {
-            builder.setLargeIcon(currentArtBitmap)
+        val art = (if (track.id.isNotBlank()) artBitmapCache.get(track.id) else null)
+            ?: (if (track.artUrl.isNotBlank()) artBitmapCache.get(track.artUrl) else null)
+            ?: if (currentTrackIdForArt == track.id) currentArtBitmap else null
+
+        if (art != null) {
+            builder.setLargeIcon(art)
         }
 
         return builder.build()
@@ -430,6 +482,14 @@ class MediaPlaybackService : Service() {
         releaseWakeAndWifiLocks()
         runCatching {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        }
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
         }
         runCatching {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager

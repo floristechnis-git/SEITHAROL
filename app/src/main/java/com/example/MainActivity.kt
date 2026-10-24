@@ -1,8 +1,11 @@
 package com.example
 
+import android.app.PictureInPictureParams
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
+import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -44,6 +47,24 @@ class MainActivity : ComponentActivity() {
 
     private var pendingDeepLink by mutableStateOf<SeitharolDeepLinkHelper.DeepLinkTarget?>(null)
     private var openNotificationsRequest by mutableStateOf(false)
+    var isInPiPMode by mutableStateOf(false)
+        private set
+
+    fun enterPiPMode() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            runCatching {
+                val params = PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .build()
+                enterPictureInPictureMode(params)
+            }
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        isInPiPMode = isInPictureInPictureMode
+    }
 
     companion object {
         var hasShownSplashThisProcess = false
@@ -75,6 +96,7 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching {
                 ManipurCalendarNotificationEngine.checkAndDispatchDailyNotification(appCtx)
+                com.example.notification.BirthdayNotificationScheduler.scheduleFromPreferences(appCtx)
             }
         }
 
@@ -121,8 +143,13 @@ class MainActivity : ComponentActivity() {
                     )
                 } else if (!userSettings.onboarded) {
                     OnboardingScreen(
-                        onContinue = { name, age ->
-                            appPreferences.saveOnboarding(name, age)
+                        onContinue = { name, birthday, age ->
+                            appPreferences.saveOnboarding(name = name, age = age, birthdate = birthday)
+                            com.example.notification.BirthdayNotificationScheduler.scheduleBirthdayAlarm(
+                                context = context,
+                                userName = name,
+                                birthdateIso = birthday
+                            )
                         }
                     )
                 } else {
@@ -158,7 +185,8 @@ class MainActivity : ComponentActivity() {
                     CascadeApp(
                         viewModel = viewModel,
                         openNotificationsRequest = openNotificationsRequest,
-                        onNotificationsOpened = { openNotificationsRequest = false }
+                        onNotificationsOpened = { openNotificationsRequest = false },
+                        isInPiPMode = isInPiPMode
                     )
                 }
             }
@@ -193,6 +221,10 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        val playerMgr = (application as? CascadeApplication)?.audioPlayerManager
+        if (isFinishing && playerMgr?.state?.value?.isPlaying != true) {
+            com.example.player.MediaPlaybackService.stopService(applicationContext)
+        }
         super.onDestroy()
     }
 }

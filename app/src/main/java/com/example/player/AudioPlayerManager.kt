@@ -63,7 +63,7 @@ data class PlayerState(
     val durationMs: Long = 0L,
     val queue: List<Track> = emptyList(),
     val currentIndex: Int = 0,
-    val repeatMode: RepeatMode = RepeatMode.ALL,
+    val repeatMode: RepeatMode = RepeatMode.OFF,
     val isShuffle: Boolean = false,
     val activeStream: ResolvedStream? = null,
     val activeLyricIndex: Int = -1,
@@ -299,45 +299,44 @@ class AudioPlayerManager(
      * reopening the app restores the exact song and position in sync with the notification.
      */
     fun persistCurrentPlaybackState() {
-        runCatching {
-            val s = _state.value
-            val current = s.currentTrack
-            if (current == null) {
-                playbackPrefs.edit().remove("saved_session_json").apply()
-                return
-            }
-            val livePos = exoPlayer?.currentPosition?.takeIf { it > 0L } ?: s.currentPositionMs
-            val root = JSONObject().apply {
-                put("currentIndex", s.currentIndex)
-                put("positionMs", livePos.coerceAtLeast(0L))
-                put("durationMs", s.durationMs.coerceAtLeast(current.durationMs))
-                put("repeatMode", s.repeatMode.name)
-                put("isShuffle", s.isShuffle)
-                put("isSingleTrackPlayback", s.isSingleTrackPlayback)
-                put("isPartOfPlaylist", s.isPartOfPlaylist)
-                put("currentTrack", trackToJson(current))
-                val qArr = JSONArray()
-                s.queue.take(50).forEach { t -> qArr.put(trackToJson(t)) }
-                put("queue", qArr)
-            }
-            playbackPrefs.edit().putString("saved_session_json", root.toString()).apply()
+        val s = _state.value
+        val current = s.currentTrack ?: run {
+            playbackPrefs.edit().remove("saved_session_json").apply()
+            return
+        }
+        val livePos = (exoPlayer?.currentPosition?.takeIf { it > 0L } ?: s.currentPositionMs).coerceAtLeast(0L)
+        val queueSnapshot = s.queue.take(20)
 
-            coroutineScope.launch(Dispatchers.IO) {
-                runCatching {
-                    musicRepository.saveCheckpoint(
-                        trackId = current.id,
-                        index = s.currentIndex,
-                        posMs = livePos.coerceAtLeast(0L),
-                        queueIds = s.queue.map { it.id },
-                        shuffle = s.isShuffle,
-                        repeat = s.repeatMode.ordinal
-                    )
+        coroutineScope.launch(Dispatchers.IO) {
+            runCatching {
+                val root = JSONObject().apply {
+                    put("currentIndex", s.currentIndex)
+                    put("positionMs", livePos)
+                    put("durationMs", s.durationMs.coerceAtLeast(current.durationMs))
+                    put("repeatMode", s.repeatMode.name)
+                    put("isShuffle", s.isShuffle)
+                    put("isSingleTrackPlayback", s.isSingleTrackPlayback)
+                    put("isPartOfPlaylist", s.isPartOfPlaylist)
+                    put("currentTrack", trackToJson(current, includeLyrics = true))
+                    val qArr = JSONArray()
+                    queueSnapshot.forEach { t -> qArr.put(trackToJson(t, includeLyrics = false)) }
+                    put("queue", qArr)
                 }
+                playbackPrefs.edit().putString("saved_session_json", root.toString()).apply()
+
+                musicRepository.saveCheckpoint(
+                    trackId = current.id,
+                    index = s.currentIndex,
+                    posMs = livePos,
+                    queueIds = s.queue.map { it.id },
+                    shuffle = s.isShuffle,
+                    repeat = s.repeatMode.ordinal
+                )
             }
         }
     }
 
-    private fun trackToJson(t: Track): JSONObject = JSONObject().apply {
+    private fun trackToJson(t: Track, includeLyrics: Boolean = false): JSONObject = JSONObject().apply {
         put("id", t.id)
         put("title", t.title)
         put("artist", t.artist)
@@ -347,9 +346,10 @@ class AudioPlayerManager(
         put("isDownloaded", t.isDownloaded)
         put("localPath", t.localPath.orEmpty())
         put("isLiked", t.isLiked)
-        put("lyrics", t.lyrics)
+        if (includeLyrics && t.lyrics.isNotBlank()) {
+            put("lyrics", t.lyrics)
+        }
         put("genre", t.genre)
-        put("audioUrl", t.audioUrl)
     }
 
     private fun jsonToTrack(o: JSONObject): Track = Track(
@@ -390,8 +390,8 @@ class AudioPlayerManager(
             val savedIdx = root.optInt("currentIndex", 0).coerceIn(0, restoredQueue.lastIndex)
             val savedPos = root.optLong("positionMs", 0L).coerceAtLeast(0L)
             val savedDur = root.optLong("durationMs", restoredTrack.durationMs.takeIf { it > 0L } ?: 210_000L)
-            val savedRepeat = runCatching { RepeatMode.valueOf(root.optString("repeatMode", RepeatMode.ALL.name)) }
-                .getOrDefault(RepeatMode.ALL)
+            val savedRepeat = runCatching { RepeatMode.valueOf(root.optString("repeatMode", RepeatMode.OFF.name)) }
+                .getOrDefault(RepeatMode.OFF)
             val savedShuffle = root.optBoolean("isShuffle", false)
             val localLyrics = parseLrc(restoredTrack.lyrics)
             val activeIdx = localLyrics.indexOfLast { it.timestampMs <= savedPos }
@@ -427,7 +427,7 @@ class AudioPlayerManager(
                 val queueTracks = queueIds.mapNotNull { id -> musicRepository.getTrackById(id) }.ifEmpty { listOf(track) }
                 val validIdx = checkpoint.currentIndex.coerceIn(0, queueTracks.lastIndex)
                 val posMs = checkpoint.positionMs.coerceAtLeast(0L)
-                val repeat = RepeatMode.entries.getOrElse(checkpoint.repeatMode) { RepeatMode.ALL }
+                val repeat = RepeatMode.entries.getOrElse(checkpoint.repeatMode) { RepeatMode.OFF }
 
                 withContext(Dispatchers.Main) {
                     if (_state.value.currentTrack == null) {
@@ -504,18 +504,26 @@ class AudioPlayerManager(
 
     private fun startBufferingWatchdog(expectedTrackId: String) {
         bufferingWatchdogJob?.cancel()
+        val player = exoPlayer
+        // If track is already playing and has progressed, do NOT run buffering watchdog.
+        // ExoPlayer's built-in loader handles temporary network stalls gracefully without killing playback.
+        if (player != null && player.isPlaying && player.currentPosition > 2000L) {
+            return
+        }
+
         bufferingWatchdogJob = coroutineScope.launch {
-            delay(6_500L)
+            delay(25_000L)
             if (!isActive || !userRequestedPlay) return@launch
             val current = _state.value.currentTrack ?: return@launch
-            val player = exoPlayer ?: return@launch
-            if (current.id == expectedTrackId && (_state.value.isBuffering || isRetryingOrLoading) && !player.isPlaying) {
-                Log.w(TAG, "Buffering watchdog triggered after 14s for '${current.title}', rotating stream source...")
-                val resumePos = (player.currentPosition.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
+            val p = exoPlayer ?: return@launch
+            // Only trigger if track STILL has not started playing at all after 25s
+            if (current.id == expectedTrackId && (_state.value.isBuffering || isRetryingOrLoading) && !p.isPlaying && p.currentPosition < 1000L) {
+                Log.w(TAG, "Initial load watchdog triggered after 25s for '${current.title}', retrying stream...")
+                val resumePos = (p.currentPosition.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
                 resolverEngine.invalidateTrack(current.id)
                 try {
                     val freshStream = withContext(Dispatchers.IO) {
-                        withTimeout(10_000L) {
+                        withTimeout(15_000L) {
                             val localFirst = resolveLocalTrackIfAvailable(current)
                             resolverEngine.resolveTrack(
                                 track = localFirst.copy(audioUrl = ""),
@@ -531,7 +539,7 @@ class AudioPlayerManager(
                     }
                 } catch (e: Exception) {
                     isRetryingOrLoading = false
-                    _state.value = _state.value.copy(isBuffering = false, isPlaying = false)
+                    _state.value = _state.value.copy(isBuffering = false)
                 }
             }
         }
@@ -546,17 +554,19 @@ class AudioPlayerManager(
             }
             val dataSourceFactory = DefaultDataSource.Factory(context, resolvingFactory)
             val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
-                .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(/* minimumLoadableRetryCount = */ 1))
+                .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(/* minimumLoadableRetryCount = */ 3))
 
+            // Buffer tuned for smooth continuous background streaming:
+            // Keeps up to 60s of audio buffer in RAM (~960 KB), eliminating background freezing every 30s.
             val loadControl = DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
-                    /* minBufferMs = */ 12_000,
-                    /* maxBufferMs = */ 32_000,
+                    /* minBufferMs = */ 30_000,
+                    /* maxBufferMs = */ 60_000,
                     /* bufferForPlaybackMs = */ 1_000,
                     /* bufferForPlaybackAfterRebufferMs = */ 2_000
                 )
                 .setPrioritizeTimeOverSizeThresholds(true)
-                .setBackBuffer(/* backBufferDurationMs = */ 15_000, /* retainBackBufferFromKeyframe = */ true)
+                .setBackBuffer(/* backBufferDurationMs = */ 0, /* retainBackBufferFromKeyframe = */ false)
                 .build()
 
             val builder = ExoPlayer.Builder(context)
@@ -691,7 +701,9 @@ class AudioPlayerManager(
                         retryJob?.cancel()
                         retryJob = coroutineScope.launch {
                             val title = current.title.trim().trim('"', '\'').ifBlank { current.artist.ifBlank { "Track" } }
-                            val hasNextTrack = !_state.value.isSingleTrackPlayback && _state.value.currentIndex < _state.value.queue.lastIndex
+                            // Never auto-skip if user was resuming playback or track had already started playing!
+                            val isResumingOrAlreadyPlaying = resumePositionMs > 1000L || hasUserInitiatedPlaybackThisSession
+                            val hasNextTrack = !isResumingOrAlreadyPlaying && !_state.value.isSingleTrackPlayback && _state.value.currentIndex < _state.value.queue.lastIndex
 
                             if (lastFailedTrackId != current.id) {
                                 lastFailedTrackId = current.id
@@ -729,7 +741,7 @@ class AudioPlayerManager(
                                 return@launch
                             }
 
-                            if (trackRetryCount >= 2) {
+                            if (trackRetryCount >= 3) {
                                 bufferingWatchdogJob?.cancel()
                                 isRetryingOrLoading = false
                                 Log.w(TAG, "Retry attempts exhausted for '$title'.")
@@ -745,7 +757,6 @@ class AudioPlayerManager(
                                     userRequestedPlay = false
                                     try {
                                         exoPlayer?.stop()
-                                        exoPlayer?.clearMediaItems()
                                     } catch (_: Throwable) {}
                                     _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
                                     persistCurrentPlaybackState()
@@ -757,7 +768,7 @@ class AudioPlayerManager(
                             delay(150L)
                             if (!isActive || !userRequestedPlay || _state.value.currentTrack?.id != current.id) return@launch
                             try {
-                                val freshStream = withTimeout(10_000L) {
+                                val freshStream = withTimeout(20_000L) {
                                     resolverEngine.resolveTrack(
                                         track = current.copy(audioUrl = ""),
                                         preferredQuality = getPreferredAudioQuality(),
@@ -771,10 +782,10 @@ class AudioPlayerManager(
                             } catch (e: Exception) {
                                 if (!isActive || !userRequestedPlay || _state.value.currentTrack?.id != current.id) return@launch
                                 Log.e(TAG, "Retry attempt $trackRetryCount failed: ${e.message}", e)
-                                if (trackRetryCount == 1) {
+                                if (trackRetryCount <= 2) {
                                     trackRetryCount++
                                     runCatching {
-                                        val secondStream = withTimeout(10_000L) {
+                                        val secondStream = withTimeout(20_000L) {
                                             resolverEngine.resolveTrack(
                                                 track = current.copy(audioUrl = ""),
                                                 preferredQuality = com.seitharol.data.resolver.AudioQuality.LOW,
@@ -803,7 +814,6 @@ class AudioPlayerManager(
                                     userRequestedPlay = false
                                     try {
                                         exoPlayer?.stop()
-                                        exoPlayer?.clearMediaItems()
                                     } catch (_: Throwable) {}
                                     _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
                                     persistCurrentPlaybackState()
@@ -904,17 +914,17 @@ class AudioPlayerManager(
                         )
 
                         val now = System.currentTimeMillis()
-                        if (now - lastCheckpointSaveMs > 5_000L) {
+                        if (now - lastCheckpointSaveMs > 20_000L) {
                             lastCheckpointSaveMs = now
                             persistCurrentPlaybackState()
                         }
 
-                        if (safeDur > 0L && (pos.toFloat() / safeDur.toFloat()) > 0.75f) {
+                        if (safeDur > 0L && (pos.toFloat() / safeDur.toFloat()) > 0.85f) {
                             prefetchNextTrack()
                         }
                     }
                 }
-                delay(200)
+                delay(400)
             }
         }
     }
@@ -987,27 +997,14 @@ class AudioPlayerManager(
         if (track.isDownloaded || !track.localPath.isNullOrBlank()) {
             isAutoplayEnabled = false
         }
-        val currentQueue = _state.value.queue.toMutableList()
-        val index = currentQueue.indexOfFirst { it.id == track.id }
-        if (index != -1) {
-            _state.value = _state.value.copy(
-                currentIndex = index,
-                currentTrack = track,
-                currentPositionMs = 0L,
-                isSingleTrackPlayback = true,
-                isPartOfPlaylist = false
-            )
-        } else {
-            currentQueue.add(0, track)
-            _state.value = _state.value.copy(
-                queue = currentQueue,
-                currentIndex = 0,
-                currentTrack = track,
-                currentPositionMs = 0L,
-                isSingleTrackPlayback = true,
-                isPartOfPlaylist = false
-            )
-        }
+        _state.value = _state.value.copy(
+            queue = listOf(track),
+            currentIndex = 0,
+            currentTrack = track,
+            currentPositionMs = 0L,
+            isSingleTrackPlayback = true,
+            isPartOfPlaylist = false
+        )
         loadAndPlayCurrent(resumePositionMs = 0L)
     }
 
@@ -1181,7 +1178,8 @@ class AudioPlayerManager(
         startBufferingWatchdog(current.id)
 
         val stopImmediately = settingsManager.state.value.stopImmediatelyOnNewTrack
-        if (stopImmediately) {
+        val isSameTrack = _state.value.currentTrack?.id == current.id
+        if (stopImmediately && !isSameTrack) {
             try {
                 // Stop previous stream cleanly without setting playWhenReady = false
                 exoPlayer?.stop()
@@ -1551,17 +1549,33 @@ class AudioPlayerManager(
         hasUserInitiatedPlaybackThisSession = true
         ensurePlayerInitialized()
         val player = exoPlayer ?: return
-        // If actively playing OR currently loading/buffering a user-requested track, tapping toggle pauses cleanly!
-        if (_state.value.isPlaying || player.isPlaying || (_state.value.isBuffering && userRequestedPlay)) {
+        // Only pause when audio is actively playing!
+        // When paused, buffering, or loading, tapping toggle MUST start/resume playback, never pause.
+        if (_state.value.isPlaying && player.isPlaying) {
             pause()
         } else {
             userRequestedPlay = true
             val savedResumePos = _state.value.currentPositionMs.coerceAtLeast(0L)
-            if (_state.value.currentTrack != null) {
-                if (player.playbackState == Player.STATE_IDLE || player.mediaItemCount == 0) {
+            val current = _state.value.currentTrack
+
+            if (current != null) {
+                if (player.playbackState == Player.STATE_BUFFERING) {
+                    player.playWhenReady = true
+                    player.play()
+                    _state.value = _state.value.copy(isPlaying = true)
+                    return
+                }
+                val isPlayerStalledOrNeedsReload = player.playbackState == Player.STATE_IDLE ||
+                    player.mediaItemCount == 0 ||
+                    player.currentMediaItem == null
+
+                if (isPlayerStalledOrNeedsReload) {
                     loadAndPlayCurrent(resumePositionMs = savedResumePos)
                 } else {
                     requestAudioFocus()
+                    if (player.playerError != null) {
+                        player.prepare()
+                    }
                     if (savedResumePos > 0L && kotlin.math.abs(player.currentPosition - savedResumePos) > 1500L) {
                         player.seekTo(savedResumePos)
                     }
@@ -1592,6 +1606,21 @@ class AudioPlayerManager(
         hasUserInitiatedPlaybackThisSession = true
         userRequestedPlay = true
 
+        val isLast = _state.value.currentIndex >= queue.lastIndex
+        val current = _state.value.currentTrack
+        val isCurrentOffline = resolverEngine.isOfflineMode.value || current?.isDownloaded == true || !current?.localPath.isNullOrBlank() || queue.any { it.isDownloaded || !it.localPath.isNullOrBlank() }
+
+        if (isLast && _state.value.repeatMode != RepeatMode.ALL) {
+            if (isAutoplayEnabled && !isCurrentOffline) {
+                triggerAutoplayNext()
+                return
+            } else if (_state.value.repeatMode == RepeatMode.OFF && !_state.value.isPartOfPlaylist) {
+                seekTo(0)
+                pause()
+                return
+            }
+        }
+
         val nextIndex = if (_state.value.isShuffle) {
             (0 until queue.size).filter { it != _state.value.currentIndex }.randomOrNull() ?: 0
         } else {
@@ -1619,7 +1648,7 @@ class AudioPlayerManager(
         val prevIndex = if (_state.value.currentIndex > 0) {
             _state.value.currentIndex - 1
         } else {
-            queue.lastIndex
+            if (_state.value.repeatMode == RepeatMode.ALL) queue.lastIndex else 0
         }
         _state.value = _state.value.copy(
             currentIndex = prevIndex,
@@ -1794,17 +1823,20 @@ class AudioPlayerManager(
                     queueTracks = queueMeta,
                     limit = 6
                 )
+                val isCurrentVideo = current.isVideoTrack
                 val nextRec = recommendations.firstOrNull { rec ->
-                    _state.value.queue.none { it.id == rec.id }
+                    _state.value.queue.none { it.id == rec.id } &&
+                        (isCurrentVideo || (!rec.title.contains("video", ignoreCase = true) && !rec.album.contains("video", ignoreCase = true)))
                 }
                 if (nextRec != null) {
                     val newTrack = Track(
                         id = nextRec.id,
                         title = nextRec.title,
                         artist = nextRec.artist,
-                        album = "",
+                        album = if (isCurrentVideo) "YouTube Video" else nextRec.album,
                         durationMs = nextRec.durationSeconds * 1000L,
-                        artUrl = nextRec.thumbnailUrl
+                        artUrl = nextRec.thumbnailUrl,
+                        genre = if (isCurrentVideo) "YouTube Video" else "Track"
                     )
                     musicRepository.insertTrack(newTrack)
                     withContext(Dispatchers.Main) {
@@ -1857,17 +1889,20 @@ class AudioPlayerManager(
                     queueTracks = queueMeta,
                     limit = 6
                 )
+                val isCurrentVideo = current.isVideoTrack
                 val nextRec = recommendations.firstOrNull { rec ->
-                    _state.value.queue.none { it.id == rec.id }
+                    _state.value.queue.none { it.id == rec.id } &&
+                        (isCurrentVideo || (!rec.title.contains("video", ignoreCase = true) && !rec.album.contains("video", ignoreCase = true)))
                 }
                 if (nextRec != null) {
                     val newTrack = Track(
                         id = nextRec.id,
                         title = nextRec.title,
                         artist = nextRec.artist,
-                        album = "",
+                        album = if (isCurrentVideo) "YouTube Video" else nextRec.album,
                         durationMs = nextRec.durationSeconds * 1000L,
-                        artUrl = nextRec.thumbnailUrl
+                        artUrl = nextRec.thumbnailUrl,
+                        genre = if (isCurrentVideo) "YouTube Video" else "Track"
                     )
                     musicRepository.insertTrack(newTrack)
                     withContext(Dispatchers.Main) {

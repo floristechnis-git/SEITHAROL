@@ -314,12 +314,33 @@ fun HomeScreen(
         items.distinctBy { it.id }.take(6)
     }
 
-    // Dynamic suggested artists strictly personalized from user's listening history, liked songs, and recent searches (strictly max 4)
-    val dynamicArtists = remember(activeHistory, likedTracks, recentSearches, trendingHits, downloadedTracks) {
-        val artistScores = mutableMapOf<String, Int>()
+    // Dynamic suggested artists strictly personalized from user's listening history and liked songs (strictly max 4)
+    val dynamicArtists = remember(activeHistory, likedTracks, trendingHits, downloadedTracks) {
+        val bannedArtistKeywords = setOf(
+            "local artist", "device storage", "downloaded in seitharol",
+            "<unknown>", "unknown artist", "unknown", "various artists", "various", "download", "seitharol",
+            "video", "official", "audio", "records", "music", "entertainment", "channel", "production",
+            "vevo", "topic", "remix", "slowed", "reverb", "mashup", "playlist", "compilation", "soundtrack",
+            "theme", "bgm", "status", "lyrics", "cover", "extended", "1 hour", "8d", "nightcore", "workout",
+            "relaxing", "sleep", "beats", "lofi", "lo-fi", "chill", "trap", "bass", "boosted"
+        )
         fun isValidArtist(a: String): Boolean {
-            val lower = a.lowercase().trim()
-            return lower.isNotBlank() && !bannedKeywords.any { lower.contains(it) }
+            val trimmed = a.trim()
+            if (trimmed.length < 2 || trimmed.length > 32) return false
+            if (trimmed.all { it.isDigit() || it.isWhitespace() }) return false
+            val lower = trimmed.lowercase()
+            if (bannedArtistKeywords.any { lower.contains(it) }) return false
+            if (lower.contains("http") || lower.contains(".com") || lower.contains(".net") || lower.contains("www.")) return false
+            if (lower.contains("?") || lower.contains("!") || lower.contains("/") || lower.contains("\\") || lower.contains("|")) return false
+            return true
+        }
+
+        val artistScores = mutableMapOf<String, Int>()
+        likedTracks.forEach { track ->
+            val a = track.artist.trim()
+            if (isValidArtist(a)) {
+                artistScores[a] = (artistScores[a] ?: 0) + 3
+            }
         }
         activeHistory.forEach { track ->
             val a = track.artist.trim()
@@ -327,26 +348,15 @@ fun HomeScreen(
                 artistScores[a] = (artistScores[a] ?: 0) + 2
             }
         }
-        likedTracks.forEach { track ->
-            val a = track.artist.trim()
-            if (isValidArtist(a)) {
-                artistScores[a] = (artistScores[a] ?: 0) + 3
-            }
-        }
         downloadedTracks.forEach { track ->
             val a = track.artist.trim()
             if (isValidArtist(a)) {
-                artistScores[a] = (artistScores[a] ?: 0) + 2
-            }
-        }
-        recentSearches.forEach { query ->
-            val q = query.trim()
-            if (isValidArtist(q)) {
-                artistScores[q] = (artistScores[q] ?: 0) + 2
+                artistScores[a] = (artistScores[a] ?: 0) + 1
             }
         }
 
         val personalized = artistScores.entries
+            .filter { it.value >= 2 }
             .sortedByDescending { it.value }
             .map { it.key }
 

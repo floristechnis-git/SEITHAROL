@@ -7,7 +7,7 @@ import com.example.data.repository.MusicRepository
 import com.example.player.AudioPlayerManager
 import com.example.resolver.ResolverEngine
 
-class CascadeApplication : Application() {
+class CascadeApplication : Application(), coil.ImageLoaderFactory {
 
     lateinit var database: CascadeDatabase
         private set
@@ -19,6 +19,24 @@ class CascadeApplication : Application() {
         private set
     lateinit var audioPlayerManager: AudioPlayerManager
         private set
+
+    override fun newImageLoader(): coil.ImageLoader {
+        return coil.ImageLoader.Builder(this)
+            .memoryCache {
+                coil.memory.MemoryCache.Builder(this)
+                    .maxSizePercent(0.12) // Limit image memory cache to 12% heap for 2GB RAM budget phones
+                    .build()
+            }
+            .diskCache {
+                coil.disk.DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_cache"))
+                    .maxSizeBytes(25L * 1024 * 1024)
+                    .build()
+            }
+            .respectCacheHeaders(false)
+            .crossfade(true)
+            .build()
+    }
 
     override fun onCreate() {
         super.onCreate()

@@ -831,11 +831,12 @@ object InnerTubeStreamExtractor {
             topSongs = topSongs
         )
 
+        val isOfficial = browseId.startsWith("UC") || browseId.startsWith("MPLA")
         YtmArtistPageData(
             browseId = browseId.ifBlank { artistName },
             name = artistName,
-            description = "Official tracks, albums, singles, and artist mixes by $artistName.",
-            subscriberCountText = "Verified Artist",
+            description = if (isOfficial) "Official tracks, albums, singles, and artist mixes by $artistName." else if (topSongs.isNotEmpty()) "Tracks and releases by $artistName." else "",
+            subscriberCountText = if (isOfficial) "Verified Artist" else "",
             avatarUrl = verifiedAvatar,
             bannerUrl = verifiedAvatar,
             radioPlaylistId = topSongs.firstOrNull()?.videoId?.let { "RDAMVM$it" },
@@ -1703,6 +1704,14 @@ object InnerTubeStreamExtractor {
                     put("contentCheckOk", true)
                     put("racyCheckOk", true)
                     client.params?.let { put("params", it) }
+                    if (client.isEmbedded) {
+                        put("playbackContext", JSONObject().apply {
+                            put("contentPlaybackContext", JSONObject().apply {
+                                put("html5Preference", "HTML5_PREF_WANTS")
+                                put("signatureTimestamp", 20073)
+                            })
+                        })
+                    }
                     put("context", JSONObject().apply {
                         put("client", JSONObject().apply {
                             put("clientName", client.clientName)
@@ -1717,6 +1726,11 @@ object InnerTubeStreamExtractor {
                             client.androidSdkVersion?.let { put("androidSdkVersion", it) }
                             if (visData != null) put("visitorData", visData)
                         })
+                        if (client.isEmbedded) {
+                            put("thirdParty", JSONObject().apply {
+                                put("embedUrl", "https://www.youtube.com/")
+                            })
+                        }
                     })
                 }
                 conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
@@ -1730,13 +1744,37 @@ object InnerTubeStreamExtractor {
                     var bestHeight = -1
                     for (i in 0 until formats.length()) {
                         val fmt = formats.optJSONObject(i) ?: continue
-                        val url = fmt.optString("url", "")
+                        var rawUrl = fmt.optString("url", "")
+                        if (rawUrl.isBlank()) {
+                            val cipherStr = fmt.optString("signatureCipher").ifBlank { fmt.optString("cipher") }
+                            if (cipherStr.isNotBlank()) {
+                                val params = mutableMapOf<String, String>()
+                                for (part in cipherStr.split("&")) {
+                                    val idx = part.indexOf('=')
+                                    if (idx > 0) {
+                                        params[URLDecoder.decode(part.substring(0, idx), "UTF-8")] =
+                                            URLDecoder.decode(part.substring(idx + 1), "UTF-8")
+                                    }
+                                }
+                                val baseUrl = params["url"].orEmpty()
+                                val sig = params["s"].orEmpty()
+                                val sp = params["sp"] ?: "sig"
+                                if (baseUrl.isNotBlank() && sig.isNotBlank()) {
+                                    val ops = com.example.resolver.KotlinJsInterp.getActiveCipherOperations()
+                                    val deciphered = com.example.resolver.KotlinJsInterp.decipherSignature(sig, ops)
+                                    if (deciphered.isNotBlank()) {
+                                        val sep = if (baseUrl.contains("?")) "&" else "?"
+                                        rawUrl = "$baseUrl$sep$sp=$deciphered"
+                                    }
+                                }
+                            }
+                        }
                         val height = fmt.optInt("height", 360)
-                        if (url.isNotBlank()) {
-                            val withCpn = if (!url.contains("cpn=")) {
-                                val sep = if (url.contains("?")) "&" else "?"
-                                "$url${sep}cpn=$cpn"
-                            } else url
+                        if (rawUrl.isNotBlank()) {
+                            val withCpn = if (!rawUrl.contains("cpn=")) {
+                                val sep = if (rawUrl.contains("?")) "&" else "?"
+                                "$rawUrl${sep}cpn=$cpn"
+                            } else rawUrl
                             if (height >= bestHeight) {
                                 bestHeight = height
                                 bestUrl = withCpn
@@ -1753,7 +1791,49 @@ object InnerTubeStreamExtractor {
                 return@withContext Result.success(videoUrl)
             }
         }
-        resolveExactYoutubeStreamById(cleanVideoId, AudioQuality.HIGH, forceRefresh = false)
+
+        // Fast Invidious / Piped video fallback for progressive video streams
+        val pipedInstances = listOf(
+            "https://pipedapi.kavin.rocks",
+            "https://api.piped.video"
+        )
+        for (instance in pipedInstances) {
+            val pipedVideoUrl = runCatching {
+                val conn = (URL("$instance/streams/$cleanVideoId").openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 3000
+                    readTimeout = 3000
+                    setRequestProperty("User-Agent", "Mozilla/5.0")
+                }
+                if (conn.responseCode == 200) {
+                    val root = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                    val streams = root.optJSONArray("videoStreams")
+                    var pickedUrl: String? = null
+                    var maxQuality = -1
+                    if (streams != null) {
+                        for (j in 0 until streams.length()) {
+                            val s = streams.optJSONObject(j) ?: continue
+                            val format = s.optString("format", "")
+                            val videoOnly = s.optBoolean("videoOnly", true)
+                            val u = s.optString("url", "")
+                            val quality = s.optInt("height", 0)
+                            if (!videoOnly && format.equals("mp4", ignoreCase = true) && u.isNotBlank()) {
+                                if (quality >= maxQuality) {
+                                    maxQuality = quality
+                                    pickedUrl = u
+                                }
+                            }
+                        }
+                    }
+                    if (!pickedUrl.isNullOrBlank()) pickedUrl
+                    else root.optString("hls", "").takeIf { it.isNotBlank() }
+                } else null
+            }.getOrNull()
+            if (!pipedVideoUrl.isNullOrBlank()) {
+                return@withContext Result.success(pipedVideoUrl)
+            }
+        }
+
+        Result.failure(IllegalStateException("No verified video stream found for videoId=$cleanVideoId"))
     }
 
     /**

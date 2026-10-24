@@ -146,12 +146,44 @@ object ManipurCalendarNotificationEngine {
         month: Int,
         day: Int,
         isToday: Boolean,
-        eventTimestampMs: Long = System.currentTimeMillis()
+        eventTimestampMs: Long = System.currentTimeMillis(),
+        context: Context? = null
     ): CalendarEventNotification? {
         val mmDd = String.format(Locale.US, "%02d-%02d", month, day)
         val formattedDate = formatMonthDay(year, month, day)
 
-        // 1. Special Birthday: November 27
+        // 1. Personalized User Birthday from AppPreferences
+        val userPrefs = context?.let { com.example.data.AppPreferences.getInstance(it).settings.value }
+        val userBirthdate = userPrefs?.userBirthdate?.takeIf { it.isNotBlank() }
+        val userName = userPrefs?.userName?.takeIf { it.isNotBlank() } ?: "Listener"
+
+        val isUserBirthday = if (userBirthdate != null) {
+            val parts = userBirthdate.split("-")
+            val (uM, uD) = when (parts.size) {
+                3 -> (parts[1].toIntOrNull() ?: -1) to (parts[2].toIntOrNull() ?: -1)
+                2 -> (parts[0].toIntOrNull() ?: -1) to (parts[1].toIntOrNull() ?: -1)
+                else -> -1 to -1
+            }
+            month == uM && day == uD
+        } else {
+            false
+        }
+
+        if (isUserBirthday) {
+            val safeId = userName.lowercase().replace(" ", "_")
+            return CalendarEventNotification(
+                id = "bday_${safeId}_$year",
+                title = "Happy Birthday $userName! 🎂🎉",
+                body = "Wishing you a wonderful year ahead filled with soulful melodies, joy, good health, and memorable moments with Seitharol!",
+                dateLabel = if (isToday) "Today • $formattedDate" else "Passed • $formattedDate",
+                iconName = "CAKE",
+                icon = Icons.Outlined.Cake,
+                isToday = isToday,
+                timestampMs = eventTimestampMs
+            )
+        }
+
+        // Classic Special Celebration: November 27
         if (mmDd == "11-27") {
             return CalendarEventNotification(
                 id = "bday_johnson_$year",
@@ -307,7 +339,8 @@ object ManipurCalendarNotificationEngine {
             month = todayMonth,
             day = todayDay,
             isToday = true,
-            eventTimestampMs = nowCal.timeInMillis
+            eventTimestampMs = nowCal.timeInMillis,
+            context = context
         )
         if (todayEvent != null && !storedMap.containsKey(todayEvent.id)) {
             val unreadToday = todayEvent.copy(isUnread = true)
@@ -318,28 +351,28 @@ object ManipurCalendarNotificationEngine {
             storedMap[todayEvent.id] = existing.copy(isToday = true, dateLabel = todayEvent.dateLabel)
         }
 
-        // 2. Backfill ONLY passed past calendar events (scanning backwards 1..300 days in the past, NEVER future!)
-        val pastCal = Calendar.getInstance()
-        for (daysAgo in 1..300) {
-            pastCal.add(Calendar.DAY_OF_YEAR, -1)
-            val y = pastCal.get(Calendar.YEAR)
-            val m = pastCal.get(Calendar.MONTH) + 1
-            val d = pastCal.get(Calendar.DAY_OF_MONTH)
-            val pastEv = getEventForDate(
-                year = y,
-                month = m,
-                day = d,
-                isToday = false,
-                eventTimestampMs = pastCal.timeInMillis
-            )
-            if (pastEv != null && !storedMap.containsKey(pastEv.id)) {
-                storedMap[pastEv.id] = pastEv.copy(isUnread = false)
-            } else if (pastEv != null) {
-                val existing = storedMap[pastEv.id] ?: pastEv
-                if (existing.isToday) {
-                    storedMap[pastEv.id] = existing.copy(isToday = false, dateLabel = pastEv.dateLabel)
+        // 2. Backfill passed past calendar events once on initial launch (scanning backwards 90 days, NEVER future!)
+        val alreadyScannedPast = prefs.getBoolean("calendar_past_scanned_v1", false)
+        if (!alreadyScannedPast) {
+            val pastCal = Calendar.getInstance()
+            for (daysAgo in 1..90) {
+                pastCal.add(Calendar.DAY_OF_YEAR, -1)
+                val y = pastCal.get(Calendar.YEAR)
+                val m = pastCal.get(Calendar.MONTH) + 1
+                val d = pastCal.get(Calendar.DAY_OF_MONTH)
+                val pastEv = getEventForDate(
+                    year = y,
+                    month = m,
+                    day = d,
+                    isToday = false,
+                    eventTimestampMs = pastCal.timeInMillis,
+                    context = context
+                )
+                if (pastEv != null && !storedMap.containsKey(pastEv.id)) {
+                    storedMap[pastEv.id] = pastEv.copy(isUnread = false)
                 }
             }
+            prefs.edit().putBoolean("calendar_past_scanned_v1", true).apply()
         }
 
         // 3. Ensure today's daily/initial app release notice is pulled on its date and stored

@@ -10,6 +10,7 @@ data class UserSettings(
     val onboarded: Boolean = false,
     val userName: String = "",
     val userAge: String = "",
+    val userBirthdate: String = "",
     val themeMode: String = "SYSTEM", // "SYSTEM", "LIGHT", "DARK"
     val audioQuality: String = "Data Saver (96 kbps)",
     val streamingQuality: String = "LOW", // "LOW", "NORMAL", "HIGH" - Data Saver default
@@ -66,6 +67,7 @@ class AppPreferences private constructor(context: Context) {
             onboarded = prefs.getBoolean("onboarded", false),
             userName = prefs.getString("user_name", "") ?: "",
             userAge = prefs.getString("user_age", "") ?: "",
+            userBirthdate = prefs.getString("user_birthdate", "") ?: "",
             themeMode = prefs.getString("theme_mode", "SYSTEM") ?: "SYSTEM",
             audioQuality = prefs.getString("audio_quality", "Data Saver (96 kbps)") ?: "Data Saver (96 kbps)",
             streamingQuality = prefs.getString("streaming_quality", "LOW") ?: "LOW",
@@ -214,20 +216,24 @@ class AppPreferences private constructor(context: Context) {
         }
     }
 
-    fun saveOnboarding(name: String, age: String) {
+    fun saveOnboarding(name: String, age: String, birthdate: String = "") {
         prefs.edit()
             .putBoolean("onboarded", true)
             .putString("user_name", name.trim())
             .putString("user_age", age.trim())
+            .putString("user_birthdate", birthdate.trim())
             .apply()
         _settings.value = loadSettings()
     }
 
-    fun updateAccount(name: String, age: String) {
-        prefs.edit()
+    fun updateAccount(name: String, age: String, birthdate: String = "") {
+        val editor = prefs.edit()
             .putString("user_name", name.trim())
             .putString("user_age", age.trim())
-            .apply()
+        if (birthdate.isNotBlank()) {
+            editor.putString("user_birthdate", birthdate.trim())
+        }
+        editor.apply()
         _settings.value = loadSettings()
     }
 

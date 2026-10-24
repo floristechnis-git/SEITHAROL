@@ -822,8 +822,8 @@ object InnerTubeStreamExtractor {
         if (raw.isBlank()) return ""
         val withHttps = if (raw.startsWith("//")) "https:$raw" else raw
         return withHttps
-            .replace(Regex("=s\d+[^&\s]*"), "=s512-c-k-c0x00ffffff-no-rj")
-            .replace(Regex("=w\d+-h\d+[^&\s]*"), "=w512-h512")
+            .replace(Regex("=s\\d+[^&\\s]*"), "=s512-c-k-c0x00ffffff-no-rj")
+            .replace(Regex("=w\\d+-h\\d+[^&\\s]*"), "=w512-h512")
     }
 
     /**

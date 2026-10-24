@@ -807,16 +807,83 @@ fun DownloadProviderFormatBottomSheet(
             Spacer(modifier = Modifier.height(18.dp))
 
             Text(
-                text = "Download Audio Quality",
+                text = "Download Format",
                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(modifier = Modifier.height(8.dp))
 
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                DownloadFormat.entries.forEach { format ->
+                    val isSelected = selectedFormat == format
+                    val isVideoFormat = format == DownloadFormat.VIDEO
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(14.dp))
+                            .border(
+                                width = if (isSelected) 1.8.dp else 1.dp,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                            .clickable {
+                                selectedFormat = format
+                                settingsManager.setDownloadVideoFormat(isVideoFormat)
+                            },
+                        color = if (isSelected) {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.40f)
+                        } else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = format.label,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = format.badge,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            Text(
+                text = "Download Quality",
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            val isVideoSelected = selectedFormat == DownloadFormat.VIDEO
             val qualityTiers = listOf(
-                Triple(AudioQuality.HIGH, "High", "320 kbps"),
-                Triple(AudioQuality.NORMAL, "Normal", "160 kbps"),
-                Triple(AudioQuality.LOW, "Low", "96 kbps")
+                Triple(AudioQuality.HIGH, "High", if (isVideoSelected) "720p HD" else "320 kbps"),
+                Triple(AudioQuality.NORMAL, "Normal", if (isVideoSelected) "480p SD" else "160 kbps"),
+                Triple(AudioQuality.LOW, "Low", if (isVideoSelected) "360p Saver" else "96 kbps")
             )
 
             Row(
@@ -853,80 +920,6 @@ fun DownloadProviderFormatBottomSheet(
                             )
                             Text(
                                 text = bitrate,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            Text(
-                text = "Audio Container / Format",
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                DownloadFormat.entries.forEach { format ->
-                    val isSelected = selectedFormat == format
-                    val isFlac = format == DownloadFormat.FLAC
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(14.dp))
-                            .border(
-                                width = if (isSelected) 1.8.dp else 1.dp,
-                                color = if (isSelected) {
-                                    if (isFlac) Color(0xFFFFD700) else MaterialTheme.colorScheme.primary
-                                } else MaterialTheme.colorScheme.outlineVariant,
-                                shape = RoundedCornerShape(14.dp)
-                            )
-                            .clickable {
-                                selectedFormat = format
-                                if (isFlac) {
-                                    selectedQuality = AudioQuality.HIGH
-                                    settingsManager.setDownloadQuality(AudioQuality.HIGH)
-                                }
-                            },
-                        color = if (isSelected) {
-                            if (isFlac) Color(0xFFFFD700).copy(alpha = 0.12f)
-                            else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.40f)
-                        } else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = format.label,
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                    color = if (isSelected) {
-                                        if (isFlac) Color(0xFFFFD700) else MaterialTheme.colorScheme.primary
-                                    } else MaterialTheme.colorScheme.onSurface
-                                )
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = null,
-                                        tint = if (isFlac) Color(0xFFFFD700) else MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-                            Text(
-                                text = format.badge,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1022,7 +1015,11 @@ fun DownloadProviderFormatBottomSheet(
                 com.seitharol.ui.search.DownloadSvgIcon(tint = Color.White, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Download ${selectedFormat.ext.uppercase()} (${selectedQuality.maxBitrateKbps} kbps)",
+                    text = if (selectedFormat == DownloadFormat.VIDEO) {
+                        "Download Video MP4 (${selectedQuality.name.lowercase().replaceFirstChar { it.uppercase() }})"
+                    } else {
+                        "Download Audio Only (${selectedQuality.maxBitrateKbps} kbps)"
+                    },
                     color = Color.White,
                     fontWeight = FontWeight.Bold
                 )

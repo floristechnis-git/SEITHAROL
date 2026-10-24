@@ -837,7 +837,7 @@ class CascadeViewModel(
     }
 
     private fun com.seitharol.data.resolver.CandidateStream.toTrack(): Track {
-        val isVideo = this.videoType == "MUSIC_VIDEO_TYPE_UGC"
+        val isVideo = this.videoType == "MUSIC_VIDEO_TYPE_UGC" || this.videoType == "MUSIC_VIDEO_TYPE_OMV"
         val cleanAlbum = this.albumName?.takeUnless {
             it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
         }.orEmpty()
@@ -980,7 +980,12 @@ class CascadeViewModel(
             it.title.equals(track.title, ignoreCase = true) &&
                 (track.artist.isBlank() || it.artist.contains(track.artist, ignoreCase = true) || track.artist.contains(it.artist, ignoreCase = true))
         }
-        val effectiveTrack = if (dlMatch != null) {
+        val canUseLocalMatch = dlMatch != null && (
+            !track.isVideoTrack ||
+                isOfflineMode.value ||
+                dlMatch.localPath?.endsWith(".mp4", ignoreCase = true) == true
+            )
+        val effectiveTrack = if (canUseLocalMatch && dlMatch != null) {
             track.copy(isDownloaded = true, localPath = dlMatch.localPath)
         } else track
 
@@ -1172,8 +1177,7 @@ class CascadeViewModel(
     }
 
     fun startDownload(track: Track, tier: DownloadTier = DownloadTier.STANDARD) {
-        val effectiveTier = if (track.isVideoTrack) DownloadTier.VIDEO_MP4 else tier
-        runCatching { downloadRepository.enqueueDownload(track, effectiveTier) }
+        runCatching { downloadRepository.enqueueDownload(track, tier) }
     }
 
     fun downloadAllTracks(tracks: List<Track>, tier: DownloadTier = DownloadTier.STANDARD) {

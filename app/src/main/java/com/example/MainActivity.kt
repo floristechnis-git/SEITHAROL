@@ -248,10 +248,16 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        val playerMgr = (application as? CascadeApplication)?.audioPlayerManager
-        if (isFinishing) {
+        if (!isChangingConfigurations) {
+            val appCtx = applicationContext
+            com.example.player.MediaPlaybackService.stopService(appCtx)
+            val playerMgr = (application as? CascadeApplication)?.audioPlayerManager
             runCatching { playerMgr?.onAppClearedFromRecents() }
-            com.example.player.MediaPlaybackService.stopService(applicationContext)
+            runCatching {
+                val nm = appCtx.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+                nm?.cancel(com.example.player.MediaPlaybackService.NOTIFICATION_ID)
+                nm?.cancelAll()
+            }
         }
         super.onDestroy()
     }

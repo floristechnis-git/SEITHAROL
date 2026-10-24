@@ -925,8 +925,7 @@ fun SearchScreen(
                         },
                         onLikeClick = { viewModel.toggleLike(track) },
                         onDownloadClick = { tier: DownloadTier ->
-                            val effectiveTier = if (isVideo) DownloadTier.VIDEO_MP4 else tier
-                            viewModel.startDownload(track, effectiveTier)
+                            viewModel.startDownload(track, tier)
                         },
                         onPlayNextClick = { viewModel.playNext(track) },
                         onAddToQueueClick = { viewModel.addToQueue(track) },

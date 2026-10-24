@@ -187,6 +187,7 @@ fun TrackCard(
     onRemoveDownloadClick: (() -> Unit)? = null
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    var showDownloadFormatSheet by remember { mutableStateOf(false) }
     var hasRequestedDownload by remember(track.id, track.isDownloaded) { mutableStateOf(false) }
 
     Surface(
@@ -288,8 +289,7 @@ fun TrackCard(
                     if (track.isDownloaded) {
                         onRemoveDownloadClick?.invoke()
                     } else if (!hasRequestedDownload) {
-                        hasRequestedDownload = true
-                        onDownloadClick(if (track.isVideoTrack) DownloadTier.VIDEO_MP4 else DownloadTier.STANDARD)
+                        showDownloadFormatSheet = true
                     }
                 },
                 modifier = Modifier.size(36.dp)
@@ -426,26 +426,39 @@ fun TrackCard(
                             }
                         )
                     } else {
-                        if (track.isVideoTrack) {
-                            DropdownMenuItem(
-                                text = { Text("Download MP4 Video", color = SeitharolTextPrimary) },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Videocam,
-                                        contentDescription = "Download MP4 Video",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                },
-                                onClick = {
-                                    showMenu = false
-                                    hasRequestedDownload = true
-                                    onDownloadClick(DownloadTier.VIDEO_MP4)
-                                }
-                            )
-                        }
                         DropdownMenuItem(
-                            text = { Text("Download High Quality", color = SeitharolTextPrimary) },
+                            text = { Text("Download (Choose Format & Quality)", color = SeitharolTextPrimary) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.CloudDownload,
+                                    contentDescription = "Download Options",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                showDownloadFormatSheet = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Download Video (MP4)", color = SeitharolTextPrimary) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Videocam,
+                                    contentDescription = "Download Video (MP4)",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                hasRequestedDownload = true
+                                onDownloadClick(DownloadTier.VIDEO_MP4)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Download Audio Only • High (320k)", color = SeitharolTextPrimary) },
                             leadingIcon = {
                                 Image(
                                     painter = painterResource(id = R.drawable.ic_mp3),
@@ -460,7 +473,7 @@ fun TrackCard(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Download Standard (160k)", color = SeitharolTextPrimary) },
+                            text = { Text("Download Audio Only • Normal (160k)", color = SeitharolTextPrimary) },
                             leadingIcon = {
                                 Image(
                                     painter = painterResource(id = R.drawable.ic_mp3),
@@ -475,7 +488,7 @@ fun TrackCard(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Download Data Saver (96k)", color = SeitharolTextPrimary) },
+                            text = { Text("Download Audio Only • Low (96k)", color = SeitharolTextPrimary) },
                             leadingIcon = {
                                 Image(
                                     painter = painterResource(id = R.drawable.ic_mp3),
@@ -489,28 +502,21 @@ fun TrackCard(
                                 onDownloadClick(DownloadTier.DATA_SAVER)
                             }
                         )
-                        if (!track.isVideoTrack && com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(track.id) != null) {
-                            DropdownMenuItem(
-                                text = { Text("Download MP4 Video", color = SeitharolTextPrimary) },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Videocam,
-                                        contentDescription = "Download MP4 Video",
-                                        tint = SeitharolDark,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                },
-                                onClick = {
-                                    showMenu = false
-                                    hasRequestedDownload = true
-                                    onDownloadClick(DownloadTier.VIDEO_MP4)
-                                }
-                            )
-                        }
                     }
                 }
             }
         }
+    }
+
+    if (showDownloadFormatSheet) {
+        TrackDownloadFormatQualitySheet(
+            track = track,
+            onDismiss = { showDownloadFormatSheet = false },
+            onConfirmDownload = { chosenTier ->
+                hasRequestedDownload = true
+                onDownloadClick(chosenTier)
+            }
+        )
     }
 }
 

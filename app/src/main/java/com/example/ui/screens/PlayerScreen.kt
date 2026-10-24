@@ -117,10 +117,12 @@ fun PlayerScreen(
     var showExpandedLyrics by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
     var showAudioAdjustSheet by remember { mutableStateOf(false) }
+    var showDownloadOptionsSheet by remember { mutableStateOf(false) }
     var showFullscreenVideo by remember { mutableStateOf(false) }
     var isVideoZoomCrop by remember { mutableStateOf(false) }
 
     val isVideoTrack = playerState.isVideoMode ||
+        track.isVideoTrack ||
         track.genre.equals("YouTube Video", ignoreCase = true) ||
         track.album.equals("YouTube Video", ignoreCase = true)
 
@@ -672,8 +674,7 @@ fun PlayerScreen(
                     if (isDownloading) {
                         viewModel.cancelDownload(trackDownload?.trackId ?: track.id)
                     } else if (!isDownloaded) {
-                        val tier = if (isVideoTrack) com.example.data.model.DownloadTier.VIDEO_MP4 else com.example.data.model.DownloadTier.STANDARD
-                        viewModel.startDownload(track, tier)
+                        showDownloadOptionsSheet = true
                     }
                 },
                 modifier = Modifier.size(40.dp)
@@ -1265,7 +1266,6 @@ fun SeitharolRawVideoSurface(
             AndroidView(
                 factory = { ctx ->
                     TextureView(ctx).apply {
-                        isOpaque = false
                         viewModel.attachVideoTextureView(this)
                         addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
                             val loc = IntArray(2)
@@ -1540,8 +1540,7 @@ fun SeitharolFullscreenVideoModal(
                 AndroidView(
                     factory = { ctx ->
                         TextureView(ctx).apply {
-                            isOpaque = false
-                            viewModel.attachVideoTextureView(this)
+                                viewModel.attachVideoTextureView(this)
                             addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
                                 val loc = IntArray(2)
                                 v.getLocationOnScreen(loc)

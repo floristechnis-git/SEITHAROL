@@ -547,11 +547,12 @@ class DownloadRepository(
     fun enqueueDownload(track: Track, tier: DownloadTier = DownloadTier.STANDARD): Job {
         activeDownloadJobs[track.id]?.cancel()
         activeTrackTitles[track.id] = track.title
-        val effectiveTier = if (track.isVideoTrack) DownloadTier.VIDEO_MP4 else tier
+        val effectiveTier = tier
+        val isVideoDownload = effectiveTier == DownloadTier.VIDEO_MP4
         val job = repoScope.launch {
             val downloadDir = File(appContext.filesDir, "downloads").apply { if (!exists()) mkdirs() }
             val ext = when {
-                effectiveTier == DownloadTier.VIDEO_MP4 || track.isVideoTrack -> "mp4"
+                isVideoDownload -> "mp4"
                 effectiveTier.codec.contains("Opus", ignoreCase = true) -> "opus"
                 else -> "m4a"
             }
@@ -561,8 +562,8 @@ class DownloadRepository(
                 val existing = trackDao.getTrackById(track.id)
                 trackDao.insertTrack(
                     track.copy(
-                        genre = if (track.isVideoTrack) "YouTube Video" else track.genre,
-                        codec = if (track.isVideoTrack) "MP4" else track.codec,
+                        genre = if (isVideoDownload) "YouTube Video" else track.genre,
+                        codec = if (isVideoDownload) "MP4" else track.codec,
                         isLiked = existing?.isLiked ?: track.isLiked,
                         isDownloaded = existing?.isDownloaded ?: false,
                         localPath = existing?.localPath ?: destFile.absolutePath
@@ -576,7 +577,7 @@ class DownloadRepository(
                         localPath = destFile.absolutePath,
                         progress = 0.01f,
                         bytesDownloaded = 0L,
-                        totalBytes = if (track.isVideoTrack) 18_000_000L else 4_000_000L
+                        totalBytes = if (isVideoDownload) 18_000_000L else 4_000_000L
                     )
                 )
             }
@@ -596,7 +597,7 @@ class DownloadRepository(
     }
 
     private suspend fun executeDownload(track: Track, tier: DownloadTier) = withContext(Dispatchers.IO) {
-        val isVideo = track.isVideoTrack || tier == DownloadTier.VIDEO_MP4
+        val isVideo = tier == DownloadTier.VIDEO_MP4
         val downloadDir = File(appContext.filesDir, "downloads").apply { if (!exists()) mkdirs() }
         val ext = when {
             isVideo -> "mp4"

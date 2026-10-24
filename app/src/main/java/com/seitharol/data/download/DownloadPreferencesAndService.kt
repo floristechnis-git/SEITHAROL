@@ -52,8 +52,13 @@ enum class DownloadProvider(val id: String, val displayName: String, val subtitl
 }
 
 enum class DownloadFormat(val ext: String, val mimeType: String, val label: String, val badge: String) {
-    MP3("m4a", "audio/mp4", "Standard Audio", "M4A / AAC (320 kbps)"),
-    FLAC("flac", "audio/flac", "Lossless / Master", "Hi-Res FLAC • 24-bit")
+    AUDIO("m4a", "audio/mp4", "Audio Only", "M4A / AAC Audio"),
+    VIDEO("mp4", "video/mp4", "Video", "MP4 Video + Audio");
+
+    companion object {
+        val MP3: DownloadFormat get() = AUDIO
+        val FLAC: DownloadFormat get() = AUDIO
+    }
 }
 
 sealed class DownloadTaskState {
@@ -278,7 +283,7 @@ class DownloadPreferencesAndService(private val context: Context) {
             downloadDao.insertDownload(
                 com.example.data.local.DownloadEntity(
                     trackId = canonicalId,
-                    tier = format.label,
+                    tier = if (format == DownloadFormat.VIDEO) com.example.data.model.DownloadTier.VIDEO_MP4.label else format.label,
                     state = "DOWNLOADING",
                     localPath = internalDestFile.absolutePath,
                     progress = 0.05f,
@@ -287,14 +292,23 @@ class DownloadPreferencesAndService(private val context: Context) {
                 )
             )
 
-            val candidateUrls = buildList {
-                resolveDirectDownloadUrl(track, primaryArtist, provider, preferredQuality)?.let { add(it) }
-                InnerTubeStreamExtractor.resolveDownloadableStreamCandidates(
+            val isVideoFormat = format == DownloadFormat.VIDEO
+            val candidateUrls = if (isVideoFormat) {
+                InnerTubeStreamExtractor.resolveDownloadableVideoCandidates(
                     videoId = track.sourceId,
                     title = track.title,
-                    artist = primaryArtist,
-                    preferredQuality = preferredQuality
-                ).forEach { if (!contains(it)) add(it) }
+                    artist = primaryArtist
+                )
+            } else {
+                buildList {
+                    resolveDirectDownloadUrl(track, primaryArtist, provider, preferredQuality)?.let { add(it) }
+                    InnerTubeStreamExtractor.resolveDownloadableStreamCandidates(
+                        videoId = track.sourceId,
+                        title = track.title,
+                        artist = primaryArtist,
+                        preferredQuality = preferredQuality
+                    ).forEach { if (!contains(it)) add(it) }
+                }
             }
             if (candidateUrls.isEmpty()) {
                 throw IllegalStateException("Could not resolve downloadable stream for ${track.title}")
@@ -330,7 +344,7 @@ class DownloadPreferencesAndService(private val context: Context) {
                             downloadDao.updateDownload(
                                 com.example.data.local.DownloadEntity(
                                     trackId = canonicalId,
-                                    tier = format.label,
+                                    tier = if (format == DownloadFormat.VIDEO) com.example.data.model.DownloadTier.VIDEO_MP4.label else format.label,
                                     state = "DOWNLOADING",
                                     localPath = internalDestFile.absolutePath,
                                     progress = (progress / 100f).coerceIn(0.02f, 0.99f),
@@ -387,6 +401,8 @@ class DownloadPreferencesAndService(private val context: Context) {
                         album = track.album?.takeUnless { it.equals("Discover Downloads", ignoreCase = true) || it.equals("YouTube Video", ignoreCase = true) }.orEmpty(),
                         durationMs = track.durationMs.takeIf { it > 0L } ?: 210_000L,
                         artUrl = track.artUrl.orEmpty(),
+                        genre = if (format == DownloadFormat.VIDEO) "YouTube Video" else "Pop",
+                        codec = if (format == DownloadFormat.VIDEO) "MP4" else "AAC",
                         isLiked = existing?.isLiked ?: track.isLiked,
                         isDownloaded = true,
                         localPath = validInternalFile.absolutePath
@@ -396,7 +412,7 @@ class DownloadPreferencesAndService(private val context: Context) {
                 downloadDao.insertDownload(
                     com.example.data.local.DownloadEntity(
                         trackId = canonicalId,
-                        tier = format.label,
+                        tier = if (format == DownloadFormat.VIDEO) com.example.data.model.DownloadTier.VIDEO_MP4.label else format.label,
                         state = "COMPLETED",
                         localPath = validInternalFile.absolutePath,
                         progress = 1.0f,
@@ -441,20 +457,39 @@ class DownloadPreferencesAndService(private val context: Context) {
         format: DownloadFormat,
         track: NormalizedTrack
     ) {
+        val isVideo = format == DownloadFormat.VIDEO
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val resolver = appContext.contentResolver
-            val contentValues = ContentValues().apply {
-                put(MediaStore.Audio.Media.DISPLAY_NAME, safeFileName)
-                put(MediaStore.Audio.Media.MIME_TYPE, format.mimeType)
-                put(MediaStore.Audio.Media.TITLE, track.title)
-                put(MediaStore.Audio.Media.ARTIST, track.artists.joinToString(", "))
-                put(MediaStore.Audio.Media.ALBUM, track.album ?: "Single")
-                put(MediaStore.Audio.Media.DURATION, track.durationMs)
-                put(MediaStore.Audio.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MUSIC}/Seitharol")
-                put(MediaStore.Audio.Media.IS_MUSIC, 1)
-                put(MediaStore.Audio.Media.IS_PENDING, 1)
+            val collectionUri = if (isVideo) {
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            } else {
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
             }
-            val itemUri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, contentValues) ?: return
+            val contentValues = if (isVideo) {
+                ContentValues().apply {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, safeFileName)
+                    put(MediaStore.Video.Media.MIME_TYPE, format.mimeType)
+                    put(MediaStore.Video.Media.TITLE, track.title)
+                    put(MediaStore.Video.Media.ARTIST, track.artists.joinToString(", "))
+                    put(MediaStore.Video.Media.ALBUM, track.album ?: "Seitharol")
+                    put(MediaStore.Video.Media.DURATION, track.durationMs)
+                    put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/Seitharol")
+                    put(MediaStore.Video.Media.IS_PENDING, 1)
+                }
+            } else {
+                ContentValues().apply {
+                    put(MediaStore.Audio.Media.DISPLAY_NAME, safeFileName)
+                    put(MediaStore.Audio.Media.MIME_TYPE, format.mimeType)
+                    put(MediaStore.Audio.Media.TITLE, track.title)
+                    put(MediaStore.Audio.Media.ARTIST, track.artists.joinToString(", "))
+                    put(MediaStore.Audio.Media.ALBUM, track.album ?: "Single")
+                    put(MediaStore.Audio.Media.DURATION, track.durationMs)
+                    put(MediaStore.Audio.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MUSIC}/Seitharol")
+                    put(MediaStore.Audio.Media.IS_MUSIC, 1)
+                    put(MediaStore.Audio.Media.IS_PENDING, 1)
+                }
+            }
+            val itemUri = resolver.insert(collectionUri, contentValues) ?: return
             try {
                 resolver.openOutputStream(itemUri)?.use { out ->
                     FileInputStream(sourceFile).use { input ->
@@ -462,18 +497,20 @@ class DownloadPreferencesAndService(private val context: Context) {
                     }
                 }
                 val publishValues = ContentValues().apply {
-                    put(MediaStore.Audio.Media.IS_PENDING, 0)
+                    put(if (isVideo) MediaStore.Video.Media.IS_PENDING else MediaStore.Audio.Media.IS_PENDING, 0)
                 }
                 resolver.update(itemUri, publishValues, null, null)
             } catch (e: Throwable) {
                 runCatching { resolver.delete(itemUri, null, null) }
             }
         } else {
-            val publicMusicDir = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+            val publicDir = File(
+                Environment.getExternalStoragePublicDirectory(
+                    if (isVideo) Environment.DIRECTORY_MOVIES else Environment.DIRECTORY_MUSIC
+                ),
                 "Seitharol"
             ).apply { if (!exists()) mkdirs() }
-            val destFile = File(publicMusicDir, safeFileName)
+            val destFile = File(publicDir, safeFileName)
             FileInputStream(sourceFile).use { input ->
                 FileOutputStream(destFile).use { out ->
                     input.copyTo(out)
@@ -698,8 +735,11 @@ class DownloadPreferencesAndService(private val context: Context) {
         )
 
     fun getPreferredFormat(): DownloadFormat {
-        val saved = prefs.getString("preferred_format", DownloadFormat.MP3.name) ?: DownloadFormat.MP3.name
-        return runCatching { DownloadFormat.valueOf(saved) }.getOrDefault(DownloadFormat.MP3)
+        val saved = prefs.getString("preferred_format", DownloadFormat.AUDIO.name) ?: DownloadFormat.AUDIO.name
+        return when (saved.uppercase()) {
+            "VIDEO", "VIDEO_MP4", "MP4" -> DownloadFormat.VIDEO
+            else -> DownloadFormat.AUDIO
+        }
     }
 
     fun recordProviderAndFormatSelection(provider: DownloadProvider, format: DownloadFormat) {

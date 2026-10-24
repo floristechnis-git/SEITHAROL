@@ -44,6 +44,9 @@ object OuterTuneResolvingDataSource {
     const val ANDROID_MUSIC_USER_AGENT =
         "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 13; en_US) gzip"
 
+    const val ANDROID_APP_USER_AGENT =
+        "com.google.android.youtube/20.10.38 (Linux; U; Android 14; en_US) gzip"
+
     const val IOS_USER_AGENT =
         "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)"
 
@@ -134,8 +137,11 @@ object OuterTuneResolvingDataSource {
             clientParam.contains("ANDROID_TESTSUITE") -> mapOf(
                 "User-Agent" to ANDROID_TESTSUITE_USER_AGENT
             )
-            clientParam.contains("ANDROID_MUSIC") || clientParam == "ANDROID" -> mapOf(
+            clientParam.contains("ANDROID_MUSIC") -> mapOf(
                 "User-Agent" to ANDROID_MUSIC_USER_AGENT
+            )
+            clientParam == "ANDROID" -> mapOf(
+                "User-Agent" to ANDROID_APP_USER_AGENT
             )
             clientParam.contains("IOS") -> mapOf(
                 "User-Agent" to IOS_USER_AGENT
@@ -273,6 +279,7 @@ object OuterTuneResolvingDataSource {
                 private val transferListeners = mutableListOf<TransferListener>()
 
                 private var isChunkedGoogleVideo = false
+                private var useHttpRangeHeaderForChunks = false
                 private var baseResolvedSpec: DataSpec? = null
                 private var baseUriWithoutRange: String = ""
                 private var targetUserAgent: String = VR_161_USER_AGENT
@@ -303,14 +310,21 @@ object OuterTuneResolvingDataSource {
 
                     val chunkLen = min(GOOGLE_VIDEO_CHUNK_BYTES, totalBytesRemaining)
                     val endByte = nextReadPosition + chunkLen - 1L
-                    val sep = if (baseUriWithoutRange.contains("?")) "&" else "?"
-                    val chunkUri = Uri.parse("${baseUriWithoutRange}${sep}range=${nextReadPosition}-${endByte}")
-
-                    val chunkSpec = baseSpec.buildUpon()
-                        .setUri(chunkUri)
-                        .setPosition(0L)
-                        .setLength(C.LENGTH_UNSET.toLong())
-                        .build()
+                    val chunkSpec = if (useHttpRangeHeaderForChunks) {
+                        baseSpec.buildUpon()
+                            .setUri(Uri.parse(baseUriWithoutRange))
+                            .setPosition(nextReadPosition)
+                            .setLength(chunkLen)
+                            .build()
+                    } else {
+                        val sep = if (baseUriWithoutRange.contains("?")) "&" else "?"
+                        val chunkUri = Uri.parse("${baseUriWithoutRange}${sep}range=${nextReadPosition}-${endByte}")
+                        baseSpec.buildUpon()
+                            .setUri(chunkUri)
+                            .setPosition(0L)
+                            .setLength(C.LENGTH_UNSET.toLong())
+                            .build()
+                    }
 
                     val delegate = createDelegate()
                     activeDelegate = delegate
@@ -330,9 +344,16 @@ object OuterTuneResolvingDataSource {
                     val isGoogleVideo = uriStr.contains("googlevideo.com", ignoreCase = true) &&
                         !uriStr.contains(".m3u8", ignoreCase = true) &&
                         !uriStr.contains("manifest.googlevideo.com", ignoreCase = true)
+                    val isProgressiveMuxedVideo = uriStr.contains("itag=18&", ignoreCase = true) ||
+                        uriStr.endsWith("itag=18", ignoreCase = true) ||
+                        uriStr.contains("itag=22&", ignoreCase = true) ||
+                        uriStr.endsWith("itag=22", ignoreCase = true) ||
+                        !uriStr.contains("gir=yes", ignoreCase = true)
                     val clen = if (isGoogleVideo) {
                         Regex("[?&]clen=(\\d+)").find(uriStr)?.groupValues?.get(1)?.toLongOrNull() ?: -1L
                     } else -1L
+
+                    useHttpRangeHeaderForChunks = isProgressiveMuxedVideo
 
                     if (isGoogleVideo && clen > 0L) {
                         baseResolvedSpec = resolvedSpec

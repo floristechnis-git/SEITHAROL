@@ -156,7 +156,6 @@ fun CascadeApp(
             AndroidView(
                 factory = { ctx ->
                     android.view.TextureView(ctx).apply {
-                        isOpaque = false
                         viewModel.attachVideoTextureView(this)
                     }
                 },

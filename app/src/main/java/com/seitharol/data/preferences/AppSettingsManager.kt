@@ -24,6 +24,7 @@ data class PersistedSettingsState(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val streamingQuality: AudioQuality = AudioQuality.LOW,
     val downloadQuality: AudioQuality = AudioQuality.LOW,
+    val downloadVideoFormat: Boolean = false,
     val thumbnailQuality: ThumbnailQuality = ThumbnailQuality.MEDIUM,
     val eqBandsDb: List<Float> = listOf(0f, 0f, 0f, 0f, 0f),
     val eqEnabled: Boolean = false,
@@ -62,6 +63,7 @@ class AppSettingsManager(context: Context) {
             themeMode = runCatching { ThemeMode.valueOf(themeName) }.getOrDefault(ThemeMode.SYSTEM),
             streamingQuality = runCatching { AudioQuality.valueOf(streamName) }.getOrDefault(AudioQuality.LOW),
             downloadQuality = runCatching { AudioQuality.valueOf(downloadName) }.getOrDefault(AudioQuality.LOW),
+            downloadVideoFormat = prefs.getBoolean(KEY_DOWNLOAD_VIDEO_FORMAT, false),
             thumbnailQuality = runCatching { ThumbnailQuality.valueOf(thumbName) }.getOrDefault(ThumbnailQuality.MEDIUM),
             eqBandsDb = bands,
             eqEnabled = prefs.getBoolean(KEY_EQ_ENABLED, false),
@@ -98,6 +100,11 @@ class AppSettingsManager(context: Context) {
     fun setDownloadQuality(quality: AudioQuality) {
         prefs.edit().putString(KEY_DOWNLOAD_QUALITY, quality.name).apply()
         _state.value = _state.value.copy(downloadQuality = quality)
+    }
+
+    fun setDownloadVideoFormat(isVideo: Boolean) {
+        prefs.edit().putBoolean(KEY_DOWNLOAD_VIDEO_FORMAT, isVideo).apply()
+        _state.value = _state.value.copy(downloadVideoFormat = isVideo)
     }
 
     fun setThumbnailQuality(quality: ThumbnailQuality) {
@@ -147,6 +154,7 @@ class AppSettingsManager(context: Context) {
         private const val KEY_THEME_MODE = "theme_mode"
         private const val KEY_STREAM_QUALITY = "streaming_quality"
         private const val KEY_DOWNLOAD_QUALITY = "download_quality"
+        private const val KEY_DOWNLOAD_VIDEO_FORMAT = "download_video_format"
         private const val KEY_THUMBNAIL_QUALITY = "thumbnail_quality"
         private const val KEY_EQ_BAND_PREFIX = "eq_band_"
         private const val KEY_EQ_ENABLED = "eq_enabled"

@@ -97,11 +97,14 @@ class MediaPlaybackService : Service() {
             isRunning = false
             val appCtx = context.applicationContext
             runCatching {
+                activeInstance?.isTerminating = true
+                activeInstance?.serviceScope?.cancel()
                 activeInstance?.stopAndRemoveNotification()
             }
             try {
                 val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
                 nm?.cancel(NOTIFICATION_ID)
+                nm?.cancelAll()
                 appCtx.stopService(Intent(appCtx, MediaPlaybackService::class.java))
             } catch (_: Throwable) {
             }
@@ -238,40 +241,36 @@ class MediaPlaybackService : Service() {
 
     private fun promoteOrNotifySafely(notification: Notification, forceStartForeground: Boolean = false) {
         if (isTerminating) return
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-        val isCurrentlyActive = playerManager?.state?.value?.let { it.isPlaying || it.isBuffering } ?: false
-        if (!isInForeground || forceStartForeground) {
+        // Always keep notification bound to startForeground (NEVER call STOP_FOREGROUND_DETACH!)
+        // so that when the app is swiped/closed from Recents or the process exits, Android OS
+        // automatically and unconditionally removes NOTIFICATION_ID from the status bar.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ServiceCompat.startForeground(
+                    this,
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            isInForeground = true
+            return
+        } catch (_: Throwable) {
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    ServiceCompat.startForeground(
-                        this,
-                        NOTIFICATION_ID,
-                        notification,
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-                    )
-                } else {
-                    startForeground(NOTIFICATION_ID, notification)
-                }
+                startForeground(NOTIFICATION_ID, notification)
                 isInForeground = true
                 return
-            } catch (_: Throwable) {
-                try {
-                    startForeground(NOTIFICATION_ID, notification)
-                    isInForeground = true
-                    return
-                } catch (e2: Throwable) {
-                    Log.w(TAG, "Foreground promotion fallback to notify: ${e2.message}")
-                }
+            } catch (e2: Throwable) {
+                Log.w(TAG, "Foreground promotion fallback to notify: ${e2.message}")
             }
         }
-        if (!isCurrentlyActive && isInForeground) {
+        if (!isTerminating) {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             runCatching {
-                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
-                isInForeground = false
+                nm?.notify(NOTIFICATION_ID, notification)
             }
-        }
-        runCatching {
-            nm?.notify(NOTIFICATION_ID, notification)
         }
     }
 
@@ -530,6 +529,7 @@ class MediaPlaybackService : Service() {
         runCatching {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             nm?.cancel(NOTIFICATION_ID)
+            nm?.cancelAll()
         }
         runCatching {
             stopSelf()

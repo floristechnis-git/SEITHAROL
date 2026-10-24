@@ -18,7 +18,6 @@ import android.util.Log
 import android.util.LruCache
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
-import coil.ImageLoader
 import coil.request.ImageRequest
 import com.example.MainActivity
 import com.example.R
@@ -32,22 +31,21 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Crash-proof Foreground Service for background audio playback with synchronized media notification.
  *
  * Key fixes:
- * 1. Uses safe 2-stage foreground promotion (`ServiceCompat.startForeground` with fallback to 2-arg
- *    `startForeground` and `NotificationManager.notify`) and avoids `STOP_FOREGROUND_DETACH` so
- *    Android 12–15 NEVER throws `ForegroundServiceDidNotStartInTimeException`,
- *    `ForegroundServiceStartNotAllowedException`, or `IllegalArgumentException`.
- * 2. Syncs Play/Pause icon strictly with `isPlaying` (never showing "Playing"/Pause icon while
- *    merely loading/buffering without active audio streaming).
- * 3. Unconditionally stops playback and removes the notification in `onTaskRemoved` when the app
- *    is cleared from Recents.
- * 4. Caches artwork per track ID in LruCache so pausing/resuming never glitches, flickers, or shows
- *    a previous track's thumbnail.
- * 5. Immediately acquires wake/wifi locks on user notification tap before Doze throttling occurs.
+ * 1. Safe 2-stage foreground promotion (`ServiceCompat.startForeground` with fallback to 2-arg
+ *    `startForeground` and `NotificationManager.notify`) so Android 12–15 NEVER throws
+ *    `ForegroundServiceDidNotStartInTimeException` or `ForegroundServiceStartNotAllowedException`.
+ * 2. Syncs Play/Pause icon and subtext strictly with `isPlaying` and `isBuffering`.
+ * 3. Cancels `serviceScope` and sets `isTerminating = true` FIRST in `onTaskRemoved` before stopping
+ *    playback, preventing any state emission race from re-posting the notification after swipe-close.
+ * 4. Eliminates the 1-second artwork blink on uncached tracks by awaiting fast disk/memory Coil loads
+ *    (up to 350ms) before posting, while strictly clearing any prior song's artwork on track change.
  */
 class MediaPlaybackService : Service() {
 
@@ -58,7 +56,8 @@ class MediaPlaybackService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var lockReleaseJob: Job? = null
-    private val artBitmapCache = LruCache<String, Bitmap>(20)
+    private var artLoadJob: Job? = null
+    private val artBitmapCache = LruCache<String, Bitmap>(24)
     private var currentArtBitmap: Bitmap? = null
     private var currentTrackIdForArt: String? = null
     private var lastLoadedArtUrl: String? = null
@@ -79,7 +78,6 @@ class MediaPlaybackService : Service() {
         @Volatile var isRunning: Boolean = false
 
         fun startService(context: Context) {
-            // If service is already running and collecting playerManager.state, do not re-trigger startForegroundService!
             if (isRunning) return
             val appCtx = context.applicationContext
             val intent = Intent(appCtx, MediaPlaybackService::class.java)
@@ -175,7 +173,7 @@ class MediaPlaybackService : Service() {
                         } else {
                             lockReleaseJob?.cancel()
                             lockReleaseJob = serviceScope.launch {
-                                delay(20_000L)
+                                delay(45_000L)
                                 val stillPaused = !(playerManager?.state?.value?.let { it.isPlaying || it.isBuffering } ?: false)
                                 if (stillPaused) {
                                     releaseWakeAndWifiLocks()
@@ -192,7 +190,12 @@ class MediaPlaybackService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (isTerminating && intent?.action == ACTION_STOP) {
+            stopAndRemoveNotification()
+            return START_NOT_STICKY
+        }
         isRunning = true
+        isTerminating = false
         createNotificationChannel()
         if (playerManager == null) {
             playerManager = (application as? com.example.CascadeApplication)?.audioPlayerManager
@@ -222,7 +225,7 @@ class MediaPlaybackService : Service() {
             }
         }
 
-        if (!isInForeground) {
+        if (!isInForeground && !isTerminating) {
             startForegroundSynchronously()
         }
         return START_NOT_STICKY
@@ -300,13 +303,31 @@ class MediaPlaybackService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    private suspend fun fetchTrackArtBitmap(artUrl: String): Bitmap? = withContext(Dispatchers.IO) {
+        try {
+            val loader = coil.Coil.imageLoader(this@MediaPlaybackService)
+            val request = ImageRequest.Builder(this@MediaPlaybackService)
+                .data(artUrl)
+                .size(144, 144)
+                .allowHardware(false)
+                .build()
+            val result = loader.execute(request).drawable
+            (result as? BitmapDrawable)?.bitmap
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     private fun loadArtAndNotify(track: Track, isPlaying: Boolean, isBuffering: Boolean) {
         if (isTerminating) return
 
         val cached = (if (track.id.isNotBlank()) artBitmapCache.get(track.id) else null)
             ?: (if (track.artUrl.isNotBlank()) artBitmapCache.get(track.artUrl) else null)
+            ?: (if (currentTrackIdForArt == track.id) currentArtBitmap else null)
 
         if (cached != null) {
+            if (track.id.isNotBlank()) artBitmapCache.put(track.id, cached)
+            if (track.artUrl.isNotBlank()) artBitmapCache.put(track.artUrl, cached)
             currentArtBitmap = cached
             currentTrackIdForArt = track.id
             lastLoadedArtUrl = track.artUrl
@@ -314,47 +335,51 @@ class MediaPlaybackService : Service() {
             return
         }
 
-        // When switching to a new track without a cached art bitmap, clear currentArtBitmap
-        // immediately so the previous song's thumbnail is NEVER displayed with the new song!
+        // Switching to a new track without cached artwork: clear previous song's bitmap immediately
         if (currentTrackIdForArt != track.id) {
             currentArtBitmap = null
             currentTrackIdForArt = track.id
             lastLoadedArtUrl = null
         }
 
-        updateNotification(track, isPlaying, isBuffering)
+        if (track.artUrl.isBlank()) {
+            updateNotification(track, isPlaying, isBuffering)
+            return
+        }
 
-        if (track.artUrl.isNotBlank() && track.artUrl != lastLoadedArtUrl) {
-            lastLoadedArtUrl = track.artUrl
-            serviceScope.launch(Dispatchers.IO) {
-                if (isTerminating) return@launch
-                val loadedBitmap = try {
-                    val loader = coil.Coil.imageLoader(this@MediaPlaybackService)
-                    val request = ImageRequest.Builder(this@MediaPlaybackService)
-                        .data(track.artUrl)
-                        .size(128, 128)
-                        .allowHardware(false)
-                        .build()
-                    val result = loader.execute(request).drawable
-                    (result as? BitmapDrawable)?.bitmap
-                } catch (_: Throwable) {
-                    null
-                }
-
-                if (loadedBitmap != null) {
-                    if (track.id.isNotBlank()) artBitmapCache.put(track.id, loadedBitmap)
-                    if (track.artUrl.isNotBlank()) artBitmapCache.put(track.artUrl, loadedBitmap)
-                }
-
-                val latestState = playerManager?.state?.value
-                val latestTrack = latestState?.currentTrack ?: track
-                val latestPlaying = latestState?.isPlaying ?: isPlaying
-                val latestBuffering = latestState?.isBuffering ?: isBuffering
-
+        lastLoadedArtUrl = track.artUrl
+        artLoadJob?.cancel()
+        artLoadJob = serviceScope.launch {
+            if (isTerminating) return@launch
+            // Try fast disk/memory load within 320ms so notification posts with art on the first update (no blink!)
+            val fastBitmap = withTimeoutOrNull(320L) {
+                fetchTrackArtBitmap(track.artUrl)
+            }
+            if (fastBitmap != null) {
+                if (track.id.isNotBlank()) artBitmapCache.put(track.id, fastBitmap)
+                if (track.artUrl.isNotBlank()) artBitmapCache.put(track.artUrl, fastBitmap)
+                val latest = playerManager?.state?.value
+                val latestTrack = latest?.currentTrack ?: track
                 if (!isTerminating && latestTrack.id == track.id) {
-                    currentArtBitmap = loadedBitmap
+                    currentArtBitmap = fastBitmap
                     currentTrackIdForArt = track.id
-                    updateNotification(latestTrack, latestPlaying, latestBuffering)
+                    updateNotification(latestTrack, latest?.isPlaying ?: isPlaying, latest?.isBuffering ?: isBuffering)
+                }
+                return@launch
+            }
+
+            // If network fetch takes longer than 320ms, post notification immediately and update when art arrives
+            updateNotification(track, isPlaying, isBuffering)
+            val slowBitmap = fetchTrackArtBitmap(track.artUrl)
+            if (slowBitmap != null) {
+                if (track.id.isNotBlank()) artBitmapCache.put(track.id, slowBitmap)
+                if (track.artUrl.isNotBlank()) artBitmapCache.put(track.artUrl, slowBitmap)
+                val latest = playerManager?.state?.value
+                val latestTrack = latest?.currentTrack ?: track
+                if (!isTerminating && latestTrack.id == track.id) {
+                    currentArtBitmap = slowBitmap
+                    currentTrackIdForArt = track.id
+                    updateNotification(latestTrack, latest?.isPlaying ?: isPlaying, latest?.isBuffering ?: isBuffering)
                 }
             }
         }
@@ -394,8 +419,6 @@ class MediaPlaybackService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Strict sync: ONLY show the Pause icon ("Playing") when audio is actively playing!
-        // Never show the notification as playing when paused during loading.
         val playPauseIcon = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
         val playPauseTitle = if (isPlaying) "Pause" else "Play"
 
@@ -479,6 +502,7 @@ class MediaPlaybackService : Service() {
         isRunning = false
         isInForeground = false
         lockReleaseJob?.cancel()
+        artLoadJob?.cancel()
         releaseWakeAndWifiLocks()
         runCatching {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -501,19 +525,25 @@ class MediaPlaybackService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // When the user clears/swipes the app from Recents, ALWAYS pause playback and remove
-        // the playback notification so no stale play control notification remains behind.
+        // Set terminating flags and cancel collectors FIRST so onAppClearedFromRecents()
+        // cannot trigger a state-collection notification repost!
+        isTerminating = true
+        isRunning = false
+        lockReleaseJob?.cancel()
+        artLoadJob?.cancel()
+        serviceScope.cancel()
         runCatching {
             playerManager?.onAppClearedFromRecents()
         }
         stopAndRemoveNotification()
-        serviceScope.cancel()
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
-        stopAndRemoveNotification()
+        isTerminating = true
+        isRunning = false
         serviceScope.cancel()
+        stopAndRemoveNotification()
         super.onDestroy()
     }
 }

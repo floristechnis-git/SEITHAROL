@@ -644,6 +644,7 @@ fun HistoryScreen(
                         TrackCard(
                             track = track,
                             isPlaying = playerState.currentTrack?.id == track.id,
+                            subtitleText = if (track.isVideoTrack) "${track.artist} • MP4 Video • ${track.durationFormatted}" else null,
                             onTrackClick = { viewModel.playTrack(track) },
                             onLikeClick = { viewModel.toggleLike(track) },
                             onDownloadClick = { tier -> viewModel.startDownload(track, tier) },

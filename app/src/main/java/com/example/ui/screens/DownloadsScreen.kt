@@ -185,7 +185,7 @@ fun DownloadsScreen(
                                         contentDescription = null,
                                         modifier = Modifier.size(16.dp).padding(end = 4.dp)
                                     )
-                                    Text("Opus 160k", color = SeitharolDark, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = OutfitFontFamily)
+                                    Text("Opus / MP4", color = SeitharolDark, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = OutfitFontFamily)
                                 }
                             }
                         }
@@ -372,13 +372,24 @@ fun DownloadItemRow(
                         fontWeight = FontWeight.Medium
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Image(
-                            painter = painterResource(id = R.drawable.ic_mp3),
-                            contentDescription = item.tier.label,
-                            modifier = Modifier.size(12.dp).padding(end = 4.dp)
-                        )
+                        val isMp4Video = item.tier == com.example.data.model.DownloadTier.VIDEO_MP4 ||
+                            item.localFilePath?.endsWith(".mp4", ignoreCase = true) == true
+                        if (isMp4Video) {
+                            Icon(
+                                imageVector = Icons.Default.Videocam,
+                                contentDescription = "MP4 Video",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(14.dp).padding(end = 4.dp)
+                            )
+                        } else {
+                            Image(
+                                painter = painterResource(id = R.drawable.ic_mp3),
+                                contentDescription = item.tier.label,
+                                modifier = Modifier.size(12.dp).padding(end = 4.dp)
+                            )
+                        }
                         Text(
-                            text = "${item.artist} • ${item.tier.label}",
+                            text = "${item.artist} • ${if (isMp4Video) "MP4 Video" else item.tier.label}",
                             color = SeitharolTextSecondary,
                             fontSize = 12.sp,
                             fontFamily = OutfitFontFamily

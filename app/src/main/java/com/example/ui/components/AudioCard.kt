@@ -289,7 +289,7 @@ fun TrackCard(
                         onRemoveDownloadClick?.invoke()
                     } else if (!hasRequestedDownload) {
                         hasRequestedDownload = true
-                        onDownloadClick(DownloadTier.STANDARD)
+                        onDownloadClick(if (track.isVideoTrack) DownloadTier.VIDEO_MP4 else DownloadTier.STANDARD)
                     }
                 },
                 modifier = Modifier.size(36.dp)
@@ -417,6 +417,24 @@ fun TrackCard(
                             }
                         )
                     } else {
+                        if (track.isVideoTrack) {
+                            DropdownMenuItem(
+                                text = { Text("Download MP4 Video", color = SeitharolTextPrimary) },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Videocam,
+                                        contentDescription = "Download MP4 Video",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    hasRequestedDownload = true
+                                    onDownloadClick(DownloadTier.VIDEO_MP4)
+                                }
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("Download High Quality", color = SeitharolTextPrimary) },
                             leadingIcon = {
@@ -462,6 +480,24 @@ fun TrackCard(
                                 onDownloadClick(DownloadTier.DATA_SAVER)
                             }
                         )
+                        if (!track.isVideoTrack && com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(track.id) != null) {
+                            DropdownMenuItem(
+                                text = { Text("Download MP4 Video", color = SeitharolTextPrimary) },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Videocam,
+                                        contentDescription = "Download MP4 Video",
+                                        tint = SeitharolDark,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    hasRequestedDownload = true
+                                    onDownloadClick(DownloadTier.VIDEO_MP4)
+                                }
+                            )
+                        }
                     }
                 }
             }

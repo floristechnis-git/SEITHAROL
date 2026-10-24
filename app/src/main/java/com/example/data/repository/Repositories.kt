@@ -632,13 +632,11 @@ class DownloadRepository(
             updateDownloadNotification(track.id, track.title, 5)
 
             val candidateUrls = if (isVideo) {
-                buildList {
-                    val ytId = com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(track.id) ?: track.id
-                    com.seitharol.data.resolver.InnerTubeStreamExtractor
-                        .resolveRawVideoStreamById(ytId)
-                        .getOrNull()
-                        ?.let { if (!it.contains(".m3u8", true)) add(it) }
-                }
+                com.seitharol.data.resolver.InnerTubeStreamExtractor.resolveDownloadableVideoCandidates(
+                    videoId = track.id,
+                    title = track.title,
+                    artist = track.artist
+                )
             } else {
                 val quality = when (tier) {
                     DownloadTier.DATA_SAVER -> com.seitharol.data.resolver.AudioQuality.LOW
@@ -914,45 +912,66 @@ class DownloadRepository(
                 downloadDir.takeIf { it.exists() }
             )
 
+            val knownSuffixes = listOf(
+                "_video_mp4" to "MP4 Video",
+                "_data_saver" to "Data Saver",
+                "_standard" to "Standard",
+                "_original" to "Original",
+                "_high" to "High",
+                "_discover" to "High"
+            )
+
             for (dir in directoriesToScan) {
                 val files = dir.listFiles() ?: continue
                 for (file in files) {
-                    if (file.isFile && file.length() > 10_240L && !file.name.endsWith(".tmp")) {
+                    if (file.name.endsWith(".tmp")) {
+                        // Clean up stale partial .tmp raw files older than 30 minutes
+                        if (System.currentTimeMillis() - file.lastModified() > 30 * 60 * 1000L) {
+                            runCatching { file.delete() }
+                        }
+                        continue
+                    }
+                    if (file.isFile && file.length() > 10_240L) {
                         val baseName = file.nameWithoutExtension
-                        val trackId = baseName.substringBeforeLast("_", baseName)
-                        val tierName = baseName.substringAfterLast("_", "standard")
+                        val matchedSuffix = knownSuffixes.firstOrNull { (sfx, _) ->
+                            baseName.endsWith(sfx, ignoreCase = true)
+                        }
+                        val trackId = if (matchedSuffix != null) {
+                            baseName.dropLast(matchedSuffix.first.length)
+                        } else {
+                            baseName.substringBeforeLast("_", baseName)
+                        }
+                        val tierLabel = matchedSuffix?.second
+                            ?: if (file.extension.equals("mp4", ignoreCase = true)) "MP4 Video" else "Standard"
 
-                        val existingTrack = trackDao.getTrackById(trackId)
-                        if (existingTrack == null) {
-                            val cleanTitle = trackId.replace("_", " ").replaceFirstChar { it.uppercase() }
-                            val newEntity = TrackEntity(
-                                id = trackId,
-                                title = cleanTitle,
-                                artist = "Downloaded Music",
-                                album = "Offline Storage",
-                                durationMs = 0,
-                                artUrl = "",
-                                isDownloaded = true,
-                                localPath = file.absolutePath
-                            )
-                            trackDao.insertTrack(newEntity)
-                        } else if (!existingTrack.isDownloaded || existingTrack.localPath.isNullOrBlank()) {
-                            trackDao.setDownloaded(trackId, true, file.absolutePath)
+                        // Clean up any legacy corrupted ghost entries ("<id>_video" / "<id>_data")
+                        if (matchedSuffix != null) {
+                            val ghostId = baseName.substringBeforeLast("_", "")
+                            if (ghostId.isNotBlank() && ghostId != trackId) {
+                                runCatching { downloadDao.deleteDownload(ghostId) }
+                                runCatching { trackDao.setDownloaded(ghostId, false, null) }
+                            }
                         }
 
-                        val existingDl = downloadDao.getDownload(trackId)
-                        if (existingDl == null || existingDl.state != "COMPLETED") {
-                            downloadDao.insertDownload(
-                                DownloadEntity(
-                                    trackId = trackId,
-                                    tier = tierName.replaceFirstChar { it.uppercase() },
-                                    state = "COMPLETED",
-                                    localPath = file.absolutePath,
-                                    progress = 1.0f,
-                                    bytesDownloaded = file.length(),
-                                    totalBytes = file.length()
+                        val existingTrack = trackDao.getTrackById(trackId)
+                        if (existingTrack != null) {
+                            if (!existingTrack.isDownloaded || existingTrack.localPath.isNullOrBlank()) {
+                                trackDao.setDownloaded(trackId, true, file.absolutePath)
+                            }
+                            val existingDl = downloadDao.getDownload(trackId)
+                            if (existingDl == null || existingDl.state != "COMPLETED") {
+                                downloadDao.insertDownload(
+                                    DownloadEntity(
+                                        trackId = trackId,
+                                        tier = tierLabel,
+                                        state = "COMPLETED",
+                                        localPath = file.absolutePath,
+                                        progress = 1.0f,
+                                        bytesDownloaded = file.length(),
+                                        totalBytes = file.length()
+                                    )
                                 )
-                            )
+                            }
                         }
                     }
                 }

@@ -90,7 +90,8 @@ class CascadeViewModel(
         val dlService = com.seitharol.data.download.DownloadPreferencesAndService.getInstance(com.example.CascadeApplication.instance)
         val trackMap = LinkedHashMap<String, Track>()
         dbTracks.forEach { track ->
-            val isFakeScannedId = track.id.contains(" - ") && track.artist == "Downloaded Music"
+            val isFakeScannedId = track.artist == "Downloaded Music" &&
+                (track.id.contains(" - ") || track.id.endsWith("_video", true) || track.id.endsWith("_data", true) || track.album == "Offline Storage")
             if (!isFakeScannedId && isLocalUriOrFileReadable(track.localPath)) {
                 val canonId = dlService.canonicalTrackId(track.id)
                 trackMap[canonId] = track.copy(
@@ -478,10 +479,12 @@ class CascadeViewModel(
     init {
         playerManager.isAutoplayEnabled = autoSuggestManager.isAutoSuggestEnabled.value && !isOfflineMode.value
         loadHomeScreenMusic()
-        loadDiscoverFeed()
-        loadTrendingSearches()
+        // Stagger secondary background tasks on 2GB RAM phones so initial Home feed & audio playback have 100% CPU/network priority
         viewModelScope.launch(vmExceptionHandler) {
+            delay(1500L)
             downloadRepository.rescanLocalDownloads()
+            delay(1500L)
+            loadTrendingSearches()
         }
 
         viewModelScope.launch(vmExceptionHandler) {
@@ -779,14 +782,22 @@ class CascadeViewModel(
         playTrack(domainTrack)
     }
 
-    private fun com.seitharol.data.resolver.CandidateStream.toTrack(): Track = Track(
-        id = this.videoId,
-        title = this.title,
-        artist = this.artist,
-        album = this.albumName.orEmpty(),
-        durationMs = this.durationSeconds * 1000L,
-        artUrl = this.thumbnailUrl
-    )
+    private fun com.seitharol.data.resolver.CandidateStream.toTrack(): Track {
+        val isVideo = this.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
+            this.videoType == "MUSIC_VIDEO_TYPE_UGC" ||
+            this.albumName.equals("YouTube Video", ignoreCase = true)
+        return Track(
+            id = this.videoId,
+            title = this.title,
+            artist = this.artist,
+            album = if (isVideo) "YouTube Video" else this.albumName.orEmpty(),
+            durationMs = this.durationSeconds * 1000L,
+            artUrl = this.thumbnailUrl,
+            genre = if (isVideo) "YouTube Video" else "Music",
+            itag = if (isVideo) 18 else 251,
+            codec = if (isVideo) "MP4" else "Opus"
+        )
+    }
 
     private fun Track.toNormalizedTrack(): com.seitharol.domain.model.NormalizedTrack {
         return com.seitharol.domain.model.NormalizedTrack(
@@ -1228,6 +1239,11 @@ class CascadeViewModel(
     fun setLoudnessGain(gainDb: Float) = playerManager.setLoudnessGain(gainDb)
     fun setSleepTimer(minutes: Int) = playerManager.setSleepTimer(minutes)
     fun adjustLyricOffset(deltaMs: Long) = playerManager.adjustLyricOffset(deltaMs)
+    val playerInstance: androidx.media3.exoplayer.ExoPlayer?
+        get() = playerManager.playerInstance
+
+    fun toggleMute() = playerManager.toggleMute()
+    fun setMuted(muted: Boolean) = playerManager.setMuted(muted)
     fun setVideoMode(enabled: Boolean) = playerManager.setVideoMode(enabled)
     fun setPlaybackSpeed(speed: Float) = playerManager.setPlaybackSpeed(speed)
     fun attachVideoTextureView(textureView: android.view.TextureView?) = playerManager.attachVideoTextureView(textureView)

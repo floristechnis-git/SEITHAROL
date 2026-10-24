@@ -267,7 +267,8 @@ fun PlayerScreen(
                 )
                 val currentTempQuality = viewModel.getTemporaryTrackQuality()
                 val qualityText = when {
-                    isVideoTrack -> "YouTube Video • Direct Stream"
+                    isVideoTrack && track.isDownloaded -> "Offline MP4 Video"
+                    isVideoTrack -> "HD Video Stream"
                     track.isDownloaded -> "Offline Opus • Direct Audio"
                     currentTempQuality != null -> "Quality: ${currentTempQuality.label} (Temp)"
                     else -> "Online Pure Stream"
@@ -482,7 +483,6 @@ fun PlayerScreen(
                     onEnterFullscreen = { showFullscreenVideo = true },
                     onEnterPiP = {
                         (context as? MainActivity)?.enterPiPMode()
-                        onDismiss()
                     }
                 )
             }
@@ -573,7 +573,7 @@ fun PlayerScreen(
                             .padding(vertical = 2.dp, horizontal = 2.dp)
                             .testTag("player_artist_name")
                     )
-                    if (track.album.isNotBlank() && track.album != track.title && track.album != "Single") {
+                    if (track.album.isNotBlank() && track.album != track.title && track.album != "Single" && !track.album.equals("YouTube Video", ignoreCase = true)) {
                         Text(
                             text = "• ${track.album}",
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
@@ -619,7 +619,8 @@ fun PlayerScreen(
                     if (isDownloading) {
                         viewModel.cancelDownload(trackDownload?.trackId ?: track.id)
                     } else if (!isDownloaded) {
-                        viewModel.startDownload(track, com.example.data.model.DownloadTier.STANDARD)
+                        val tier = if (isVideoTrack) com.example.data.model.DownloadTier.VIDEO_MP4 else com.example.data.model.DownloadTier.STANDARD
+                        viewModel.startDownload(track, tier)
                     }
                 },
                 modifier = Modifier.size(40.dp)
@@ -827,11 +828,44 @@ fun PlayerScreen(
         }
 
         // ────────────────────────────────────────────────────────────
-        // Up Next / Queue Card Button
+        // 10s Countdown Before Next Song/Video & Up Next Queue Card
         // ────────────────────────────────────────────────────────────
-        val nextTrack = if (playerState.currentIndex in 0 until playerState.queue.size - 1) {
-            playerState.queue[playerState.currentIndex + 1]
-        } else null
+        val nextTrack = when {
+            playerState.currentIndex in 0 until playerState.queue.size - 1 ->
+                playerState.queue[playerState.currentIndex + 1]
+            playerState.repeatMode == RepeatMode.ALL && playerState.queue.size > 1 ->
+                playerState.queue.firstOrNull()
+            else -> null
+        }
+        val remainingMs = (totalDuration - displayPosition).coerceAtLeast(0L)
+        var dismissedCountdownForTrackId by remember(track.id) { mutableStateOf(false) }
+        val showNextCountdown = playerState.isPlaying &&
+            !playerState.isBuffering &&
+            totalDuration >= 15_000L &&
+            remainingMs in 1L..10_000L &&
+            nextTrack != null &&
+            !dismissedCountdownForTrackId
+        val countdownSeconds = ((remainingMs + 999L) / 1000L).toInt().coerceIn(1, 10)
+        val countdownProgress = (remainingMs.toFloat() / 10_000f).coerceIn(0f, 1f)
+
+        AnimatedVisibility(
+            visible = showNextCountdown && !showFullscreenVideo,
+            enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
+            exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 })
+        ) {
+            if (nextTrack != null) {
+                SeitharolNextTrackCountdownBanner(
+                    nextTrack = nextTrack,
+                    countdownSeconds = countdownSeconds,
+                    countdownProgress = countdownProgress,
+                    onPlayNow = { viewModel.next() },
+                    onDismiss = { dismissedCountdownForTrackId = true },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 4.dp)
+                )
+            }
+        }
 
         AnimatedVisibility(
             visible = isUpNextVisible && hasClickedQueueButton,
@@ -946,15 +980,37 @@ fun PlayerScreen(
     }
 
     if (showFullscreenVideo) {
+        val fullscreenNextTrack = when {
+            playerState.currentIndex in 0 until playerState.queue.size - 1 ->
+                playerState.queue[playerState.currentIndex + 1]
+            playerState.repeatMode == RepeatMode.ALL && playerState.queue.size > 1 ->
+                playerState.queue.firstOrNull()
+            else -> null
+        }
+        val fullscreenRemainingMs = (totalDuration - displayPosition).coerceAtLeast(0L)
+        var dismissedFullscreenCountdown by remember(track.id) { mutableStateOf(false) }
+        val showFullscreenCountdown = playerState.isPlaying &&
+            !playerState.isBuffering &&
+            totalDuration >= 15_000L &&
+            fullscreenRemainingMs in 1L..10_000L &&
+            fullscreenNextTrack != null &&
+            !dismissedFullscreenCountdown
+        val fullscreenCountdownSec = ((fullscreenRemainingMs + 999L) / 1000L).toInt().coerceIn(1, 10)
+        val fullscreenCountdownProg = (fullscreenRemainingMs.toFloat() / 10_000f).coerceIn(0f, 1f)
+
         SeitharolFullscreenVideoModal(
             viewModel = viewModel,
             playerState = playerState,
             isZoomCrop = isVideoZoomCrop,
             onToggleZoomCrop = { isVideoZoomCrop = !isVideoZoomCrop },
+            nextTrack = fullscreenNextTrack,
+            showNextCountdown = showFullscreenCountdown,
+            countdownSeconds = fullscreenCountdownSec,
+            countdownProgress = fullscreenCountdownProg,
+            onDismissCountdown = { dismissedFullscreenCountdown = true },
             onEnterPiP = {
                 showFullscreenVideo = false
                 (context as? MainActivity)?.enterPiPMode()
-                onDismiss()
             },
             onDismiss = { showFullscreenVideo = false }
         )
@@ -990,10 +1046,136 @@ fun PlayerScreen(
 }
 
 /**
- * 100% Full-Width Custom Video Surface — renders the direct stream inside a TextureView
- * with zero YouTube branding/iframe, no "RAW VIDEO" badge, automatic control hiding when playing,
- * instant tap-to-hide / tap-to-unhide controls, double-tap ±10s seek, playback speed selector,
- * Fit/Zoom toggle, Picture-in-Picture (PiP) toggle, and Fullscreen toggle.
+ * 10-Second "Up Next" Countdown Banner — displayed during the final 10 seconds of a song or video
+ * (both inside Fullscreen Video UI and on the standard PlayerScreen when not in fullscreen).
+ */
+@Composable
+fun SeitharolNextTrackCountdownBanner(
+    nextTrack: com.example.data.model.Track,
+    countdownSeconds: Int,
+    countdownProgress: Float,
+    onPlayNow: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.clip(RoundedCornerShape(18.dp)),
+        shape = RoundedCornerShape(18.dp),
+        color = Color(0xE61E2022),
+        tonalElevation = 6.dp,
+        shadowElevation = 10.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Box(
+                    modifier = Modifier.size(38.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        progress = { countdownProgress },
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = Color.White.copy(alpha = 0.18f),
+                        strokeWidth = 3.dp
+                    )
+                    Text(
+                        text = "${countdownSeconds}s",
+                        color = Color.White,
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 11.sp
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.DarkGray)
+                ) {
+                    AsyncImage(
+                        model = InnerTubeResolver.upgradeThumbnailUrl(nextTrack.artUrl),
+                        contentDescription = nextTrack.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "NEXT TRACK IN ${countdownSeconds}S",
+                        color = MaterialTheme.colorScheme.primary,
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp,
+                        letterSpacing = 0.8.sp
+                    )
+                    Text(
+                        text = "${nextTrack.title} • ${nextTrack.artist}",
+                        color = Color.White,
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { onPlayNow() }
+                ) {
+                    Text(
+                        text = "Play Now",
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Dismiss countdown",
+                        tint = Color.White.copy(alpha = 0.7f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 100% Full-Width Video Frame — renders only the 4 requested controls:
+ * 1. Picture-in-Picture (PiP)
+ * 2. Mute / Unmute
+ * 3. Double-tap left/right to skip ±10s
+ * 4. Play / Pause (visible on tap for 1.6s like YouTube Music)
+ * 5. Fullscreen toggle
  */
 @Composable
 fun SeitharolRawVideoSurface(
@@ -1005,15 +1187,12 @@ fun SeitharolRawVideoSurface(
     onEnterPiP: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
     val track = playerState.currentTrack
-    // Controls hide automatically when video plays, and toggle immediately on click
     var showOverlayControls by remember(track?.id) { mutableStateOf(false) }
     var seekFeedbackText by remember { mutableStateOf<String?>(null) }
-    val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
     val latestState by rememberUpdatedState(playerState)
 
-    // Auto-hide controls when playback starts or after 3s of being shown while playing
+    // Hide controls when playback starts; when tapped while playing, auto-hide after 1.6s (1-2s YouTube Music style)
     LaunchedEffect(playerState.isPlaying) {
         if (playerState.isPlaying) {
             showOverlayControls = false
@@ -1022,7 +1201,7 @@ fun SeitharolRawVideoSurface(
 
     LaunchedEffect(showOverlayControls, playerState.isPlaying) {
         if (showOverlayControls && playerState.isPlaying) {
-            delay(3000L)
+            delay(1600L)
             showOverlayControls = false
         }
     }
@@ -1044,7 +1223,6 @@ fun SeitharolRawVideoSurface(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                // Keyed to Unit so 200ms position updates never cancel tap / double-tap detection!
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = {
@@ -1058,30 +1236,20 @@ fun SeitharolRawVideoSurface(
                                 latestState.durationMs.coerceAtLeast(1000L)
                             )
                             viewModel.seekTo(target)
-                            seekFeedbackText = if (isLeftHalf) "⏪ -10s" else "+10s ⏩"
+                            seekFeedbackText = if (isLeftHalf) "⏪ 10s" else "10s ⏩"
                         }
                     )
                 },
             contentAlignment = Alignment.Center
         ) {
-            // Subtle dimmed artwork backdrop only while initial stream is buffering
-            if (track != null && playerState.isBuffering) {
-                AsyncImage(
-                    model = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer { alpha = 0.25f }
-                )
-            }
-
-            // Media3 PlayerView bound to ExoPlayer singleton instance
+            // Media3 PlayerView bound to ExoPlayer singleton instance with transparent shutter
             AndroidView(
                 factory = { ctx ->
                     PlayerView(ctx).apply {
                         useController = false
                         resizeMode = if (isZoomCrop) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
+                        keepContentOnPlayerReset = true
                         player = viewModel.playerInstance
                     }
                 },
@@ -1094,7 +1262,19 @@ fun SeitharolRawVideoSurface(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Subtle loading indicator while buffering when controls are hidden
+            // Artwork backdrop shown while initial video stream is buffering before first video frame renders
+            // so the frame is NEVER a blank black box!
+            if (track != null && (!playerState.isVideoFrameRendered || playerState.isBuffering)) {
+                AsyncImage(
+                    model = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { alpha = if (playerState.isVideoFrameRendered) 0.22f else 0.78f }
+                )
+            }
+
             if (playerState.isBuffering && !showOverlayControls) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(32.dp),
@@ -1103,7 +1283,7 @@ fun SeitharolRawVideoSurface(
                 )
             }
 
-            // Double-tap ±10s indicator pill
+            // Double-tap ±10s skip feedback pill
             AnimatedVisibility(
                 visible = seekFeedbackText != null,
                 enter = fadeIn(),
@@ -1124,224 +1304,111 @@ fun SeitharolRawVideoSurface(
                 }
             }
 
-            // Custom Seitharol Overlay Controls — strictly controlled by showOverlayControls (click to hide/unhide)
+            // Minimal YouTube Music-style Video Overlay: ONLY PiP, Mute, Center Play/Pause, and Fullscreen
             AnimatedVisibility(
                 visible = showOverlayControls,
-                enter = fadeIn(),
-                exit = fadeOut()
+                enter = fadeIn(animationSpec = tween(150)),
+                exit = fadeOut(animationSpec = tween(200))
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(
-                                    Color.Black.copy(alpha = 0.55f),
-                                    Color.Black.copy(alpha = 0.20f),
-                                    Color.Black.copy(alpha = 0.62f)
-                                )
-                            )
-                        )
+                        .background(Color.Black.copy(alpha = 0.38f))
                 ) {
-                    // Top Bar: Speed + Fit/Zoom + PiP + Fullscreen (aligned to top-right, no RAW VIDEO tag)
+                    // Top-Right: ONLY Mute/Unmute + Picture-in-Picture (PiP)
                     Row(
                         modifier = Modifier
-                            .fillMaxWidth()
                             .align(Alignment.TopEnd)
                             .padding(horizontal = 12.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.End,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            // Speed selector pill
-                            Surface(
-                                shape = RoundedCornerShape(999.dp),
-                                color = Color.Black.copy(alpha = 0.58f),
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(999.dp))
-                                    .clickable {
-                                        val nextIdx = (speeds.indexOfFirst { it == playerState.playbackSpeed } + 1) % speeds.size
-                                        viewModel.setPlaybackSpeed(speeds[nextIdx])
-                                    }
-                            ) {
-                                Text(
-                                    text = "${playerState.playbackSpeed}x",
-                                    color = Color.White,
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 11.sp,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                                )
-                            }
-
-                            // Fit / Zoom toggle pill
-                            Surface(
-                                shape = RoundedCornerShape(999.dp),
-                                color = Color.Black.copy(alpha = 0.58f),
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(999.dp))
-                                    .clickable { onToggleZoomCrop() }
-                            ) {
-                                Text(
-                                    text = if (isZoomCrop) "Zoom" else "Fit",
-                                    color = Color.White,
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 11.sp,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                                )
-                            }
-
-                            // Picture-in-Picture (PiP) button
-                            Surface(
-                                shape = CircleShape,
-                                color = Color.Black.copy(alpha = 0.58f),
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .clip(CircleShape)
-                                    .clickable {
-                                        val mainActivity = context as? MainActivity
-                                        if (mainActivity != null) {
-                                            mainActivity.enterPiPMode()
-                                        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                            runCatching {
-                                                val activity = context as? Activity
-                                                activity?.enterPictureInPictureMode(
-                                                    PictureInPictureParams.Builder()
-                                                        .setAspectRatio(Rational(16, 9))
-                                                        .build()
-                                                )
-                                            }
-                                        }
-                                        onEnterPiP()
-                                    }
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.PictureInPictureAlt,
-                                        contentDescription = "Picture in Picture",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            }
-
-                            // Fullscreen toggle button
-                            Surface(
-                                shape = CircleShape,
-                                color = Color.Black.copy(alpha = 0.58f),
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .clip(CircleShape)
-                                    .clickable { onEnterFullscreen() }
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.Fullscreen,
-                                        contentDescription = "Fullscreen Video",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Center Play/Pause + ±10s Seek Controls
-                    Row(
-                        modifier = Modifier.align(Alignment.Center),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(24.dp)
-                    ) {
-                        IconButton(
-                            onClick = {
-                                val target = (playerState.currentPositionMs - 10_000L).coerceAtLeast(0L)
-                                viewModel.seekTo(target)
-                            },
-                            modifier = Modifier
-                                .size(38.dp)
-                                .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.45f))
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Replay10,
-                                contentDescription = "Rewind 10s",
-                                tint = Color.White,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-
+                        // Mute / Unmute button
                         Surface(
                             shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.92f),
+                            color = Color.Black.copy(alpha = 0.58f),
                             modifier = Modifier
-                                .size(52.dp)
+                                .size(36.dp)
                                 .clip(CircleShape)
-                                .clickable { viewModel.togglePlayPause() }
+                                .clickable { viewModel.toggleMute() }
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                if (playerState.isBuffering) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(24.dp),
-                                        color = MaterialTheme.colorScheme.onPrimary,
-                                        strokeWidth = 2.5.dp
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                        contentDescription = "Play/Pause",
-                                        tint = MaterialTheme.colorScheme.onPrimary,
-                                        modifier = Modifier.size(28.dp)
-                                    )
-                                }
+                                Icon(
+                                    imageVector = if (playerState.isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                                    contentDescription = if (playerState.isMuted) "Unmute" else "Mute",
+                                    tint = if (playerState.isMuted) MaterialTheme.colorScheme.primary else Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                         }
 
-                        IconButton(
-                            onClick = {
-                                val target = (playerState.currentPositionMs + 10_000L)
-                                    .coerceAtMost(playerState.durationMs.coerceAtLeast(1000L))
-                                viewModel.seekTo(target)
-                            },
+                        // Picture-in-Picture (PiP) button (manual trigger)
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.Black.copy(alpha = 0.58f),
                             modifier = Modifier
-                                .size(38.dp)
+                                .size(36.dp)
                                 .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.45f))
+                                .clickable { onEnterPiP() }
                         ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.PictureInPictureAlt,
+                                    contentDescription = "Picture in Picture",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Center: ONLY Play / Pause
+                    Surface(
+                        shape = CircleShape,
+                        color = Color.Black.copy(alpha = 0.62f),
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .clickable { viewModel.togglePlayPause() }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            if (playerState.isBuffering) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(26.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.5.dp
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = "Play/Pause",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(32.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Bottom-Right: ONLY Fullscreen button
+                    Surface(
+                        shape = CircleShape,
+                        color = Color.Black.copy(alpha = 0.58f),
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .clickable { onEnterFullscreen() }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
                             Icon(
-                                imageVector = Icons.Default.Forward10,
-                                contentDescription = "Forward 10s",
+                                imageVector = Icons.Default.Fullscreen,
+                                contentDescription = "Fullscreen Video",
                                 tint = Color.White,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
-                    }
-
-                    // Bottom timestamp inside video frame
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.BottomCenter)
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Tap to hide controls • Double-tap ±10s",
-                            color = Color.White.copy(alpha = 0.72f),
-                            fontFamily = OutfitFontFamily,
-                            fontSize = 11.sp
-                        )
-                        Text(
-                            text = "${formatMs(playerState.currentPositionMs)} / ${formatMs(playerState.durationMs.coerceAtLeast(1000L))}",
-                            color = Color.White.copy(alpha = 0.9f),
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 11.sp
-                        )
                     }
                 }
             }
@@ -1350,8 +1417,8 @@ fun SeitharolRawVideoSurface(
 }
 
 /**
- * Fullscreen Custom Video Modal — zero YouTube UI, custom Seitharol controls,
- * instant tap-to-hide/unhide controls, Fit/Zoom toggle, Playback Speed, Picture-in-Picture, and Scrubber.
+ * Fullscreen Video Modal — includes Mute, PiP, Exit Fullscreen, Play/Pause, double-tap ±10s skip,
+ * progress bar scrubber, and the 10-second Next Song/Video Countdown overlay in Fullscreen UI.
  */
 @Composable
 fun SeitharolFullscreenVideoModal(
@@ -1359,6 +1426,11 @@ fun SeitharolFullscreenVideoModal(
     playerState: PlayerState,
     isZoomCrop: Boolean,
     onToggleZoomCrop: () -> Unit,
+    nextTrack: com.example.data.model.Track? = null,
+    showNextCountdown: Boolean = false,
+    countdownSeconds: Int = 10,
+    countdownProgress: Float = 1f,
+    onDismissCountdown: () -> Unit = {},
     onEnterPiP: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1366,7 +1438,7 @@ fun SeitharolFullscreenVideoModal(
     var showControls by remember { mutableStateOf(false) }
     var isDraggingSlider by remember { mutableStateOf(false) }
     var seekingPosition by remember { mutableStateOf<Float?>(null) }
-    val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+    var seekFeedbackText by remember { mutableStateOf<String?>(null) }
     val latestState by rememberUpdatedState(playerState)
 
     val displayPosition = (if (isDraggingSlider) seekingPosition?.toLong() else null)
@@ -1374,10 +1446,18 @@ fun SeitharolFullscreenVideoModal(
     val totalDuration = playerState.durationMs.coerceAtLeast(1000L)
     val progress = (displayPosition.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
 
+    // Auto-hide fullscreen controls after 1.8s when playing
     LaunchedEffect(showControls, playerState.isPlaying, isDraggingSlider) {
         if (showControls && playerState.isPlaying && !isDraggingSlider) {
-            delay(3200L)
+            delay(1800L)
             showControls = false
+        }
+    }
+
+    LaunchedEffect(seekFeedbackText) {
+        if (seekFeedbackText != null) {
+            delay(750L)
+            seekFeedbackText = null
         }
     }
 
@@ -1404,6 +1484,7 @@ fun SeitharolFullscreenVideoModal(
                                 viewModel.seekTo(
                                     (latestState.currentPositionMs + delta).coerceIn(0L, dur)
                                 )
+                                seekFeedbackText = if (isLeft) "⏪ 10s" else "10s ⏩"
                             }
                         )
                     },
@@ -1414,6 +1495,8 @@ fun SeitharolFullscreenVideoModal(
                         PlayerView(ctx).apply {
                             useController = false
                             resizeMode = if (isZoomCrop) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
+                            keepContentOnPlayerReset = true
                             player = viewModel.playerInstance
                         }
                     },
@@ -1428,10 +1511,44 @@ fun SeitharolFullscreenVideoModal(
                         .aspectRatio(16f / 9f)
                 )
 
+                if (!playerState.isVideoFrameRendered || playerState.isBuffering) {
+                    AsyncImage(
+                        model = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(16f / 9f)
+                            .graphicsLayer { alpha = if (playerState.isVideoFrameRendered) 0.22f else 0.78f }
+                    )
+                }
+
+                // Double-tap ±10s skip feedback pill
                 AnimatedVisibility(
-                    visible = showControls,
+                    visible = seekFeedbackText != null,
                     enter = fadeIn(),
                     exit = fadeOut()
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = Color.Black.copy(alpha = 0.72f)
+                    ) {
+                        Text(
+                            text = seekFeedbackText ?: "",
+                            color = Color.White,
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp)
+                        )
+                    }
+                }
+
+                // Fullscreen controls overlay (auto-hides after 1.8s)
+                AnimatedVisibility(
+                    visible = showControls,
+                    enter = fadeIn(animationSpec = tween(150)),
+                    exit = fadeOut(animationSpec = tween(200))
                 ) {
                     Box(
                         modifier = Modifier
@@ -1440,7 +1557,7 @@ fun SeitharolFullscreenVideoModal(
                             .statusBarsPadding()
                             .navigationBarsPadding()
                     ) {
-                        // Top bar
+                        // Top bar: Title/Artist + Mute + PiP + Exit Fullscreen
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1471,42 +1588,13 @@ fun SeitharolFullscreenVideoModal(
 
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Surface(
-                                    shape = RoundedCornerShape(999.dp),
-                                    color = Color.White.copy(alpha = 0.16f),
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(999.dp))
-                                        .clickable {
-                                            val nextIdx = (speeds.indexOfFirst { it == playerState.playbackSpeed } + 1) % speeds.size
-                                            viewModel.setPlaybackSpeed(speeds[nextIdx])
-                                        }
-                                ) {
-                                    Text(
-                                        text = "${playerState.playbackSpeed}x",
-                                        color = Color.White,
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 12.sp,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                                    )
-                                }
-
-                                Surface(
-                                    shape = RoundedCornerShape(999.dp),
-                                    color = Color.White.copy(alpha = 0.16f),
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(999.dp))
-                                        .clickable { onToggleZoomCrop() }
-                                ) {
-                                    Text(
-                                        text = if (isZoomCrop) "Zoomed" else "Fit 16:9",
-                                        color = Color.White,
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 12.sp,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                IconButton(onClick = { viewModel.toggleMute() }) {
+                                    Icon(
+                                        imageVector = if (playerState.isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                                        contentDescription = if (playerState.isMuted) "Unmute" else "Mute",
+                                        tint = if (playerState.isMuted) MaterialTheme.colorScheme.primary else Color.White
                                     )
                                 }
 
@@ -1528,11 +1616,11 @@ fun SeitharolFullscreenVideoModal(
                             }
                         }
 
-                        // Center controls
+                        // Center controls: Previous, Play/Pause, Next
                         Row(
                             modifier = Modifier.align(Alignment.Center),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(28.dp)
+                            horizontalArrangement = Arrangement.spacedBy(32.dp)
                         ) {
                             IconButton(onClick = { viewModel.previous() }) {
                                 Icon(
@@ -1540,19 +1628,6 @@ fun SeitharolFullscreenVideoModal(
                                     contentDescription = "Previous",
                                     tint = Color.White,
                                     modifier = Modifier.size(34.dp)
-                                )
-                            }
-
-                            IconButton(
-                                onClick = {
-                                    viewModel.seekTo((playerState.currentPositionMs - 10_000L).coerceAtLeast(0L))
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Replay10,
-                                    contentDescription = "Rewind 10s",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(30.dp)
                                 )
                             }
 
@@ -1582,19 +1657,6 @@ fun SeitharolFullscreenVideoModal(
                                 }
                             }
 
-                            IconButton(
-                                onClick = {
-                                    viewModel.seekTo((playerState.currentPositionMs + 10_000L).coerceAtMost(totalDuration))
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Forward10,
-                                    contentDescription = "Forward 10s",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(30.dp)
-                                )
-                            }
-
                             IconButton(onClick = { viewModel.next() }) {
                                 Icon(
                                     imageVector = Icons.Default.SkipNext,
@@ -1605,7 +1667,7 @@ fun SeitharolFullscreenVideoModal(
                             }
                         }
 
-                        // Bottom scrubber
+                        // Bottom scrubber progress bar
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1647,6 +1709,28 @@ fun SeitharolFullscreenVideoModal(
                                 )
                             }
                         }
+                    }
+                }
+
+                // 10-Second Countdown Overlay in Fullscreen UI (visible even when tap controls are hidden!)
+                AnimatedVisibility(
+                    visible = showNextCountdown && nextTrack != null,
+                    enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+                    exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .navigationBarsPadding()
+                        .padding(horizontal = 24.dp, vertical = if (showControls) 96.dp else 28.dp)
+                ) {
+                    if (nextTrack != null) {
+                        SeitharolNextTrackCountdownBanner(
+                            nextTrack = nextTrack,
+                            countdownSeconds = countdownSeconds,
+                            countdownProgress = countdownProgress,
+                            onPlayNow = { viewModel.next() },
+                            onDismiss = onDismissCountdown,
+                            modifier = Modifier.widthIn(max = 380.dp)
+                        )
                     }
                 }
             }

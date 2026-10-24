@@ -541,7 +541,13 @@ fun PlaybackQueueModal(
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
                                     .clickable {
-                                        viewModel.playTrack(track)
+                                        val existingIdx = queue.indexOfFirst { it.id == track.id }
+                                        if (existingIdx >= 0) {
+                                            viewModel.playQueueIndex(existingIdx)
+                                        } else {
+                                            viewModel.addToQueue(track)
+                                            viewModel.playQueueIndex(queue.size)
+                                        }
                                         onDismiss()
                                     }
                             ) {

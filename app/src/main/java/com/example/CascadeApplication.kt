@@ -1,6 +1,7 @@
 package com.example
 
 import android.app.Application
+import android.content.ComponentCallbacks2
 import com.example.data.local.CascadeDatabase
 import com.example.data.repository.DownloadRepository
 import com.example.data.repository.MusicRepository
@@ -24,17 +25,18 @@ class CascadeApplication : Application(), coil.ImageLoaderFactory {
         return coil.ImageLoader.Builder(this)
             .memoryCache {
                 coil.memory.MemoryCache.Builder(this)
-                    .maxSizePercent(0.12) // Limit image memory cache to 12% heap for 2GB RAM budget phones
+                    .maxSizePercent(0.10) // Tuned to 10% heap for 2GB RAM phones
                     .build()
             }
             .diskCache {
                 coil.disk.DiskCache.Builder()
                     .directory(cacheDir.resolve("image_cache"))
-                    .maxSizeBytes(25L * 1024 * 1024)
+                    .maxSizeBytes(30L * 1024 * 1024)
                     .build()
             }
+            .allowRgb565(true) // Halves bitmap RAM usage (2 bytes/pixel instead of 4) on 2GB RAM phones
             .respectCacheHeaders(false)
-            .crossfade(true)
+            .crossfade(false) // Eliminates crossfade double-bitmap allocation spikes during scroll/unlock
             .build()
     }
 
@@ -45,7 +47,6 @@ class CascadeApplication : Application(), coil.ImageLoaderFactory {
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             android.util.Log.e("CascadeApplication", "Uncaught exception on thread ${thread.name}: ${throwable.message}", throwable)
-            // Never let background worker/IO/network/media thread exceptions kill the app process
             if (thread.name != "main") {
                 return@setDefaultUncaughtExceptionHandler
             }
@@ -69,10 +70,16 @@ class CascadeApplication : Application(), coil.ImageLoaderFactory {
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        // On low-RAM devices (especially during lock/unlock transitions), trim Coil image memory caches
-        // so Android Low Memory Killer (LMKD) never terminates background audio playback!
-        runCatching {
-            coil.Coil.imageLoader(this).memoryCache?.clear()
+        // Only clear Coil memory cache under genuine low-memory pressure or deep background eviction.
+        // Do NOT clear on TRIM_MEMORY_UI_HIDDEN (screen lock), which previously forced every visible
+        // thumbnail to re-decode simultaneously on screen unlock and caused unlock crashes/stalls!
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND ||
+            level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
+            level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL
+        ) {
+            runCatching {
+                coil.Coil.imageLoader(this).memoryCache?.clear()
+            }
         }
     }
 

@@ -70,8 +70,13 @@ private fun DiscoverSubScreenHost(
             com.seitharol.data.resolver.AudioQuality.LOW
         }
         val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(context, resolvingFactory)
+        val compactLoadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setBufferDurationsMs(4_000, 10_000, 800, 1_500)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
         androidx.media3.exoplayer.ExoPlayer.Builder(context)
             .setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory))
+            .setLoadControl(compactLoadControl)
             .build()
     }
     val seitharolPlayerManager = remember(previewExoPlayer) {
@@ -89,6 +94,11 @@ private fun DiscoverSubScreenHost(
     }
 
     val feedTracks by viewModel.discoverTracks.collectAsState()
+    LaunchedEffect(Unit) {
+        if (feedTracks.isEmpty()) {
+            viewModel.loadDiscoverFeed()
+        }
+    }
     com.seitharol.ui.discover.DiscoverScreen(
         feedTracks = feedTracks,
         audioPlayerManager = seitharolPlayerManager,
@@ -148,6 +158,8 @@ fun CascadeApp(
                     PlayerView(ctx).apply {
                         useController = false
                         resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
+                        keepContentOnPlayerReset = true
                         player = viewModel.playerInstance
                     }
                 },
@@ -772,7 +784,8 @@ fun CascadeApp(
                         .fillMaxWidth()
                         .navigationBarsPadding(),
                     horizontalAlignment = Alignment.CenterHorizontally
-                    if (playerState.currentTrack != null && !isPlayerExpanded && currentSubScreen !is SubScreen.Discover && !playerState.isVideoMode && playerState.currentTrack?.isVideoTrack != true) {
+                ) {
+                    if (playerState.currentTrack != null && !isPlayerExpanded && currentSubScreen !is SubScreen.Discover && !isInPiPMode) {
                         MiniPlayer(
                             playerState = playerState,
                             onExpand = { isPlayerExpanded = true },

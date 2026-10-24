@@ -309,12 +309,18 @@ private suspend fun scanDeviceAudioFiles(context: Context): List<CandidateStream
                 MediaStore.Video.Media.ARTIST,
                 MediaStore.Video.Media.DURATION
             )
-            val videoSelection = "${MediaStore.Video.Media.DURATION} >= 10000"
+            val videoSelection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                "${MediaStore.Video.Media.DURATION} >= 10000 AND ${MediaStore.Video.Media.RELATIVE_PATH} LIKE ?"
+            } else {
+                @Suppress("DEPRECATION")
+                "${MediaStore.Video.Media.DURATION} >= 10000 AND ${MediaStore.Video.Media.DATA} LIKE ?"
+            }
+            val videoSelectionArgs = arrayOf("%Seitharol%")
             context.contentResolver.query(
                 MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
                 videoProjection,
                 videoSelection,
-                null,
+                videoSelectionArgs,
                 "${MediaStore.Video.Media.DATE_ADDED} DESC"
             )?.use { cursor ->
                 val idCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)

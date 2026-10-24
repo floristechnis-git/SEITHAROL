@@ -76,6 +76,8 @@ data class PlayerState(
     val isSingleTrackPlayback: Boolean = false,
     val isPartOfPlaylist: Boolean = false,
     val isVideoMode: Boolean = false,
+    val isVideoFrameRendered: Boolean = false,
+    val isMuted: Boolean = false,
     val playbackSpeed: Float = 1.0f
 )
 
@@ -118,6 +120,17 @@ class AudioPlayerManager(
     private var prefetchedTrackId: String? = null
     private var trackRetryCount = 0
     private var lastFailedTrackId: String? = null
+    private val sessionPlayedIds = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
+    private val sessionPlayedSignatures = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
+
+    private fun recordSessionPlayed(track: Track) {
+        if (track.id.isNotBlank()) sessionPlayedIds.add(track.id)
+        val cleanTitle = track.title.lowercase().replace(Regex("\\(.*?\\)|\\[.*?]"), "").trim()
+        val cleanArtist = track.artist.lowercase().trim()
+        if (cleanTitle.isNotBlank()) {
+            sessionPlayedSignatures.add("$cleanTitle|$cleanArtist")
+        }
+    }
     @Volatile
     private var isRetryingOrLoading: Boolean = false
     @Volatile
@@ -158,7 +171,7 @@ class AudioPlayerManager(
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         when (focusChange) {
             AudioManager.AUDIOFOCUS_GAIN -> {
-                exoPlayer?.volume = 1.0f
+                exoPlayer?.volume = if (_state.value.isMuted) 0f else 1.0f
                 if (wasPlayingBeforeCall) {
                     wasPlayingBeforeCall = false
                     userRequestedPlay = true
@@ -178,11 +191,11 @@ class AudioPlayerManager(
                     }
                 } else {
                     // Never pause playback on screen lock/unlock chimes or transient system sounds
-                    exoPlayer?.volume = 1.0f
+                    exoPlayer?.volume = if (_state.value.isMuted) 0f else 1.0f
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                exoPlayer?.volume = 0.6f
+                exoPlayer?.volume = if (_state.value.isMuted) 0f else 0.6f
             }
         }
     }
@@ -317,7 +330,7 @@ class AudioPlayerManager(
                     put("isShuffle", s.isShuffle)
                     put("isSingleTrackPlayback", s.isSingleTrackPlayback)
                     put("isPartOfPlaylist", s.isPartOfPlaylist)
-                    put("currentTrack", trackToJson(current, includeLyrics = true))
+                    put("currentTrack", trackToJson(current, includeLyrics = false))
                     val qArr = JSONArray()
                     queueSnapshot.forEach { t -> qArr.put(trackToJson(t, includeLyrics = false)) }
                     put("queue", qArr)
@@ -419,6 +432,11 @@ class AudioPlayerManager(
     private fun restoreCheckpointFromDatabaseAsync() {
         coroutineScope.launch(Dispatchers.IO) {
             runCatching {
+                // Seed sessionPlayedIds from recent history so Autoplay never repeats recently played songs
+                musicRepository.getActiveHistory().firstOrNull()?.take(30)?.forEach { histTrack ->
+                    recordSessionPlayed(histTrack)
+                }
+                _state.value.currentTrack?.let { recordSessionPlayed(it) }
                 if (_state.value.currentTrack != null) return@launch
                 val checkpoint = musicRepository.getCheckpoint() ?: return@launch
                 val trackId = checkpoint.currentTrackId ?: return@launch
@@ -502,11 +520,54 @@ class AudioPlayerManager(
         }
     }
 
+    private suspend fun resolveStreamForTrack(
+        track: Track,
+        isVideo: Boolean,
+        preferredQuality: com.seitharol.data.resolver.AudioQuality,
+        forceRefresh: Boolean
+    ): ResolvedStream {
+        if (isVideo && !track.isDownloaded && track.localPath.isNullOrBlank()) {
+            val ytId = InnerTubeStreamExtractor.extractVideoId(track.id) ?: track.id.trim()
+            if (forceRefresh) {
+                InnerTubeStreamExtractor.invalidateVideoStreamCache(ytId)
+            }
+            val videoUrl = InnerTubeStreamExtractor.resolveRawVideoStreamById(
+                videoId = ytId,
+                forceRefresh = forceRefresh,
+                allowHlsFallback = true
+            ).getOrNull() ?: InnerTubeStreamExtractor.resolveRawVideoStreamById(
+                videoId = ytId,
+                forceRefresh = true,
+                allowHlsFallback = true
+            ).getOrNull()
+
+            if (!videoUrl.isNullOrBlank()) {
+                val isHls = videoUrl.contains(".m3u8", ignoreCase = true)
+                return ResolvedStream(
+                    videoId = ytId,
+                    streamUrl = videoUrl,
+                    itag = 18,
+                    codec = if (isHls) "HLS Video" else "MP4",
+                    bitrate = "720p / 360p",
+                    expiresAtMs = System.currentTimeMillis() + 6 * 3600 * 1000L,
+                    isLocal = false,
+                    resolvedBy = "Direct Video Stream",
+                    latencyMs = 10
+                )
+            }
+            throw IllegalStateException("Unable to resolve video stream for '${track.title}'")
+        }
+        return resolverEngine.resolveTrack(
+            track = if (forceRefresh) track.copy(audioUrl = "") else track,
+            preferredQuality = preferredQuality,
+            forceRefresh = forceRefresh,
+            preferNonYoutubeFallback = false
+        )
+    }
+
     private fun startBufferingWatchdog(expectedTrackId: String) {
         bufferingWatchdogJob?.cancel()
         val player = exoPlayer
-        // If track is already playing and has progressed, do NOT run buffering watchdog.
-        // ExoPlayer's built-in loader handles temporary network stalls gracefully without killing playback.
         if (player != null && player.isPlaying && player.currentPosition > 2000L) {
             return
         }
@@ -516,20 +577,21 @@ class AudioPlayerManager(
             if (!isActive || !userRequestedPlay) return@launch
             val current = _state.value.currentTrack ?: return@launch
             val p = exoPlayer ?: return@launch
-            // Only trigger if track STILL has not started playing at all after 25s
             if (current.id == expectedTrackId && (_state.value.isBuffering || isRetryingOrLoading) && !p.isPlaying && p.currentPosition < 1000L) {
                 Log.w(TAG, "Initial load watchdog triggered after 25s for '${current.title}', retrying stream...")
                 val resumePos = (p.currentPosition.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
+                val isVideo = current.isVideoTrack || _state.value.isVideoMode
                 resolverEngine.invalidateTrack(current.id)
+                InnerTubeStreamExtractor.invalidateVideoStreamCache(current.id)
                 try {
                     val freshStream = withContext(Dispatchers.IO) {
-                        withTimeout(15_000L) {
+                        withTimeout(18_000L) {
                             val localFirst = resolveLocalTrackIfAvailable(current)
-                            resolverEngine.resolveTrack(
-                                track = localFirst.copy(audioUrl = ""),
+                            resolveStreamForTrack(
+                                track = localFirst,
+                                isVideo = isVideo,
                                 preferredQuality = com.seitharol.data.resolver.AudioQuality.LOW,
-                                forceRefresh = true,
-                                preferNonYoutubeFallback = false
+                                forceRefresh = true
                             )
                         }
                     }
@@ -636,6 +698,18 @@ class AudioPlayerManager(
                                     _state.value = _state.value.copy(isBuffering = false, isPlaying = false)
                                 }
                             }
+                        }
+                    }
+
+                    override fun onRenderedFirstFrame() {
+                        if (!_state.value.isVideoFrameRendered) {
+                            _state.value = _state.value.copy(isVideoFrameRendered = true)
+                        }
+                    }
+
+                    override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                        if (videoSize.width > 0 && videoSize.height > 0 && !_state.value.isVideoFrameRendered) {
+                            _state.value = _state.value.copy(isVideoFrameRendered = true)
                         }
                     }
 
@@ -764,16 +838,18 @@ class AudioPlayerManager(
                                 return@launch
                             }
 
+                            val isVideo = current.isVideoTrack || _state.value.isVideoMode
+                            InnerTubeStreamExtractor.invalidateVideoStreamCache(current.id)
                             trackRetryCount++
                             delay(150L)
                             if (!isActive || !userRequestedPlay || _state.value.currentTrack?.id != current.id) return@launch
                             try {
                                 val freshStream = withTimeout(20_000L) {
-                                    resolverEngine.resolveTrack(
+                                    resolveStreamForTrack(
                                         track = current.copy(audioUrl = ""),
+                                        isVideo = isVideo,
                                         preferredQuality = getPreferredAudioQuality(),
-                                        forceRefresh = true,
-                                        preferNonYoutubeFallback = false
+                                        forceRefresh = true
                                     )
                                 }
                                 if (!isActive || !userRequestedPlay || _state.value.currentTrack?.id != current.id) return@launch
@@ -786,11 +862,11 @@ class AudioPlayerManager(
                                     trackRetryCount++
                                     runCatching {
                                         val secondStream = withTimeout(20_000L) {
-                                            resolverEngine.resolveTrack(
+                                            resolveStreamForTrack(
                                                 track = current.copy(audioUrl = ""),
+                                                isVideo = isVideo,
                                                 preferredQuality = com.seitharol.data.resolver.AudioQuality.LOW,
-                                                forceRefresh = true,
-                                                preferNonYoutubeFallback = false
+                                                forceRefresh = true
                                             )
                                         }
                                         if (isActive && userRequestedPlay && _state.value.currentTrack?.id == current.id) {
@@ -866,6 +942,7 @@ class AudioPlayerManager(
             )
 
             requestAudioFocus()
+            player.volume = if (_state.value.isMuted) 0f else 1.0f
             if (startPositionMs > 0L) {
                 player.setMediaItem(mediaItem, startPositionMs)
             } else {
@@ -894,37 +971,46 @@ class AudioPlayerManager(
         positionJob?.cancel()
         positionJob = coroutineScope.launch {
             while (isActive) {
-                exoPlayer?.let { player ->
-                    val isPastGracePeriod = (System.currentTimeMillis() - lastUserSeekTimestamp) > 700L
-                    if (player.isPlaying && isPastGracePeriod) {
-                        val pos = player.currentPosition.coerceAtLeast(0L)
-                        val dur = player.duration
-                        val safeDur = if (dur > 0L && dur != C.TIME_UNSET) dur else _state.value.durationMs
+                val player = exoPlayer ?: break
+                if (!player.isPlaying && !_state.value.isPlaying) {
+                    break
+                }
+                val isPastGracePeriod = (System.currentTimeMillis() - lastUserSeekTimestamp) > 700L
+                if (player.isPlaying && isPastGracePeriod) {
+                    val pos = player.currentPosition.coerceAtLeast(0L)
+                    val dur = player.duration
+                    val safeDur = if (dur > 0L && dur != C.TIME_UNSET) dur else _state.value.durationMs
 
-                        checkSponsorSkip(pos)
+                    checkSponsorSkip(pos)
 
-                        val currentLyrics = _state.value.lyricLines
-                        val adjustedPos = pos + _state.value.lyricOffsetMs
-                        val activeIdx = currentLyrics.indexOfLast { it.timestampMs <= adjustedPos }
+                    val currentLyrics = _state.value.lyricLines
+                    val adjustedPos = pos + _state.value.lyricOffsetMs
+                    val activeIdx = currentLyrics.indexOfLast { it.timestampMs <= adjustedPos }
 
-                        _state.value = _state.value.copy(
-                            currentPositionMs = pos,
-                            durationMs = if (safeDur > 0L) safeDur else _state.value.durationMs,
-                            activeLyricIndex = activeIdx
-                        )
+                    val hasVideoSize = player.videoSize.width > 0 && player.videoSize.height > 0
+                    _state.value = _state.value.copy(
+                        currentPositionMs = pos,
+                        durationMs = if (safeDur > 0L) safeDur else _state.value.durationMs,
+                        activeLyricIndex = activeIdx,
+                        isVideoFrameRendered = _state.value.isVideoFrameRendered || hasVideoSize
+                    )
 
-                        val now = System.currentTimeMillis()
-                        if (now - lastCheckpointSaveMs > 20_000L) {
-                            lastCheckpointSaveMs = now
-                            persistCurrentPlaybackState()
+                    val now = System.currentTimeMillis()
+                    if (now - lastCheckpointSaveMs > 60_000L) {
+                        lastCheckpointSaveMs = now
+                        persistCurrentPlaybackState()
+                    }
+
+                    if (safeDur > 0L && (pos.toFloat() / safeDur.toFloat()) > 0.75f) {
+                        if (_state.value.currentIndex >= _state.value.queue.lastIndex && isAutoplayEnabled) {
+                            prefetchAutoplayRecommendation()
                         }
-
-                        if (safeDur > 0L && (pos.toFloat() / safeDur.toFloat()) > 0.85f) {
+                        if ((pos.toFloat() / safeDur.toFloat()) > 0.82f) {
                             prefetchNextTrack()
                         }
                     }
                 }
-                delay(400)
+                delay(500L)
             }
         }
     }
@@ -987,6 +1073,16 @@ class AudioPlayerManager(
     }
 
     fun playTrack(track: Track) {
+        val current = _state.value.currentTrack
+        val p = exoPlayer
+        // If tapping the exact song that is already loaded, do NOT restart from 0:00!
+        if (current != null && current.id == track.id && p != null && p.playbackState != Player.STATE_IDLE && p.currentMediaItem != null) {
+            if (!_state.value.isPlaying) {
+                togglePlayPause()
+            }
+            return
+        }
+
         hasUserInitiatedPlaybackThisSession = true
         userRequestedPlay = true
         trackRetryCount = 0
@@ -997,13 +1093,16 @@ class AudioPlayerManager(
         if (track.isDownloaded || !track.localPath.isNullOrBlank()) {
             isAutoplayEnabled = false
         }
+        recordSessionPlayed(track)
         _state.value = _state.value.copy(
             queue = listOf(track),
             currentIndex = 0,
             currentTrack = track,
             currentPositionMs = 0L,
             isSingleTrackPlayback = true,
-            isPartOfPlaylist = false
+            isPartOfPlaylist = false,
+            isVideoMode = track.isVideoTrack,
+            isVideoFrameRendered = false
         )
         loadAndPlayCurrent(resumePositionMs = 0L)
     }
@@ -1011,6 +1110,16 @@ class AudioPlayerManager(
     fun playQueueIndex(index: Int) {
         val q = _state.value.queue
         if (index in q.indices) {
+            val target = q[index]
+            val p = exoPlayer
+            // If tapping the currently active queue item, resume if paused rather than restarting from 0:00
+            if (index == _state.value.currentIndex && _state.value.currentTrack?.id == target.id && p != null && p.playbackState != Player.STATE_IDLE && p.currentMediaItem != null) {
+                if (!_state.value.isPlaying) {
+                    togglePlayPause()
+                }
+                return
+            }
+
             hasUserInitiatedPlaybackThisSession = true
             userRequestedPlay = true
             trackRetryCount = 0
@@ -1018,10 +1127,13 @@ class AudioPlayerManager(
             loadTrackJob?.cancel()
             retryJob?.cancel()
             bufferingWatchdogJob?.cancel()
+            recordSessionPlayed(target)
             _state.value = _state.value.copy(
                 currentIndex = index,
-                currentTrack = q[index],
-                currentPositionMs = 0L
+                currentTrack = target,
+                currentPositionMs = 0L,
+                isVideoMode = target.isVideoTrack,
+                isVideoFrameRendered = false
             )
             loadAndPlayCurrent(resumePositionMs = 0L)
         }
@@ -1204,6 +1316,7 @@ class AudioPlayerManager(
                 val initialLyricIdx = localLyrics.indexOfLast { it.timestampMs <= initialPos + _state.value.lyricOffsetMs }
                 val isVideoTrack = current.isVideoTrack
 
+                recordSessionPlayed(current)
                 _state.value = _state.value.copy(
                     currentTrack = current,
                     isBuffering = true,
@@ -1211,11 +1324,12 @@ class AudioPlayerManager(
                     currentPositionMs = initialPos,
                     lyricLines = localLyrics,
                     activeLyricIndex = initialLyricIdx,
-                    isVideoMode = isVideoTrack
+                    isVideoMode = isVideoTrack,
+                    isVideoFrameRendered = if (isSameTrack) _state.value.isVideoFrameRendered else false
                 )
 
                 // Fetch synchronized lyrics asynchronously when online
-                if (localLyrics.isEmpty() && !resolverEngine.isOfflineMode.value && com.example.util.ErrorFormatter.isOnline(context)) {
+                if (localLyrics.isEmpty() && !isVideoTrack && !resolverEngine.isOfflineMode.value && com.example.util.ErrorFormatter.isOnline(context)) {
                     coroutineScope.launch(Dispatchers.IO) {
                         val lrclibLines = com.example.network.NetworkClients.fetchLrclibLyrics(
                             artist = current.artist,
@@ -1247,29 +1361,24 @@ class AudioPlayerManager(
                         }
                     }
 
-                    val resolvedStream = withTimeout(10_000L) {
-                        if (isVideoTrack && !resolvedLocalTrack.isDownloaded && resolvedLocalTrack.localPath.isNullOrBlank()) {
-                            val ytId = InnerTubeStreamExtractor.extractVideoId(resolvedLocalTrack.id)
-                            val videoUrl = if (!ytId.isNullOrBlank()) {
-                                InnerTubeStreamExtractor.resolveRawVideoStreamById(ytId).getOrNull()
-                            } else null
-                            if (!videoUrl.isNullOrBlank()) {
-                                ResolvedStream(
-                                    videoId = ytId ?: resolvedLocalTrack.id,
-                                    streamUrl = videoUrl,
-                                    itag = 18,
-                                    codec = "MP4 Video",
-                                    bitrate = "720p",
-                                    expiresAtMs = System.currentTimeMillis() + 6 * 3600 * 1000L,
-                                    isLocal = false,
-                                    resolvedBy = "Direct Video Stream",
-                                    latencyMs = 10
-                                )
-                            } else {
-                                resolverEngine.resolveTrack(resolvedLocalTrack, preferredQuality)
-                            }
-                        } else {
-                            resolverEngine.resolveTrack(resolvedLocalTrack, preferredQuality)
+                    val resolvedStream = try {
+                        withTimeout(18_000L) {
+                            resolveStreamForTrack(
+                                track = resolvedLocalTrack,
+                                isVideo = isVideoTrack,
+                                preferredQuality = preferredQuality,
+                                forceRefresh = false
+                            )
+                        }
+                    } catch (firstErr: Exception) {
+                        // Automatic retry with fresh token & LOW quality so notification resume / slow radio wake never auto-pauses
+                        withTimeout(16_000L) {
+                            resolveStreamForTrack(
+                                track = resolvedLocalTrack,
+                                isVideo = isVideoTrack,
+                                preferredQuality = com.seitharol.data.resolver.AudioQuality.LOW,
+                                forceRefresh = true
+                            )
                         }
                     }
                     resolvedLocalTrack to resolvedStream
@@ -1342,14 +1451,8 @@ class AudioPlayerManager(
 
         val dbTrack = runCatching {
             musicRepository.getTrackById(current.id)
-                ?: musicRepository.getTrackById(canonicalId)
-                ?: cleanYtId?.let { musicRepository.getTrackById(it) }
-                ?: musicRepository.getDownloadedTracks().firstOrNull()?.firstOrNull {
-                    it.id == current.id ||
-                        it.id == canonicalId ||
-                        (it.title.equals(current.title, ignoreCase = true) &&
-                            (current.artist.isBlank() || it.artist.contains(current.artist, ignoreCase = true) || current.artist.contains(it.artist, ignoreCase = true)))
-                }
+                ?: (if (canonicalId != current.id) musicRepository.getTrackById(canonicalId) else null)
+                ?: (if (cleanYtId != null && cleanYtId != current.id) musicRepository.getTrackById(cleanYtId) else null)
         }.getOrNull()
         val dbPath = dbTrack?.localPath
 
@@ -1410,6 +1513,15 @@ class AudioPlayerManager(
             localCandidates.add(File(downloadDir, "${idCandidate}_discover.m4a"))
             localCandidates.add(File(downloadDir, "${idCandidate}_discover.flac"))
             localCandidates.add(File(downloadDir, "${idCandidate}_discover.opus"))
+        }
+
+        val directHit = localCandidates.firstOrNull { it.exists() && it.length() > 10_240L }
+        if (directHit != null) {
+            return current.copy(isDownloaded = true, localPath = directHit.absolutePath)
+        }
+        // Only perform expensive directory listFiles() scans if the track was marked downloaded
+        if (!current.isDownloaded && dbTrack?.isDownloaded != true && downloadEntityPath.isNullOrBlank() && discoverDownloadPath.isNullOrBlank()) {
+            return current.copy(isDownloaded = false, localPath = null)
         }
 
         if (downloadDir.exists() && downloadDir.isDirectory) {
@@ -1560,9 +1672,11 @@ class AudioPlayerManager(
 
             if (current != null) {
                 if (player.playbackState == Player.STATE_BUFFERING) {
+                    requestAudioFocus()
                     player.playWhenReady = true
                     player.play()
-                    _state.value = _state.value.copy(isPlaying = true)
+                    _state.value = _state.value.copy(isBuffering = true)
+                    MediaPlaybackService.startService(context)
                     return
                 }
                 val isPlayerStalledOrNeedsReload = player.playbackState == Player.STATE_IDLE ||
@@ -1821,7 +1935,9 @@ class AudioPlayerManager(
                 val recommendations = QueueRecommendationEngine.fetchRelevantRecommendations(
                     currentTrack = seedMeta,
                     queueTracks = queueMeta,
-                    limit = 6
+                    limit = 8,
+                    additionalExcludedIds = sessionPlayedIds.toSet(),
+                    additionalExcludedSignatures = sessionPlayedSignatures.toSet()
                 )
                 val isCurrentVideo = current.isVideoTrack
                 val nextRec = recommendations.firstOrNull { rec ->
@@ -1887,7 +2003,9 @@ class AudioPlayerManager(
                 val recommendations = QueueRecommendationEngine.fetchRelevantRecommendations(
                     currentTrack = seedMeta,
                     queueTracks = queueMeta,
-                    limit = 6
+                    limit = 8,
+                    additionalExcludedIds = sessionPlayedIds.toSet(),
+                    additionalExcludedSignatures = sessionPlayedSignatures.toSet()
                 )
                 val isCurrentVideo = current.isVideoTrack
                 val nextRec = recommendations.firstOrNull { rec ->
@@ -2001,6 +2119,17 @@ class AudioPlayerManager(
         } catch (t: Throwable) {
             Log.w(TAG, "attachVideoTextureView error: ${t.message}")
         }
+    }
+
+    fun toggleMute() {
+        setMuted(!_state.value.isMuted)
+    }
+
+    fun setMuted(muted: Boolean) {
+        _state.value = _state.value.copy(isMuted = muted)
+        try {
+            exoPlayer?.volume = if (muted) 0f else 1.0f
+        } catch (_: Throwable) {}
     }
 
     fun setPlaybackSpeed(speed: Float) {

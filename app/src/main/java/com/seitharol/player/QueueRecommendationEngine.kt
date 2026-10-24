@@ -8,7 +8,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
-import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -20,29 +19,43 @@ object QueueRecommendationEngine {
      * 1. Real YouTube Music RDAMVM{videoId} Automix Watch-Next radio for 11-char YouTube IDs.
      * 2. Dominant artist + seed song contextual YouTube Music ATV search.
      * 3. JioSaavn station similarity fallback for numeric/Saavn IDs.
+     *
+     * Strictly excludes all tracks in [queueTracks], [additionalExcludedIds], and
+     * [additionalExcludedSignatures] so recently played songs NEVER repeat in Autoplay.
      */
     suspend fun fetchRelevantRecommendations(
         currentTrack: TrackMetadata,
         queueTracks: List<TrackMetadata>,
         historyArtists: List<String> = emptyList(),
-        limit: Int = 10
+        limit: Int = 10,
+        additionalExcludedIds: Set<String> = emptySet(),
+        additionalExcludedSignatures: Set<String> = emptySet()
     ): List<TrackMetadata> = withContext(Dispatchers.IO) {
-        val excludedIds = (queueTracks.map { it.id } + currentTrack.id).toHashSet()
-        val excludedTitles = (queueTracks.map { normalizeTitle(it.title) } + normalizeTitle(currentTrack.title)).toHashSet()
+        val excludedIds = (queueTracks.map { it.id } + currentTrack.id + additionalExcludedIds).toHashSet()
+        val excludedTitles = (
+            queueTracks.map { normalizeTitle(it.title) } +
+                normalizeTitle(currentTrack.title) +
+                additionalExcludedSignatures.map { normalizeTitle(it.substringBefore("|")) }
+            ).filter { it.isNotBlank() }.toHashSet()
+        val excludedSigs = (
+            queueTracks.map { signature(it.title, it.artist) } +
+                signature(currentTrack.title, currentTrack.artist) +
+                additionalExcludedSignatures
+            ).toHashSet()
         val results = mutableListOf<TrackMetadata>()
 
         coroutineScope {
             // 1. Primary: Real YouTube Music RDAMVM Automix Queue
             val automixDeferred = async {
                 if (currentTrack.id.length == 11) {
-                    InnerTubeStreamExtractor.fetchAutomixQueue(currentTrack.id, limit = limit + 6)
+                    InnerTubeStreamExtractor.fetchAutomixQueue(currentTrack.id, limit = limit + 10)
                 } else {
                     val resolvedSeed = InnerTubeStreamExtractor.searchOfficialYtmSongs(
                         "${currentTrack.title} ${currentTrack.artist}",
                         limit = 2
                     ).firstOrNull()
                     if (resolvedSeed != null) {
-                        InnerTubeStreamExtractor.fetchAutomixQueue(resolvedSeed.videoId, limit = limit + 6)
+                        InnerTubeStreamExtractor.fetchAutomixQueue(resolvedSeed.videoId, limit = limit + 10)
                     } else emptyList()
                 }
             }
@@ -60,7 +73,7 @@ object QueueRecommendationEngine {
                     queueArtists.forEach { add("$it official songs") }
                 }
                 queries.flatMap { q ->
-                    InnerTubeStreamExtractor.searchOfficialYtmSongs(q, limit = 5)
+                    InnerTubeStreamExtractor.searchOfficialYtmSongs(q, limit = 6)
                 }
             }
 
@@ -70,11 +83,13 @@ object QueueRecommendationEngine {
             for (cand in (automixTracks + artistTracks)) {
                 if (results.size >= limit) break
                 val normTitle = normalizeTitle(cand.title)
-                if (cand.videoId in excludedIds || normTitle in excludedTitles) continue
+                val sig = signature(cand.title, cand.artist)
+                if (cand.videoId in excludedIds || normTitle in excludedTitles || sig in excludedSigs) continue
                 if (StreamResolver.containsUnwantedVariant(currentTrack.title, cand.title)) continue
 
                 excludedIds.add(cand.videoId)
                 excludedTitles.add(normTitle)
+                excludedSigs.add(sig)
                 results.add(
                     TrackMetadata(
                         id = cand.videoId,
@@ -91,7 +106,7 @@ object QueueRecommendationEngine {
 
         // 3. Tertiary fallback: JioSaavn reco if still under limit
         if (results.size < limit) {
-            fetchSaavnStationRecommendations(currentTrack.id, excludedIds, excludedTitles, results)
+            fetchSaavnStationRecommendations(currentTrack.id, excludedIds, excludedTitles, excludedSigs, results)
         }
 
         results.take(limit)
@@ -100,10 +115,14 @@ object QueueRecommendationEngine {
     private fun normalizeTitle(raw: String): String =
         raw.lowercase().replace(Regex("\\(.*?\\)|\\[.*?]"), "").trim()
 
+    private fun signature(title: String, artist: String): String =
+        "${normalizeTitle(title)}|${artist.lowercase().trim()}"
+
     private fun fetchSaavnStationRecommendations(
         songId: String,
         excludedIds: MutableSet<String>,
         excludedTitles: MutableSet<String>,
+        excludedSigs: MutableSet<String>,
         out: MutableList<TrackMetadata>
     ) {
         try {
@@ -125,20 +144,22 @@ object QueueRecommendationEngine {
                     .replace("&amp;", "&")
                     .takeIf { it.isNotBlank() } ?: continue
                 val norm = normalizeTitle(title)
-                if (id in excludedIds || norm in excludedTitles) continue
-
                 val moreInfo = obj.optJSONObject("more_info")
                 val artist = moreInfo?.optJSONObject("artistMap")
                     ?.optJSONArray("primary_artists")
                     ?.optJSONObject(0)
                     ?.optString("name")
                     ?: obj.optString("primary_artists").ifBlank { "Unknown Artist" }
+                val sig = signature(title, artist)
+                if (id in excludedIds || norm in excludedTitles || sig in excludedSigs) continue
+
                 val image = obj.optString("image").replace("150x150", "500x500")
                 val duration = moreInfo?.optString("duration")?.toIntOrNull() ?: 210
                 val encryptedUrl = moreInfo?.optString("encrypted_media_url")
 
                 excludedIds.add(id)
                 excludedTitles.add(norm)
+                excludedSigs.add(sig)
                 out.add(
                     TrackMetadata(
                         id = id,

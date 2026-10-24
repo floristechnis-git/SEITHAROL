@@ -102,16 +102,17 @@ object InnerTubeStreamExtractor {
      */
     val VERIFIED_CLIENTS = listOf(
         InnerTubeClientConfig(
-            clientName = "VISIONOS",
-            clientVersion = "0.1",
-            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
-            clientId = "101",
-            deviceMake = "Apple",
-            deviceModel = "RealityDevice14,1",
-            osName = "visionOS",
-            osVersion = "1.3.21O771",
+            clientName = "ANDROID_VR",
+            clientVersion = "1.61.48",
+            userAgent = "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+            clientId = "28",
+            deviceMake = "Oculus",
+            deviceModel = "Quest 3",
+            osName = "Android",
+            osVersion = "12L",
+            androidSdkVersion = 32,
             glOverride = null,
-            sendOriginHeaders = true
+            sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
             clientName = "IOS",
@@ -122,19 +123,6 @@ object InnerTubeStreamExtractor {
             deviceModel = "iPhone16,2",
             osName = "iOS",
             osVersion = "18.3.1.22D72",
-            glOverride = null,
-            sendOriginHeaders = false
-        ),
-        InnerTubeClientConfig(
-            clientName = "ANDROID_VR",
-            clientVersion = "1.61.48",
-            userAgent = "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
-            clientId = "28",
-            deviceMake = "Oculus",
-            deviceModel = "Quest 3",
-            osName = "Android",
-            osVersion = "12L",
-            androidSdkVersion = 32,
             glOverride = null,
             sendOriginHeaders = false
         ),
@@ -166,6 +154,18 @@ object InnerTubeStreamExtractor {
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
+            clientName = "VISIONOS",
+            clientVersion = "0.1",
+            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+            clientId = "101",
+            deviceMake = "Apple",
+            deviceModel = "RealityDevice14,1",
+            osName = "visionOS",
+            osVersion = "1.3.21O771",
+            glOverride = null,
+            sendOriginHeaders = true
+        ),
+        InnerTubeClientConfig(
             clientName = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
             clientVersion = "2.0",
             userAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/11.50) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.0 Safari/605.1.15",
@@ -178,9 +178,12 @@ object InnerTubeStreamExtractor {
 
     @Volatile
     private var cachedVisitorData: String? = null
+    private val videoStreamCache = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Long>>()
 
-    init {
-        bgScope.launch { ensureVisitorData(forceFresh = true) }
+    fun invalidateVideoStreamCache(videoId: String) {
+        val clean = extractVideoId(videoId) ?: videoId.trim()
+        videoStreamCache.remove(clean)
+        videoStreamCache.remove(videoId.trim())
     }
 
     fun ensureVisitorData(forceFresh: Boolean = false): String? {
@@ -191,25 +194,6 @@ object InnerTubeStreamExtractor {
     }
 
     private fun fetchVisitorDataSync(): String? {
-        runCatching {
-            val conn = (URL("https://www.youtube.com/sw.js_data").openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 2000
-                readTimeout = 2000
-                setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-                setRequestProperty("Accept-Language", "en-US,en;q=0.9")
-            }
-            if (conn.responseCode == 200) {
-                val body = conn.inputStream.bufferedReader().use { it.readText() }
-                val match = Regex("\"([A-Za-z0-9_-]{16,}%3D%3D)\"").find(body)
-                val token = match?.groupValues?.get(1)
-                if (!token.isNullOrBlank()) {
-                    cachedVisitorData = token
-                    return token
-                }
-            }
-        }
-
         return runCatching {
             val conn = (URL("https://www.youtube.com/youtubei/v1/visitor_id?prettyPrint=false").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -1581,15 +1565,25 @@ object InnerTubeStreamExtractor {
             .ifBlank { defaultArt }
             .ifBlank { "https://i.ytimg.com/vi/$videoId/hqdefault.jpg" }
 
+        val rawItemStr = item.toString()
+        val isVideoItem = rawItemStr.contains("MUSIC_VIDEO_TYPE_OMV") ||
+            rawItemStr.contains("MUSIC_VIDEO_TYPE_UGC")
+        val resolvedVideoType = if (isVideoItem) "MUSIC_VIDEO_TYPE_OMV" else "MUSIC_VIDEO_TYPE_ATV"
+        val resolvedAlbumName = if (isVideoItem && (albumName.isNullOrBlank() || albumName == "Single")) {
+            "YouTube Video"
+        } else {
+            albumName
+        }
+
         return CandidateStream(
             videoId = videoId,
             title = title,
             artist = artist,
             artistBrowseId = artistBrowseId,
             channelName = "$artist - Topic",
-            albumName = albumName,
+            albumName = resolvedAlbumName,
             durationSeconds = if (durationSeconds > 0) durationSeconds else 210,
-            videoType = "MUSIC_VIDEO_TYPE_ATV",
+            videoType = resolvedVideoType,
             thumbnailUrl = thumbUrl,
             isVerifiedArtist = true
         )
@@ -1669,130 +1663,65 @@ object InnerTubeStreamExtractor {
 
 
     /**
-     * Resolves a raw googlevideo.com progressive video+audio MP4 stream (itag 18 / 22) for Video Mode.
-     * Plays directly inside Seitharol custom ExoPlayer surface with ZERO YouTube logo or iframe chrome.
+     * Resolves a direct progressive MP4 video+audio stream (itag 18 / 22) for Video Mode & MP4 Downloads.
+     * Prioritizes ANDROID_VR, ANDROID_TESTSUITE, and IOS progressive MP4 streams first so ExoPlayer
+     * renders hardware-decoded H.264+AAC MP4 frames immediately without black/blank HLS stalls.
      */
-    suspend fun resolveRawVideoStreamById(videoId: String): Result<String> = withContext(Dispatchers.IO) {
+    suspend fun resolveRawVideoStreamById(
+        videoId: String,
+        forceRefresh: Boolean = false,
+        allowHlsFallback: Boolean = true
+    ): Result<String> = withContext(Dispatchers.IO) {
         val cleanVideoId = extractVideoId(videoId) ?: videoId.trim()
         if (!VALID_VIDEO_ID_REGEX.matches(cleanVideoId)) {
             return@withContext Result.failure(IllegalArgumentException("Invalid YouTube videoId: $videoId"))
         }
-        val cpn = generateCpn()
-        for (client in VERIFIED_CLIENTS) {
-            val videoUrl = runCatching {
-                val visData = cachedVisitorData?.takeIf { it.isNotBlank() }
-                val effectiveGl = client.glOverride ?: resolveDeviceGl()
-                val conn = (URL(client.playerEndpoint).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "POST"
-                    connectTimeout = 3500
-                    readTimeout = 4000
-                    doOutput = true
-                    setRequestProperty("Content-Type", "application/json")
-                    setRequestProperty("User-Agent", client.userAgent)
-                    setRequestProperty("X-YouTube-Client-Name", client.clientId)
-                    setRequestProperty("X-YouTube-Client-Version", client.clientVersion)
-                    setRequestProperty("X-Goog-Api-Format-Version", "2")
-                    if (client.sendOriginHeaders) {
-                        setRequestProperty("Origin", client.origin)
-                        setRequestProperty("Referer", "${client.origin}/")
-                    }
-                    if (visData != null) setRequestProperty("X-Goog-Visitor-Id", visData)
+
+        val now = System.currentTimeMillis()
+        if (forceRefresh) {
+            videoStreamCache.remove(cleanVideoId)
+        } else {
+            videoStreamCache[cleanVideoId]?.let { (cachedUrl, ts) ->
+                if (now - ts < 2 * 3600 * 1000L && (allowHlsFallback || !cachedUrl.contains(".m3u8", true))) {
+                    return@withContext Result.success(cachedUrl)
                 }
-                val payload = JSONObject().apply {
-                    put("videoId", cleanVideoId)
-                    put("cpn", cpn)
-                    put("contentCheckOk", true)
-                    put("racyCheckOk", true)
-                    client.params?.let { put("params", it) }
-                    if (client.isEmbedded) {
-                        put("playbackContext", JSONObject().apply {
-                            put("contentPlaybackContext", JSONObject().apply {
-                                put("html5Preference", "HTML5_PREF_WANTS")
-                                put("signatureTimestamp", 20073)
-                            })
-                        })
-                    }
-                    put("context", JSONObject().apply {
-                        put("client", JSONObject().apply {
-                            put("clientName", client.clientName)
-                            put("clientVersion", client.clientVersion)
-                            put("userAgent", client.userAgent)
-                            put("hl", "en")
-                            put("gl", effectiveGl)
-                            client.deviceMake?.let { put("deviceMake", it) }
-                            client.deviceModel?.let { put("deviceModel", it) }
-                            client.osName?.let { put("osName", it) }
-                            client.osVersion?.let { put("osVersion", it) }
-                            client.androidSdkVersion?.let { put("androidSdkVersion", it) }
-                            if (visData != null) put("visitorData", visData)
-                        })
-                        if (client.isEmbedded) {
-                            put("thirdParty", JSONObject().apply {
-                                put("embedUrl", "https://www.youtube.com/")
-                            })
-                        }
-                    })
-                }
-                conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
-                if (conn.responseCode != 200) return@runCatching null
-                val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-                if (json.optJSONObject("playabilityStatus")?.optString("status") != "OK") return@runCatching null
-                val streamingData = json.optJSONObject("streamingData") ?: return@runCatching null
-                val formats = streamingData.optJSONArray("formats")
-                if (formats != null) {
-                    var bestUrl: String? = null
-                    var bestHeight = -1
-                    for (i in 0 until formats.length()) {
-                        val fmt = formats.optJSONObject(i) ?: continue
-                        var rawUrl = fmt.optString("url", "")
-                        if (rawUrl.isBlank()) {
-                            val cipherStr = fmt.optString("signatureCipher").ifBlank { fmt.optString("cipher") }
-                            if (cipherStr.isNotBlank()) {
-                                val params = mutableMapOf<String, String>()
-                                for (part in cipherStr.split("&")) {
-                                    val idx = part.indexOf('=')
-                                    if (idx > 0) {
-                                        params[URLDecoder.decode(part.substring(0, idx), "UTF-8")] =
-                                            URLDecoder.decode(part.substring(idx + 1), "UTF-8")
-                                    }
-                                }
-                                val baseUrl = params["url"].orEmpty()
-                                val sig = params["s"].orEmpty()
-                                val sp = params["sp"] ?: "sig"
-                                if (baseUrl.isNotBlank() && sig.isNotBlank()) {
-                                    val ops = com.example.resolver.KotlinJsInterp.getActiveCipherOperations()
-                                    val deciphered = com.example.resolver.KotlinJsInterp.decipherSignature(sig, ops)
-                                    if (deciphered.isNotBlank()) {
-                                        val sep = if (baseUrl.contains("?")) "&" else "?"
-                                        rawUrl = "$baseUrl$sep$sp=$deciphered"
-                                    }
-                                }
-                            }
-                        }
-                        val height = fmt.optInt("height", 360)
-                        if (rawUrl.isNotBlank()) {
-                            val withCpn = if (!rawUrl.contains("cpn=")) {
-                                val sep = if (rawUrl.contains("?")) "&" else "?"
-                                "$rawUrl${sep}cpn=$cpn"
-                            } else rawUrl
-                            if (height >= bestHeight) {
-                                bestHeight = height
-                                bestUrl = withCpn
-                            }
-                        }
-                    }
-                    if (!bestUrl.isNullOrBlank()) return@runCatching bestUrl
-                }
-                val hlsUrl = streamingData.optString("hlsManifestUrl", "")
-                if (hlsUrl.isNotBlank()) return@runCatching hlsUrl
-                null
-            }.getOrNull()
-            if (!videoUrl.isNullOrBlank()) {
-                return@withContext Result.success(videoUrl)
             }
         }
 
-        // Fast Invidious / Piped video fallback for progressive video streams
+        val cpn = generateCpn()
+        var hlsFallbackCandidate: String? = null
+
+        // Prioritize progressive MP4-capable clients (ANDROID_VR, ANDROID_TESTSUITE, IOS) before VISIONOS
+        val videoOrderedClients = VERIFIED_CLIENTS.filter { it.clientName != "VISIONOS" } +
+            VERIFIED_CLIENTS.filter { it.clientName == "VISIONOS" }
+
+        for (client in videoOrderedClients) {
+            val mp4Url = extractProgressiveVideoWithClient(cleanVideoId, client, cpn) { hls ->
+                if (hlsFallbackCandidate.isNullOrBlank() && hls.isNotBlank()) {
+                    hlsFallbackCandidate = hls
+                }
+            }
+            if (!mp4Url.isNullOrBlank()) {
+                videoStreamCache[cleanVideoId] = mp4Url to now
+                return@withContext Result.success(mp4Url)
+            }
+        }
+
+        // Refresh visitorData once and retry ANDROID_VR & ANDROID_TESTSUITE if initial pass returned no MP4
+        ensureVisitorData(forceFresh = true)
+        for (client in videoOrderedClients.take(3)) {
+            val retryMp4 = extractProgressiveVideoWithClient(cleanVideoId, client, generateCpn()) { hls ->
+                if (hlsFallbackCandidate.isNullOrBlank() && hls.isNotBlank()) {
+                    hlsFallbackCandidate = hls
+                }
+            }
+            if (!retryMp4.isNullOrBlank()) {
+                videoStreamCache[cleanVideoId] = retryMp4 to now
+                return@withContext Result.success(retryMp4)
+            }
+        }
+
+        // Fast Piped progressive MP4 fallback
         val pipedInstances = listOf(
             "https://pipedapi.kavin.rocks",
             "https://api.piped.video"
@@ -1800,8 +1729,8 @@ object InnerTubeStreamExtractor {
         for (instance in pipedInstances) {
             val pipedVideoUrl = runCatching {
                 val conn = (URL("$instance/streams/$cleanVideoId").openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 3000
-                    readTimeout = 3000
+                    connectTimeout = 2800
+                    readTimeout = 2800
                     setRequestProperty("User-Agent", "Mozilla/5.0")
                 }
                 if (conn.responseCode == 200) {
@@ -1824,16 +1753,205 @@ object InnerTubeStreamExtractor {
                             }
                         }
                     }
-                    if (!pickedUrl.isNullOrBlank()) pickedUrl
-                    else root.optString("hls", "").takeIf { it.isNotBlank() }
+                    if (!pickedUrl.isNullOrBlank()) {
+                        pickedUrl
+                    } else {
+                        val hls = root.optString("hls", "")
+                        if (hls.isNotBlank() && hlsFallbackCandidate.isNullOrBlank()) {
+                            hlsFallbackCandidate = hls
+                        }
+                        null
+                    }
                 } else null
             }.getOrNull()
             if (!pipedVideoUrl.isNullOrBlank()) {
+                videoStreamCache[cleanVideoId] = pipedVideoUrl to now
                 return@withContext Result.success(pipedVideoUrl)
             }
         }
 
+        if (allowHlsFallback && !hlsFallbackCandidate.isNullOrBlank()) {
+            val hls = hlsFallbackCandidate!!
+            videoStreamCache[cleanVideoId] = hls to now
+            return@withContext Result.success(hls)
+        }
+
         Result.failure(IllegalStateException("No verified video stream found for videoId=$cleanVideoId"))
+    }
+
+    private fun extractProgressiveVideoWithClient(
+        cleanVideoId: String,
+        client: InnerTubeClientConfig,
+        cpn: String,
+        onHlsDiscovered: (String) -> Unit = {}
+    ): String? {
+        return runCatching {
+            val visData = cachedVisitorData?.takeIf { it.isNotBlank() }
+            val effectiveGl = client.glOverride ?: resolveDeviceGl()
+            val conn = (URL(client.playerEndpoint).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 2800
+                readTimeout = 3200
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("User-Agent", client.userAgent)
+                setRequestProperty("X-YouTube-Client-Name", client.clientId)
+                setRequestProperty("X-YouTube-Client-Version", client.clientVersion)
+                setRequestProperty("X-Goog-Api-Format-Version", "2")
+                if (client.sendOriginHeaders) {
+                    setRequestProperty("Origin", client.origin)
+                    setRequestProperty("Referer", "${client.origin}/")
+                }
+                if (visData != null) setRequestProperty("X-Goog-Visitor-Id", visData)
+            }
+            val payload = JSONObject().apply {
+                put("videoId", cleanVideoId)
+                put("cpn", cpn)
+                put("contentCheckOk", true)
+                put("racyCheckOk", true)
+                client.params?.let { put("params", it) }
+                if (client.isEmbedded) {
+                    put("playbackContext", JSONObject().apply {
+                        put("contentPlaybackContext", JSONObject().apply {
+                            put("html5Preference", "HTML5_PREF_WANTS")
+                            put("signatureTimestamp", com.example.resolver.KotlinJsInterp.getSignatureTimestamp())
+                        })
+                    })
+                }
+                put("context", JSONObject().apply {
+                    put("client", JSONObject().apply {
+                        put("clientName", client.clientName)
+                        put("clientVersion", client.clientVersion)
+                        put("userAgent", client.userAgent)
+                        put("hl", "en")
+                        put("gl", effectiveGl)
+                        client.deviceMake?.let { put("deviceMake", it) }
+                        client.deviceModel?.let { put("deviceModel", it) }
+                        client.osName?.let { put("osName", it) }
+                        client.osVersion?.let { put("osVersion", it) }
+                        client.androidSdkVersion?.let { put("androidSdkVersion", it) }
+                        if (visData != null) put("visitorData", visData)
+                    })
+                    if (client.isEmbedded) {
+                        put("thirdParty", JSONObject().apply {
+                            put("embedUrl", "https://www.youtube.com/")
+                        })
+                    }
+                })
+            }
+            conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+            if (conn.responseCode != 200) return@runCatching null
+            val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+            json.optJSONObject("responseContext")?.optString("visitorData")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { cachedVisitorData = it }
+
+            val status = json.optJSONObject("playabilityStatus")?.optString("status")
+            if (status != "OK") return@runCatching null
+            val streamingData = json.optJSONObject("streamingData") ?: return@runCatching null
+
+            val hlsUrl = streamingData.optString("hlsManifestUrl", "")
+            if (hlsUrl.isNotBlank()) onHlsDiscovered(hlsUrl)
+
+            val formats = streamingData.optJSONArray("formats")
+            if (formats != null) {
+                var bestUrl: String? = null
+                var bestHeight = -1
+                for (i in 0 until formats.length()) {
+                    val fmt = formats.optJSONObject(i) ?: continue
+                    val mime = fmt.optString("mimeType", "")
+                    val itag = fmt.optInt("itag", 0)
+                    if (!mime.startsWith("video/") && itag !in listOf(18, 22, 37, 59, 78)) continue
+
+                    var rawUrl = fmt.optString("url", "")
+                    if (rawUrl.isBlank()) {
+                        val cipherStr = fmt.optString("signatureCipher").ifBlank { fmt.optString("cipher") }
+                        if (cipherStr.isNotBlank()) {
+                            val params = mutableMapOf<String, String>()
+                            for (part in cipherStr.split("&")) {
+                                val idx = part.indexOf('=')
+                                if (idx > 0) {
+                                    params[URLDecoder.decode(part.substring(0, idx), "UTF-8")] =
+                                        URLDecoder.decode(part.substring(idx + 1), "UTF-8")
+                                }
+                            }
+                            val baseUrl = params["url"].orEmpty()
+                            val sig = params["s"].orEmpty()
+                            val sp = params["sp"] ?: "sig"
+                            if (baseUrl.isNotBlank() && sig.isNotBlank()) {
+                                val ops = com.example.resolver.KotlinJsInterp.getActiveCipherOperations()
+                                val deciphered = com.example.resolver.KotlinJsInterp.decipherSignature(sig, ops)
+                                if (deciphered.isNotBlank() && deciphered != sig) {
+                                    val sep = if (baseUrl.contains("?")) "&" else "?"
+                                    rawUrl = "$baseUrl$sep$sp=$deciphered"
+                                }
+                            }
+                        }
+                    }
+                    val height = fmt.optInt("height", 360)
+                    if (rawUrl.isNotBlank() && !rawUrl.contains(".m3u8", true)) {
+                        val withCpn = if (!rawUrl.contains("cpn=")) {
+                            val sep = if (rawUrl.contains("?")) "&" else "?"
+                            "$rawUrl${sep}cpn=$cpn"
+                        } else rawUrl
+                        if (height >= bestHeight) {
+                            bestHeight = height
+                            bestUrl = withCpn
+                        }
+                    }
+                }
+                if (!bestUrl.isNullOrBlank()) return@runCatching bestUrl
+            }
+            null
+        }.getOrNull()
+    }
+
+    /**
+     * Collects all direct downloadable progressive MP4 video stream URLs (never HLS .m3u8)
+     * across ANDROID_VR, ANDROID_TESTSUITE, IOS, and Piped fallbacks for reliable MP4 file downloads.
+     */
+    suspend fun resolveDownloadableVideoCandidates(
+        videoId: String?,
+        title: String,
+        artist: String
+    ): List<String> = withContext(Dispatchers.IO) {
+        val candidates = mutableListOf<String>()
+        fun addVideoCandidate(url: String?) {
+            if (!url.isNullOrBlank() &&
+                url.startsWith("http") &&
+                !url.contains(".m3u8", ignoreCase = true) &&
+                !url.contains("manifest.googlevideo.com", ignoreCase = true) &&
+                !candidates.contains(url)
+            ) {
+                candidates.add(url)
+            }
+        }
+
+        var targetYtId = extractVideoId(videoId)
+        if (targetYtId.isNullOrBlank() && title.isNotBlank()) {
+            val cleanArtist = artist.takeIf { !it.equals("Unknown Artist", true) && !it.equals("YouTube", true) }.orEmpty()
+            val q = "$title $cleanArtist".trim()
+            val searched = runCatching { searchAllYoutubeVideos(q, limit = 3) }.getOrDefault(emptyList())
+            targetYtId = searched.firstOrNull()?.videoId
+        }
+
+        if (!targetYtId.isNullOrBlank()) {
+            videoStreamCache[targetYtId]?.first?.let { addVideoCandidate(it) }
+
+            val mp4Clients = VERIFIED_CLIENTS.filter { it.clientName != "VISIONOS" }
+            for (client in mp4Clients) {
+                val url = extractProgressiveVideoWithClient(targetYtId, client, generateCpn())
+                addVideoCandidate(url)
+                if (candidates.size >= 3) break
+            }
+
+            if (candidates.isEmpty()) {
+                val resolved = resolveRawVideoStreamById(targetYtId, forceRefresh = true, allowHlsFallback = false).getOrNull()
+                addVideoCandidate(resolved)
+            }
+        }
+
+        candidates
     }
 
     /**

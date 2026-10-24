@@ -4,9 +4,8 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
-import com.example.data.model.Track
-
 import androidx.media3.common.MimeTypes
+import com.example.data.model.Track
 
 fun Track.toMediaItem(streamUri: Uri? = null): MediaItem {
     val safeTitle = title.ifBlank { "Unknown Track" }
@@ -37,9 +36,14 @@ fun Track.toMediaItem(streamUri: Uri? = null): MediaItem {
         .setMediaMetadata(metadata)
         .setTag(this)
 
-    if (uriString.contains(".m3u8") || uriString.contains("manifest/hls")) {
+    if (uriString.contains(".m3u8") ||
+        uriString.contains("manifest/hls") ||
+        uriString.contains("manifest.googlevideo.com") ||
+        uriString.contains("hls_variant") ||
+        uriString.contains("hls_playlist")
+    ) {
         builder.setMimeType(MimeTypes.APPLICATION_M3U8)
-    } else if (uriString.endsWith(".mp4") || codec.equals("MP4", ignoreCase = true)) {
+    } else if (uriString.endsWith(".mp4") || uriString.contains("mime=video%2fmp4")) {
         builder.setMimeType(MimeTypes.VIDEO_MP4)
     }
 

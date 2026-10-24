@@ -170,7 +170,7 @@ object SeitharolDeepLinkHelper {
                 title = resolved.title,
                 artist = resolved.artist,
                 durationMs = resolved.durationMs,
-                album = if (isVideo) "YouTube Video" else resolved.album,
+                album = resolved.album.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Audio", ignoreCase = true) }.orEmpty(),
                 isVideo = isVideo
             )
         }

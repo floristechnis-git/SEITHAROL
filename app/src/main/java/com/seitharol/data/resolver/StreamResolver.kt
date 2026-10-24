@@ -66,8 +66,45 @@ object StreamResolver {
             decryptJioSaavnUrl(track.encryptedMediaUrl, quality)?.let { return@withContext it }
         }
 
+        // 3.5. If track.id is a direct JioSaavn song ID (e.g. from Discover / saavn_clip:), resolve by ID first
+        val cleanSaavnId = track.id.removePrefix("saavn_").removePrefix("saavn_clip:").trim()
+        if (cleanSaavnId.isNotBlank() && !cleanSaavnId.contains(" ")) {
+            resolveFromJioSaavnById(cleanSaavnId, quality)?.let { return@withContext it }
+        }
+
         // 4. Resolve from JioSaavn with strict Title + Artist + Duration verification
         resolveFromJioSaavnExact(track, quality)
+    }
+
+    private fun resolveFromJioSaavnById(saavnId: String, quality: AudioQuality): String? {
+        return try {
+            val encId = URLEncoder.encode(saavnId, "UTF-8")
+            val detailsUrl = "https://www.jiosaavn.com/api.php?__call=song.getDetails&pids=$encId&api_version=4&_format=json&_marker=0&ctx=android"
+            val jsonStr = httpGet(detailsUrl) ?: return null
+            val root = JSONObject(jsonStr)
+            val item = root.optJSONObject(saavnId)
+                ?: root.optJSONArray("songs")?.optJSONObject(0)
+                ?: return null
+            val moreInfo = item.optJSONObject("more_info")
+            val encrypted = item.optString("encrypted_media_url").ifBlank {
+                moreInfo?.optString("encrypted_media_url").orEmpty()
+            }
+            if (encrypted.isNotBlank()) {
+                return decryptJioSaavnUrl(encrypted, quality)
+            }
+            val preview = item.optString("media_preview_url")
+                .ifBlank { moreInfo?.optString("media_preview_url").orEmpty() }
+                .ifBlank { moreInfo?.optString("vlink").orEmpty() }
+            if (preview.isNotBlank()) {
+                return preview
+                    .replace("preview.saavncdn.com", "aac.saavncdn.com")
+                    .replace("_96_p.mp4", quality.saavnSuffix)
+                    .replace("http://", "https://")
+            }
+            null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     /**
@@ -249,10 +286,9 @@ object StreamResolver {
             requestMethod = "GET"
             connectTimeout = 4000
             readTimeout = 4000
-            setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-            setRequestProperty("Referer", "https://www.jiosaavn.com/")
+            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
         }
-        return if (conn.responseCode in 200..299) {
+        return if (conn.responseCode == 200) {
             conn.inputStream.bufferedReader().use { it.readText() }
         } else null
     }

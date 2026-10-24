@@ -555,7 +555,25 @@ class AudioPlayerManager(
                     latencyMs = 10
                 )
             }
-            throw IllegalStateException("Unable to resolve video stream for '${track.title}'")
+            // Fallback to audio/adaptive stream if progressive MP4 is unavailable for this video
+            val fallbackAudioUrl = InnerTubeStreamExtractor.resolveExactYoutubeStreamById(
+                videoId = ytId,
+                preferredQuality = preferredQuality,
+                forceRefresh = forceRefresh
+            ).getOrNull()
+            if (!fallbackAudioUrl.isNullOrBlank()) {
+                return ResolvedStream(
+                    videoId = ytId,
+                    streamUrl = fallbackAudioUrl,
+                    itag = 140,
+                    codec = "AAC",
+                    bitrate = "160 kbps",
+                    expiresAtMs = System.currentTimeMillis() + 6 * 3600 * 1000L,
+                    isLocal = false,
+                    resolvedBy = "YouTube Stream Fallback",
+                    latencyMs = 15
+                )
+            }
         }
         return resolverEngine.resolveTrack(
             track = if (forceRefresh) track.copy(audioUrl = "") else track,
@@ -573,7 +591,7 @@ class AudioPlayerManager(
         }
 
         bufferingWatchdogJob = coroutineScope.launch {
-            delay(11_000L)
+            delay(16_000L)
             if (!isActive || !userRequestedPlay) return@launch
             val current = _state.value.currentTrack ?: return@launch
             val p = exoPlayer ?: return@launch
@@ -675,7 +693,8 @@ class AudioPlayerManager(
                                 _state.value = _state.value.copy(
                                     isBuffering = false,
                                     isPlaying = activelyPlaying,
-                                    durationMs = safeDur
+                                    durationMs = safeDur,
+                                    isVideoFrameRendered = _state.value.isVideoFrameRendered || activelyPlaying
                                 )
                                 trackRetryCount = 0
                                 lastFailedTrackId = null
@@ -720,7 +739,11 @@ class AudioPlayerManager(
                         if (isPlaying) {
                             bufferingWatchdogJob?.cancel()
                             isRetryingOrLoading = false
-                            _state.value = _state.value.copy(isPlaying = true, isBuffering = false)
+                            _state.value = _state.value.copy(
+                                isPlaying = true,
+                                isBuffering = false,
+                                isVideoFrameRendered = true
+                            )
                             persistCurrentPlaybackState()
                             startPositionTracker()
                             try {
@@ -1282,7 +1305,6 @@ class AudioPlayerManager(
         retryJob?.cancel()
         bufferingWatchdogJob?.cancel()
         isRetryingOrLoading = true
-        startBufferingWatchdog(current.id)
 
         val stopImmediately = settingsManager.state.value.stopImmediatelyOnNewTrack
         val isSameTrack = _state.value.currentTrack?.id == current.id
@@ -1924,7 +1946,7 @@ class AudioPlayerManager(
                     id = current.id,
                     title = current.title,
                     artist = current.artist,
-                    album = if (current.isVideoTrack) "YouTube Video" else current.album,
+                    album = current.album.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true) }.orEmpty(),
                     durationSeconds = (current.durationMs / 1000).toInt(),
                     thumbnailUrl = current.artUrl,
                     source = if (current.isVideoTrack) "YOUTUBE_VIDEO" else "YOUTUBE"
@@ -1946,7 +1968,7 @@ class AudioPlayerManager(
                         id = nextRec.id,
                         title = nextRec.title,
                         artist = nextRec.artist,
-                        album = if (isCurrentVideo) "YouTube Video" else nextRec.album,
+                        album = nextRec.album.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true) }.orEmpty(),
                         durationMs = nextRec.durationSeconds * 1000L,
                         artUrl = nextRec.thumbnailUrl,
                         genre = if (isCurrentVideo) "YouTube Video" else "Track",
@@ -1996,7 +2018,7 @@ class AudioPlayerManager(
                     id = current.id,
                     title = current.title,
                     artist = current.artist,
-                    album = if (current.isVideoTrack) "YouTube Video" else current.album,
+                    album = current.album.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true) }.orEmpty(),
                     durationSeconds = (current.durationMs / 1000).toInt(),
                     thumbnailUrl = current.artUrl,
                     source = if (current.isVideoTrack) "YOUTUBE_VIDEO" else "YOUTUBE"
@@ -2018,7 +2040,7 @@ class AudioPlayerManager(
                         id = nextRec.id,
                         title = nextRec.title,
                         artist = nextRec.artist,
-                        album = if (isCurrentVideo) "YouTube Video" else nextRec.album,
+                        album = nextRec.album.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true) }.orEmpty(),
                         durationMs = nextRec.durationSeconds * 1000L,
                         artUrl = nextRec.thumbnailUrl,
                         genre = if (isCurrentVideo) "YouTube Video" else "Track",
@@ -2166,6 +2188,7 @@ class AudioPlayerManager(
                         }
                         if (!ytId.isNullOrBlank()) {
                             InnerTubeStreamExtractor.resolveRawVideoStreamById(ytId).getOrNull()
+                                ?: InnerTubeStreamExtractor.resolveExactYoutubeStreamById(ytId, getPreferredAudioQuality()).getOrNull()
                         } else null
                     }
                     if (!rawStreamUrl.isNullOrBlank() && isActive && _state.value.currentTrack?.id == current.id) {

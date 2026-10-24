@@ -420,12 +420,21 @@ fun ArtistScreen(
                     }
                 }
 
-                // 4A. Official Multi-Track Albums Carousel
-                val pureAlbums = page.albums.filterNot {
-                    it.type.equals("SINGLE", true) ||
-                        it.subtitle.contains("Single", true) ||
-                        it.subtitle.contains("1 song", true) ||
-                        it.subtitle.contains("1 track", true)
+                // 4A. Official Multi-Track Albums Carousel (strictly authentic albums only, never YouTube Videos)
+                val pureAlbums = if (effectiveIsChannel) {
+                    emptyList()
+                } else {
+                    page.albums.filter {
+                        (it.browseId.startsWith("MPREb_") || it.browseId.startsWith("OLAK5uy_")) &&
+                            !it.type.equals("SINGLE", true) &&
+                            !it.subtitle.contains("Single", true) &&
+                            !it.subtitle.contains("1 song", true) &&
+                            !it.subtitle.contains("1 track", true) &&
+                            !it.title.contains("YouTube Video", true) &&
+                            !it.subtitle.contains("YouTube Video", true) &&
+                            !it.title.equals("Videos", true) &&
+                            !it.title.equals("YouTube Videos", true)
+                    }
                 }
                 if (pureAlbums.isNotEmpty()) {
                     item {
@@ -495,7 +504,16 @@ fun ArtistScreen(
                 }
 
                 // 4B. Singles
-                if (page.singles.isNotEmpty()) {
+                val cleanSingles = if (effectiveIsChannel) {
+                    emptyList()
+                } else {
+                    page.singles.filterNot {
+                        it.title.contains("YouTube Video", true) ||
+                            it.subtitle.contains("YouTube Video", true) ||
+                            it.title.equals("Videos", true)
+                    }
+                }
+                if (cleanSingles.isNotEmpty()) {
                     item {
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
@@ -505,7 +523,7 @@ fun ArtistScreen(
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
                         )
                     }
-                    items(page.singles.distinctBy { it.title.lowercase().trim() }.take(10), key = { "single_song_${it.browseId}_${it.title}" }) { singleItem ->
+                    items(cleanSingles.distinctBy { it.title.lowercase().trim() }.take(10), key = { "single_song_${it.browseId}_${it.title}" }) { singleItem ->
                         ListItem(
                             colors = ListItemDefaults.colors(
                                 containerColor = Color.Transparent,
@@ -700,14 +718,15 @@ fun ArtistScreen(
 }
 
 private fun CandidateStream.toDomainTrack(forceVideo: Boolean = false): Track {
-    val isVid = forceVideo ||
-        this.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
-        this.albumName.equals("YouTube Video", ignoreCase = true)
+    val isVid = forceVideo
+    val cleanAlbum = this.albumName
+        ?.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true) }
+        .orEmpty()
     return Track(
         id = this.videoId,
         title = this.title,
         artist = this.artist,
-        album = if (isVid) "YouTube Video" else this.albumName.orEmpty(),
+        album = cleanAlbum,
         durationMs = this.durationSeconds * 1000L,
         artUrl = this.thumbnailUrl,
         genre = if (isVid) "YouTube Video" else "Music",

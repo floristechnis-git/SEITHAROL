@@ -93,10 +93,19 @@ fun upgradeThumbnail(url: String): String {
 }
 
 fun Track.toHomeMediaItem(isMix: Boolean = false, isAlbumOrPlaylist: Boolean = false): HomeMediaItem {
+    val cleanAlbum = album.takeUnless {
+        it.equals("Single", ignoreCase = true) ||
+            it.equals("YouTube Video", ignoreCase = true) ||
+            it.equals("YouTube Videos", ignoreCase = true) ||
+            it.equals("Discover Downloads", ignoreCase = true) ||
+            it.equals("Shared Track", ignoreCase = true) ||
+            it.equals("Local Storage", ignoreCase = true) ||
+            it.equals(title, ignoreCase = true)
+    }.orEmpty()
     return HomeMediaItem(
         id = id,
         title = title,
-        subtitle = if (album.isNotBlank() && album != "Single" && album != title) "$artist • $album" else artist,
+        subtitle = if (cleanAlbum.isNotBlank()) "$artist • $cleanAlbum" else artist,
         thumbnailUrl = artUrl,
         isMix = isMix || id.startsWith("RD") || title.contains("Mix", ignoreCase = true),
         isAlbumOrPlaylist = isAlbumOrPlaylist || id.startsWith("MPREb_") || id.startsWith("OLAK5uy_") || id.startsWith("VL") || id.startsWith("PL"),

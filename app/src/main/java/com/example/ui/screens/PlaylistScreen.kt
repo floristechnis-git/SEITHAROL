@@ -57,20 +57,37 @@ fun PlaylistScreen(
     }
 
     var remotePlaylistTracks by remember { mutableStateOf<List<Track>>(emptyList()) }
+    var remoteCollectionMeta by remember(playlistId) { mutableStateOf<com.seitharol.data.resolver.YtmCollectionPageData?>(null) }
     var isLoadingPlaylist by remember { mutableStateOf(false) }
 
     LaunchedEffect(playlistId) {
         isLoadingPlaylist = true
-        viewModel.loadPlaylistTracks(playlistId) { tracks ->
+        viewModel.loadPlaylistTracks(
+            playlistId = playlistId,
+            onMetadata = { meta -> remoteCollectionMeta = meta }
+        ) { tracks ->
             remotePlaylistTracks = tracks
             isLoadingPlaylist = false
         }
     }
 
-    val displayTitle = remember(savedPlaylist, remotePlaylistTracks, playlistId) {
+    val displayTitle = remember(savedPlaylist, remoteCollectionMeta, remotePlaylistTracks, playlistId) {
         savedPlaylist?.title
-            ?: remotePlaylistTracks.firstOrNull()?.album?.takeIf { it.isNotBlank() && it != "Single" }
-            ?: remotePlaylistTracks.firstOrNull()?.let { "${it.artist} Collection" }
+            ?: remoteCollectionMeta?.title?.takeIf {
+                it.isNotBlank() &&
+                    !it.equals("Music Collection", ignoreCase = true) &&
+                    !it.equals("YouTube Video", ignoreCase = true) &&
+                    !it.equals("YouTube Videos", ignoreCase = true)
+            }
+            ?: remotePlaylistTracks.firstOrNull()?.album?.takeIf {
+                it.isNotBlank() &&
+                    !it.equals("Single", ignoreCase = true) &&
+                    !it.equals("YouTube Video", ignoreCase = true) &&
+                    !it.equals("YouTube Videos", ignoreCase = true) &&
+                    !it.equals("Discover Downloads", ignoreCase = true) &&
+                    !it.equals("Shared Track", ignoreCase = true) &&
+                    !it.equals("Local Storage", ignoreCase = true)
+            }
             ?: when {
                 playlistId.startsWith("RD") -> "YouTube Mix"
                 playlistId.startsWith("MPREb_") || playlistId.startsWith("OLAK5uy_") -> "Album"
@@ -78,19 +95,20 @@ fun PlaylistScreen(
             }
     }
 
-    val displayDescription = remember(savedPlaylist, remotePlaylistTracks, isLoadingPlaylist) {
+    val displayDescription = remember(savedPlaylist, remoteCollectionMeta, remotePlaylistTracks, isLoadingPlaylist) {
         savedPlaylist?.description?.takeIf { it.isNotBlank() }
+            ?: remoteCollectionMeta?.description?.takeIf { it.isNotBlank() && !it.contains("YouTube Video", ignoreCase = true) }
             ?: if (isLoadingPlaylist) "Loading tracks..."
-            else if (remotePlaylistTracks.isNotEmpty()) "${remotePlaylistTracks.size} tracks • Official Release"
-            else "Curated Collection"
+            else if (remotePlaylistTracks.isNotEmpty()) "${remotePlaylistTracks.size} tracks"
+            else "Playlist"
     }
 
-    val currentPlaylist = remember(savedPlaylist, playlistId, displayTitle, displayDescription, remotePlaylistTracks) {
+    val currentPlaylist = remember(savedPlaylist, remoteCollectionMeta, playlistId, displayTitle, displayDescription, remotePlaylistTracks) {
         savedPlaylist ?: Playlist(
             id = playlistId,
             title = displayTitle,
             description = displayDescription,
-            coverUrl = remotePlaylistTracks.firstOrNull()?.artUrl,
+            coverUrl = remoteCollectionMeta?.thumbnailUrl?.takeIf { it.isNotBlank() } ?: remotePlaylistTracks.firstOrNull()?.artUrl,
             trackCount = remotePlaylistTracks.size
         )
     }
@@ -112,7 +130,10 @@ fun PlaylistScreen(
         isRefreshing = isLoadingPlaylist,
         onRefresh = {
             isLoadingPlaylist = true
-            viewModel.loadPlaylistTracks(playlistId) { tracks ->
+            viewModel.loadPlaylistTracks(
+                playlistId = playlistId,
+                onMetadata = { meta -> remoteCollectionMeta = meta }
+            ) { tracks ->
                 remotePlaylistTracks = tracks
                 isLoadingPlaylist = false
             }

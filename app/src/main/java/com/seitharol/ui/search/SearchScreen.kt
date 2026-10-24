@@ -129,7 +129,7 @@ fun SearchScreen(
                 IconButton(
                     onClick = {
                         if (query.isEmpty()) {
-                            focusManager.clearFocus()
+                            focusManager.clearFocus(force = true)
                             keyboardController?.hide()
                             onNavigateBack()
                         } else {
@@ -155,7 +155,7 @@ fun SearchScreen(
             keyboardActions = KeyboardActions(
                 onSearch = {
                     recentQueries = saveSearchQueryMaxFour(context, query)
-                    focusManager.clearFocus()
+                    focusManager.clearFocus(force = true)
                     keyboardController?.hide()
                 }
             ),
@@ -165,7 +165,13 @@ fun SearchScreen(
         )
 
         if (onOpenDiscover != null && query.isBlank()) {
-            DiscoverEntryCard(onOpenDiscover = onOpenDiscover)
+            DiscoverEntryCard(
+                onOpenDiscover = {
+                    focusManager.clearFocus(force = true)
+                    keyboardController?.hide()
+                    onOpenDiscover()
+                }
+            )
         }
 
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
@@ -236,11 +242,11 @@ fun SearchScreen(
                     )
                 }
                 ListItem(
-                        colors = ListItemDefaults.colors(
-                            containerColor = Color.Transparent,
-                            headlineColor = MaterialTheme.colorScheme.onSurface,
-                            supportingColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        ),
+                    colors = ListItemDefaults.colors(
+                        containerColor = Color.Transparent,
+                        headlineColor = MaterialTheme.colorScheme.onSurface,
+                        supportingColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    ),
                     headlineContent = { Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     supportingContent = { Text(track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     leadingContent = {
@@ -257,7 +263,7 @@ fun SearchScreen(
                         if (query.isNotBlank()) {
                             recentQueries = saveSearchQueryMaxFour(context, query)
                         }
-                        focusManager.clearFocus()
+                        focusManager.clearFocus(force = true)
                         keyboardController?.hide()
                         onPlaySongAndMaximizePlayer(track)
                     }

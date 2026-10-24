@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -55,6 +56,7 @@ fun InDiscoverSearchSurface(
     val settings by remember { AppSettingsManager.getInstance(context) }.state.collectAsState()
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<NormalizedTrack>>(emptyList()) }
@@ -67,6 +69,8 @@ fun InDiscoverSearchSurface(
     val isPreviewPlaying by audioPlayerManager.isPreviewPlaying.collectAsState()
 
     BackHandler {
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
         audioPlayerManager.pausePreview()
         onClose()
     }
@@ -134,6 +138,8 @@ fun InDiscoverSearchSurface(
                 leadingIcon = {
                     IconButton(
                         onClick = {
+                            focusManager.clearFocus(force = true)
+                            keyboardController?.hide()
                             audioPlayerManager.pausePreview()
                             onClose()
                         }
@@ -168,7 +174,8 @@ fun InDiscoverSearchSurface(
                 ),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = {
-                    focusManager.clearFocus()
+                    focusManager.clearFocus(force = true)
+                    keyboardController?.hide()
                     val clean = query.trim()
                     if (clean.length >= 2) {
                         searchJob?.cancel()
@@ -259,7 +266,8 @@ fun InDiscoverSearchSurface(
                                 shape = RoundedCornerShape(20.dp)
                             )
                             .clickable {
-                                focusManager.clearFocus()
+                                focusManager.clearFocus(force = true)
+                                keyboardController?.hide()
                                 onOpenFullSong(item)
                             }
                     ) {
@@ -271,7 +279,8 @@ fun InDiscoverSearchSurface(
                                         .size(64.dp)
                                         .clip(RoundedCornerShape(14.dp))
                                         .clickable {
-                                            focusManager.clearFocus()
+                                            focusManager.clearFocus(force = true)
+                                            keyboardController?.hide()
                                             if (isThisPlaying) audioPlayerManager.pausePreview()
                                             else audioPlayerManager.playPreview(item)
                                         },
@@ -332,6 +341,8 @@ fun InDiscoverSearchSurface(
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier.clickable {
+                                            focusManager.clearFocus(force = true)
+                                            keyboardController?.hide()
                                             onVisitArtist(primaryArtist, item.primaryArtistBrowseId)
                                         }
                                     ) {
@@ -358,13 +369,17 @@ fun InDiscoverSearchSurface(
 
                             Spacer(modifier = Modifier.height(12.dp))
 
-                            // Action Row: Download + Play Full
+                            // Action Row: Download + Play
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Button(
-                                    onClick = { onOpenDownloadPicker(item) },
+                                    onClick = {
+                                        focusManager.clearFocus(force = true)
+                                        keyboardController?.hide()
+                                        onOpenDownloadPicker(item)
+                                    },
                                     modifier = Modifier.weight(1f).height(38.dp),
                                     shape = RoundedCornerShape(50),
                                     contentPadding = PaddingValues(horizontal = 14.dp),
@@ -375,12 +390,18 @@ fun InDiscoverSearchSurface(
                                 ) {
                                     DownloadSvgIcon(tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(15.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Download", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        text = "Download",
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
 
                                 OutlinedButton(
                                     onClick = {
-                                        focusManager.clearFocus()
+                                        focusManager.clearFocus(force = true)
+                                        keyboardController?.hide()
                                         onOpenFullSong(item)
                                     },
                                     modifier = Modifier.weight(1f).height(38.dp),
@@ -396,7 +417,12 @@ fun InDiscoverSearchSurface(
                                         modifier = Modifier.size(14.dp)
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Play", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                                    Text(
+                                        text = "Play",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
                                 }
                             }
                         }

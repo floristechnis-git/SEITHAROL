@@ -98,7 +98,7 @@ object QueueRecommendationEngine {
                             id = cand.videoId,
                             title = cand.title,
                             artist = cand.artist,
-                            album = "YouTube Video",
+                            album = cand.albumName?.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true) }.orEmpty(),
                             durationSeconds = cand.durationSeconds,
                             thumbnailUrl = cand.thumbnailUrl,
                             source = "YOUTUBE_VIDEO"

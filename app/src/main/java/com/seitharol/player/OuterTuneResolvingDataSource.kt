@@ -2,11 +2,12 @@ package com.seitharol.player
 
 import android.net.Uri
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.datasource.ResolvingDataSource
+import androidx.media3.datasource.TransferListener
 import com.seitharol.data.resolver.AudioQuality
 import com.seitharol.data.resolver.InnerTubeStreamExtractor
 import com.seitharol.data.resolver.StreamResolver
@@ -51,7 +52,7 @@ object OuterTuneResolvingDataSource {
     const val WEB_REMIX_USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
-    const val MEDIA_HTTP_USER_AGENT = VISIONOS_USER_AGENT
+    const val MEDIA_HTTP_USER_AGENT = VR_161_USER_AGENT
 
     private const val STREAM_TTL_MS = 3 * 60 * 60 * 1000L // 3 hours
 
@@ -62,6 +63,7 @@ object OuterTuneResolvingDataSource {
     )
 
     private val urlCache = ConcurrentHashMap<String, CachedStream>()
+    private val httpFactoryByUserAgent = ConcurrentHashMap<String, DefaultHttpDataSource.Factory>()
 
     fun getCachedUrl(videoId: String, quality: AudioQuality): String? {
         val key = "${videoId}_${quality.name}"
@@ -95,8 +97,8 @@ object OuterTuneResolvingDataSource {
     }
 
     /**
-     * Inspects the signed `c=` and `cver=` parameters on googlevideo.com stream URLs and returns
-     * the exact matching headers required by GoogleVideo CDN.
+     * Inspects both query parameters (`?c=...&cver=...`) and HLS path segments (`/c/.../cver/...`)
+     * on googlevideo.com stream URLs and returns the exact matching headers required by GoogleVideo CDN.
      */
     fun resolveClientHeadersForUrl(streamUrl: String): Map<String, String> {
         val lower = streamUrl.lowercase()
@@ -106,15 +108,17 @@ object OuterTuneResolvingDataSource {
             )
         }
 
-        val clientParam = Regex("[?&]c=([^&]+)").find(streamUrl)?.groupValues?.get(1)?.uppercase().orEmpty()
-        val clientVer = Regex("[?&]cver=([^&]+)").find(streamUrl)?.groupValues?.get(1).orEmpty()
+        val clientParam = (
+            Regex("[?&]c=([^&]+)").find(streamUrl)?.groupValues?.get(1)
+                ?: Regex("/c/([^/?&]+)").find(streamUrl)?.groupValues?.get(1)
+            )?.uppercase().orEmpty()
+
+        val clientVer = (
+            Regex("[?&]cver=([^&]+)").find(streamUrl)?.groupValues?.get(1)
+                ?: Regex("/cver/([^/?&]+)").find(streamUrl)?.groupValues?.get(1)
+            ).orEmpty()
 
         return when {
-            clientParam.contains("VISIONOS") -> mapOf(
-                "User-Agent" to VISIONOS_USER_AGENT,
-                "Origin" to "https://www.youtube.com",
-                "Referer" to "https://www.youtube.com/"
-            )
             clientParam.contains("ANDROID_VR") -> {
                 val vrUa = when {
                     clientVer.startsWith("1.61") -> VR_161_USER_AGENT
@@ -134,6 +138,11 @@ object OuterTuneResolvingDataSource {
             clientParam.contains("IOS") -> mapOf(
                 "User-Agent" to IOS_USER_AGENT
             )
+            clientParam.contains("VISIONOS") -> mapOf(
+                "User-Agent" to VISIONOS_USER_AGENT,
+                "Origin" to "https://www.youtube.com",
+                "Referer" to "https://www.youtube.com/"
+            )
             clientParam.contains("TVHTML5") -> mapOf(
                 "User-Agent" to TV_EMBED_USER_AGENT,
                 "Origin" to "https://www.youtube.com",
@@ -150,99 +159,147 @@ object OuterTuneResolvingDataSource {
                 "Referer" to "https://www.youtube.com/"
             )
             else -> mapOf(
-                "User-Agent" to VISIONOS_USER_AGENT,
-                "Origin" to "https://www.youtube.com",
-                "Referer" to "https://www.youtube.com/"
+                "User-Agent" to VR_161_USER_AGENT
             )
         }
     }
 
+    private fun getHttpFactoryForUserAgent(userAgent: String): DefaultHttpDataSource.Factory {
+        return httpFactoryByUserAgent.getOrPut(userAgent) {
+            DefaultHttpDataSource.Factory()
+                .setUserAgent(userAgent)
+                .setConnectTimeoutMs(15_000)
+                .setReadTimeoutMs(20_000)
+                .setAllowCrossProtocolRedirects(true)
+        }
+    }
+
+    private fun resolveDataSpec(
+        dataSpec: DataSpec,
+        qualityProvider: () -> AudioQuality
+    ): DataSpec {
+        val rawUri = dataSpec.uri.toString()
+
+        if (rawUri.startsWith("file://") || rawUri.startsWith("content://") || rawUri.startsWith("/")) {
+            return dataSpec
+        }
+
+        if (rawUri.startsWith("http") &&
+            !rawUri.contains("youtube.com/watch") &&
+            !rawUri.contains("music.youtube.com/watch") &&
+            !rawUri.contains("youtu.be/")
+        ) {
+            val extraHeaders = resolveClientHeadersForUrl(rawUri)
+            val mergedHeaders = HashMap<String, String>(dataSpec.httpRequestHeaders)
+            mergedHeaders.remove("Origin")
+            mergedHeaders.remove("Referer")
+            mergedHeaders.putAll(extraHeaders)
+            return dataSpec.withRequestHeaders(mergedHeaders)
+        }
+
+        val targetQuality = qualityProvider()
+        val forceRefresh = rawUri.contains("refresh=1")
+
+        if (rawUri.startsWith("saavn_clip:")) {
+            val saavnId = rawUri.removePrefix("saavn_clip:").substringBefore("?").trim()
+            val resolvedSaavn = try {
+                runBlocking {
+                    StreamResolver.resolveExactStreamUrl(
+                        TrackMetadata(id = saavnId, title = "", artist = ""),
+                        targetQuality
+                    )
+                }
+            } catch (e: Exception) {
+                throw IOException("Unable to resolve Saavn stream for $saavnId", e)
+            } ?: throw IOException("Unable to resolve Saavn stream for $saavnId")
+
+            return dataSpec
+                .withUri(Uri.parse(resolvedSaavn))
+                .withRequestHeaders(resolveClientHeadersForUrl(resolvedSaavn))
+        }
+
+        val cleanYtId = when {
+            rawUri.startsWith("ytm_clip:") -> rawUri.removePrefix("ytm_clip:").substringBefore("?").trim()
+            rawUri.startsWith("ytm://") -> rawUri.removePrefix("ytm://").substringBefore("?").trim()
+            rawUri.startsWith("youtube://") -> rawUri.removePrefix("youtube://").substringBefore("?").trim()
+            rawUri.startsWith("resolver://track/") -> rawUri.removePrefix("resolver://track/").substringBefore("?").trim()
+            else -> InnerTubeStreamExtractor.extractVideoId(rawUri)
+        }
+
+        if (!cleanYtId.isNullOrBlank()) {
+            val cached = if (forceRefresh) null else getCachedUrl(cleanYtId, targetQuality)
+            val resolvedUrl = cached ?: try {
+                runBlocking {
+                    InnerTubeStreamExtractor.resolveExactYoutubeStreamById(
+                        cleanYtId,
+                        targetQuality,
+                        forceRefresh = forceRefresh
+                    ).getOrNull()
+                }
+            } catch (e: Exception) {
+                throw IOException("Unable to resolve YouTube stream for $cleanYtId", e)
+            } ?: throw IOException("Unable to resolve YouTube stream for $cleanYtId")
+
+            val headers = resolveClientHeadersForUrl(resolvedUrl)
+            val mergedHeaders = HashMap<String, String>(dataSpec.httpRequestHeaders)
+            mergedHeaders.remove("Origin")
+            mergedHeaders.remove("Referer")
+            mergedHeaders.putAll(headers)
+
+            return dataSpec
+                .withUri(Uri.parse(resolvedUrl))
+                .withRequestHeaders(mergedHeaders)
+        }
+
+        return dataSpec
+    }
+
+    /**
+     * Creates a DataSource.Factory that resolves custom track URIs and dispatches each HTTP request
+     * to a DefaultHttpDataSource configured with the exact client-matched User-Agent (so Media3's
+     * DefaultHttpDataSource.makeConnection never overwrites ANDROID_VR / IOS / TESTSUITE User-Agents).
+     */
     fun createFactory(
         qualityProvider: () -> AudioQuality = { AudioQuality.NORMAL }
     ): DataSource.Factory {
-        val baseHttpFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent(VISIONOS_USER_AGENT)
-            .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(20_000)
-            .setAllowCrossProtocolRedirects(true)
+        return DataSource.Factory {
+            object : DataSource {
+                private var activeDelegate: DataSource? = null
+                private val transferListeners = mutableListOf<TransferListener>()
 
-        return ResolvingDataSource.Factory(baseHttpFactory) { dataSpec: DataSpec ->
-            val rawUri = dataSpec.uri.toString()
+                override fun addTransferListener(transferListener: TransferListener) {
+                    transferListeners.add(transferListener)
+                    activeDelegate?.addTransferListener(transferListener)
+                }
 
-            // Local files & content URIs pass straight through
-            if (rawUri.startsWith("file://") || rawUri.startsWith("content://") || rawUri.startsWith("/")) {
-                return@Factory dataSpec
-            }
+                override fun open(dataSpec: DataSpec): Long {
+                    val resolvedSpec = resolveDataSpec(dataSpec, qualityProvider)
+                    val targetUa = resolvedSpec.httpRequestHeaders["User-Agent"]
+                        ?: resolveClientHeadersForUrl(resolvedSpec.uri.toString())["User-Agent"]
+                        ?: VR_161_USER_AGENT
+                    val delegate = getHttpFactoryForUserAgent(targetUa).createDataSource()
+                    transferListeners.forEach { delegate.addTransferListener(it) }
+                    activeDelegate = delegate
+                    return delegate.open(resolvedSpec)
+                }
 
-            // Already-resolved HTTP(S) CDN URLs (e.g. googlevideo.com or saavncdn.com):
-            if (rawUri.startsWith("http") &&
-                !rawUri.contains("youtube.com/watch") &&
-                !rawUri.contains("music.youtube.com/watch") &&
-                !rawUri.contains("youtu.be/")
-            ) {
-                val extraHeaders = resolveClientHeadersForUrl(rawUri)
-                val mergedHeaders = HashMap<String, String>(dataSpec.httpRequestHeaders)
-                mergedHeaders.remove("Origin")
-                mergedHeaders.remove("Referer")
-                mergedHeaders.putAll(extraHeaders)
-                return@Factory dataSpec.withRequestHeaders(mergedHeaders)
-            }
+                override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                    return activeDelegate?.read(buffer, offset, length) ?: C.RESULT_END_OF_INPUT
+                }
 
-            val targetQuality = qualityProvider()
-            val forceRefresh = rawUri.contains("refresh=1")
+                override fun getUri(): Uri? = activeDelegate?.uri
 
-            if (rawUri.startsWith("saavn_clip:")) {
-                val saavnId = rawUri.removePrefix("saavn_clip:").substringBefore("?").trim()
-                val resolvedSaavn = try {
-                    runBlocking {
-                        StreamResolver.resolveExactStreamUrl(
-                            TrackMetadata(id = saavnId, title = "", artist = ""),
-                            targetQuality
-                        )
+                override fun getResponseHeaders(): Map<String, List<String>> =
+                    activeDelegate?.responseHeaders ?: emptyMap()
+
+                override fun close() {
+                    try {
+                        activeDelegate?.close()
+                    } finally {
+                        activeDelegate = null
                     }
-                } catch (e: Exception) {
-                    throw IOException("Unable to resolve Saavn stream for $saavnId", e)
-                } ?: throw IOException("Unable to resolve Saavn stream for $saavnId")
-
-                return@Factory dataSpec
-                    .withUri(Uri.parse(resolvedSaavn))
-                    .withRequestHeaders(resolveClientHeadersForUrl(resolvedSaavn))
+                }
             }
-
-            val cleanYtId = when {
-                rawUri.startsWith("ytm_clip:") -> rawUri.removePrefix("ytm_clip:").substringBefore("?").trim()
-                rawUri.startsWith("ytm://") -> rawUri.removePrefix("ytm://").substringBefore("?").trim()
-                rawUri.startsWith("youtube://") -> rawUri.removePrefix("youtube://").substringBefore("?").trim()
-                rawUri.startsWith("resolver://track/") -> rawUri.removePrefix("resolver://track/").substringBefore("?").trim()
-                else -> InnerTubeStreamExtractor.extractVideoId(rawUri)
-            }
-
-            if (!cleanYtId.isNullOrBlank()) {
-                val cached = if (forceRefresh) null else getCachedUrl(cleanYtId, targetQuality)
-                val resolvedUrl = cached ?: try {
-                    runBlocking {
-                        InnerTubeStreamExtractor.resolveExactYoutubeStreamById(
-                            cleanYtId,
-                            targetQuality,
-                            forceRefresh = forceRefresh
-                        ).getOrNull()
-                    }
-                } catch (e: Exception) {
-                    throw IOException("Unable to resolve YouTube stream for $cleanYtId", e)
-                } ?: throw IOException("Unable to resolve YouTube stream for $cleanYtId")
-
-                val headers = resolveClientHeadersForUrl(resolvedUrl)
-                val mergedHeaders = HashMap<String, String>(dataSpec.httpRequestHeaders)
-                mergedHeaders.remove("Origin")
-                mergedHeaders.remove("Referer")
-                mergedHeaders.putAll(headers)
-
-                return@Factory dataSpec
-                    .withUri(Uri.parse(resolvedUrl))
-                    .withRequestHeaders(mergedHeaders)
-            }
-
-            dataSpec
         }
     }
 }

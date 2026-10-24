@@ -719,7 +719,7 @@ class DownloadRepository(
                 val currentDb = trackDao.getTrackById(track.id)
                 val completedTrack = track.copy(
                     genre = if (isVideo) "YouTube Video" else track.genre,
-                    album = if (isVideo) "YouTube Video" else track.album,
+                    album = track.album.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true) }.orEmpty(),
                     codec = if (isVideo) "MP4" else track.codec,
                     isLiked = currentDb?.isLiked ?: track.isLiked,
                     isDownloaded = true,
@@ -776,7 +776,7 @@ class DownloadRepository(
                     put(android.provider.MediaStore.Video.Media.MIME_TYPE, "video/mp4")
                     put(android.provider.MediaStore.Video.Media.TITLE, track.title)
                     put(android.provider.MediaStore.Video.Media.ARTIST, track.artist)
-                    put(android.provider.MediaStore.Video.Media.ALBUM, "YouTube Video")
+                    put(android.provider.MediaStore.Video.Media.ALBUM, track.album.takeUnless { it.isBlank() || it.equals("YouTube Video", ignoreCase = true) } ?: "Seitharol")
                     put(android.provider.MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/Seitharol")
                     put(android.provider.MediaStore.Video.Media.IS_PENDING, 1)
                 }
@@ -989,7 +989,7 @@ class DownloadRepository(
                                 id = norm.sourceId,
                                 title = norm.title,
                                 artist = norm.artists.firstOrNull() ?: "Unknown Artist",
-                                album = norm.album ?: "Discover Downloads",
+                                album = norm.album?.takeUnless { it.equals("Discover Downloads", ignoreCase = true) || it.equals("YouTube Video", ignoreCase = true) }.orEmpty(),
                                 durationMs = norm.durationMs,
                                 artUrl = norm.artUrl.orEmpty(),
                                 isDownloaded = true,

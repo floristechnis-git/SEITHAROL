@@ -37,21 +37,32 @@ class DeviceInnerTubeResolver : Resolver {
         val clientConfigs = listOf(
             ClientAttempt(
                 endpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-                clientName = "VISIONOS",
-                clientVersion = "0.1",
-                clientId = "101",
-                userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
-                gl = userGl,
-                sendOrigin = true,
-                includePoToken = false
-            ),
-            ClientAttempt(
-                endpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
                 clientName = "ANDROID_VR",
                 clientVersion = "1.61.48",
                 clientId = "28",
                 userAgent = "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
                 gl = userGl,
+                sendOrigin = false,
+                includePoToken = false
+            ),
+            ClientAttempt(
+                endpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+                clientName = "ANDROID_TESTSUITE",
+                clientVersion = "1.9",
+                clientId = "30",
+                userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 12L; US) gzip",
+                gl = "US",
+                sendOrigin = false,
+                includePoToken = false,
+                params = "CgIIAQ=="
+            ),
+            ClientAttempt(
+                endpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+                clientName = "ANDROID_VR",
+                clientVersion = "1.43.32",
+                clientId = "28",
+                userAgent = "com.google.android.apps.youtube.vr.oculus/1.43.32 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+                gl = "US",
                 sendOrigin = false,
                 includePoToken = false
             ),
@@ -67,14 +78,13 @@ class DeviceInnerTubeResolver : Resolver {
             ),
             ClientAttempt(
                 endpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-                clientName = "ANDROID_TESTSUITE",
-                clientVersion = "1.9",
-                clientId = "30",
-                userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 12L; US) gzip",
-                gl = "US",
-                sendOrigin = false,
-                includePoToken = false,
-                params = "CgIIAQ=="
+                clientName = "VISIONOS",
+                clientVersion = "0.1",
+                clientId = "101",
+                userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+                gl = userGl,
+                sendOrigin = true,
+                includePoToken = false
             ),
             ClientAttempt(
                 endpoint = "https://music.youtube.com/youtubei/v1/player?prettyPrint=false",
@@ -313,6 +323,14 @@ class DeviceInnerTubeResolver : Resolver {
                     .thenByDescending { it.bitrate }
             )
 
+            val verifiedFormats = candidateFormats.distinctBy { it.id }.mapNotNull { fmt ->
+                val verifiedUrl = InnerTubeStreamExtractor.verifyStreamPlayable(fmt.url)
+                if (!verifiedUrl.isNullOrBlank()) fmt.copy(url = verifiedUrl) else null
+            }
+            if (verifiedFormats.isEmpty()) {
+                throw IllegalStateException("All extracted audio streams failed HTTP verification")
+            }
+
             val videoDetails = json.optJSONObject("videoDetails")
             val title = videoDetails?.optString("title", req.title ?: "Track") ?: "Track"
             val artist = videoDetails?.optString("author", req.artist ?: "Artist") ?: "Artist"
@@ -326,7 +344,7 @@ class DeviceInnerTubeResolver : Resolver {
                 title = title,
                 artist = artist,
                 artUrl = "https://i.ytimg.com/vi/$videoId/hqdefault.jpg",
-                formats = candidateFormats.distinctBy { it.id }.take(2),
+                formats = verifiedFormats.take(2),
                 resolverId = id,
                 packVersion = "device-v2026.10-js"
             )

@@ -273,17 +273,52 @@ class ResolverEngine {
                 }
             }
 
+            // Fallback for audio songs if the specific videoId is restricted or unavailable
+            if (!track.isVideoTrack && track.title.isNotBlank()) {
+                try {
+                    val fallbackUrl = com.seitharol.data.resolver.StreamResolver.resolveExactStreamUrl(
+                        track = com.seitharol.data.resolver.TrackMetadata(
+                            id = targetVideoId,
+                            title = track.title,
+                            artist = track.artist,
+                            album = track.album,
+                            durationSeconds = (track.durationMs / 1000L).toInt(),
+                            thumbnailUrl = track.artUrl
+                        ),
+                        preferredQuality = preferredQuality
+                    )
+                    if (!fallbackUrl.isNullOrBlank()) {
+                        val resolved = ResolvedStream(
+                            videoId = targetVideoId,
+                            streamUrl = fallbackUrl,
+                            itag = if (fallbackUrl.contains("opus") || fallbackUrl.contains("webm")) 251 else 140,
+                            codec = if (fallbackUrl.contains("opus") || fallbackUrl.contains("webm")) "Opus" else "AAC",
+                            bitrate = "${targetKbps} kbps",
+                            expiresAtMs = now + (6 * 3600 * 1000L),
+                            isLocal = false,
+                            resolvedBy = "Canonical Stream Fallback",
+                            latencyMs = 25
+                        )
+                        streamCache[cacheKey] = resolved
+                        return@withContext resolved
+                    }
+                } catch (e: Exception) {
+                    failures.add("StreamResolverFallback: ${e.message}")
+                }
+            }
+
             val failureSummary = failures.joinToString(" | ")
             Log.w(TAG, "Original YouTube videoId resolution failed for '${track.title}' ($targetVideoId): [$failureSummary]")
             throw IllegalStateException("Unable to resolve original stream for '${track.title}' ($targetVideoId)")
         }
 
-        // 5. Non-YouTube Track IDs (Direct JioSaavn ID or Spotify 22-char ID only)
+        // 5. Non-YouTube Track IDs (Direct JioSaavn ID or Spotify 22-char ID or Title/Artist Fallback)
         val isSpotify = rawId.length == 22 && !rawId.contains("_") && !rawId.contains("-")
-        val cleanSaavnId = rawId.removePrefix("saavn_")
+        val cleanSaavnId = rawId.removePrefix("saavn_").removePrefix("saavn_clip:").removePrefix("ytm_clip:")
         val isSaavn = rawId.startsWith("saavn_") ||
+            rawId.startsWith("saavn_clip:") ||
             track.audioUrl.contains("saavncdn.com") ||
-            (!isSpotify && (cleanSaavnId.all { it.isDigit() } || (cleanSaavnId.length in 6..16 && !cleanSaavnId.contains(" ") && !cleanSaavnId.contains("-"))))
+            (!isSpotify && (cleanSaavnId.all { it.isDigit() } || (cleanSaavnId.length in 6..16 && !cleanSaavnId.contains(" "))))
 
         if (isSaavn && cleanSaavnId.isNotBlank()) {
             try {
@@ -320,6 +355,39 @@ class ResolverEngine {
                 return@withContext resolved
             } catch (e: Exception) {
                 failures.add("SpotifyMatcher: ${e.message}")
+            }
+        }
+
+        if (track.title.isNotBlank()) {
+            try {
+                val fallbackUrl = com.seitharol.data.resolver.StreamResolver.resolveExactStreamUrl(
+                    track = com.seitharol.data.resolver.TrackMetadata(
+                        id = cleanSaavnId.ifBlank { rawId },
+                        title = track.title,
+                        artist = track.artist,
+                        album = track.album,
+                        durationSeconds = (track.durationMs / 1000L).toInt(),
+                        thumbnailUrl = track.artUrl
+                    ),
+                    preferredQuality = preferredQuality
+                )
+                if (!fallbackUrl.isNullOrBlank()) {
+                    val resolved = ResolvedStream(
+                        videoId = rawId.ifBlank { "resolved_track" },
+                        streamUrl = fallbackUrl,
+                        itag = 140,
+                        codec = "AAC",
+                        bitrate = "${targetKbps} kbps",
+                        expiresAtMs = now + (6 * 3600 * 1000L),
+                        isLocal = false,
+                        resolvedBy = "Multi-Source StreamResolver",
+                        latencyMs = 25
+                    )
+                    if (rawId.isNotBlank()) streamCache[cacheKey] = resolved
+                    return@withContext resolved
+                }
+            } catch (e: Exception) {
+                failures.add("StreamResolverFallback: ${e.message}")
             }
         }
 

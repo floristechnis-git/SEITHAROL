@@ -116,18 +116,6 @@ object InnerTubeStreamExtractor {
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
-            clientName = "IOS",
-            clientVersion = "20.10.4",
-            userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)",
-            clientId = "5",
-            deviceMake = "Apple",
-            deviceModel = "iPhone16,2",
-            osName = "iOS",
-            osVersion = "18.3.1.22D72",
-            glOverride = null,
-            sendOriginHeaders = false
-        ),
-        InnerTubeClientConfig(
             clientName = "ANDROID_TESTSUITE",
             clientVersion = "1.9",
             userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 12L; US) gzip",
@@ -152,6 +140,18 @@ object InnerTubeStreamExtractor {
             osVersion = "12L",
             androidSdkVersion = 32,
             glOverride = "US",
+            sendOriginHeaders = false
+        ),
+        InnerTubeClientConfig(
+            clientName = "IOS",
+            clientVersion = "20.10.4",
+            userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)",
+            clientId = "5",
+            deviceMake = "Apple",
+            deviceModel = "iPhone16,2",
+            osName = "iOS",
+            osVersion = "18.3.1.22D72",
+            glOverride = null,
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
@@ -475,8 +475,8 @@ object InnerTubeStreamExtractor {
             collectStreams(adaptiveFormats, isLegacy = false, allowCipher = false)
             collectStreams(legacyFormats, isLegacy = true, allowCipher = false)
 
-            // Pass 2: Only inspect ciphered streams if the client returned zero direct URLs
-            if (audioStreams.isEmpty() && client.isEmbedded) {
+            // Pass 2: Inspect ciphered streams if the client returned zero direct URLs
+            if (audioStreams.isEmpty()) {
                 collectStreams(adaptiveFormats, isLegacy = false, allowCipher = true)
                 collectStreams(legacyFormats, isLegacy = true, allowCipher = true)
             }
@@ -486,8 +486,8 @@ object InnerTubeStreamExtractor {
                     .thenBy { kotlin.math.abs(it.kbps - preferredQuality.maxBitrateKbps) }
             )
 
-            // Verify top 2 candidates (e.g. M4A 140 then Opus 251) so a 403 URL is never returned to ExoPlayer
-            for (cand in sortedCandidates.take(2)) {
+            // Verify top 3 candidates (e.g. M4A 140, Opus 251, Progressive 18) so a 403 URL is never returned to ExoPlayer
+            for (cand in sortedCandidates.take(3)) {
                 val verified = verifyStreamPlayable(cand.url)
                 if (!verified.isNullOrBlank()) {
                     return@runCatching verified
@@ -497,8 +497,10 @@ object InnerTubeStreamExtractor {
             if (allowHls) {
                 val hlsUrl = streamingData.optString("hlsManifestUrl", "")
                 if (hlsUrl.isNotBlank()) {
-                    val verifiedHls = verifyStreamPlayable(hlsUrl) ?: hlsUrl
-                    return@runCatching verifiedHls
+                    val verifiedHls = verifyStreamPlayable(hlsUrl)
+                    if (!verifiedHls.isNullOrBlank()) {
+                        return@runCatching verifiedHls
+                    }
                 }
             }
 
@@ -531,6 +533,7 @@ object InnerTubeStreamExtractor {
             0
         }
 
+        // Pass 1: Direct binary audio streams (M4A / Opus) across all verified clients (zero HLS overhead)
         for (i in VERIFIED_CLIENTS.indices) {
             val clientIdx = (startOffset + i) % VERIFIED_CLIENTS.size
             val client = VERIFIED_CLIENTS[clientIdx]
@@ -539,7 +542,7 @@ object InnerTubeStreamExtractor {
                 client = client,
                 preferredQuality = preferredQuality,
                 cpn = cpn,
-                allowHls = true,
+                allowHls = false,
                 includeVisitorData = false
             )
             if (!extractedUrl.isNullOrBlank()) {
@@ -548,9 +551,9 @@ object InnerTubeStreamExtractor {
             }
         }
 
-        // Refresh visitorData once and retry primary clients with visitorData if stateless pass failed
+        // Pass 2: Refresh visitorData once and retry all clients (allowing verified HLS as fallback)
         ensureVisitorData(forceFresh = true)
-        for (client in VERIFIED_CLIENTS.take(3)) {
+        for (client in VERIFIED_CLIENTS) {
             val retryUrl = extractStreamWithConfig(
                 videoId = cleanVideoId,
                 client = client,
@@ -1008,7 +1011,7 @@ object InnerTubeStreamExtractor {
                                 artist = resolvedTitle,
                                 artistBrowseId = resolvedId,
                                 channelName = resolvedTitle,
-                                albumName = if (treatUploadsAsVideo) "YouTube Video" else resolvedTitle,
+                                albumName = null,
                                 durationSeconds = durSec,
                                 videoType = if (treatUploadsAsVideo) "MUSIC_VIDEO_TYPE_OMV" else "MUSIC_VIDEO_TYPE_ATV",
                                 thumbnailUrl = thumb,
@@ -1224,14 +1227,8 @@ object InnerTubeStreamExtractor {
             ytChannelMeta?.videos.orEmpty()
         }
 
-        val rawCollections = searchYtmCollections(cleanTargetName, "EgWKAQIYAWoKEAkQChADEAUQBA==", "ALBUM", 16)
-            .filter { belongsToArtist(cleanTargetName, it.title, it.subtitle) }
-        val albums = rawCollections.filterNot {
-            it.type == "SINGLE" || it.subtitle.contains("Single", true) || it.subtitle.contains("1 song", true) || it.subtitle.contains("1 track", true)
-        }.distinctBy { it.browseId }
-        val singles = rawCollections.filter {
-            it.type == "SINGLE" || it.subtitle.contains("Single", true) || it.subtitle.contains("1 song", true) || it.subtitle.contains("1 track", true)
-        }.map { it.copy(type = "SINGLE") }.distinctBy { it.browseId }
+        val albums = emptyList<YtmCollectionSummary>()
+        val singles = emptyList<YtmCollectionSummary>()
 
         val verifiedAvatar = when {
             !ytChannelMeta?.avatarUrl.isNullOrBlank() -> ytChannelMeta!!.avatarUrl
@@ -1514,8 +1511,12 @@ object InnerTubeStreamExtractor {
                             ?.optJSONObject("watchPlaylistEndpoint")
                             ?.optString("playlistId")
 
+                    val isFakeVideoTitle = itemTitle.contains("YouTube Video", ignoreCase = true) ||
+                        itemSubtitle.contains("YouTube Video", ignoreCase = true)
+                    val isOfficialAlbumBrowseId = navBrowseId.startsWith("MPREb_") || navBrowseId.startsWith("OLAK5uy_")
+
                     when {
-                        shelfTitle.contains("video") || shelfTitle.contains("live performance") -> Unit
+                        shelfTitle.contains("video") || shelfTitle.contains("live performance") || isFakeVideoTitle -> Unit
 
                         shelfTitle.contains("fan") || shelfTitle.contains("similar") || shelfTitle.contains("like") ||
                             navBrowseId.startsWith("UC") || navBrowseId.startsWith("MPLA") -> {
@@ -1531,7 +1532,8 @@ object InnerTubeStreamExtractor {
                             }
                         }
 
-                        shelfTitle.contains("single") || shelfTitle.contains("ep") -> {
+                        (shelfTitle.contains("single") || shelfTitle.contains("ep")) &&
+                            (isOfficialAlbumBrowseId || !watchPlaylistId.isNullOrBlank()) -> {
                             albumsOrSinglesAdd(
                                 singles,
                                 navBrowseId,
@@ -1543,8 +1545,9 @@ object InnerTubeStreamExtractor {
                             )
                         }
 
-                        (shelfTitle.contains("album") || shelfTitle.contains("release") || navBrowseId.startsWith("MPREb_")) &&
-                            !shelfTitle.contains("featured") -> {
+                        (shelfTitle.contains("album") || shelfTitle.contains("release")) &&
+                            !shelfTitle.contains("featured") &&
+                            isOfficialAlbumBrowseId -> {
                             val isSingleRelease = itemSubtitle.contains("Single", ignoreCase = true) ||
                                 itemSubtitle.contains("EP", ignoreCase = true) ||
                                 itemSubtitle.contains("1 song", ignoreCase = true) ||
@@ -1573,7 +1576,7 @@ object InnerTubeStreamExtractor {
                         }
 
                         (shelfTitle.contains("playlist") || shelfTitle.contains("mix") || shelfTitle.contains("artist")) &&
-                            (navBrowseId.startsWith("VL") || navBrowseId.startsWith("PL") || navBrowseId.startsWith("RD") || !watchPlaylistId.isNullOrBlank()) -> {
+                            (navBrowseId.startsWith("VL") || navBrowseId.startsWith("PL") || navBrowseId.startsWith("RD")) -> {
                             if (belongsToArtist(name, itemTitle, itemSubtitle)) {
                                 val effectiveType = if (itemTitle.contains("Mix", true) || itemTitle.contains("Radio", true) || navBrowseId.startsWith("RD")) "MIX" else "PLAYLIST"
                                 albumsOrSinglesAdd(playlists, navBrowseId, watchPlaylistId, itemTitle, itemSubtitle, itemThumb, effectiveType)
@@ -1595,7 +1598,13 @@ object InnerTubeStreamExtractor {
         }
 
         val cleanedAlbums = albums.filterNot {
-            it.type == "SINGLE" || it.subtitle.contains("Single", true) || it.subtitle.contains("1 song", true) || it.subtitle.contains("1 track", true)
+            it.type == "SINGLE" ||
+                it.subtitle.contains("Single", true) ||
+                it.subtitle.contains("1 song", true) ||
+                it.subtitle.contains("1 track", true) ||
+                it.title.contains("YouTube Video", true) ||
+                it.subtitle.contains("YouTube Video", true) ||
+                (!it.browseId.startsWith("MPREb_") && !it.browseId.startsWith("OLAK5uy_"))
         }.distinctBy { it.browseId }
 
         val cleanedSingles = (singles + albums.filter {
@@ -1935,14 +1944,9 @@ object InnerTubeStreamExtractor {
             .ifBlank { defaultArt }
             .ifBlank { "https://i.ytimg.com/vi/$videoId/hqdefault.jpg" }
 
-        val rawItemStr = item.toString()
-        val isVideoItem = rawItemStr.contains("MUSIC_VIDEO_TYPE_OMV") ||
-            rawItemStr.contains("MUSIC_VIDEO_TYPE_UGC")
-        val resolvedVideoType = if (isVideoItem) "MUSIC_VIDEO_TYPE_OMV" else "MUSIC_VIDEO_TYPE_ATV"
-        val resolvedAlbumName = if (isVideoItem && (albumName.isNullOrBlank() || albumName == "Single")) {
-            "YouTube Video"
-        } else {
-            albumName
+        val resolvedVideoType = "MUSIC_VIDEO_TYPE_ATV"
+        val resolvedAlbumName = albumName?.takeUnless {
+            it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
         }
 
         return CandidateStream(
@@ -2061,13 +2065,14 @@ object InnerTubeStreamExtractor {
         val cpn = generateCpn()
         var hlsFallbackCandidate: String? = null
 
-        val baseClients = VERIFIED_CLIENTS.filter { it.clientName != "TVHTML5_SIMPLY_EMBEDDED_PLAYER" }
+        val baseClients = VERIFIED_CLIENTS
         val startOffset = if (forceRefresh) {
             clientRotationOffset.incrementAndGet() % baseClients.size
         } else {
             0
         }
 
+        // Pass 1: Try all progressive MP4 clients first (ANDROID_VR, ANDROID_TESTSUITE, ANDROID_VR 1.43, IOS, etc.)
         for (i in baseClients.indices) {
             val client = baseClients[(startOffset + i) % baseClients.size]
             val mp4Url = extractProgressiveVideoWithClient(
@@ -2077,32 +2082,21 @@ object InnerTubeStreamExtractor {
                 includeVisitorData = false
             ) { hls ->
                 if (hlsFallbackCandidate.isNullOrBlank() && hls.isNotBlank()) {
-                    hlsFallbackCandidate = hls
+                    val verifiedHls = verifyStreamPlayable(hls)
+                    if (!verifiedHls.isNullOrBlank()) {
+                        hlsFallbackCandidate = verifiedHls
+                    }
                 }
             }
             if (!mp4Url.isNullOrBlank()) {
                 videoStreamCache[cleanVideoId] = mp4Url to now
                 return@withContext Result.success(mp4Url)
             }
-            // For live video playback (allowHlsFallback = true), if IOS or VISIONOS returned a valid HLS
-            // video+audio manifest and ANDROID_VR had no progressive MP4, use HLS immediately on Pass 1
-            // instead of stalling for 25s across dead Piped servers!
-            if (allowHlsFallback && !hlsFallbackCandidate.isNullOrBlank() && i >= 1) {
-                val hls = hlsFallbackCandidate!!
-                videoStreamCache[cleanVideoId] = hls to now
-                return@withContext Result.success(hls)
-            }
         }
 
-        if (allowHlsFallback && !hlsFallbackCandidate.isNullOrBlank()) {
-            val hls = hlsFallbackCandidate!!
-            videoStreamCache[cleanVideoId] = hls to now
-            return@withContext Result.success(hls)
-        }
-
-        // Refresh visitorData once and retry ANDROID_VR & IOS with visitorData if stateless pass failed
+        // Pass 2: Refresh visitorData once and retry progressive MP4 clients with visitorData
         ensureVisitorData(forceFresh = true)
-        for (client in baseClients.take(3)) {
+        for (client in baseClients.take(4)) {
             val retryMp4 = extractProgressiveVideoWithClient(
                 cleanVideoId = cleanVideoId,
                 client = client,
@@ -2110,7 +2104,10 @@ object InnerTubeStreamExtractor {
                 includeVisitorData = true
             ) { hls ->
                 if (hlsFallbackCandidate.isNullOrBlank() && hls.isNotBlank()) {
-                    hlsFallbackCandidate = hls
+                    val verifiedHls = verifyStreamPlayable(hls)
+                    if (!verifiedHls.isNullOrBlank()) {
+                        hlsFallbackCandidate = verifiedHls
+                    }
                 }
             }
             if (!retryMp4.isNullOrBlank()) {
@@ -2211,7 +2208,33 @@ object InnerTubeStreamExtractor {
                     val itag = fmt.optInt("itag", 0)
                     if (!mime.startsWith("video/") && itag !in listOf(18, 22, 37, 59, 78)) continue
 
-                    val rawUrl = fmt.optString("url", "")
+                    var rawUrl = fmt.optString("url", "")
+                    if (rawUrl.isBlank()) {
+                        val cipherStr = fmt.optString("signatureCipher").ifBlank { fmt.optString("cipher") }
+                        if (cipherStr.isNotBlank()) {
+                            val params = mutableMapOf<String, String>()
+                            for (part in cipherStr.split("&")) {
+                                val idx = part.indexOf('=')
+                                if (idx > 0) {
+                                    params[URLDecoder.decode(part.substring(0, idx), "UTF-8")] =
+                                        URLDecoder.decode(part.substring(idx + 1), "UTF-8")
+                                }
+                            }
+                            val baseUrl = params["url"].orEmpty()
+                            val sig = params["s"].orEmpty()
+                            val sp = params["sp"] ?: "sig"
+                            if (baseUrl.isNotBlank() && sig.isNotBlank()) {
+                                val ops = com.example.resolver.KotlinJsInterp.getActiveCipherOperations()
+                                if (ops.isNotEmpty()) {
+                                    val deciphered = com.example.resolver.KotlinJsInterp.decipherSignature(sig, ops)
+                                    if (deciphered.isNotBlank() && deciphered != sig) {
+                                        val sep = if (baseUrl.contains("?")) "&" else "?"
+                                        rawUrl = "$baseUrl$sep$sp=$deciphered"
+                                    }
+                                }
+                            }
+                        }
+                    }
                     val height = fmt.optInt("height", 360)
                     if (rawUrl.isNotBlank() && !rawUrl.contains(".m3u8", true)) {
                         val withCpn = if (!rawUrl.contains("cpn=")) {
@@ -2516,7 +2539,7 @@ object InnerTubeStreamExtractor {
                                 artist = channel,
                                 artistBrowseId = browseId,
                                 channelName = channel,
-                                albumName = "YouTube Video",
+                                albumName = null,
                                 durationSeconds = durSec,
                                 videoType = "MUSIC_VIDEO_TYPE_OMV",
                                 thumbnailUrl = thumb,
@@ -2538,7 +2561,7 @@ object InnerTubeStreamExtractor {
                     val root = postWebRemix("https://music.youtube.com/youtubei/v1/search?prettyPrint=false", payload)
                     if (root != null) {
                         val ytmVideos = parseMusicResponsiveListItems(root).map {
-                            it.copy(videoType = "MUSIC_VIDEO_TYPE_OMV", albumName = "YouTube Video")
+                            it.copy(videoType = "MUSIC_VIDEO_TYPE_OMV", albumName = null)
                         }
                         results.addAll(ytmVideos)
                     }

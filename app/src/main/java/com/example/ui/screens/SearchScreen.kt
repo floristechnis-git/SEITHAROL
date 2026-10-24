@@ -200,6 +200,25 @@ fun SearchScreen(
     val focusManager = LocalFocusManager.current
     val listState = rememberLazyListState()
 
+    val dismissSearchKeyboard = {
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
+        runCatching {
+            val imm = context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
+            val token = (context as? android.app.Activity)?.currentFocus?.windowToken
+                ?: (context as? android.app.Activity)?.window?.decorView?.windowToken
+            if (token != null) {
+                imm?.hideSoftInputFromWindow(token, 0)
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            dismissSearchKeyboard()
+        }
+    }
+
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
         keyboardController?.show()
@@ -207,8 +226,7 @@ fun SearchScreen(
 
     LaunchedEffect(listState.isScrollInProgress) {
         if (listState.isScrollInProgress) {
-            focusManager.clearFocus()
-            keyboardController?.hide()
+            dismissSearchKeyboard()
         }
     }
 
@@ -659,7 +677,10 @@ fun SearchScreen(
             if (currentProvider != com.example.ui.ProviderFilter.LOCAL) {
                 item {
                     com.seitharol.ui.search.DiscoverEntryCard(
-                        onOpenDiscover = onOpenDiscover
+                        onOpenDiscover = {
+                            dismissSearchKeyboard()
+                            onOpenDiscover()
+                        }
                     )
                 }
             }
@@ -691,6 +712,7 @@ fun SearchScreen(
                             .padding(horizontal = 14.dp, vertical = 2.dp)
                             .clip(RoundedCornerShape(16.dp))
                             .clickable {
+                                dismissSearchKeyboard()
                                 viewModel.navigateToArtist(artistPreview.name, isChannel = false)
                             },
                         color = Color.Transparent
@@ -765,7 +787,10 @@ fun SearchScreen(
                                 .fillMaxWidth()
                                 .padding(horizontal = 14.dp, vertical = 2.dp)
                                 .clip(RoundedCornerShape(16.dp))
-                                .clickable { onNavigateToPlaylist(pl.id) },
+                                .clickable {
+                                    dismissSearchKeyboard()
+                                    onNavigateToPlaylist(pl.id)
+                                },
                             color = Color.Transparent
                         ) {
                             Row(

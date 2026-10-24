@@ -239,8 +239,23 @@ fun CascadeApp(
         }
     }
 
-    // On visit to Discover and Download page, pause current playing music
+    val rootFocusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val rootKeyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+
+    // On visit to Discover and Download page (or any SubScreen), hide active keyboard and pause current music on Discover
     LaunchedEffect(currentSubScreen) {
+        if (currentSubScreen !is SubScreen.None) {
+            rootFocusManager.clearFocus(force = true)
+            rootKeyboardController?.hide()
+            runCatching {
+                val imm = context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
+                val token = (context as? android.app.Activity)?.currentFocus?.windowToken
+                    ?: (context as? android.app.Activity)?.window?.decorView?.windowToken
+                if (token != null) {
+                    imm?.hideSoftInputFromWindow(token, 0)
+                }
+            }
+        }
         if (currentSubScreen is SubScreen.Discover) {
             viewModel.pause()
         }
@@ -402,13 +417,15 @@ fun CascadeApp(
                                 availablePlaylists = playlists.map { it.id to it.title },
                                 onPlayLocalTrack = { candidate ->
                                     val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
-                                        candidate.albumName == "YouTube Video" ||
                                         candidate.videoId.lowercase().endsWith(".mp4")
+                                    val cleanAlbum = candidate.albumName?.takeUnless {
+                                        it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Storage", ignoreCase = true)
+                                    }.orEmpty()
                                     val localTrack = Track(
                                         id = "local_${candidate.videoId.hashCode()}",
                                         title = candidate.title,
                                         artist = candidate.artist,
-                                        album = if (isVideo) "YouTube Video" else (candidate.albumName ?: "Local Storage"),
+                                        album = cleanAlbum,
                                         durationMs = candidate.durationSeconds * 1000L,
                                         artUrl = candidate.thumbnailUrl,
                                         genre = if (isVideo) "YouTube Video" else "Local Audio",
@@ -421,11 +438,14 @@ fun CascadeApp(
                                     isPlayerExpanded = true
                                 },
                                 onAddLocalTrackToPlaylist = { plId, candidate ->
+                                    val cleanAlbum = candidate.albumName?.takeUnless {
+                                        it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Storage", ignoreCase = true)
+                                    }.orEmpty()
                                     val localTrack = Track(
                                         id = "local_${candidate.videoId.hashCode()}",
                                         title = candidate.title,
                                         artist = candidate.artist,
-                                        album = candidate.albumName ?: "Local Storage",
+                                        album = cleanAlbum,
                                         durationMs = candidate.durationSeconds * 1000L,
                                         artUrl = candidate.thumbnailUrl,
                                         genre = "Local Audio",
@@ -650,13 +670,15 @@ fun CascadeApp(
                             availablePlaylists = playlists.map { it.id to it.title },
                             onPlayLocalTrack = { candidate ->
                                 val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
-                                    candidate.albumName == "YouTube Video" ||
                                     candidate.videoId.lowercase().endsWith(".mp4")
+                                val cleanAlbum = candidate.albumName?.takeUnless {
+                                    it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Storage", ignoreCase = true)
+                                }.orEmpty()
                                 val localTrack = Track(
                                     id = "local_${candidate.videoId.hashCode()}",
                                     title = candidate.title,
                                     artist = candidate.artist,
-                                    album = if (isVideo) "YouTube Video" else (candidate.albumName ?: "Local Storage"),
+                                    album = cleanAlbum,
                                     durationMs = candidate.durationSeconds * 1000L,
                                     artUrl = candidate.thumbnailUrl,
                                     genre = if (isVideo) "YouTube Video" else "Local Audio",
@@ -669,11 +691,14 @@ fun CascadeApp(
                                 isPlayerExpanded = true
                             },
                             onAddLocalTrackToPlaylist = { plId, candidate ->
+                                val cleanAlbum = candidate.albumName?.takeUnless {
+                                    it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Storage", ignoreCase = true)
+                                }.orEmpty()
                                 val localTrack = Track(
                                     id = "local_${candidate.videoId.hashCode()}",
                                     title = candidate.title,
                                     artist = candidate.artist,
-                                    album = candidate.albumName ?: "Local Storage",
+                                    album = cleanAlbum,
                                     durationMs = candidate.durationSeconds * 1000L,
                                     artUrl = candidate.thumbnailUrl,
                                     genre = "Local Audio",

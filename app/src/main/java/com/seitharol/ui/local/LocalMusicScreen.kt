@@ -340,7 +340,7 @@ private suspend fun scanDeviceAudioFiles(context: Context): List<CandidateStream
                             title = title,
                             artist = artist,
                             channelName = "Device Video Storage",
-                            albumName = "YouTube Video",
+                            albumName = null,
                             durationSeconds = durationSec,
                             videoType = "MUSIC_VIDEO_TYPE_OMV",
                             thumbnailUrl = "",

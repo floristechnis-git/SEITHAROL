@@ -74,7 +74,11 @@ class AudioPlayerManager(
                         exoPlayer.seekTo(0L)
                         exoPlayer.play()
                     }
-                    Player.STATE_IDLE -> _isPreviewBuffering.value = false
+                    Player.STATE_IDLE -> {
+                        if (previewResolveJob?.isActive != true) {
+                            _isPreviewBuffering.value = false
+                        }
+                    }
                 }
             }
 
@@ -94,9 +98,12 @@ class AudioPlayerManager(
 
     fun playPreview(track: NormalizedTrack) {
         if (_activePreviewTrackId.value == track.sourceId &&
-            (exoPlayer.isPlaying || exoPlayer.playbackState == Player.STATE_BUFFERING)
+            (_isPreviewBuffering.value || exoPlayer.isPlaying || exoPlayer.playbackState == Player.STATE_BUFFERING || previewResolveJob?.isActive == true)
         ) {
             exoPlayer.playWhenReady = true
+            if (exoPlayer.playbackState == Player.STATE_READY && !exoPlayer.isPlaying) {
+                exoPlayer.play()
+            }
             return
         }
         hasRetriedCurrentPreview = false
@@ -157,20 +164,43 @@ class AudioPlayerManager(
                 startOffsetMs = 25_000L
             }
 
-            // Only search YouTube Music by title + artist if the track had NO YouTube videoId (e.g. Spotify metadata item)
-            if (streamUrl.isNullOrBlank() && ytId.isNullOrBlank()) {
+            // Fallback 1: If direct YouTube ID resolution failed or track was non-YouTube, try JioSaavn exact match
+            if (streamUrl.isNullOrBlank()) {
+                runCatching {
+                    val meta = TrackMetadata(
+                        id = if (ytId == null) track.sourceId else "",
+                        title = track.title,
+                        artist = track.artists.firstOrNull().orEmpty(),
+                        album = track.album.orEmpty(),
+                        durationSeconds = (track.durationMs / 1000L).toInt(),
+                        thumbnailUrl = track.artUrl
+                    )
+                    val saavnUrl = StreamResolver.resolveExactStreamUrl(meta, AudioQuality.LOW)
+                    if (!saavnUrl.isNullOrBlank()) {
+                        streamUrl = saavnUrl
+                        startOffsetMs = 25_000L
+                    }
+                }
+            }
+
+            // Fallback 2: Search YouTube Music by title + artist if stream is still unresolved
+            if (streamUrl.isNullOrBlank()) {
                 runCatching {
                     val query = "${track.title} ${track.artists.firstOrNull().orEmpty()}".trim()
                     if (query.isNotBlank()) {
-                        val candidates = InnerTubeStreamExtractor.searchOfficialYtmSongs(query, limit = 3)
-                        val candidate = candidates.firstOrNull()
-                        if (candidate != null) {
-                            streamUrl = InnerTubeStreamExtractor.resolveExactYoutubeStreamById(
+                        val candidates = InnerTubeStreamExtractor.searchOfficialYtmSongs(query, limit = 4)
+                        for (candidate in candidates) {
+                            if (candidate.videoId == ytId && !forceFresh) continue
+                            val resolved = InnerTubeStreamExtractor.resolveExactYoutubeStreamById(
                                 candidate.videoId,
                                 AudioQuality.LOW,
                                 forceRefresh = forceFresh
                             ).getOrNull()
-                            startOffsetMs = if (candidate.durationSeconds > 60) 30_000L else 0L
+                            if (!resolved.isNullOrBlank()) {
+                                streamUrl = resolved
+                                startOffsetMs = if (candidate.durationSeconds > 60) 30_000L else 0L
+                                break
+                            }
                         }
                     }
                 }
@@ -179,7 +209,7 @@ class AudioPlayerManager(
             withContext(Dispatchers.Main) {
                 if (requestId != currentRequestId || _activePreviewTrackId.value != track.sourceId) return@withContext
                 if (!streamUrl.isNullOrBlank()) {
-                    startExoPreviewPlayback(track.sourceId, streamUrl, startOffsetMs)
+                    startExoPreviewPlayback(track.sourceId, streamUrl!!, startOffsetMs)
                 } else {
                     _isPreviewBuffering.value = false
                     _isPreviewPlaying.value = false
@@ -237,6 +267,7 @@ class AudioPlayerManager(
     ): Result<Unit> {
         stopPreviewAndClear()
         val validYtId = InnerTubeStreamExtractor.extractVideoId(track.sourceId)
+            ?: InnerTubeStreamExtractor.extractVideoId(track.previewUrl?.removePrefix("ytm_clip:"))
         if (!validYtId.isNullOrBlank()) {
             val directTrack = track.copy(
                 source = TrackSource.YOUTUBE,
@@ -247,8 +278,9 @@ class AudioPlayerManager(
             return Result.success(Unit)
         }
 
-        return resolverEngine.resolveForFullPlayback(track, offlineMode).map { target ->
-            when (target) {
+        val resolvedResult = resolverEngine.resolveForFullPlayback(track, offlineMode)
+        if (resolvedResult.isSuccess) {
+            when (val target = resolvedResult.getOrThrow()) {
                 is ResolvedPlaybackTarget.LocalDeviceUri -> {
                     onMaximizePlayer(
                         track.copy(
@@ -262,12 +294,18 @@ class AudioPlayerManager(
                     val verifiedTrack = target.resolvedTrack.copy(
                         title = track.title,
                         artists = track.artists,
-                        artUrl = track.artUrl.ifBlank { target.resolvedTrack.artUrl }
+                        artUrl = track.artUrl.ifBlank { target.resolvedTrack.artUrl },
+                        previewUrl = target.url.ifBlank { track.previewUrl }
                     )
                     onMaximizePlayer(verifiedTrack)
                 }
             }
+            return Result.success(Unit)
         }
+
+        // Fallback: hand the track directly to the main player so its multi-client/JioSaavn resolver can play it
+        onMaximizePlayer(track)
+        return Result.success(Unit)
     }
 
     fun stopAndDismissNotifications() {

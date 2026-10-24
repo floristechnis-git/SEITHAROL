@@ -1,6 +1,8 @@
 package com.seitharol.ui.discover
 
+import android.content.Context
 import android.content.Intent
+import android.view.inputmethod.InputMethodManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -32,6 +34,9 @@ import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -70,6 +75,9 @@ fun DiscoverScreen(
     onNavigateBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
 
     val activeFeed = remember { mutableStateListOf<NormalizedTrack>() }
@@ -90,7 +98,21 @@ fun DiscoverScreen(
 
     val downloadTaskState by downloadService.downloadState.collectAsState()
 
+    // Ensure software keyboard from SearchScreen or InDiscoverSearchSurface is dismissed when on the Discover feed
+    LaunchedEffect(isInDiscoverSearchOpen) {
+        if (!isInDiscoverSearchOpen) {
+            focusManager.clearFocus(force = true)
+            keyboardController?.hide()
+            runCatching {
+                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                imm?.hideSoftInputFromWindow(view.windowToken, 0)
+            }
+        }
+    }
+
     BackHandler {
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
         if (isInDiscoverSearchOpen) {
             isInDiscoverSearchOpen = false
             audioPlayerManager.pausePreview()
@@ -100,7 +122,8 @@ fun DiscoverScreen(
         }
     }
 
-    LaunchedEffect(pagerState.settledPage, activeFeed.size, isInDiscoverSearchOpen) {
+    val currentSettledTrackId = activeFeed.getOrNull(pagerState.settledPage)?.sourceId
+    LaunchedEffect(pagerState.settledPage, currentSettledTrackId, activeFeed.size, isInDiscoverSearchOpen) {
         if (isInDiscoverSearchOpen) {
             audioPlayerManager.pausePreview()
         } else if (activeFeed.isNotEmpty()) {
@@ -202,6 +225,8 @@ fun DiscoverScreen(
         ) {
             IconButton(
                 onClick = {
+                    focusManager.clearFocus(force = true)
+                    keyboardController?.hide()
                     audioPlayerManager.stopPreviewAndClear()
                     onNavigateBack()
                 },
@@ -261,23 +286,35 @@ fun DiscoverScreen(
             InDiscoverSearchSurface(
                 audioPlayerManager = audioPlayerManager,
                 onSearch = onSearchPreviewTracks,
-                onOpenDownloadPicker = { selectedTrack -> trackForDownloadSheet = selectedTrack },
+                onOpenDownloadPicker = { selectedTrack ->
+                    focusManager.clearFocus(force = true)
+                    keyboardController?.hide()
+                    trackForDownloadSheet = selectedTrack
+                },
                 onOpenFullSong = { selectedTrack ->
+                    focusManager.clearFocus(force = true)
+                    keyboardController?.hide()
                     audioPlayerManager.stopPreviewAndClear()
                     activeFeed.removeAll { it.sourceId == selectedTrack.sourceId }
                     activeFeed.add(0, selectedTrack)
-                    isInDiscoverSearchOpen = false
                     scope.launch {
                         pagerState.scrollToPage(0)
+                        isInDiscoverSearchOpen = false
                         audioPlayerManager.playPreview(selectedTrack)
                     }
                 },
                 onVisitArtist = { name, browseId ->
+                    focusManager.clearFocus(force = true)
+                    keyboardController?.hide()
                     isInDiscoverSearchOpen = false
                     audioPlayerManager.pausePreview()
                     onVisitArtist(name, browseId)
                 },
-                onClose = { isInDiscoverSearchOpen = false }
+                onClose = {
+                    focusManager.clearFocus(force = true)
+                    keyboardController?.hide()
+                    isInDiscoverSearchOpen = false
+                }
             )
         }
 
@@ -484,7 +521,12 @@ private fun DiscoverShortPage(
                             tint = Color.Black
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Play Full", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "Play Full",
+                            color = Color.Black,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
 
                     val isThisDownloading = downloadState is DownloadTaskState.Downloading && downloadState.trackId == track.sourceId
@@ -508,11 +550,21 @@ private fun DiscoverShortPage(
                                 tint = Color.White
                             )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Cancel", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "Cancel",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         } else {
                             com.seitharol.ui.search.DownloadSvgIcon(tint = Color.White, modifier = Modifier.size(15.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Download", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "Download",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
 
@@ -531,7 +583,12 @@ private fun DiscoverShortPage(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(5.dp))
-                        Text("Artist", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = "Artist",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
                 }
 
@@ -966,6 +1023,7 @@ fun DownloadProviderFormatBottomSheet(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "Download ${selectedFormat.ext.uppercase()} (${selectedQuality.maxBitrateKbps} kbps)",
+                    color = Color.White,
                     fontWeight = FontWeight.Bold
                 )
             }

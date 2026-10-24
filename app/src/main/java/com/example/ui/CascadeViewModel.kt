@@ -111,7 +111,11 @@ class CascadeViewModel(
                         id = canonId,
                         title = norm.title,
                         artist = norm.artists.firstOrNull() ?: "Unknown Artist",
-                        album = norm.album ?: "Discover Downloads",
+                        album = norm.album?.takeUnless {
+                            it.equals("Discover Downloads", ignoreCase = true) ||
+                                it.equals("YouTube Video", ignoreCase = true) ||
+                                it.equals("YouTube Videos", ignoreCase = true)
+                        }.orEmpty(),
                         durationMs = norm.durationMs,
                         artUrl = norm.artUrl,
                         genre = "Downloaded",
@@ -206,7 +210,7 @@ class CascadeViewModel(
                         id = cleanId,
                         title = fallbackTitle,
                         artist = fallbackArtist.ifBlank { "Artist" },
-                        album = "Shared Track",
+                        album = "",
                         durationMs = 210_000L,
                         artUrl = fallbackArtUrl.ifBlank {
                             if (cleanId.length == 11) "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg" else ""
@@ -218,9 +222,9 @@ class CascadeViewModel(
                         }.getOrNull()
                         Track(
                             id = cleanId,
-                            title = oembed?.first ?: "Shared Track",
+                            title = oembed?.first ?: "Track",
                             artist = oembed?.second ?: "Artist",
-                            album = "Single",
+                            album = "",
                             durationMs = 210_000L,
                             artUrl = if (cleanId.length == 11) "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg" else ""
                         )
@@ -260,7 +264,7 @@ class CascadeViewModel(
                     id = seed.id,
                     title = seed.title,
                     artist = seed.artist,
-                    album = if (isVideo) "YouTube Video" else seed.album,
+                    album = seed.album.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true) }.orEmpty(),
                     durationSeconds = (seed.durationMs / 1000L).toInt(),
                     thumbnailUrl = seed.artUrl,
                     source = if (isVideo) "YOUTUBE_VIDEO" else "YOUTUBE"
@@ -271,12 +275,12 @@ class CascadeViewModel(
                     limit = 14
                 )
                 _queueVideoSuggestions.value = recs.map { r ->
-                    val recIsVideo = isVideo || r.source == "YOUTUBE_VIDEO" || r.album.equals("YouTube Video", ignoreCase = true)
+                    val recIsVideo = isVideo || r.source == "YOUTUBE_VIDEO"
                     Track(
                         id = r.id,
                         title = r.title,
                         artist = r.artist,
-                        album = if (recIsVideo) "YouTube Video" else r.album,
+                        album = r.album.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true) }.orEmpty(),
                         durationMs = r.durationSeconds * 1000L,
                         artUrl = r.thumbnailUrl,
                         genre = if (recIsVideo) "YouTube Video" else "Music",
@@ -309,7 +313,7 @@ class CascadeViewModel(
                     id = trackId,
                     title = title.ifBlank { if (detectedVideo) "Video File" else "Audio File" },
                     artist = artist.ifBlank { if (detectedVideo) "Local Video" else "Local Audio" },
-                    album = if (detectedVideo) "YouTube Video" else album.ifBlank { "Local Audio" },
+                    album = album.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Audio", ignoreCase = true) }.orEmpty(),
                     durationMs = durationMs,
                     artUrl = "",
                     genre = if (detectedVideo) "YouTube Video" else "Local Audio",
@@ -460,11 +464,14 @@ class CascadeViewModel(
 
                 onlineSearchResults.value = ranked.map { c ->
                     val isYtVideo = filter == ProviderFilter.YOUTUBE || c.videoType == "MUSIC_VIDEO_TYPE_OMV"
+                    val cleanAlbum = c.albumName?.takeUnless {
+                        it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
+                    }.orEmpty()
                     Track(
                         id = c.videoId,
                         title = c.title,
                         artist = c.artist,
-                        album = if (isYtVideo) "YouTube Video" else c.albumName.orEmpty(),
+                        album = cleanAlbum,
                         durationMs = c.durationSeconds * 1000L,
                         artUrl = c.thumbnailUrl,
                         genre = if (isYtVideo) "YouTube Video" else "Music",
@@ -805,13 +812,23 @@ class CascadeViewModel(
     }
 
     fun playNormalizedTrackFull(track: com.seitharol.domain.model.NormalizedTrack) {
+        val cleanId = InnerTubeStreamExtractor.extractVideoId(track.sourceId)
+            ?: InnerTubeStreamExtractor.extractVideoId(track.previewUrl?.removePrefix("ytm_clip:"))
+            ?: track.sourceId.removePrefix("ytm_clip:").removePrefix("saavn_clip:").trim()
+        val resolvedHttpUrl = track.url?.takeIf { it.startsWith("http") }.orEmpty()
+        val cleanAlbum = track.album?.takeUnless {
+            it.equals("YouTube Video", ignoreCase = true) ||
+                it.equals("YouTube Videos", ignoreCase = true) ||
+                it.equals("Discover Downloads", ignoreCase = true)
+        }.orEmpty()
         val domainTrack = Track(
-            id = track.sourceId,
+            id = cleanId,
             title = track.title,
             artist = track.artists.firstOrNull() ?: "Unknown Artist",
-            album = track.album ?: "",
-            durationMs = track.durationMs,
+            album = cleanAlbum,
+            durationMs = track.durationMs.takeIf { it > 0L } ?: 210_000L,
             artUrl = track.artUrl,
+            audioUrl = resolvedHttpUrl,
             isLiked = track.isLiked,
             localPath = track.localPath,
             isDownloaded = !track.localPath.isNullOrBlank()
@@ -820,14 +837,15 @@ class CascadeViewModel(
     }
 
     private fun com.seitharol.data.resolver.CandidateStream.toTrack(): Track {
-        val isVideo = this.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
-            this.videoType == "MUSIC_VIDEO_TYPE_UGC" ||
-            this.albumName.equals("YouTube Video", ignoreCase = true)
+        val isVideo = this.videoType == "MUSIC_VIDEO_TYPE_UGC"
+        val cleanAlbum = this.albumName?.takeUnless {
+            it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
+        }.orEmpty()
         return Track(
             id = this.videoId,
             title = this.title,
             artist = this.artist,
-            album = if (isVideo) "YouTube Video" else this.albumName.orEmpty(),
+            album = cleanAlbum,
             durationMs = this.durationSeconds * 1000L,
             artUrl = this.thumbnailUrl,
             genre = if (isVideo) "YouTube Video" else "Music",
@@ -1085,7 +1103,11 @@ class CascadeViewModel(
         }
     }
 
-    fun loadPlaylistTracks(playlistId: String, onResult: (List<Track>) -> Unit) {
+    fun loadPlaylistTracks(
+        playlistId: String,
+        onMetadata: ((com.seitharol.data.resolver.YtmCollectionPageData) -> Unit)? = null,
+        onResult: (List<Track>) -> Unit
+    ) {
         viewModelScope.launch(vmExceptionHandler) {
             try {
                 val likedIds = likedTrackIds.value
@@ -1105,7 +1127,19 @@ class CascadeViewModel(
                     return@launch
                 }
                 val remoteDetails = InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(playlistId)
-                val tracks = remoteDetails.tracks.map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
+                onMetadata?.invoke(remoteDetails)
+                val cleanAlbumTitle = remoteDetails.title.takeUnless {
+                    it.equals("Music Collection", ignoreCase = true) ||
+                        it.equals("YouTube Personalized Mix", ignoreCase = true) ||
+                        it.contains("YouTube Video", ignoreCase = true)
+                }.orEmpty()
+                val tracks = remoteDetails.tracks.map { cand ->
+                    val base = cand.toTrack()
+                    val withAlbum = if (base.album.isBlank() && (playlistId.startsWith("MPREb_") || playlistId.startsWith("OLAK5uy_")) && cleanAlbumTitle.isNotBlank()) {
+                        base.copy(album = cleanAlbumTitle)
+                    } else base
+                    enrichTrackStatus(withAlbum, likedIds, dlMap)
+                }
                 if (tracks.isNotEmpty()) {
                     onResult(tracks)
                 } else {

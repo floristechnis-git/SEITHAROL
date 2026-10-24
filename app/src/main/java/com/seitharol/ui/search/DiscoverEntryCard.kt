@@ -20,6 +20,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -75,6 +77,9 @@ fun DiscoverEntryCard(
     onOpenDiscover: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
@@ -82,7 +87,11 @@ fun DiscoverEntryCard(
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 6.dp)
             .clip(RoundedCornerShape(14.dp))
-            .clickable { onOpenDiscover() }
+            .clickable {
+                focusManager.clearFocus(force = true)
+                keyboardController?.hide()
+                onOpenDiscover()
+            }
     ) {
         Row(
             modifier = Modifier
@@ -189,4 +198,3 @@ fun QueueAddSvgIcon(
         drawPath(path = path, color = tint, style = stroke)
     }
 }
-

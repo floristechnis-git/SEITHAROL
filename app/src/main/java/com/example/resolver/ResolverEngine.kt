@@ -285,7 +285,7 @@ class ResolverEngine {
                             durationSeconds = (track.durationMs / 1000L).toInt(),
                             thumbnailUrl = track.artUrl
                         ),
-                        preferredQuality = preferredQuality
+                        quality = preferredQuality
                     )
                     if (!fallbackUrl.isNullOrBlank()) {
                         val resolved = ResolvedStream(
@@ -369,7 +369,7 @@ class ResolverEngine {
                         durationSeconds = (track.durationMs / 1000L).toInt(),
                         thumbnailUrl = track.artUrl
                     ),
-                    preferredQuality = preferredQuality
+                    quality = preferredQuality
                 )
                 if (!fallbackUrl.isNullOrBlank()) {
                     val resolved = ResolvedStream(

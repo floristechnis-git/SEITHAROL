@@ -567,13 +567,28 @@ fun PlayerScreen(
                             ) {
                                 if (track.artist.isNotBlank()) {
                                     onDismiss()
-                                    viewModel.navigateToArtist(track.artist)
+                                    viewModel.navigateToArtist(track.artist, isChannel = isVideoTrack)
                                 }
                             }
                             .padding(vertical = 2.dp, horizontal = 2.dp)
                             .testTag("player_artist_name")
                     )
-                    if (track.album.isNotBlank() && track.album != track.title && track.album != "Single" && !track.album.equals("YouTube Video", ignoreCase = true)) {
+                    if (isVideoTrack) {
+                        Text(
+                            text = "• Channel",
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f),
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            modifier = Modifier.clickable {
+                                if (track.artist.isNotBlank()) {
+                                    onDismiss()
+                                    viewModel.navigateToArtist(track.artist, isChannel = true)
+                                }
+                            }
+                        )
+                    } else if (track.album.isNotBlank() && track.album != track.title && track.album != "Single" && !track.album.equals("YouTube Video", ignoreCase = true)) {
                         Text(
                             text = "• ${track.album}",
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),

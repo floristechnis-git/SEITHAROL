@@ -395,9 +395,18 @@ fun TrackCard(
                     }
                     if (onGoToArtistClick != null && track.artist.isNotBlank()) {
                         DropdownMenuItem(
-                            text = { Text("Go to Artist", color = SeitharolTextPrimary) },
+                            text = {
+                                Text(
+                                    text = if (track.isVideoTrack) "Visit Channel" else "Go to Artist",
+                                    color = SeitharolTextPrimary
+                                )
+                            },
                             leadingIcon = {
-                                Icon(Icons.Default.Person, contentDescription = null, tint = SeitharolDark)
+                                Icon(
+                                    imageVector = if (track.isVideoTrack) Icons.Default.Tv else Icons.Default.Person,
+                                    contentDescription = null,
+                                    tint = SeitharolDark
+                                )
                             },
                             onClick = {
                                 showMenu = false

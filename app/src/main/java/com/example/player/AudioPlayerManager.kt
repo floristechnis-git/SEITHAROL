@@ -568,16 +568,16 @@ class AudioPlayerManager(
     private fun startBufferingWatchdog(expectedTrackId: String) {
         bufferingWatchdogJob?.cancel()
         val player = exoPlayer
-        if (player != null && player.isPlaying && player.currentPosition > 2000L) {
+        if (player != null && player.isPlaying) {
             return
         }
 
         bufferingWatchdogJob = coroutineScope.launch {
-            delay(25_000L)
+            delay(11_000L)
             if (!isActive || !userRequestedPlay) return@launch
             val current = _state.value.currentTrack ?: return@launch
             val p = exoPlayer ?: return@launch
-            if (current.id == expectedTrackId && (_state.value.isBuffering || isRetryingOrLoading) && !p.isPlaying && p.currentPosition < 1000L) {
+            if (current.id == expectedTrackId && (_state.value.isBuffering || isRetryingOrLoading) && !p.isPlaying) {
                 Log.w(TAG, "Initial load watchdog triggered after 25s for '${current.title}', retrying stream...")
                 val resumePos = (p.currentPosition.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
                 val isVideo = current.isVideoTrack || _state.value.isVideoMode
@@ -616,18 +616,17 @@ class AudioPlayerManager(
             }
             val dataSourceFactory = DefaultDataSource.Factory(context, resolvingFactory)
             val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
-                .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(/* minimumLoadableRetryCount = */ 3))
+                .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(/* minimumLoadableRetryCount = */ 1))
 
-            // Buffer tuned for smooth continuous background streaming:
-            // Keeps up to 60s of audio buffer in RAM (~960 KB), eliminating background freezing every 30s.
+            // Buffer tuned for instant startup (0.8s) and continuous streaming on 2GB RAM devices:
             val loadControl = DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
-                    /* minBufferMs = */ 30_000,
-                    /* maxBufferMs = */ 60_000,
-                    /* bufferForPlaybackMs = */ 1_000,
-                    /* bufferForPlaybackAfterRebufferMs = */ 2_000
+                    /* minBufferMs = */ 12_000,
+                    /* maxBufferMs = */ 32_000,
+                    /* bufferForPlaybackMs = */ 800,
+                    /* bufferForPlaybackAfterRebufferMs = */ 1_500
                 )
-                .setPrioritizeTimeOverSizeThresholds(true)
+                .setPrioritizeTimeOverSizeThresholds(false)
                 .setBackBuffer(/* backBufferDurationMs = */ 0, /* retainBackBufferFromKeyframe = */ false)
                 .build()
 
@@ -715,14 +714,6 @@ class AudioPlayerManager(
 
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                         super.onMediaItemTransition(mediaItem, reason)
-                        val current = _state.value.currentTrack
-                        val isCurrentOffline = current?.isDownloaded == true || !current?.localPath.isNullOrBlank() || resolverEngine.isOfflineMode.value
-                        if (isAutoplayEnabled && !isCurrentOffline) {
-                            val isNearEnd = _state.value.currentIndex >= _state.value.queue.size - 1
-                            if (isNearEnd && _state.value.queue.isNotEmpty()) {
-                                prefetchAutoplayRecommendation()
-                            }
-                        }
                     }
 
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -1001,13 +992,12 @@ class AudioPlayerManager(
                         persistCurrentPlaybackState()
                     }
 
-                    if (safeDur > 0L && (pos.toFloat() / safeDur.toFloat()) > 0.75f) {
+                    val remainingMs = safeDur - pos
+                    if (safeDur >= 20_000L && remainingMs in 1L..14_000L) {
                         if (_state.value.currentIndex >= _state.value.queue.lastIndex && isAutoplayEnabled) {
                             prefetchAutoplayRecommendation()
                         }
-                        if ((pos.toFloat() / safeDur.toFloat()) > 0.82f) {
-                            prefetchNextTrack()
-                        }
+                        prefetchNextTrack()
                     }
                 }
                 delay(500L)
@@ -1026,7 +1016,12 @@ class AudioPlayerManager(
                 coroutineScope.launch(Dispatchers.IO) {
                     try {
                         val resolvedLocal = resolveLocalTrackIfAvailable(nextTrack)
-                        resolverEngine.resolveTrack(resolvedLocal, getPreferredAudioQuality())
+                        resolveStreamForTrack(
+                            track = resolvedLocal,
+                            isVideo = resolvedLocal.isVideoTrack,
+                            preferredQuality = getPreferredAudioQuality(),
+                            forceRefresh = false
+                        )
                     } catch (e: Exception) {
                         Log.w(TAG, "Prefetch failed for ${nextTrack.id}: ${e.message}")
                     }
@@ -1929,8 +1924,10 @@ class AudioPlayerManager(
                     id = current.id,
                     title = current.title,
                     artist = current.artist,
+                    album = if (current.isVideoTrack) "YouTube Video" else current.album,
                     durationSeconds = (current.durationMs / 1000).toInt(),
-                    thumbnailUrl = current.artUrl
+                    thumbnailUrl = current.artUrl,
+                    source = if (current.isVideoTrack) "YOUTUBE_VIDEO" else "YOUTUBE"
                 )
                 val recommendations = QueueRecommendationEngine.fetchRelevantRecommendations(
                     currentTrack = seedMeta,
@@ -1952,7 +1949,9 @@ class AudioPlayerManager(
                         album = if (isCurrentVideo) "YouTube Video" else nextRec.album,
                         durationMs = nextRec.durationSeconds * 1000L,
                         artUrl = nextRec.thumbnailUrl,
-                        genre = if (isCurrentVideo) "YouTube Video" else "Track"
+                        genre = if (isCurrentVideo) "YouTube Video" else "Track",
+                        itag = if (isCurrentVideo) 18 else 251,
+                        codec = if (isCurrentVideo) "MP4" else "Opus"
                     )
                     musicRepository.insertTrack(newTrack)
                     withContext(Dispatchers.Main) {
@@ -1997,8 +1996,10 @@ class AudioPlayerManager(
                     id = current.id,
                     title = current.title,
                     artist = current.artist,
+                    album = if (current.isVideoTrack) "YouTube Video" else current.album,
                     durationSeconds = (current.durationMs / 1000).toInt(),
-                    thumbnailUrl = current.artUrl
+                    thumbnailUrl = current.artUrl,
+                    source = if (current.isVideoTrack) "YOUTUBE_VIDEO" else "YOUTUBE"
                 )
                 val recommendations = QueueRecommendationEngine.fetchRelevantRecommendations(
                     currentTrack = seedMeta,
@@ -2020,7 +2021,9 @@ class AudioPlayerManager(
                         album = if (isCurrentVideo) "YouTube Video" else nextRec.album,
                         durationMs = nextRec.durationSeconds * 1000L,
                         artUrl = nextRec.thumbnailUrl,
-                        genre = if (isCurrentVideo) "YouTube Video" else "Track"
+                        genre = if (isCurrentVideo) "YouTube Video" else "Track",
+                        itag = if (isCurrentVideo) 18 else 251,
+                        codec = if (isCurrentVideo) "MP4" else "Opus"
                     )
                     musicRepository.insertTrack(newTrack)
                     withContext(Dispatchers.Main) {

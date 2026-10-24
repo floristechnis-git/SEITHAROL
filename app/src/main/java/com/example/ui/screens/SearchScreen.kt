@@ -73,6 +73,7 @@ fun SearchScreen(
     val trendingSearches by viewModel.trendingSearches.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
     val currentProvider by viewModel.selectedProviderFilter.collectAsState()
+    val verifiedSearchArtists by viewModel.searchedVerifiedArtists.collectAsState()
     val personalizedTracks by viewModel.personalizedTracks.collectAsState()
     val trendingHits by viewModel.trendingHits.collectAsState()
 
@@ -663,11 +664,13 @@ fun SearchScreen(
                 }
             }
 
-            // Matching Artists
+            // Matching Verified Artists (strictly from real YouTube Music artist profiles, never scraped from song results)
             val shouldShowArtists = if (currentProvider == com.example.ui.ProviderFilter.LOCAL || currentProvider == com.example.ui.ProviderFilter.YOUTUBE) {
                 false
             } else {
-                (selectedTab == SearchTab.TOP || selectedTab == SearchTab.ARTISTS) && filteredArtists.isNotEmpty()
+                query.trim().length >= 2 &&
+                    (selectedTab == SearchTab.TOP || selectedTab == SearchTab.ARTISTS) &&
+                    verifiedSearchArtists.isNotEmpty()
             }
             if (shouldShowArtists) {
                 item {
@@ -681,13 +684,15 @@ fun SearchScreen(
                     )
                 }
 
-                items(filteredArtists) { name ->
+                items(verifiedSearchArtists, key = { "ver_art_${it.browseId}" }) { artistPreview ->
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 14.dp, vertical = 2.dp)
                             .clip(RoundedCornerShape(16.dp))
-                            .clickable { onNavigateToArtist(name) },
+                            .clickable {
+                                viewModel.navigateToArtist(artistPreview.name, isChannel = false)
+                            },
                         color = Color.Transparent
                     ) {
                         Row(
@@ -696,16 +701,21 @@ fun SearchScreen(
                                 .padding(horizontal = 8.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            SearchArtistAvatar(
-                                name = name,
-                                modifier = Modifier.size(46.dp)
+                            AsyncImage(
+                                model = artistPreview.avatarUrl,
+                                contentDescription = artistPreview.name,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(46.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
                             )
 
                             Spacer(modifier = Modifier.width(12.dp))
 
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = name,
+                                    text = artistPreview.name,
                                     color = MaterialTheme.colorScheme.onBackground,
                                     fontSize = 15.sp,
                                     fontFamily = OutfitFontFamily,
@@ -714,10 +724,12 @@ fun SearchScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "Artist",
+                                    text = artistPreview.subscribers.ifBlank { "Verified Artist" },
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 12.sp,
-                                    fontFamily = OutfitFontFamily
+                                    fontFamily = OutfitFontFamily,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
 
@@ -894,7 +906,9 @@ fun SearchScreen(
                         onPlayNextClick = { viewModel.playNext(track) },
                         onAddToQueueClick = { viewModel.addToQueue(track) },
                         onAddToPlaylistClick = { trackToAddToPlaylist = track },
-                        onGoToArtistClick = onNavigateToArtist,
+                        onGoToArtistClick = { creatorName ->
+                            viewModel.navigateToArtist(creatorName, isChannel = isVideo)
+                        },
                         onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                     )

@@ -45,7 +45,7 @@ enum class AppDestination(val label: String, val icon: ImageVector) {
 
 sealed interface SubScreen {
     data object None : SubScreen
-    data class Artist(val artistName: String) : SubScreen
+    data class Artist(val artistName: String, val isChannel: Boolean = false) : SubScreen
     data class Playlist(val playlistId: String, val returnSubScreen: SubScreen? = null) : SubScreen
     data object History : SubScreen
     data object Downloads : SubScreen
@@ -224,7 +224,10 @@ fun CascadeApp(
     LaunchedEffect(Unit) {
         viewModel.artistNavigationEvent.collectLatest { artistName ->
             isPlayerExpanded = false
-            currentSubScreen = SubScreen.Artist(artistName)
+            currentSubScreen = SubScreen.Artist(
+                artistName = artistName,
+                isChannel = viewModel.isArtistNavigationChannel.value
+            )
         }
     }
 
@@ -339,6 +342,7 @@ fun CascadeApp(
                     when (val sub = currentSubScreen) {
                         is SubScreen.Artist -> ArtistScreen(
                             artistName = sub.artistName,
+                            isChannel = sub.isChannel,
                             viewModel = viewModel,
                             playerState = playerState,
                             onBack = { currentSubScreen = SubScreen.None },
@@ -566,6 +570,7 @@ fun CascadeApp(
                         BackHandler { currentSubScreen = SubScreen.None }
                         ArtistScreen(
                             artistName = sub.artistName,
+                            isChannel = sub.isChannel,
                             viewModel = viewModel,
                             playerState = playerState,
                             onBack = { currentSubScreen = SubScreen.None },

@@ -79,28 +79,36 @@ fun PlaybackQueueModal(
     val trendingHits by viewModel.trendingHits.collectAsState()
     val videoSuggestions by viewModel.queueVideoSuggestions.collectAsState()
 
-    LaunchedEffect(playerState.currentTrack?.id) {
+    LaunchedEffect(playerState.currentTrack?.id, queue.size) {
         viewModel.refreshQueueSuggestions(playerState.currentTrack)
     }
 
     val suggestedTracks = remember(queue, personalizedTracks, trendingHits, videoSuggestions, playerState.currentTrack) {
         val queueIds = queue.map { it.id }.toSet()
         val isCurrentVideo = playerState.currentTrack?.isVideoTrack == true
-        val combinedPool = if (isCurrentVideo) {
-            (videoSuggestions + personalizedTracks + trendingHits).distinctBy { it.id }
+        val filteredSpecific = videoSuggestions
+            .filter { cand ->
+                cand.id !in queueIds && (isCurrentVideo || !cand.isVideoTrack)
+            }
+            .distinctBy { it.id }
+
+        if (filteredSpecific.isNotEmpty()) {
+            filteredSpecific.take(14)
         } else {
-            (personalizedTracks + trendingHits)
-                .filterNot {
-                    it.isVideoTrack ||
-                    it.album.equals("YouTube Video", ignoreCase = true) ||
-                    it.genre.equals("YouTube Video", ignoreCase = true) ||
-                    it.codec.equals("MP4", ignoreCase = true) ||
-                    it.title.contains("official video", ignoreCase = true) ||
-                    it.title.contains("music video", ignoreCase = true)
-                }
-                .distinctBy { it.id }
+            val fallbackPool = if (isCurrentVideo) {
+                videoSuggestions.distinctBy { it.id }
+            } else {
+                personalizedTracks
+                    .filterNot {
+                        it.isVideoTrack ||
+                            it.album.equals("YouTube Video", ignoreCase = true) ||
+                            it.genre.equals("YouTube Video", ignoreCase = true) ||
+                            it.codec.equals("MP4", ignoreCase = true)
+                    }
+                    .distinctBy { it.id }
+            }
+            fallbackPool.filter { it.id !in queueIds }.take(14)
         }
-        combinedPool.filter { it.id !in queueIds }.take(12)
     }
 
     androidx.activity.compose.BackHandler(onBack = onDismiss)

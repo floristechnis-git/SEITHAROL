@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.network.NetworkClients
 import okhttp3.Request
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 /**
  * Lightweight, 2GB-RAM-safe YouTube Player (`base.js`) Cipher Extractor & Evaluator.
@@ -11,10 +12,10 @@ import java.util.concurrent.ConcurrentHashMap
  * Key optimizations for 2GB RAM devices:
  * 1. Eliminates the persistent `android.webkit.WebView` instance (which consumed 45–80 MB of
  *    native Chromium RAM even when idle in the background).
- * 2. Releases the raw `base.js` string immediately after extracting the tiny `List<CipherOp>`
+ * 2. Never re-downloads `base.js` repeatedly if extraction returns empty (`lastLoadedTimestampMs`
+ *    guards all attempts for 6 hours, preventing repeated 2.5 MB downloads in format loops).
+ * 3. Releases the raw `base.js` string immediately after extracting `List<CipherOp>`
  *    (`REVERSE`, `SPLICE`, `SWAP`) and `signatureTimestamp`, keeping heap usage under 4 KB.
- * 3. Only runs lazily when a ciphered fallback format is encountered (primary `ANDROID_VR`,
- *    `IOS`, and `ANDROID_TESTSUITE` streams are unciphered and bypass `base.js` completely).
  */
 object KotlinJsInterp {
     private const val TAG = "KotlinJsInterp"
@@ -36,15 +37,25 @@ object KotlinJsInterp {
     private val sigCache = ConcurrentHashMap<String, String>()
     private val loadLock = Any()
 
+    private val fastHttpClient by lazy {
+        NetworkClients.okHttpClient.newBuilder()
+            .connectTimeout(3, TimeUnit.SECONDS)
+            .readTimeout(3, TimeUnit.SECONDS)
+            .build()
+    }
+
     fun ensurePlayerJsLoaded(forceRefresh: Boolean = false) {
         val now = System.currentTimeMillis()
-        if (!forceRefresh && cachedCipherOps.isNotEmpty() && (now - lastLoadedTimestampMs) < PLAYER_CACHE_TTL_MS) {
+        if (!forceRefresh && lastLoadedTimestampMs > 0L && (now - lastLoadedTimestampMs) < PLAYER_CACHE_TTL_MS) {
             return
         }
         synchronized(loadLock) {
-            if (!forceRefresh && cachedCipherOps.isNotEmpty() && (System.currentTimeMillis() - lastLoadedTimestampMs) < PLAYER_CACHE_TTL_MS) {
+            val checkNow = System.currentTimeMillis()
+            if (!forceRefresh && lastLoadedTimestampMs > 0L && (checkNow - lastLoadedTimestampMs) < PLAYER_CACHE_TTL_MS) {
                 return
             }
+            // Record attempt timestamp immediately so we NEVER loop downloading 2.5MB base.js on every format
+            lastLoadedTimestampMs = checkNow
             try {
                 val baseJsUrl = discoverActiveBaseJsUrl() ?: return
                 val baseJsCode = fetchText(baseJsUrl) ?: return
@@ -59,8 +70,6 @@ object KotlinJsInterp {
                 if (ops.isNotEmpty()) {
                     cachedCipherOps = ops
                 }
-
-                lastLoadedTimestampMs = System.currentTimeMillis()
                 Log.i(TAG, "Loaded base.js cipher ops: sts=$cachedSignatureTimestamp, ops=${cachedCipherOps.size}")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to parse YouTube base.js: ${e.message}")
@@ -185,7 +194,7 @@ object KotlinJsInterp {
             }
         }
 
-        if (helperObjName.isNullOrBlank() || statementsBody.isNullOrBlank()) {
+        if (helperObjName.isNullOrBlank() || statementsbrideIsNull(statementsBody)) {
             return emptyList()
         }
 
@@ -211,7 +220,7 @@ object KotlinJsInterp {
 
         val ops = mutableListOf<CipherOp>()
         val callRegex = Regex("""$escapedObj\.([a-zA-Z0-9_$]+)\(\s*a\s*(?:,\s*(\d+)\s*)?\)""")
-        for (call in callRegex.findAll(statementsBody)) {
+        for (call in callRegex.findAll(statementsBody!!)) {
             val methodName = call.groupValues[1]
             val arg = call.groupValues[2].toIntOrNull() ?: 0
             val opType = methodMap[methodName] ?: continue
@@ -220,6 +229,8 @@ object KotlinJsInterp {
 
         return ops
     }
+
+    private fun statementsbrideIsNull(s: String?): Boolean = s.isNullOrBlank()
 
     private fun fetchText(url: String): String? {
         return try {
@@ -230,7 +241,7 @@ object KotlinJsInterp {
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
                 )
                 .build()
-            NetworkClients.okHttpClient.newCall(req).execute().use { resp ->
+            fastHttpClient.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return null
                 resp.body?.string()
             }

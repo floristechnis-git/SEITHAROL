@@ -179,11 +179,13 @@ class CascadeViewModel(
 
     private val _artistNavigationEvent = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val artistNavigationEvent: SharedFlow<String> = _artistNavigationEvent.asSharedFlow()
+    val isArtistNavigationChannel = MutableStateFlow(false)
 
     private val _playerExpandEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val playerExpandEvent: SharedFlow<Unit> = _playerExpandEvent.asSharedFlow()
 
-    fun navigateToArtist(artistName: String) {
+    fun navigateToArtist(artistName: String, isChannel: Boolean = false) {
+        isArtistNavigationChannel.value = isChannel
         viewModelScope.launch(vmExceptionHandler) { _artistNavigationEvent.emit(artistName) }
     }
 
@@ -236,28 +238,52 @@ class CascadeViewModel(
 
     fun refreshQueueSuggestions(seedTrack: Track?) {
         val seed = seedTrack ?: playerState.value.currentTrack ?: return
-        if (isOfflineMode.value || !seed.isVideoTrack) {
+        if (isOfflineMode.value) {
             _queueVideoSuggestions.value = emptyList()
             return
         }
         viewModelScope.launch(vmExceptionHandler) {
             runCatching {
-                val query = "${seed.title} ${seed.artist}".trim()
-                val videos = InnerTubeStreamExtractor.searchAllYoutubeVideos("$query official video", limit = 6)
-                    .map { c ->
-                        Track(
-                            id = c.videoId,
-                            title = c.title,
-                            artist = c.artist,
-                            album = "YouTube Video",
-                            durationMs = c.durationSeconds * 1000L,
-                            artUrl = c.thumbnailUrl,
-                            genre = "YouTube Video",
-                            itag = 18,
-                            codec = "MP4"
-                        )
-                    }
-                _queueVideoSuggestions.value = videos
+                val isVideo = seed.isVideoTrack
+                val queueMeta = playerState.value.queue.map {
+                    com.seitharol.data.resolver.TrackMetadata(
+                        id = it.id,
+                        title = it.title,
+                        artist = it.artist,
+                        album = it.album,
+                        durationSeconds = (it.durationMs / 1000L).toInt(),
+                        thumbnailUrl = it.artUrl,
+                        source = if (it.isVideoTrack) "YOUTUBE_VIDEO" else "YOUTUBE"
+                    )
+                }
+                val seedMeta = com.seitharol.data.resolver.TrackMetadata(
+                    id = seed.id,
+                    title = seed.title,
+                    artist = seed.artist,
+                    album = if (isVideo) "YouTube Video" else seed.album,
+                    durationSeconds = (seed.durationMs / 1000L).toInt(),
+                    thumbnailUrl = seed.artUrl,
+                    source = if (isVideo) "YOUTUBE_VIDEO" else "YOUTUBE"
+                )
+                val recs = com.seitharol.player.QueueRecommendationEngine.fetchRelevantRecommendations(
+                    currentTrack = seedMeta,
+                    queueTracks = queueMeta,
+                    limit = 14
+                )
+                _queueVideoSuggestions.value = recs.map { r ->
+                    val recIsVideo = isVideo || r.source == "YOUTUBE_VIDEO" || r.album.equals("YouTube Video", ignoreCase = true)
+                    Track(
+                        id = r.id,
+                        title = r.title,
+                        artist = r.artist,
+                        album = if (recIsVideo) "YouTube Video" else r.album,
+                        durationMs = r.durationSeconds * 1000L,
+                        artUrl = r.thumbnailUrl,
+                        genre = if (recIsVideo) "YouTube Video" else "Music",
+                        itag = if (recIsVideo) 18 else 251,
+                        codec = if (recIsVideo) "MP4" else "Opus"
+                    )
+                }
             }
         }
     }
@@ -326,6 +352,7 @@ class CascadeViewModel(
     val searchFilter = MutableStateFlow(SearchFilter.ALL)
     val selectedProviderFilter = MutableStateFlow(ProviderFilter.ALL)
     private val onlineSearchResults = MutableStateFlow<List<Track>>(emptyList())
+    val searchedVerifiedArtists = MutableStateFlow<List<com.seitharol.data.resolver.YtmArtistPreview>>(emptyList())
     val isSearchingOnline = MutableStateFlow(false)
     val hasCompletedOnlineSearch = MutableStateFlow(false)
     private var searchRequestToken = 0
@@ -359,6 +386,7 @@ class CascadeViewModel(
         if (clean.length < 2 || isOfflineMode.value || !com.example.util.ErrorFormatter.isOnline(com.example.CascadeApplication.instance)) {
             searchRequestToken++
             onlineSearchResults.value = emptyList()
+            searchedVerifiedArtists.value = emptyList()
             isSearchingOnline.value = false
             hasCompletedOnlineSearch.value = true
             return
@@ -370,6 +398,13 @@ class CascadeViewModel(
 
         activeSearchJob = viewModelScope.launch(vmExceptionHandler) {
             try {
+                val verifiedArtistsDeferred = async {
+                    if (filter == ProviderFilter.ALL || filter == ProviderFilter.MUSIC) {
+                        InnerTubeStreamExtractor.searchVerifiedArtists(clean, limit = 4)
+                    } else {
+                        emptyList()
+                    }
+                }
                 val rawCandidates = when (filter) {
                     ProviderFilter.ALL -> {
                         // STRICTLY AUDIO SONGS ONLY — Never include YouTube Videos in "All"
@@ -437,7 +472,9 @@ class CascadeViewModel(
                         codec = if (isYtVideo) "MP4" else "Opus"
                     )
                 }
+                val verifiedArtists = runCatching { verifiedArtistsDeferred.await() }.getOrDefault(emptyList())
                 if (token == searchRequestToken) {
+                    searchedVerifiedArtists.value = verifiedArtists
                     isSearchingOnline.value = false
                     hasCompletedOnlineSearch.value = true
                 }

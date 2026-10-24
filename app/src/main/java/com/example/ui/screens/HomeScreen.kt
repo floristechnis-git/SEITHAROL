@@ -1185,8 +1185,8 @@ fun TrendingSongsHorizontalShelf(
                     shape = RoundedCornerShape(12.dp),
                     color = if (isPlaying) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                     modifier = Modifier
-                        .width(320.dp)
-                        .height(60.dp)
+                        .width(344.dp)
+                        .height(62.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .clickable { onTrackClick(track) }
                 ) {
@@ -1347,13 +1347,13 @@ fun FreshNewMusicShelf(
             itemsIndexed(tracks.distinctBy { it.id }, key = { idx, item -> "${item.id}_$idx" }) { _, track ->
                 Column(
                     modifier = Modifier
-                        .width(176.dp)
+                        .width(196.dp)
                         .clip(RoundedCornerShape(14.dp))
                         .clickable { onTrackClick(track) }
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(176.dp)
+                            .size(196.dp)
                             .clip(RoundedCornerShape(14.dp))
                     ) {
                         // Full-bleed High-Res Cover Art
@@ -1450,26 +1450,26 @@ fun QuickDialBentoSection(
     val topItems = items.take(12)
     val columns = topItems.chunked(2)
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val cardWidth = ((maxWidth - 42.dp) / 2f).coerceIn(148.dp, 210.dp)
+        val cardWidth = (maxWidth * 0.74f).coerceIn(248.dp, 320.dp)
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
             items(columns.size) { colIdx ->
                 val colItems = columns[colIdx]
                 Column(
                     modifier = Modifier.width(cardWidth),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     colItems.forEach { item ->
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(12.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(62.dp)
-                                .clip(RoundedCornerShape(8.dp))
+                                .height(68.dp)
+                                .clip(RoundedCornerShape(12.dp))
                                 .clickable { onItemClick(item) }
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1477,7 +1477,7 @@ fun QuickDialBentoSection(
                                     model = upgradeThumbnail(item.thumbnailUrl),
                                     contentDescription = item.title,
                                     contentScale = ContentScale.Crop,
-                                    modifier = Modifier.size(62.dp)
+                                    modifier = Modifier.size(68.dp)
                                 )
                                 Column(
                                     modifier = Modifier

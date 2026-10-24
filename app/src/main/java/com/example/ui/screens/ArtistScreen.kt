@@ -40,6 +40,7 @@ import com.seitharol.ui.search.BackArrowSvgIcon
 @Composable
 fun ArtistScreen(
     artistName: String,
+    isChannel: Boolean = false,
     viewModel: CascadeViewModel,
     playerState: PlayerState,
     onBack: () -> Unit,
@@ -50,15 +51,20 @@ fun ArtistScreen(
 
     val isOfflineMode by viewModel.isOfflineMode.collectAsState()
     val downloadedTracks by viewModel.downloadedTracks.collectAsState()
-    var artistData by remember(artistName) { mutableStateOf<YtmArtistPageData?>(null) }
-    var isLoading by remember(artistName) { mutableStateOf(true) }
+    var artistData by remember(artistName, isChannel) { mutableStateOf<YtmArtistPageData?>(null) }
+    var isLoading by remember(artistName, isChannel) { mutableStateOf(true) }
 
-    LaunchedEffect(artistName, isOfflineMode) {
+    LaunchedEffect(artistName, isChannel, isOfflineMode) {
         isLoading = true
         artistData = if (isOfflineMode) {
             null
         } else {
-            runCatching { InnerTubeStreamExtractor.fetchArtistPage(artistName) }.getOrNull()
+            runCatching {
+                InnerTubeStreamExtractor.fetchArtistPage(
+                    artistName = artistName,
+                    isChannel = isChannel
+                )
+            }.getOrNull()
         }
         isLoading = false
     }
@@ -161,7 +167,10 @@ fun ArtistScreen(
             }
         } else {
             val page = artistData ?: return@Box
-            val domainTopSongs = remember(page.topSongs) { page.topSongs.map { it.toDomainTrack() } }
+            val effectiveIsChannel = isChannel || page.isChannel
+            val domainTopSongs = remember(page.topSongs, effectiveIsChannel) {
+                page.topSongs.map { it.toDomainTrack(forceVideo = effectiveIsChannel) }
+            }
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -275,7 +284,12 @@ fun ArtistScreen(
                                 )
                                 val isOfficial = page.browseId.startsWith("UC") || page.browseId.startsWith("MPLA")
                                 val subtitleText = when {
-                                    isOfficial && page.subscriberCountText.isNotBlank() -> "${page.subscriberCountText} • Official Artist"
+                                    effectiveIsChannel && page.subscriberCountText.isNotBlank() && !page.subscriberCountText.contains("Channel", true) ->
+                                        "${page.subscriberCountText} • Channel"
+                                    effectiveIsChannel -> "YouTube Channel"
+                                    isOfficial && page.subscriberCountText.isNotBlank() && !page.subscriberCountText.contains("Artist", true) ->
+                                        "${page.subscriberCountText} • Official Artist"
+                                    isOfficial && page.subscriberCountText.isNotBlank() -> page.subscriberCountText
                                     isOfficial -> "Official Artist"
                                     page.subscriberCountText.isNotBlank() -> page.subscriberCountText
                                     else -> "Artist"
@@ -312,7 +326,7 @@ fun ArtistScreen(
                             Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = "Play Top",
+                                text = if (effectiveIsChannel) "Play Videos" else "Play Top",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.sp,
                                 maxLines = 1,
@@ -323,11 +337,17 @@ fun ArtistScreen(
 
                         OutlinedButton(
                             onClick = {
-                                val seed = domainTopSongs.firstOrNull()
-                                if (seed != null) {
-                                    viewModel.startRadioMix(seed)
-                                } else if (!page.radioPlaylistId.isNullOrBlank()) {
-                                    viewModel.playPlaylistOrMix(page.radioPlaylistId)
+                                if (effectiveIsChannel) {
+                                    if (domainTopSongs.isNotEmpty()) {
+                                        viewModel.playQueue(domainTopSongs.shuffled(), 0, isPlaylist = false)
+                                    }
+                                } else {
+                                    val seed = domainTopSongs.firstOrNull()
+                                    if (seed != null) {
+                                        viewModel.startRadioMix(seed)
+                                    } else if (!page.radioPlaylistId.isNullOrBlank()) {
+                                        viewModel.playPlaylistOrMix(page.radioPlaylistId)
+                                    }
                                 }
                             },
                             shape = RoundedCornerShape(50),
@@ -337,7 +357,7 @@ fun ArtistScreen(
                             Icon(Icons.Default.Shuffle, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = "Artist Radio",
+                                text = if (effectiveIsChannel) "Shuffle Channel" else "Artist Radio",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.sp,
                                 maxLines = 1,
@@ -352,7 +372,7 @@ fun ArtistScreen(
                 if (domainTopSongs.isNotEmpty()) {
                     item {
                         Text(
-                            text = "Top Songs",
+                            text = if (effectiveIsChannel) "Channel Videos" else "Top Songs",
                             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onBackground,
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
@@ -679,11 +699,19 @@ fun ArtistScreen(
     }
 }
 
-private fun CandidateStream.toDomainTrack(): Track = Track(
-    id = this.videoId,
-    title = this.title,
-    artist = this.artist,
-    album = this.albumName.orEmpty(),
-    durationMs = this.durationSeconds * 1000L,
-    artUrl = this.thumbnailUrl
-)
+private fun CandidateStream.toDomainTrack(forceVideo: Boolean = false): Track {
+    val isVid = forceVideo ||
+        this.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
+        this.albumName.equals("YouTube Video", ignoreCase = true)
+    return Track(
+        id = this.videoId,
+        title = this.title,
+        artist = this.artist,
+        album = if (isVid) "YouTube Video" else this.albumName.orEmpty(),
+        durationMs = this.durationSeconds * 1000L,
+        artUrl = this.thumbnailUrl,
+        genre = if (isVid) "YouTube Video" else "Music",
+        itag = if (isVid) 18 else 251,
+        codec = if (isVid) "MP4" else "Opus"
+    )
+}

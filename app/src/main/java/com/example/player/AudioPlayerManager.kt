@@ -94,6 +94,7 @@ class AudioPlayerManager(
 ) {
     private val TAG = "AudioPlayerManager"
     private var exoPlayer: ExoPlayer? = null
+    private var exoMediaSourceFactory: DefaultMediaSourceFactory? = null
     private var equalizer: Equalizer? = null
     private var loudnessEnhancer: LoudnessEnhancer? = null
     private var boundAudioSessionId: Int = -1
@@ -535,10 +536,6 @@ class AudioPlayerManager(
                 videoId = ytId,
                 forceRefresh = forceRefresh,
                 allowHlsFallback = true
-            ).getOrNull() ?: InnerTubeStreamExtractor.resolveRawVideoStreamById(
-                videoId = ytId,
-                forceRefresh = true,
-                allowHlsFallback = true
             ).getOrNull()
 
             if (!videoUrl.isNullOrBlank()) {
@@ -635,6 +632,7 @@ class AudioPlayerManager(
             val dataSourceFactory = DefaultDataSource.Factory(context, resolvingFactory)
             val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
                 .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(/* minimumLoadableRetryCount = */ 1))
+            exoMediaSourceFactory = mediaSourceFactory
 
             // Buffer tuned for instant startup (0.8s) and continuous streaming on 2GB RAM devices:
             val loadControl = DefaultLoadControl.Builder()
@@ -957,10 +955,28 @@ class AudioPlayerManager(
 
             requestAudioFocus()
             player.volume = if (_state.value.isMuted) 0f else 1.0f
-            if (startPositionMs > 0L) {
-                player.setMediaItem(mediaItem, startPositionMs)
+            val factory = exoMediaSourceFactory
+            if (sourceUrl.startsWith("merged_av::") && factory != null) {
+                val parts = sourceUrl.removePrefix("merged_av::").split("|||")
+                val videoUri = Uri.parse(parts[0])
+                val audioUri = Uri.parse(parts.getOrElse(1) { parts[0] })
+                val videoSource = factory.createMediaSource(track.toMediaItem(videoUri))
+                val audioSource = factory.createMediaSource(MediaItem.fromUri(audioUri))
+                val mergedSource = androidx.media3.exoplayer.source.MergingMediaSource(videoSource, audioSource)
+                if (startPositionMs > 0L) {
+                    player.setMediaSource(mergedSource, startPositionMs)
+                } else {
+                    player.setMediaSource(mergedSource)
+                }
             } else {
-                player.setMediaItem(mediaItem)
+                if (startPositionMs > 0L) {
+                    player.setMediaItem(mediaItem, startPositionMs)
+                } else {
+                    player.setMediaItem(mediaItem)
+                }
+            }
+            attachedTextureView?.let { tv ->
+                runCatching { player.setVideoTextureView(tv) }
             }
             player.playWhenReady = userRequestedPlay
             player.prepare()
@@ -1268,6 +1284,7 @@ class AudioPlayerManager(
         userRequestedPlay = false
         bufferingWatchdogJob?.cancel()
         isRetryingOrLoading = false
+        positionJob?.cancel()
         loadTrackJob?.cancel()
         retryJob?.cancel()
         abandonAudioFocus()
@@ -1280,6 +1297,9 @@ class AudioPlayerManager(
             isPlaying = false,
             isBuffering = false
         )
+        try {
+            MediaPlaybackService.stopService(context)
+        } catch (_: Throwable) {}
     }
 
     fun addToQueue(track: Track) {
@@ -1379,7 +1399,7 @@ class AudioPlayerManager(
                     }
 
                     val resolvedStream = try {
-                        withTimeout(18_000L) {
+                        withTimeout(6_500L) {
                             resolveStreamForTrack(
                                 track = resolvedLocalTrack,
                                 isVideo = isVideoTrack,
@@ -1388,14 +1408,23 @@ class AudioPlayerManager(
                             )
                         }
                     } catch (firstErr: Exception) {
-                        // Automatic retry with fresh token & LOW quality so notification resume / slow radio wake never auto-pauses
-                        withTimeout(16_000L) {
-                            resolveStreamForTrack(
-                                track = resolvedLocalTrack,
-                                isVideo = isVideoTrack,
-                                preferredQuality = com.seitharol.data.resolver.AudioQuality.LOW,
-                                forceRefresh = true
-                            )
+                        // Fast failover with rotated client & JioSaavn fallback
+                        withTimeout(6_500L) {
+                            if (!isVideoTrack) {
+                                resolverEngine.resolveTrack(
+                                    track = resolvedLocalTrack.copy(audioUrl = ""),
+                                    preferredQuality = com.seitharol.data.resolver.AudioQuality.LOW,
+                                    forceRefresh = true,
+                                    preferNonYoutubeFallback = true
+                                )
+                            } else {
+                                resolveStreamForTrack(
+                                    track = resolvedLocalTrack,
+                                    isVideo = true,
+                                    preferredQuality = com.seitharol.data.resolver.AudioQuality.LOW,
+                                    forceRefresh = true
+                                )
+                            }
                         }
                     }
                     resolvedLocalTrack to resolvedStream
@@ -2133,11 +2162,12 @@ class AudioPlayerManager(
 
     fun attachVideoTextureView(textureView: android.view.TextureView?) {
         try {
+            ensurePlayerInitialized()
             val player = exoPlayer ?: return
             if (textureView == null) {
                 attachedTextureView?.let { player.clearVideoTextureView(it) }
                 attachedTextureView = null
-            } else if (attachedTextureView !== textureView) {
+            } else {
                 attachedTextureView = textureView
                 player.setVideoTextureView(textureView)
             }

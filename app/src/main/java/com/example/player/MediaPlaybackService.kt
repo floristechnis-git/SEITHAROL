@@ -76,6 +76,7 @@ class MediaPlaybackService : Service() {
 
         var playerManager: AudioPlayerManager? = null
         @Volatile var isRunning: Boolean = false
+        @Volatile private var activeInstance: MediaPlaybackService? = null
 
         fun startService(context: Context) {
             if (isRunning) return
@@ -93,12 +94,15 @@ class MediaPlaybackService : Service() {
         }
 
         fun stopService(context: Context) {
+            isRunning = false
             val appCtx = context.applicationContext
-            val intent = Intent(appCtx, MediaPlaybackService::class.java)
+            runCatching {
+                activeInstance?.stopAndRemoveNotification()
+            }
             try {
                 val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
                 nm?.cancel(NOTIFICATION_ID)
-                appCtx.stopService(intent)
+                appCtx.stopService(Intent(appCtx, MediaPlaybackService::class.java))
             } catch (_: Throwable) {
             }
         }
@@ -122,6 +126,7 @@ class MediaPlaybackService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        activeInstance = this
         isRunning = true
         isTerminating = false
         createNotificationChannel()
@@ -234,6 +239,7 @@ class MediaPlaybackService : Service() {
     private fun promoteOrNotifySafely(notification: Notification, forceStartForeground: Boolean = false) {
         if (isTerminating) return
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        val isCurrentlyActive = playerManager?.state?.value?.let { it.isPlaying || it.isBuffering } ?: false
         if (!isInForeground || forceStartForeground) {
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -256,6 +262,12 @@ class MediaPlaybackService : Service() {
                 } catch (e2: Throwable) {
                     Log.w(TAG, "Foreground promotion fallback to notify: ${e2.message}")
                 }
+            }
+        }
+        if (!isCurrentlyActive && isInForeground) {
+            runCatching {
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
+                isInForeground = false
             }
         }
         runCatching {
@@ -542,7 +554,13 @@ class MediaPlaybackService : Service() {
     override fun onDestroy() {
         isTerminating = true
         isRunning = false
+        if (activeInstance === this) activeInstance = null
+        lockReleaseJob?.cancel()
+        artLoadJob?.cancel()
         serviceScope.cancel()
+        runCatching {
+            playerManager?.onAppClearedFromRecents()
+        }
         stopAndRemoveNotification()
         super.onDestroy()
     }

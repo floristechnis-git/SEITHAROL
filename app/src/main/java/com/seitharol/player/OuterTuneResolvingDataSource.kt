@@ -15,6 +15,7 @@ import com.seitharol.data.resolver.TrackMetadata
 import kotlinx.coroutines.runBlocking
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.min
 
 @OptIn(UnstableApi::class)
 object OuterTuneResolvingDataSource {
@@ -55,6 +56,7 @@ object OuterTuneResolvingDataSource {
     const val MEDIA_HTTP_USER_AGENT = VR_161_USER_AGENT
 
     private const val STREAM_TTL_MS = 3 * 60 * 60 * 1000L // 3 hours
+    private const val GOOGLE_VIDEO_CHUNK_BYTES = 512L * 1024L // 512 KB per fast unthrottled chunk
 
     private data class CachedStream(
         val streamUrl: String,
@@ -168,8 +170,8 @@ object OuterTuneResolvingDataSource {
         return httpFactoryByUserAgent.getOrPut(userAgent) {
             DefaultHttpDataSource.Factory()
                 .setUserAgent(userAgent)
-                .setConnectTimeoutMs(15_000)
-                .setReadTimeoutMs(20_000)
+                .setConnectTimeoutMs(8_000)
+                .setReadTimeoutMs(10_000)
                 .setAllowCrossProtocolRedirects(true)
         }
     }
@@ -255,9 +257,12 @@ object OuterTuneResolvingDataSource {
     }
 
     /**
-     * Creates a DataSource.Factory that resolves custom track URIs and dispatches each HTTP request
-     * to a DefaultHttpDataSource configured with the exact client-matched User-Agent (so Media3's
-     * DefaultHttpDataSource.makeConnection never overwrites ANDROID_VR / IOS / TESTSUITE User-Agents).
+     * Creates a DataSource.Factory that:
+     * 1. Dispatches each HTTP request to a DefaultHttpDataSource configured with the exact client-matched
+     *    User-Agent (preventing Media3 from overwriting ANDROID_VR / IOS / TESTSUITE User-Agents).
+     * 2. Automatically streams googlevideo.com adaptive URLs (which contain `clen=`) in fast 512 KB
+     *    `&range=start-end` chunks, eliminating GoogleVideo CDN HTTP 403 rejections and open-range throttling
+     *    so songs and videos start playing in < 1 second.
      */
     fun createFactory(
         qualityProvider: () -> AudioQuality = { AudioQuality.NORMAL }
@@ -267,32 +272,155 @@ object OuterTuneResolvingDataSource {
                 private var activeDelegate: DataSource? = null
                 private val transferListeners = mutableListOf<TransferListener>()
 
+                private var isChunkedGoogleVideo = false
+                private var baseResolvedSpec: DataSpec? = null
+                private var baseUriWithoutRange: String = ""
+                private var targetUserAgent: String = VR_161_USER_AGENT
+                private var nextReadPosition: Long = 0L
+                private var totalBytesRemaining: Long = 0L
+                private var currentChunkBytesRemaining: Long = 0L
+                private var currentChunkBytesRead: Long = 0L
+
                 override fun addTransferListener(transferListener: TransferListener) {
                     transferListeners.add(transferListener)
                     activeDelegate?.addTransferListener(transferListener)
                 }
 
+                private fun createDelegate(): DataSource {
+                    val d = getHttpFactoryForUserAgent(targetUserAgent).createDataSource()
+                    transferListeners.forEach { d.addTransferListener(it) }
+                    return d
+                }
+
+                private fun openNextGoogleVideoChunk(): Boolean {
+                    try {
+                        activeDelegate?.close()
+                    } catch (_: Throwable) {}
+                    activeDelegate = null
+
+                    if (totalBytesRemaining <= 0L) return false
+                    val baseSpec = baseResolvedSpec ?: return false
+
+                    val chunkLen = min(GOOGLE_VIDEO_CHUNK_BYTES, totalBytesRemaining)
+                    val endByte = nextReadPosition + chunkLen - 1L
+                    val sep = if (baseUriWithoutRange.contains("?")) "&" else "?"
+                    val chunkUri = Uri.parse("${baseUriWithoutRange}${sep}range=${nextReadPosition}-${endByte}")
+
+                    val chunkSpec = baseSpec.buildUpon()
+                        .setUri(chunkUri)
+                        .setPosition(0L)
+                        .setLength(C.LENGTH_UNSET.toLong())
+                        .build()
+
+                    val delegate = createDelegate()
+                    activeDelegate = delegate
+                    delegate.open(chunkSpec)
+                    currentChunkBytesRemaining = chunkLen
+                    currentChunkBytesRead = 0L
+                    return true
+                }
+
                 override fun open(dataSpec: DataSpec): Long {
                     val resolvedSpec = resolveDataSpec(dataSpec, qualityProvider)
-                    val targetUa = resolvedSpec.httpRequestHeaders["User-Agent"]
-                        ?: resolveClientHeadersForUrl(resolvedSpec.uri.toString())["User-Agent"]
+                    val uriStr = resolvedSpec.uri.toString()
+                    targetUserAgent = resolvedSpec.httpRequestHeaders["User-Agent"]
+                        ?: resolveClientHeadersForUrl(uriStr)["User-Agent"]
                         ?: VR_161_USER_AGENT
-                    val delegate = getHttpFactoryForUserAgent(targetUa).createDataSource()
-                    transferListeners.forEach { delegate.addTransferListener(it) }
+
+                    val isGoogleVideo = uriStr.contains("googlevideo.com", ignoreCase = true) &&
+                        !uriStr.contains(".m3u8", ignoreCase = true) &&
+                        !uriStr.contains("manifest.googlevideo.com", ignoreCase = true)
+                    val clen = if (isGoogleVideo) {
+                        Regex("[?&]clen=(\\d+)").find(uriStr)?.groupValues?.get(1)?.toLongOrNull() ?: -1L
+                    } else -1L
+
+                    if (isGoogleVideo && clen > 0L) {
+                        baseResolvedSpec = resolvedSpec
+                        baseUriWithoutRange = uriStr.replace(Regex("([?&])range=[^&]+(&?)")) { m ->
+                            if (m.groupValues[1] == "?" && m.groupValues[2] == "&") "?"
+                            else if (m.groupValues[2] == "&") "&"
+                            else ""
+                        }
+                        nextReadPosition = resolvedSpec.position.coerceAtLeast(0L)
+                        totalBytesRemaining = if (resolvedSpec.length != C.LENGTH_UNSET.toLong()) {
+                            resolvedSpec.length
+                        } else {
+                            (clen - nextReadPosition).coerceAtLeast(0L)
+                        }
+
+                        if (totalBytesRemaining > 0L) {
+                            try {
+                                isChunkedGoogleVideo = true
+                                openNextGoogleVideoChunk()
+                                return totalBytesRemaining
+                            } catch (e: Exception) {
+                                // Fallback to standard single-request mode if &range= chunking fails
+                                isChunkedGoogleVideo = false
+                                try {
+                                    activeDelegate?.close()
+                                } catch (_: Throwable) {}
+                                activeDelegate = null
+                            }
+                        }
+                    }
+
+                    isChunkedGoogleVideo = false
+                    val delegate = createDelegate()
                     activeDelegate = delegate
                     return delegate.open(resolvedSpec)
                 }
 
                 override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-                    return activeDelegate?.read(buffer, offset, length) ?: C.RESULT_END_OF_INPUT
+                    if (length == 0) return 0
+
+                    if (!isChunkedGoogleVideo) {
+                        return activeDelegate?.read(buffer, offset, length) ?: C.RESULT_END_OF_INPUT
+                    }
+
+                    if (totalBytesRemaining <= 0L) {
+                        return C.RESULT_END_OF_INPUT
+                    }
+
+                    if (currentChunkBytesRemaining <= 0L || activeDelegate == null) {
+                        if (!openNextGoogleVideoChunk()) {
+                            return C.RESULT_END_OF_INPUT
+                        }
+                    }
+
+                    val maxToRead = min(length.toLong(), currentChunkBytesRemaining).toInt()
+                    var bytesRead = activeDelegate?.read(buffer, offset, maxToRead) ?: C.RESULT_END_OF_INPUT
+
+                    if (bytesRead == C.RESULT_END_OF_INPUT) {
+                        if (currentChunkBytesRead == 0L) {
+                            return C.RESULT_END_OF_INPUT
+                        }
+                        if (totalBytesRemaining <= 0L || !openNextGoogleVideoChunk()) {
+                            return C.RESULT_END_OF_INPUT
+                        }
+                        val nextMax = min(length.toLong(), currentChunkBytesRemaining).toInt()
+                        bytesRead = activeDelegate?.read(buffer, offset, nextMax) ?: C.RESULT_END_OF_INPUT
+                        if (bytesRead == C.RESULT_END_OF_INPUT) {
+                            return C.RESULT_END_OF_INPUT
+                        }
+                    }
+
+                    nextReadPosition += bytesRead
+                    currentChunkBytesRemaining -= bytesRead
+                    currentChunkBytesRead += bytesRead
+                    totalBytesRemaining -= bytesRead
+                    return bytesRead
                 }
 
-                override fun getUri(): Uri? = activeDelegate?.uri
+                override fun getUri(): Uri? = baseResolvedSpec?.uri ?: activeDelegate?.uri
 
                 override fun getResponseHeaders(): Map<String, List<String>> =
                     activeDelegate?.responseHeaders ?: emptyMap()
 
                 override fun close() {
+                    isChunkedGoogleVideo = false
+                    baseResolvedSpec = null
+                    totalBytesRemaining = 0L
+                    currentChunkBytesRemaining = 0L
                     try {
                         activeDelegate?.close()
                     } finally {

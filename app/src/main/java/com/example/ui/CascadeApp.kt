@@ -155,18 +155,13 @@ fun CascadeApp(
         ) {
             AndroidView(
                 factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        useController = false
-                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
-                        setKeepContentOnPlayerReset(true)
-                        player = viewModel.playerInstance
+                    android.view.TextureView(ctx).apply {
+                        isOpaque = false
+                        viewModel.attachVideoTextureView(this)
                     }
                 },
-                update = { pv ->
-                    if (pv.player !== viewModel.playerInstance) {
-                        pv.player = viewModel.playerInstance
-                    }
+                update = { tv ->
+                    viewModel.attachVideoTextureView(tv)
                 },
                 modifier = Modifier.fillMaxSize()
             )

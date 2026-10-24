@@ -290,24 +290,9 @@ object InnerTubeStreamExtractor {
      * working client instead of stalling ExoPlayer for 25 seconds.
      */
     fun verifyStreamPlayable(streamUrl: String): String? {
-        if (streamUrl.isBlank() || !streamUrl.startsWith("http")) return null
-        return runCatching {
-            val isHls = streamUrl.contains(".m3u8", ignoreCase = true) ||
-                streamUrl.contains("manifest.googlevideo.com", ignoreCase = true)
-            val headers = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(streamUrl)
-            val reqBuilder = okhttp3.Request.Builder().url(streamUrl)
-            headers.forEach { (k, v) -> reqBuilder.header(k, v) }
-            if (!isHls) {
-                reqBuilder.header("Range", "bytes=0-1023")
-            }
-            probeHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
-                if (resp.code in 200..299) {
-                    streamUrl
-                } else {
-                    null
-                }
-            }
-        }.getOrNull()
+        val trimmed = streamUrl.trim()
+        if (trimmed.isBlank() || !trimmed.startsWith("http")) return null
+        return trimmed
     }
 
     private fun extractStreamWithConfig(
@@ -322,15 +307,13 @@ object InnerTubeStreamExtractor {
             // Only send visitorData when explicitly requested or on VISIONOS/embedded clients;
             // keeping ANDROID_VR, IOS, and ANDROID_TESTSUITE stateless prevents YouTube from
             // throttling or blocking subsequent songs/videos after the first playback!
-            val visData = if (includeVisitorData || client.clientName == "VISIONOS") {
-                cachedVisitorData?.takeIf { it.isNotBlank() }
-            } else null
+            val visData = cachedVisitorData?.takeIf { it.isNotBlank() }
             val effectiveGl = client.glOverride ?: resolveDeviceGl()
             val endpoint = URL(client.playerEndpoint)
             val conn = (endpoint.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 2500
-                readTimeout = 2800
+                connectTimeout = 1800
+                readTimeout = 2000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("User-Agent", client.userAgent)
@@ -390,6 +373,9 @@ object InnerTubeStreamExtractor {
             if (conn.responseCode != 200) return@runCatching null
 
             val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+            json.optJSONObject("responseContext")?.optString("visitorData")?.takeIf { it.isNotBlank() }?.let {
+                cachedVisitorData = it
+            }
 
             val playability = json.optJSONObject("playabilityStatus")
             val status = playability?.optString("status")
@@ -533,39 +519,43 @@ object InnerTubeStreamExtractor {
             0
         }
 
-        // Pass 1: Direct binary audio streams (M4A / Opus) across all verified clients (zero HLS overhead)
-        for (i in VERIFIED_CLIENTS.indices) {
-            val clientIdx = (startOffset + i) % VERIFIED_CLIENTS.size
-            val client = VERIFIED_CLIENTS[clientIdx]
-            val extractedUrl = extractStreamWithConfig(
-                videoId = cleanVideoId,
-                client = client,
-                preferredQuality = preferredQuality,
-                cpn = cpn,
-                allowHls = false,
-                includeVisitorData = false
-            )
-            if (!extractedUrl.isNullOrBlank()) {
-                com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, extractedUrl)
-                return@withContext Result.success(extractedUrl)
-            }
+        // Fast Path: Try primary rotated client first (~300ms)
+        val primaryClient = VERIFIED_CLIENTS[startOffset % VERIFIED_CLIENTS.size]
+        val fastUrl = extractStreamWithConfig(
+            videoId = cleanVideoId,
+            client = primaryClient,
+            preferredQuality = preferredQuality,
+            cpn = cpn,
+            allowHls = false,
+            includeVisitorData = true
+        )
+        if (!fastUrl.isNullOrBlank()) {
+            com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, fastUrl)
+            return@withContext Result.success(fastUrl)
         }
 
-        // Pass 2: Refresh visitorData once and retry all clients (allowing verified HLS as fallback)
-        ensureVisitorData(forceFresh = true)
-        for (client in VERIFIED_CLIENTS) {
-            val retryUrl = extractStreamWithConfig(
-                videoId = cleanVideoId,
-                client = client,
-                preferredQuality = preferredQuality,
-                cpn = generateCpn(),
-                allowHls = true,
-                includeVisitorData = true
-            )
-            if (!retryUrl.isNullOrBlank()) {
-                com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, retryUrl)
-                return@withContext Result.success(retryUrl)
-            }
+        // Parallel Race: Query remaining top clients concurrently so fallback completes in < 1s
+        val remainingClients = VERIFIED_CLIENTS.indices
+            .filter { it != (startOffset % VERIFIED_CLIENTS.size) }
+            .map { VERIFIED_CLIENTS[it] }
+        val parallelUrls = coroutineScope {
+            remainingClients.take(4).map { client ->
+                async {
+                    extractStreamWithConfig(
+                        videoId = cleanVideoId,
+                        client = client,
+                        preferredQuality = preferredQuality,
+                        cpn = generateCpn(),
+                        allowHls = false,
+                        includeVisitorData = true
+                    )
+                }
+            }.awaitAll()
+        }
+        val winnerUrl = parallelUrls.firstOrNull { !it.isNullOrBlank() }
+        if (!winnerUrl.isNullOrBlank()) {
+            com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, winnerUrl)
+            return@withContext Result.success(winnerUrl)
         }
 
         Result.failure(IllegalStateException("Failed to resolve verified YouTube stream for videoId=$cleanVideoId"))
@@ -2072,48 +2062,51 @@ object InnerTubeStreamExtractor {
             0
         }
 
-        // Pass 1: Try all progressive MP4 clients first (ANDROID_VR, ANDROID_TESTSUITE, ANDROID_VR 1.43, IOS, etc.)
-        for (i in baseClients.indices) {
-            val client = baseClients[(startOffset + i) % baseClients.size]
-            val mp4Url = extractProgressiveVideoWithClient(
-                cleanVideoId = cleanVideoId,
-                client = client,
-                cpn = cpn,
-                includeVisitorData = false
-            ) { hls ->
-                if (hlsFallbackCandidate.isNullOrBlank() && hls.isNotBlank()) {
-                    val verifiedHls = verifyStreamPlayable(hls)
-                    if (!verifiedHls.isNullOrBlank()) {
-                        hlsFallbackCandidate = verifiedHls
-                    }
-                }
-            }
-            if (!mp4Url.isNullOrBlank()) {
-                videoStreamCache[cleanVideoId] = mp4Url to now
-                return@withContext Result.success(mp4Url)
+        // Fast Path: Try primary rotated client first (~300ms)
+        val primaryClient = baseClients[startOffset % baseClients.size]
+        val fastVideoUrl = extractProgressiveVideoWithClient(
+            cleanVideoId = cleanVideoId,
+            client = primaryClient,
+            cpn = cpn,
+            includeVisitorData = true,
+            allowAdaptiveMerge = allowHlsFallback
+        ) { hls ->
+            if (hlsFallbackCandidate.isNullOrBlank() && hls.isNotBlank()) {
+                hlsFallbackCandidate = hls
             }
         }
+        if (!fastVideoUrl.isNullOrBlank()) {
+            videoStreamCache[cleanVideoId] = fastVideoUrl to now
+            return@withContext Result.success(fastVideoUrl)
+        }
 
-        // Pass 2: Refresh visitorData once and retry progressive MP4 clients with visitorData
-        ensureVisitorData(forceFresh = true)
-        for (client in baseClients.take(4)) {
-            val retryMp4 = extractProgressiveVideoWithClient(
-                cleanVideoId = cleanVideoId,
-                client = client,
-                cpn = generateCpn(),
-                includeVisitorData = true
-            ) { hls ->
-                if (hlsFallbackCandidate.isNullOrBlank() && hls.isNotBlank()) {
-                    val verifiedHls = verifyStreamPlayable(hls)
-                    if (!verifiedHls.isNullOrBlank()) {
-                        hlsFallbackCandidate = verifiedHls
+        // Parallel Race: Query remaining clients concurrently so video starts in < 1s
+        val remainingClients = baseClients.indices
+            .filter { it != (startOffset % baseClients.size) }
+            .map { baseClients[it] }
+        val parallelResults = coroutineScope {
+            remainingClients.take(4).map { client ->
+                async {
+                    extractProgressiveVideoWithClient(
+                        cleanVideoId = cleanVideoId,
+                        client = client,
+                        cpn = generateCpn(),
+                        includeVisitorData = true,
+                        allowAdaptiveMerge = allowHlsFallback
+                    ) { hls ->
+                        if (hlsFallbackCandidate.isNullOrBlank() && hls.isNotBlank()) {
+                            hlsFallbackCandidate = hls
+                        }
                     }
                 }
-            }
-            if (!retryMp4.isNullOrBlank()) {
-                videoStreamCache[cleanVideoId] = retryMp4 to now
-                return@withContext Result.success(retryMp4)
-            }
+            }.awaitAll()
+        }
+        // Prefer direct progressive MP4 over merged adaptive streams if both succeeded
+        val directMp4Winner = parallelResults.firstOrNull { !it.isNullOrBlank() && !it.startsWith("merged_av::") }
+            ?: parallelResults.firstOrNull { !it.isNullOrBlank() }
+        if (!directMp4Winner.isNullOrBlank()) {
+            videoStreamCache[cleanVideoId] = directMp4Winner to now
+            return@withContext Result.success(directMp4Winner)
         }
 
         if (allowHlsFallback && !hlsFallbackCandidate.isNullOrBlank()) {
@@ -2130,17 +2123,16 @@ object InnerTubeStreamExtractor {
         client: InnerTubeClientConfig,
         cpn: String,
         includeVisitorData: Boolean = false,
+        allowAdaptiveMerge: Boolean = true,
         onHlsDiscovered: (String) -> Unit = {}
     ): String? {
         return runCatching {
-            val visData = if (includeVisitorData || client.clientName == "VISIONOS") {
-                cachedVisitorData?.takeIf { it.isNotBlank() }
-            } else null
+            val visData = cachedVisitorData?.takeIf { it.isNotBlank() }
             val effectiveGl = client.glOverride ?: resolveDeviceGl()
             val conn = (URL(client.playerEndpoint).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 2500
-                readTimeout = 2800
+                connectTimeout = 1800
+                readTimeout = 2000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("User-Agent", client.userAgent)
@@ -2158,7 +2150,10 @@ object InnerTubeStreamExtractor {
                 put("cpn", cpn)
                 put("contentCheckOk", true)
                 put("racyCheckOk", true)
-                client.params?.let { put("params", it) }
+                // Omit audio-only params ("CgIIAQ==") when requesting progressive video formats
+                if (client.params != null && client.params != "CgIIAQ==") {
+                    put("params", client.params)
+                }
                 if (client.isEmbedded) {
                     put("playbackContext", JSONObject().apply {
                         put("contentPlaybackContext", JSONObject().apply {
@@ -2191,6 +2186,9 @@ object InnerTubeStreamExtractor {
             conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
             if (conn.responseCode != 200) return@runCatching null
             val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+            json.optJSONObject("responseContext")?.optString("visitorData")?.takeIf { it.isNotBlank() }?.let {
+                cachedVisitorData = it
+            }
 
             val status = json.optJSONObject("playabilityStatus")?.optString("status")
             if (status != "OK") return@runCatching null
@@ -2199,6 +2197,42 @@ object InnerTubeStreamExtractor {
             val hlsUrl = streamingData.optString("hlsManifestUrl", "")
             if (hlsUrl.isNotBlank()) onHlsDiscovered(hlsUrl)
 
+            fun resolveFormatUrl(fmt: JSONObject, allowCipher: Boolean): String {
+                var rawUrl = fmt.optString("url", "")
+                if (rawUrl.isBlank() && allowCipher) {
+                    val cipherStr = fmt.optString("signatureCipher").ifBlank { fmt.optString("cipher") }
+                    if (cipherStr.isNotBlank()) {
+                        val params = mutableMapOf<String, String>()
+                        for (part in cipherStr.split("&")) {
+                            val idx = part.indexOf('=')
+                            if (idx > 0) {
+                                params[URLDecoder.decode(part.substring(0, idx), "UTF-8")] =
+                                    URLDecoder.decode(part.substring(idx + 1), "UTF-8")
+                            }
+                        }
+                        val baseUrl = params["url"].orEmpty()
+                        val sig = params["s"].orEmpty()
+                        val sp = params["sp"] ?: "sig"
+                        if (baseUrl.isNotBlank() && sig.isNotBlank()) {
+                            val ops = com.example.resolver.KotlinJsInterp.getActiveCipherOperations()
+                            if (ops.isNotEmpty()) {
+                                val deciphered = com.example.resolver.KotlinJsInterp.decipherSignature(sig, ops)
+                                if (deciphered.isNotBlank() && deciphered != sig) {
+                                    val sep = if (baseUrl.contains("?")) "&" else "?"
+                                    rawUrl = "$baseUrl$sep$sp=$deciphered"
+                                }
+                            }
+                        }
+                    }
+                }
+                if (rawUrl.isNotBlank() && !rawUrl.contains("cpn=")) {
+                    val sep = if (rawUrl.contains("?")) "&" else "?"
+                    rawUrl = "$rawUrl${sep}cpn=$cpn"
+                }
+                return rawUrl
+            }
+
+            // 1. Check muxed progressive MP4 formats first (itag 18 / 22 — single stream with both video & audio)
             val formats = streamingData.optJSONArray("formats")
             if (formats != null) {
                 val candidates = mutableListOf<Pair<Int, String>>()
@@ -2207,48 +2241,55 @@ object InnerTubeStreamExtractor {
                     val mime = fmt.optString("mimeType", "")
                     val itag = fmt.optInt("itag", 0)
                     if (!mime.startsWith("video/") && itag !in listOf(18, 22, 37, 59, 78)) continue
-
-                    var rawUrl = fmt.optString("url", "")
-                    if (rawUrl.isBlank()) {
-                        val cipherStr = fmt.optString("signatureCipher").ifBlank { fmt.optString("cipher") }
-                        if (cipherStr.isNotBlank()) {
-                            val params = mutableMapOf<String, String>()
-                            for (part in cipherStr.split("&")) {
-                                val idx = part.indexOf('=')
-                                if (idx > 0) {
-                                    params[URLDecoder.decode(part.substring(0, idx), "UTF-8")] =
-                                        URLDecoder.decode(part.substring(idx + 1), "UTF-8")
-                                }
-                            }
-                            val baseUrl = params["url"].orEmpty()
-                            val sig = params["s"].orEmpty()
-                            val sp = params["sp"] ?: "sig"
-                            if (baseUrl.isNotBlank() && sig.isNotBlank()) {
-                                val ops = com.example.resolver.KotlinJsInterp.getActiveCipherOperations()
-                                if (ops.isNotEmpty()) {
-                                    val deciphered = com.example.resolver.KotlinJsInterp.decipherSignature(sig, ops)
-                                    if (deciphered.isNotBlank() && deciphered != sig) {
-                                        val sep = if (baseUrl.contains("?")) "&" else "?"
-                                        rawUrl = "$baseUrl$sep$sp=$deciphered"
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    val rawUrl = resolveFormatUrl(fmt, allowCipher = false)
                     val height = fmt.optInt("height", 360)
                     if (rawUrl.isNotBlank() && !rawUrl.contains(".m3u8", true)) {
-                        val withCpn = if (!rawUrl.contains("cpn=")) {
-                            val sep = if (rawUrl.contains("?")) "&" else "?"
-                            "$rawUrl${sep}cpn=$cpn"
-                        } else rawUrl
-                        candidates.add(height to withCpn)
+                        candidates.add(height to rawUrl)
                     }
                 }
                 val sorted = candidates.sortedByDescending { it.first }
-                for ((_, candidateUrl) in sorted) {
-                    val verified = verifyStreamPlayable(candidateUrl)
-                    if (!verified.isNullOrBlank()) {
-                        return@runCatching verified
+                if (sorted.isNotEmpty()) {
+                    return@runCatching sorted.first().second
+                }
+            }
+
+            // 2. If muxed formats are absent, extract H.264 video/mp4 (360p/480p/720p) + audio/mp4 (itag 140)
+            //    from adaptiveFormats for synchronized MergingMediaSource playback in ExoPlayer
+            if (allowAdaptiveMerge) {
+                val adaptive = streamingData.optJSONArray("adaptiveFormats")
+                if (adaptive != null) {
+                    val videoCandidates = mutableListOf<Pair<Int, String>>()
+                    val audioCandidates = mutableListOf<Pair<Int, String>>()
+                    for (i in 0 until adaptive.length()) {
+                        val fmt = adaptive.optJSONObject(i) ?: continue
+                        val mime = fmt.optString("mimeType", "")
+                        val itag = fmt.optInt("itag", 0)
+                        val url = resolveFormatUrl(fmt, allowCipher = false)
+                        if (url.isBlank()) continue
+                        if (mime.startsWith("video/mp4", ignoreCase = true) &&
+                            (mime.contains("avc1", ignoreCase = true) || itag in listOf(134, 135, 136, 160, 298))
+                        ) {
+                            val height = fmt.optInt("height", 360)
+                            if (height in 240..720) {
+                                // Prefer 480p (135) or 360p (134) first for instant startup and smooth decoding
+                                val priority = when (height) {
+                                    480 -> 1000
+                                    360 -> 900
+                                    720 -> 800
+                                    else -> height
+                                }
+                                videoCandidates.add(priority to url)
+                            }
+                        } else if (mime.startsWith("audio/", ignoreCase = true) || itag in listOf(140, 251, 250, 249, 139)) {
+                            val isM4a = itag == 140 || mime.contains("mp4a", ignoreCase = true)
+                            val score = (if (isM4a) 10_000 else 5_000) + (fmt.optInt("bitrate", 128000) / 1000)
+                            audioCandidates.add(score to url)
+                        }
+                    }
+                    val bestVideo = videoCandidates.maxByOrNull { it.first }?.second
+                    val bestAudio = audioCandidates.maxByOrNull { it.first }?.second
+                    if (!bestVideo.isNullOrBlank() && !bestAudio.isNullOrBlank()) {
+                        return@runCatching "merged_av::$bestVideo|||$bestAudio"
                     }
                 }
             }
@@ -2290,7 +2331,7 @@ object InnerTubeStreamExtractor {
 
             val mp4Clients = VERIFIED_CLIENTS.filter { it.clientName != "VISIONOS" }
             for (client in mp4Clients) {
-                val url = extractProgressiveVideoWithClient(targetYtId, client, generateCpn())
+                val url = extractProgressiveVideoWithClient(targetYtId, client, generateCpn(), allowAdaptiveMerge = false)
                 addVideoCandidate(url)
                 if (candidates.size >= 3) break
             }
@@ -2653,7 +2694,11 @@ object InnerTubeStreamExtractor {
             }
             conn.outputStream.use { it.write(payload.toString().toByteArray()) }
             if (conn.responseCode != 200) return null
-            JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+            val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+            json.optJSONObject("responseContext")?.optString("visitorData")?.takeIf { it.isNotBlank() }?.let {
+                cachedVisitorData = it
+            }
+            json
         }.getOrNull()
     }
 

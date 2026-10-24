@@ -181,6 +181,44 @@ fun PlayerScreen(
     val likedTrackIds by viewModel.likedTrackIds.collectAsState()
     val isLiked = track.id in likedTrackIds || track.isLiked
 
+    if (showFullscreenVideo) {
+        val fullscreenNextTrack = when {
+            playerState.currentIndex in 0 until playerState.queue.size - 1 ->
+                playerState.queue[playerState.currentIndex + 1]
+            playerState.repeatMode == RepeatMode.ALL && playerState.queue.size > 1 ->
+                playerState.queue.firstOrNull()
+            else -> null
+        }
+        val fullscreenRemainingMs = (totalDuration - displayPosition).coerceAtLeast(0L)
+        var dismissedFullscreenCountdown by remember(track.id) { mutableStateOf(false) }
+        val showFullscreenCountdown = playerState.isPlaying &&
+            !playerState.isBuffering &&
+            totalDuration >= 15_000L &&
+            fullscreenRemainingMs in 1L..10_000L &&
+            fullscreenNextTrack != null &&
+            !dismissedFullscreenCountdown
+        val fullscreenCountdownSec = ((fullscreenRemainingMs + 999L) / 1000L).toInt().coerceIn(1, 10)
+        val fullscreenCountdownProg = (fullscreenRemainingMs.toFloat() / 10_000f).coerceIn(0f, 1f)
+
+        SeitharolFullscreenVideoModal(
+            viewModel = viewModel,
+            playerState = playerState,
+            isZoomCrop = isVideoZoomCrop,
+            onToggleZoomCrop = { isVideoZoomCrop = !isVideoZoomCrop },
+            nextTrack = fullscreenNextTrack,
+            showNextCountdown = showFullscreenCountdown,
+            countdownSeconds = fullscreenCountdownSec,
+            countdownProgress = fullscreenCountdownProg,
+            onDismissCountdown = { dismissedFullscreenCountdown = true },
+            onEnterPiP = {
+                showFullscreenVideo = false
+                (context as? MainActivity)?.enterPiPMode()
+            },
+            onDismiss = { showFullscreenVideo = false }
+        )
+        return
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -994,42 +1032,7 @@ fun PlayerScreen(
         Spacer(modifier = Modifier.height(8.dp))
     }
 
-    if (showFullscreenVideo) {
-        val fullscreenNextTrack = when {
-            playerState.currentIndex in 0 until playerState.queue.size - 1 ->
-                playerState.queue[playerState.currentIndex + 1]
-            playerState.repeatMode == RepeatMode.ALL && playerState.queue.size > 1 ->
-                playerState.queue.firstOrNull()
-            else -> null
-        }
-        val fullscreenRemainingMs = (totalDuration - displayPosition).coerceAtLeast(0L)
-        var dismissedFullscreenCountdown by remember(track.id) { mutableStateOf(false) }
-        val showFullscreenCountdown = playerState.isPlaying &&
-            !playerState.isBuffering &&
-            totalDuration >= 15_000L &&
-            fullscreenRemainingMs in 1L..10_000L &&
-            fullscreenNextTrack != null &&
-            !dismissedFullscreenCountdown
-        val fullscreenCountdownSec = ((fullscreenRemainingMs + 999L) / 1000L).toInt().coerceIn(1, 10)
-        val fullscreenCountdownProg = (fullscreenRemainingMs.toFloat() / 10_000f).coerceIn(0f, 1f)
 
-        SeitharolFullscreenVideoModal(
-            viewModel = viewModel,
-            playerState = playerState,
-            isZoomCrop = isVideoZoomCrop,
-            onToggleZoomCrop = { isVideoZoomCrop = !isVideoZoomCrop },
-            nextTrack = fullscreenNextTrack,
-            showNextCountdown = showFullscreenCountdown,
-            countdownSeconds = fullscreenCountdownSec,
-            countdownProgress = fullscreenCountdownProg,
-            onDismissCountdown = { dismissedFullscreenCountdown = true },
-            onEnterPiP = {
-                showFullscreenVideo = false
-                (context as? MainActivity)?.enterPiPMode()
-            },
-            onDismiss = { showFullscreenVideo = false }
-        )
-    }
 
     if (showQueue) {
         PlaybackQueueModal(
@@ -1228,6 +1231,7 @@ fun SeitharolRawVideoSurface(
         }
     }
 
+    val context = LocalContext.current
     Surface(
         modifier = modifier
             .fillMaxWidth()
@@ -1257,36 +1261,41 @@ fun SeitharolRawVideoSurface(
                 },
             contentAlignment = Alignment.Center
         ) {
-            // Media3 PlayerView bound to ExoPlayer singleton instance with transparent shutter
+            // Hardware TextureView bound to ExoPlayer singleton instance (renders cleanly inside Compose layers & PiP)
             AndroidView(
                 factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        useController = false
-                        resizeMode = if (isZoomCrop) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
-                        setKeepContentOnPlayerReset(true)
-                        player = viewModel.playerInstance
+                    TextureView(ctx).apply {
+                        isOpaque = false
+                        viewModel.attachVideoTextureView(this)
+                        addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+                            val loc = IntArray(2)
+                            v.getLocationOnScreen(loc)
+                            val rect = android.graphics.Rect(loc[0], loc[1], loc[0] + v.width, loc[1] + v.height)
+                            (ctx as? MainActivity)?.updateVideoSourceRect(rect)
+                        }
                     }
                 },
-                update = { pv ->
-                    if (pv.player !== viewModel.playerInstance) {
-                        pv.player = viewModel.playerInstance
+                update = { tv ->
+                    viewModel.attachVideoTextureView(tv)
+                    val loc = IntArray(2)
+                    tv.getLocationOnScreen(loc)
+                    if (tv.width > 0 && tv.height > 0) {
+                        val rect = android.graphics.Rect(loc[0], loc[1], loc[0] + tv.width, loc[1] + tv.height)
+                        (context as? MainActivity)?.updateVideoSourceRect(rect)
                     }
-                    pv.resizeMode = if (isZoomCrop) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
                 },
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Artwork backdrop shown while initial video stream is buffering before first video frame renders
-            // so the frame is NEVER a blank black box!
-            if (track != null && (!playerState.isVideoFrameRendered || playerState.isBuffering)) {
+            // Artwork backdrop shown ONLY before playback begins so active video frames are 100% unobstructed
+            if (track != null && !playerState.isPlaying && !playerState.isVideoFrameRendered) {
                 AsyncImage(
                     model = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxSize()
-                        .graphicsLayer { alpha = if (playerState.isVideoFrameRendered) 0.22f else 0.78f }
+                        .graphicsLayer { alpha = 0.72f }
                 )
             }
 
@@ -1476,9 +1485,32 @@ fun SeitharolFullscreenVideoModal(
         }
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+    val context = LocalContext.current
+    androidx.activity.compose.BackHandler(onBack = onDismiss)
+
+    // Rotate screen horizontally (landscape) and enter immersive fullscreen when Fullscreen Video is active
+    DisposableEffect(Unit) {
+        val activity = context as? Activity
+        val prevOrientation = activity?.requestedOrientation ?: android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        val window = activity?.window
+        val insetsController = if (window != null) {
+            androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+        } else null
+        insetsController?.let { controller ->
+            controller.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            controller.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+        onDispose {
+            activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            insetsController?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
     ) {
         Surface(
             modifier = Modifier
@@ -1507,34 +1539,38 @@ fun SeitharolFullscreenVideoModal(
             ) {
                 AndroidView(
                     factory = { ctx ->
-                        PlayerView(ctx).apply {
-                            useController = false
-                            resizeMode = if (isZoomCrop) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
-                            setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
-                            setKeepContentOnPlayerReset(true)
-                            player = viewModel.playerInstance
+                        TextureView(ctx).apply {
+                            isOpaque = false
+                            viewModel.attachVideoTextureView(this)
+                            addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+                                val loc = IntArray(2)
+                                v.getLocationOnScreen(loc)
+                                val rect = android.graphics.Rect(loc[0], loc[1], loc[0] + v.width, loc[1] + v.height)
+                                (ctx as? MainActivity)?.updateVideoSourceRect(rect)
+                            }
                         }
                     },
-                    update = { pv ->
-                        if (pv.player !== viewModel.playerInstance) {
-                            pv.player = viewModel.playerInstance
-                        }
-                        pv.resizeMode = if (isZoomCrop) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    update = { tv ->
+                        viewModel.attachVideoTextureView(tv)
                     },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(16f / 9f)
+                    modifier = if (isZoomCrop) {
+                        Modifier.fillMaxSize()
+                    } else {
+                        Modifier
+                            .fillMaxHeight()
+                            .aspectRatio(16f / 9f)
+                    }
                 )
 
-                if (!playerState.isVideoFrameRendered || playerState.isBuffering) {
+                if (!playerState.isPlaying && !playerState.isVideoFrameRendered) {
                     AsyncImage(
                         model = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
-                            .fillMaxWidth()
+                            .fillMaxHeight()
                             .aspectRatio(16f / 9f)
-                            .graphicsLayer { alpha = if (playerState.isVideoFrameRendered) 0.22f else 0.78f }
+                            .graphicsLayer { alpha = 0.72f }
                     )
                 }
 

@@ -49,15 +49,42 @@ class MainActivity : ComponentActivity() {
     private var openNotificationsRequest by mutableStateOf(false)
     var isInPiPMode by mutableStateOf(false)
         private set
+    private var videoSourceRectHint: android.graphics.Rect? = null
+
+    fun updateVideoSourceRect(rect: android.graphics.Rect) {
+        if (!rect.isEmpty) {
+            videoSourceRectHint = rect
+        }
+    }
 
     fun enterPiPMode() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             runCatching {
-                val params = PictureInPictureParams.Builder()
+                requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                isInPiPMode = true
+                val builder = PictureInPictureParams.Builder()
                     .setAspectRatio(Rational(16, 9))
-                    .build()
-                enterPictureInPictureMode(params)
+                videoSourceRectHint?.takeIf { !it.isEmpty }?.let { rect ->
+                    builder.setSourceRectHint(rect)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    builder.setSeamlessResizeEnabled(true)
+                }
+                val entered = enterPictureInPictureMode(builder.build())
+                if (!entered) {
+                    isInPiPMode = isInPictureInPictureMode
+                }
+            }.onFailure {
+                isInPiPMode = isInPictureInPictureMode
             }
+        }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        val s = viewModel.playerState.value
+        if (s.isPlaying && (s.isVideoMode || s.currentTrack?.isVideoTrack == true)) {
+            enterPiPMode()
         }
     }
 
@@ -222,7 +249,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         val playerMgr = (application as? CascadeApplication)?.audioPlayerManager
-        if (isFinishing && playerMgr?.state?.value?.isPlaying != true) {
+        if (isFinishing) {
+            runCatching { playerMgr?.onAppClearedFromRecents() }
             com.example.player.MediaPlaybackService.stopService(applicationContext)
         }
         super.onDestroy()

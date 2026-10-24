@@ -220,33 +220,73 @@ class ResolverEngine {
         val targetKbps = preferredQuality.maxBitrateKbps
         val failures = mutableListOf<String>()
 
-        // 4. STRICT ORIGINAL YOUTUBE VIDEO_ID RESOLUTION
+        // 4. FAST ORIGINAL YOUTUBE VIDEO_ID RESOLUTION + INSTANT JIOSAAVN FAILOVER
         if (isYouTubeId) {
-            val directResult = com.seitharol.data.resolver.InnerTubeStreamExtractor
-                .resolveExactYoutubeStreamById(targetVideoId, preferredQuality, forceRefresh = forceRefresh)
-            if (directResult.isSuccess) {
-                val url = directResult.getOrThrow()
-                val resolved = ResolvedStream(
-                    videoId = targetVideoId,
-                    streamUrl = url,
-                    itag = if (url.contains("opus") || url.contains("webm")) 251 else 140,
-                    codec = if (url.contains("opus") || url.contains("webm")) "Opus" else "AAC",
-                    bitrate = "${targetKbps} kbps",
-                    expiresAtMs = now + (6 * 3600 * 1000L),
-                    isLocal = false,
-                    resolvedBy = "YouTube Music InnerTube (Original)",
-                    latencyMs = 10
-                )
-                streamCache[cacheKey] = resolved
-                return@withContext resolved
-            } else {
-                failures.add("InnerTubeDirect: ${directResult.exceptionOrNull()?.message}")
+            if (!preferNonYoutubeFallback) {
+                val directResult = com.seitharol.data.resolver.InnerTubeStreamExtractor
+                    .resolveExactYoutubeStreamById(targetVideoId, preferredQuality, forceRefresh = forceRefresh)
+                if (directResult.isSuccess) {
+                    val url = directResult.getOrThrow()
+                    val resolved = ResolvedStream(
+                        videoId = targetVideoId,
+                        streamUrl = url,
+                        itag = if (url.contains("opus") || url.contains("webm")) 251 else 140,
+                        codec = if (url.contains("opus") || url.contains("webm")) "Opus" else "AAC",
+                        bitrate = "${targetKbps} kbps",
+                        expiresAtMs = now + (6 * 3600 * 1000L),
+                        isLocal = false,
+                        resolvedBy = "YouTube Music InnerTube (Original)",
+                        latencyMs = 10
+                    )
+                    streamCache[cacheKey] = resolved
+                    return@withContext resolved
+                } else {
+                    failures.add("InnerTubeDirect: ${directResult.exceptionOrNull()?.message}")
+                }
             }
 
+            // Fast JioSaavn CDN Fallback for Audio Songs (resolves in ~250ms in India!)
+            if (!track.isVideoTrack && track.title.isNotBlank()) {
+                try {
+                    // Pass id = "" so StreamResolver goes directly to JioSaavn without re-running InnerTube!
+                    val saavnUrl = withTimeoutOrNull(2800L) {
+                        com.seitharol.data.resolver.StreamResolver.resolveExactStreamUrl(
+                            track = com.seitharol.data.resolver.TrackMetadata(
+                                id = "",
+                                title = track.title,
+                                artist = track.artist,
+                                album = track.album,
+                                durationSeconds = (track.durationMs / 1000L).toInt(),
+                                thumbnailUrl = track.artUrl
+                            ),
+                            quality = preferredQuality
+                        )
+                    }
+                    if (!saavnUrl.isNullOrBlank()) {
+                        val resolved = ResolvedStream(
+                            videoId = targetVideoId,
+                            streamUrl = saavnUrl,
+                            itag = 140,
+                            codec = "AAC",
+                            bitrate = "${targetKbps} kbps",
+                            expiresAtMs = now + (6 * 3600 * 1000L),
+                            isLocal = false,
+                            resolvedBy = "JioSaavn Direct CDN",
+                            latencyMs = 15
+                        )
+                        streamCache[cacheKey] = resolved
+                        return@withContext resolved
+                    }
+                } catch (e: Exception) {
+                    failures.add("JioSaavnFastFallback: ${e.message}")
+                }
+            }
+
+            // Secondary Device/Federated Resolvers with tight timeout
             val req = ResolveRequest(videoId = targetVideoId, title = track.title, artist = track.artist)
             for (directNode in listOf(deviceInnerTubeResolver, pipedResolver, invidiousResolver)) {
                 try {
-                    val res = withTimeoutOrNull(4500L) { directNode.resolve(req) } ?: continue
+                    val res = withTimeoutOrNull(2500L) { directNode.resolve(req) } ?: continue
                     val candidateFormats = res.formats.filter { it.url.isNotBlank() }
                     val fmt = if (preferredQuality == com.seitharol.data.resolver.AudioQuality.LOW) {
                         candidateFormats.minByOrNull { it.bitrate } ?: candidateFormats.firstOrNull()
@@ -270,40 +310,6 @@ class ResolverEngine {
                     }
                 } catch (e: Exception) {
                     failures.add("${directNode.id}: ${e.message}")
-                }
-            }
-
-            // Fallback for audio songs if the specific videoId is restricted or unavailable
-            if (!track.isVideoTrack && track.title.isNotBlank()) {
-                try {
-                    val fallbackUrl = com.seitharol.data.resolver.StreamResolver.resolveExactStreamUrl(
-                        track = com.seitharol.data.resolver.TrackMetadata(
-                            id = targetVideoId,
-                            title = track.title,
-                            artist = track.artist,
-                            album = track.album,
-                            durationSeconds = (track.durationMs / 1000L).toInt(),
-                            thumbnailUrl = track.artUrl
-                        ),
-                        quality = preferredQuality
-                    )
-                    if (!fallbackUrl.isNullOrBlank()) {
-                        val resolved = ResolvedStream(
-                            videoId = targetVideoId,
-                            streamUrl = fallbackUrl,
-                            itag = if (fallbackUrl.contains("opus") || fallbackUrl.contains("webm")) 251 else 140,
-                            codec = if (fallbackUrl.contains("opus") || fallbackUrl.contains("webm")) "Opus" else "AAC",
-                            bitrate = "${targetKbps} kbps",
-                            expiresAtMs = now + (6 * 3600 * 1000L),
-                            isLocal = false,
-                            resolvedBy = "Canonical Stream Fallback",
-                            latencyMs = 25
-                        )
-                        streamCache[cacheKey] = resolved
-                        return@withContext resolved
-                    }
-                } catch (e: Exception) {
-                    failures.add("StreamResolverFallback: ${e.message}")
                 }
             }
 

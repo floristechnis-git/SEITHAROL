@@ -1249,7 +1249,7 @@ fun SeitharolRawVideoSurface(
                         useController = false
                         resizeMode = if (isZoomCrop) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
                         setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
-                        keepContentOnPlayerReset = true
+                        setKeepContentOnPlayerReset(true)
                         player = viewModel.playerInstance
                     }
                 },
@@ -1496,7 +1496,7 @@ fun SeitharolFullscreenVideoModal(
                             useController = false
                             resizeMode = if (isZoomCrop) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
                             setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
-                            keepContentOnPlayerReset = true
+                            setKeepContentOnPlayerReset(true)
                             player = viewModel.playerInstance
                         }
                     },

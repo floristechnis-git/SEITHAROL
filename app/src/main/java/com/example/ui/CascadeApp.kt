@@ -159,7 +159,7 @@ fun CascadeApp(
                         useController = false
                         resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                         setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
-                        keepContentOnPlayerReset = true
+                        setKeepContentOnPlayerReset(true)
                         player = viewModel.playerInstance
                     }
                 },

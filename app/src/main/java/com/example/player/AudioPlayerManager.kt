@@ -678,23 +678,8 @@ class AudioPlayerManager(
         }
 
         bufferingWatchdogJob = coroutineScope.launch {
-            // Fast end-of-track check: if ExoPlayer enters STATE_BUFFERING right at the end of a track
-            // when autoplay is off, transition cleanly to completed state instead of spinning forever!
-            delay(900L)
-            val pEarly = exoPlayer
-            val sEarly = _state.value
-            val durEarly = (pEarly?.duration?.takeIf { it > 0L && it != C.TIME_UNSET } ?: sEarly.durationMs)
-            val posEarly = (pEarly?.currentPosition?.takeIf { it > 0L } ?: sEarly.currentPositionMs)
-            if (pEarly != null && !pEarly.isPlaying && durEarly >= 5_000L && posEarly >= durEarly - 1_200L &&
-                (System.currentTimeMillis() - lastUserSeekTimestamp) > 1_200L
-            ) {
-                isRetryingOrLoading = false
-                onTrackCompleted()
-                return@launch
-            }
-
             val isVid = _state.value.isVideoMode || _state.value.currentTrack?.isVideoTrack == true
-            delay(if (isVid) 14_100L else 11_100L)
+            delay(if (isVid) 15_000L else 12_000L)
             if (!isActive || !userRequestedPlay) return@launch
             val current = _state.value.currentTrack ?: return@launch
             val p = exoPlayer ?: return@launch
@@ -1291,7 +1276,7 @@ class AudioPlayerManager(
                 }
             }
 
-            if (player.playerError != null || player.playbackState == Player.STATE_IDLE) {
+            if (player.playerError != null) {
                 runCatching {
                     player.stop()
                     player.clearMediaItems()
@@ -2207,10 +2192,12 @@ class AudioPlayerManager(
 
                     seekRecoveryJob?.cancel()
                     seekRecoveryJob = coroutineScope.launch {
-                        delay(2_200L)
+                        delay(4_500L)
                         val p = exoPlayer ?: return@launch
-                        if (userRequestedPlay && _state.value.currentTrack?.id == current.id && !p.isPlaying) {
-                            loadAndPlayCurrent(resumePositionMs = 0L, forceRefresh = false)
+                        if (userRequestedPlay && _state.value.currentTrack?.id == current.id && !p.isPlaying &&
+                            (p.playerError != null || p.playbackState == Player.STATE_IDLE || p.playbackState == Player.STATE_ENDED)
+                        ) {
+                            loadAndPlayCurrent(resumePositionMs = 0L, forceRefresh = p.playerError != null)
                         }
                     }
                     return
@@ -2269,14 +2256,12 @@ class AudioPlayerManager(
     fun seekTo(positionMs: Long) {
         val clamped = positionMs.coerceAtLeast(0L)
         lastUserSeekTimestamp = System.currentTimeMillis()
-        bufferingWatchdogJob?.cancel()
-        isRetryingOrLoading = false
         val player = exoPlayer
         val current = _state.value.currentTrack
         val wasEnded = _state.value.isEnded || player?.playbackState == Player.STATE_ENDED
 
-        // If the user seeks while the track is in the ended/replay state or stalled, automatically resume playback at the seeked position!
-        if (wasEnded || _state.value.isBuffering) {
+        // If the user seeks after the track ended, automatically resume playback from the seeked point
+        if (wasEnded) {
             hasUserInitiatedPlaybackThisSession = true
             userRequestedPlay = true
         }
@@ -2290,7 +2275,7 @@ class AudioPlayerManager(
         persistCurrentPlaybackState()
 
         if (player == null || player.playbackState == Player.STATE_IDLE || player.currentMediaItem == null || player.playerError != null) {
-            if (current != null) {
+            if (current != null && (userRequestedPlay || _state.value.isPlaying || wasEnded)) {
                 userRequestedPlay = true
                 loadAndPlayCurrent(resumePositionMs = clamped, forceRefresh = player?.playerError != null)
             }
@@ -2310,27 +2295,20 @@ class AudioPlayerManager(
                     vp.play()
                 }
             }
-            _state.value = _state.value.copy(isEnded = false)
             startPositionTracker()
         }
 
-        // Seek watchdog: if ExoPlayer stays in STATE_BUFFERING or STATE_ENDED for > 2.8s after a seek,
-        // seamlessly re-open the stream at the exact target seek position so it never hangs loading!
+        // Only recover if ExoPlayer encountered an actual error or remained stuck in STATE_ENDED/STATE_IDLE after seeking
         seekRecoveryJob?.cancel()
         if (userRequestedPlay && current != null) {
             val expectedId = current.id
             seekRecoveryJob = coroutineScope.launch {
-                delay(2_800L)
+                delay(5_500L)
                 val p = exoPlayer ?: return@launch
                 if (isActive && userRequestedPlay && _state.value.currentTrack?.id == expectedId && !p.isPlaying &&
-                    (p.playbackState == Player.STATE_BUFFERING || p.playbackState == Player.STATE_ENDED || _state.value.isBuffering || p.playerError != null)
+                    (p.playerError != null || p.playbackState == Player.STATE_IDLE || p.playbackState == Player.STATE_ENDED)
                 ) {
-                    val activeUrl = _state.value.activeStream?.streamUrl
-                    if (!activeUrl.isNullOrBlank() && p.playerError == null) {
-                        setupAndPlaySource(activeUrl, current, startPositionMs = clamped)
-                    } else {
-                        loadAndPlayCurrent(resumePositionMs = clamped, forceRefresh = true)
-                    }
+                    loadAndPlayCurrent(resumePositionMs = clamped, forceRefresh = p.playerError != null)
                 }
             }
         }

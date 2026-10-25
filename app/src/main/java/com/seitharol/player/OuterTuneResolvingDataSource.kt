@@ -673,21 +673,7 @@ object OuterTuneResolvingDataSource {
 
                     val delegate = createDelegate()
                     activeDelegate = delegate
-                    val openedLen = try {
-                        delegate.open(chunkSpec)
-                    } catch (e: Exception) {
-                        try { delegate.close() } catch (_: Throwable) {}
-                        activeDelegate = null
-                        if (nextReadPosition > 0L) {
-                            totalStreamLength = nextReadPosition
-                            if (streamIdentityKey.isNotBlank()) {
-                                knownStreamTotalLengths[streamIdentityKey] = nextReadPosition
-                            }
-                            totalBytesRemaining = 0L
-                            return false
-                        }
-                        throw e
-                    }
+                    val openedLen = delegate.open(chunkSpec)
 
                     // Discover totalStreamLength from Content-Range if not known from clen=
                     if (totalStreamLength <= 0L) {
@@ -972,20 +958,7 @@ object OuterTuneResolvingDataSource {
 
                     if (bytesRead == C.RESULT_END_OF_INPUT) {
                         commitActiveWriteBufferIfComplete()
-                        // If the server returned fewer bytes than requested for this chunk, we reached true stream EOF!
-                        if (currentChunkBytesRead == 0L || currentChunkBytesRead < currentChunkExpectedLen) {
-                            if (nextReadPosition > 0L) {
-                                totalStreamLength = nextReadPosition
-                                if (streamIdentityKey.isNotBlank()) {
-                                    knownStreamTotalLengths[streamIdentityKey] = nextReadPosition
-                                }
-                                val trackKey = mappedVideoId ?: currentlyPlayingTrackId
-                                if (!trackKey.isNullOrBlank()) {
-                                    inlineTotalLengthByTrackId[trackKey] = nextReadPosition
-                                }
-                            }
-                            totalBytesRemaining = 0L
-                            currentChunkBytesRemaining = 0L
+                        if (currentChunkBytesRead == 0L) {
                             return C.RESULT_END_OF_INPUT
                         }
                         if (totalBytesRemaining == 0L || !openNextGoogleVideoChunk()) {

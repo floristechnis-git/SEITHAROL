@@ -799,43 +799,16 @@ object InnerTubeStreamExtractor {
 
         // When a specific category/mood is active on HomeScreen, NEVER inject unrelated history automix seeds!
         // Instead, load authentic YouTube Music WEB_REMIX mood playlist tracks + official YTM category songs like OuterTune.
-        val automixJobs = if (isGeneralFeed) {
-            validSeeds.map { seedId -> async { fetchAutomixQueue(seedId, limit = 12) } }
-        } else {
-            emptyList()
-        }
+        val automixSeeds: List<String> = if (isGeneralFeed) validSeeds else emptyList()
+        val automixJobs = automixSeeds.map { seedId -> async { fetchAutomixQueue(seedId, limit = 12) } }
 
-        val ytmCategoryPlaylistJob = if (!isGeneralFeed) {
-            async {
-                runCatching {
-                    val moodQuery = when {
-                        moodCategory.equals("Manipuri Song", true) -> "Manipuri Hit Songs"
-                        moodCategory.equals("Trending", true) -> "Top 100 Songs India & Global"
-                        moodCategory.equals("Energize", true) -> "Energize Pop & Dance Hits"
-                        moodCategory.equals("Sad", true) -> "Sad Heartbreak Songs Official"
-                        moodCategory.equals("Chill", true) -> "Chill Vibes Official Songs"
-                        moodCategory.equals("Romantic", true) -> "Romantic Love Songs Official"
-                        moodCategory.equals("Workout", true) -> "Workout Gym Hype Songs"
-                        moodCategory.equals("Lo-Fi", true) -> "Lo-Fi Chill Beats & Late Night Vibes"
-                        else -> "$moodCategory Official Hit Songs"
-                    }
-                    val playlists = searchYtmCollections(
-                        query = moodQuery,
-                        filterParams = "EgWKAQIoAWoKEAkQChADEAUQBA==",
-                        type = "PLAYLIST",
-                        limit = 3
-                    )
-                    val firstPl = playlists.firstOrNull()
-                    if (firstPl != null) {
-                        fetchPlaylistAlbumOrMixDetails(firstPl.browseId, firstPl.title, firstPl.thumbnailUrl)
-                            .tracks
-                            .take(20)
-                    } else {
-                        emptyList()
-                    }
-                }.getOrDefault(emptyList())
+        val ytmCategoryPlaylistJob = async {
+            if (!isGeneralFeed) {
+                fetchMoodCategoryPlaylistTracks(moodCategory)
+            } else {
+                emptyList<CandidateStream>()
             }
-        } else null
+        }
 
         val searchQueries = when {
             moodCategory.equals("Manipuri Song", true) -> listOf(
@@ -894,12 +867,13 @@ object InnerTubeStreamExtractor {
         }
 
         val searchJobs = searchQueries.map { q -> async { searchOfficialYtmSongs(q, limit = 14) } }
-        val playlistBatch = ytmCategoryPlaylistJob?.await().orEmpty()
-        val batches = buildList {
-            if (playlistBatch.isNotEmpty()) add(playlistBatch)
-            addAll(automixJobs.awaitAll())
-            addAll(searchJobs.awaitAll())
+        val playlistBatch: List<CandidateStream> = ytmCategoryPlaylistJob.await()
+        val batches = mutableListOf<List<CandidateStream>>()
+        if (playlistBatch.isNotEmpty()) {
+            batches.add(playlistBatch)
         }
+        batches.addAll(automixJobs.awaitAll())
+        batches.addAll(searchJobs.awaitAll())
 
         val interleaved = mutableListOf<CandidateStream>()
         val maxLen = batches.maxOfOrNull { it.size } ?: 0
@@ -914,6 +888,38 @@ object InnerTubeStreamExtractor {
             }
         }
         CanonicalAudioResolver.deduplicateTracks(interleaved)
+    }
+
+    private suspend fun fetchMoodCategoryPlaylistTracks(moodCategory: String): List<CandidateStream> {
+        return try {
+            val moodQuery = when {
+                moodCategory.equals("Manipuri Song", true) -> "Manipuri Hit Songs"
+                moodCategory.equals("Trending", true) -> "Top 100 Songs India & Global"
+                moodCategory.equals("Energize", true) -> "Energize Pop & Dance Hits"
+                moodCategory.equals("Sad", true) -> "Sad Heartbreak Songs Official"
+                moodCategory.equals("Chill", true) -> "Chill Vibes Official Songs"
+                moodCategory.equals("Romantic", true) -> "Romantic Love Songs Official"
+                moodCategory.equals("Workout", true) -> "Workout Gym Hype Songs"
+                moodCategory.equals("Lo-Fi", true) -> "Lo-Fi Chill Beats & Late Night Vibes"
+                else -> "$moodCategory Official Hit Songs"
+            }
+            val playlists = searchYtmCollections(
+                query = moodQuery,
+                filterParams = "EgWKAQIoAWoKEAkQChADEAUQBA==",
+                type = "PLAYLIST",
+                limit = 3
+            )
+            val firstPl = playlists.firstOrNull()
+            if (firstPl != null) {
+                fetchPlaylistAlbumOrMixDetails(firstPl.browseId, firstPl.title, firstPl.thumbnailUrl)
+                    .tracks
+                    .take(20)
+            } else {
+                emptyList()
+            }
+        } catch (_: Throwable) {
+            emptyList()
+        }
     }
 
     suspend fun fetchPersonalizedCollections(

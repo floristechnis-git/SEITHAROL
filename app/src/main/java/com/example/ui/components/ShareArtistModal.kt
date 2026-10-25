@@ -210,11 +210,33 @@ object SeitharolDeepLinkHelper {
                         )
                     } else null
                 }
-                else -> null
+                else -> {
+                    val typeParam = uri.getQueryParameter("type")?.lowercase().orEmpty()
+                    val idParam = (uri.getQueryParameter("id") ?: uri.getQueryParameter("v"))?.let(::decodeParam).orEmpty()
+                    val nameParam = uri.getQueryParameter("name")?.let(::decodeParam).orEmpty()
+                    when {
+                        (typeParam == "track" || idParam.isNotBlank()) && idParam.isNotBlank() -> {
+                            val title = uri.getQueryParameter("title")?.let(::decodeParam).orEmpty()
+                            val artist = uri.getQueryParameter("artist")?.let(::decodeParam).orEmpty()
+                            val art = uri.getQueryParameter("art")?.let(::decodeParam).orEmpty()
+                            DeepLinkTarget.TrackTarget(idParam, title, artist, art)
+                        }
+                        typeParam == "artist" || nameParam.isNotBlank() -> {
+                            val resolvedName = nameParam.ifBlank { idParam }
+                            if (resolvedName.isNotBlank()) {
+                                DeepLinkTarget.ArtistTarget(
+                                    artistName = resolvedName,
+                                    browseId = idParam.takeIf { it.startsWith("UC") || it.startsWith("MPLA") }
+                                )
+                            } else null
+                        }
+                        else -> null
+                    }
+                }
             }
         }
 
-        // HTTPS / HTTP routes: https://seitharol.vercel.app/share/track/[id], /share/artist/[id], query params, and YouTube links
+        // HTTPS / HTTP routes: https://seitharol.vercel.app/share/track/[id], /track/[id], /share/artist/[id], /artist/[name], query params, and YouTube links
         if (scheme == "https" || scheme == "http") {
             val shareIdx = segments.indexOfFirst { it.equals("share", ignoreCase = true) }
             if (shareIdx >= 0 && segments.size > shareIdx + 2) {
@@ -235,8 +257,23 @@ object SeitharolDeepLinkHelper {
             }
 
             if (host.contains("seitharol.vercel.app") || host.contains("seitharol.app")) {
+                if (segments.size >= 2 && segments[0].equals("track", ignoreCase = true)) {
+                    val rawId = decodeParam(segments[1])
+                    val title = uri.getQueryParameter("title")?.let(::decodeParam).orEmpty()
+                    val artist = uri.getQueryParameter("artist")?.let(::decodeParam).orEmpty()
+                    val art = uri.getQueryParameter("art")?.let(::decodeParam).orEmpty()
+                    return DeepLinkTarget.TrackTarget(rawId, title, artist, art)
+                }
+                if (segments.size >= 2 && segments[0].equals("artist", ignoreCase = true)) {
+                    val rawId = decodeParam(segments[1])
+                    val name = uri.getQueryParameter("name")?.let(::decodeParam)?.ifBlank { rawId } ?: rawId
+                    return DeepLinkTarget.ArtistTarget(
+                        artistName = name,
+                        browseId = rawId.takeIf { it.startsWith("UC") || it.startsWith("MPLA") }
+                    )
+                }
                 val typeParam = uri.getQueryParameter("type")?.lowercase().orEmpty()
-                val idParam = uri.getQueryParameter("id")?.let(::decodeParam).orEmpty()
+                val idParam = (uri.getQueryParameter("id") ?: uri.getQueryParameter("v"))?.let(::decodeParam).orEmpty()
                 if (typeParam == "track" && idParam.isNotBlank()) {
                     val title = uri.getQueryParameter("title")?.let(::decodeParam).orEmpty()
                     val artist = uri.getQueryParameter("artist")?.let(::decodeParam).orEmpty()

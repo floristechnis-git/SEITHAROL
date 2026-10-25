@@ -520,9 +520,11 @@ fun InfoDetailScreen(
                     )
 
                     Text(
-                        text = "Version 1.0.0 • Crafted for Pure Listening",
+                        text = "Developed by Yumkhaibam Johnson Singh • Dedicated 71-Day Build
+Version 1.0.0 Public Release • https://seitharol.vercel.app",
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 18.sp
                     )
                 }
             }

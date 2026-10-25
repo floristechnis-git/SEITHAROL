@@ -97,7 +97,7 @@ fun ProfileScreen(
                                 NotificationBellAlertSvgIcon(
                                     tint = MaterialTheme.colorScheme.onSurface,
                                     hasUnreadAlert = hasUnreadNotifications,
-                                    alertDotColor = Color(0xFFFFB74D),
+                                    alertDotColor = Color(0xFFE53935),
                                     modifier = Modifier.size(21.dp)
                                 )
                             }

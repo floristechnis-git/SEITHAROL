@@ -14,6 +14,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLDecoder
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 enum class AudioQuality(val label: String, val maxBitrateKbps: Int) {
@@ -2743,7 +2744,7 @@ object InnerTubeStreamExtractor {
     suspend fun downloadUrlToFileReliable(
         streamUrl: String,
         tempFile: java.io.File,
-        onProgress: suspend (downloadedBytes: Long, totalBytes: Long) -> Unit
+        onProgress: suspend (downloadedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> }
     ): Boolean = withContext(Dispatchers.IO) {
         val headers = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(streamUrl)
         val isGoogleVideo = streamUrl.contains("googlevideo.com", ignoreCase = true)

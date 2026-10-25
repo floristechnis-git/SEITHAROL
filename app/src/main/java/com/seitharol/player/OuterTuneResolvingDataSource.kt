@@ -161,7 +161,8 @@ object OuterTuneResolvingDataSource {
                 val tmpFile = File(dir, "$cacheKey.tmp")
                 val ok = InnerTubeStreamExtractor.downloadUrlToFileReliable(
                     streamUrl = streamUrl,
-                    tempFile = tmpFile
+                    tempFile = tmpFile,
+                    onProgress = { _, _ -> }
                 )
                 if (ok && tmpFile.exists() && tmpFile.length() > 24_576L) {
                     if (destFile.exists()) destFile.delete()

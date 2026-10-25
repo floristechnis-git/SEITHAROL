@@ -1023,7 +1023,7 @@ fun PlayerScreen(
                     }
                 }
 
-                AnimatedVisibility(
+                androidx.compose.animation.AnimatedVisibility(
                     visible = playerSkipFeedbackIsForward != null,
                     enter = fadeIn(tween(120)),
                     exit = fadeOut(tween(150))

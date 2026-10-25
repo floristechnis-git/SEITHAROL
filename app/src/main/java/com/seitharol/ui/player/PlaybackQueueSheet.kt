@@ -131,7 +131,7 @@ fun PlaybackQueueSheet(
             }
         }
         Text(
-            text = if (queue.size == 1) "Up Next • 1 track" else "Up Next • ${queue.size} tracks",
+            text = if (queue.size == 1) "Up Next • 1 item" else "Up Next • ${queue.size} items",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

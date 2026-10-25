@@ -226,7 +226,7 @@ fun PlaybackQueueModal(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = if (queue.size == 1) "1 track" else "${queue.size} tracks",
+                        text = run { val isVid = queue.isNotEmpty() && queue.all { it.isVideoTrack }; val unit = if (isVid) "video" else "track"; if (queue.size == 1) "1 $unit" else "${queue.size} ${unit}s" },
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontFamily = OutfitFontFamily,
                         fontSize = 12.sp,

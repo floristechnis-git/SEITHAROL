@@ -47,7 +47,7 @@ class MusicRepository(
     private val fifteenDaysMillis = 15L * 24 * 60 * 60 * 1000L
 
     fun getAllTracks(): Flow<List<Track>> = trackDao.getAllTracks().map { list ->
-        list.map { it.toDomain() }
+        list.map { it.toDomain() }.filterNot { it.isLocalOnlyTrack }
     }
 
     fun getLikedTracks(): Flow<List<Track>> = trackDao.getLikedTracks().map { list ->
@@ -59,24 +59,26 @@ class MusicRepository(
     }
 
     fun searchTracks(query: String): Flow<List<Track>> = trackDao.searchTracks(query).map { list ->
-        list.map { it.toDomain() }
+        list.map { it.toDomain() }.filterNot { it.isLocalOnlyTrack }
     }
 
     fun getActiveHistory(): Flow<List<Track>> {
         val cutoff = System.currentTimeMillis() - fifteenDaysMillis
         return historyDao.getActiveHistory(cutoff).map { list ->
-            list.map { it.toDomain() }
+            list.map { it.toDomain() }.filterNot { it.isLocalOnlyTrack }
         }
     }
 
     fun getArchivedHistory(): Flow<List<Track>> {
         val cutoff = System.currentTimeMillis() - fifteenDaysMillis
         return historyDao.getArchivedHistory(cutoff).map { list ->
-            list.map { it.toDomain() }
+            list.map { it.toDomain() }.filterNot { it.isLocalOnlyTrack }
         }
     }
 
     suspend fun recordPlayHistory(track: Track) = withContext(Dispatchers.IO) {
+        // Never record local device songs/videos into history or Home feed seeds!
+        if (track.isLocalOnlyTrack) return@withContext
         val fiveMinutesAgo = System.currentTimeMillis() - 5 * 60 * 1000L
         val existing = historyDao.getRecentHistoryForTrack(track.id, fiveMinutesAgo)
         if (existing != null) return@withContext

@@ -36,6 +36,8 @@ fun Track.toMediaItem(streamUri: Uri? = null): MediaItem {
         .setMediaMetadata(metadata)
         .setTag(this)
 
+    // Only set explicit APPLICATION_M3U8 for HLS manifests; let Media3's DefaultExtractorsFactory
+    // auto-sniff MP4, Fragmented M4A, WebM, Opus, and FLAC container headers natively.
     if ((uriString.contains(".m3u8") ||
             uriString.contains("manifest/hls") ||
             uriString.contains("manifest.googlevideo.com") ||
@@ -44,20 +46,6 @@ fun Track.toMediaItem(streamUri: Uri? = null): MediaItem {
         com.seitharol.data.resolver.InnerTubeStreamExtractor.isHlsSupported
     ) {
         builder.setMimeType(MimeTypes.APPLICATION_M3U8)
-    } else if (uriString.endsWith(".webm") ||
-        uriString.contains("mime=video%2fwebm") ||
-        uriString.contains("mime=video/webm")
-    ) {
-        builder.setMimeType(MimeTypes.VIDEO_WEBM)
-    } else if (uriString.endsWith(".mp4") ||
-        uriString.contains("mime=video%2fmp4") ||
-        uriString.contains("mime=video/mp4") ||
-        uriString.contains("itag=18&") ||
-        uriString.endsWith("itag=18") ||
-        uriString.contains("itag=22&") ||
-        uriString.endsWith("itag=22")
-    ) {
-        builder.setMimeType(MimeTypes.VIDEO_MP4)
     }
 
     return builder.build()

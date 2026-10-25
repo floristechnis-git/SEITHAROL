@@ -78,7 +78,10 @@ data class PlayerState(
     val isVideoMode: Boolean = false,
     val isVideoFrameRendered: Boolean = false,
     val isMuted: Boolean = false,
-    val playbackSpeed: Float = 1.0f
+    val playbackSpeed: Float = 1.0f,
+    val bufferedPositionMs: Long = 0L,
+    val bufferedFraction: Float = 0f,
+    val isStreamCachedOnDisk: Boolean = false
 )
 
 /**
@@ -120,6 +123,11 @@ class AudioPlayerManager(
     private var loadTrackJob: Job? = null
     private var retryJob: Job? = null
     private var bufferingWatchdogJob: Job? = null
+    private var seekRecoveryJob: Job? = null
+    @Volatile
+    private var bufferingStartedAtMs: Long = 0L
+    @Volatile
+    private var lastLoadStartedAtMs: Long = 0L
     private var prefetchedTrackId: String? = null
     private var trackRetryCount = 0
     private var lastFailedTrackId: String? = null
@@ -626,7 +634,7 @@ class AudioPlayerManager(
                 InnerTubeStreamExtractor.invalidateVideoStreamCache(current.id)
                 try {
                     val freshStream = withContext(Dispatchers.IO) {
-                        withTimeout(18_000L) {
+                        withTimeoutOrNull(14_000L) {
                             val localFirst = resolveLocalTrackIfAvailable(current)
                             resolveStreamForTrack(
                                 track = localFirst,
@@ -636,9 +644,12 @@ class AudioPlayerManager(
                             )
                         }
                     }
-                    if (isActive && userRequestedPlay && _state.value.currentTrack?.id == expectedTrackId) {
+                    if (freshStream != null && isActive && userRequestedPlay && _state.value.currentTrack?.id == expectedTrackId) {
                         _state.value = _state.value.copy(activeStream = freshStream, isBuffering = true)
                         setupAndPlaySource(freshStream.streamUrl, current, startPositionMs = resumePos)
+                    } else if (freshStream == null) {
+                        isRetryingOrLoading = false
+                        _state.value = _state.value.copy(isBuffering = false)
                     }
                 } catch (e: Exception) {
                     isRetryingOrLoading = false
@@ -657,19 +668,20 @@ class AudioPlayerManager(
             }
             val dataSourceFactory = DefaultDataSource.Factory(context, resolvingFactory)
             val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
-                .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(/* minimumLoadableRetryCount = */ 1))
+                .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(/* minimumLoadableRetryCount = */ 4))
             exoMediaSourceFactory = mediaSourceFactory
 
-            // Buffer tuned for instant startup (0.8s) and continuous streaming on 2GB RAM devices:
+            // Buffer tuned for instant startup (0.6s), zero-stall background play (65s ahead),
+            // and instant backward/forward seeking (120s retained back-buffer):
             val loadControl = DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
-                    /* minBufferMs = */ 12_000,
-                    /* maxBufferMs = */ 32_000,
-                    /* bufferForPlaybackMs = */ 800,
-                    /* bufferForPlaybackAfterRebufferMs = */ 1_500
+                    /* minBufferMs = */ 15_000,
+                    /* maxBufferMs = */ 65_000,
+                    /* bufferForPlaybackMs = */ 600,
+                    /* bufferForPlaybackAfterRebufferMs = */ 1_200
                 )
                 .setPrioritizeTimeOverSizeThresholds(true)
-                .setBackBuffer(/* backBufferDurationMs = */ 0, /* retainBackBufferFromKeyframe = */ false)
+                .setBackBuffer(/* backBufferDurationMs = */ 120_000, /* retainBackBufferFromKeyframe = */ true)
                 .build()
 
             val builder = ExoPlayer.Builder(context)
@@ -695,6 +707,9 @@ class AudioPlayerManager(
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         when (playbackState) {
                             Player.STATE_BUFFERING -> {
+                                if (bufferingStartedAtMs == 0L) {
+                                    bufferingStartedAtMs = System.currentTimeMillis()
+                                }
                                 if (userRequestedPlay) {
                                     _state.value = _state.value.copy(isBuffering = true)
                                     _state.value.currentTrack?.id?.let { startBufferingWatchdog(it) }
@@ -703,12 +718,12 @@ class AudioPlayerManager(
                                 }
                             }
                             Player.STATE_READY -> {
+                                bufferingStartedAtMs = 0L
                                 bufferingWatchdogJob?.cancel()
+                                seekRecoveryJob?.cancel()
                                 isRetryingOrLoading = false
                                 val dur = duration.coerceAtLeast(0L)
                                 val safeDur = if (dur > 0L && dur != C.TIME_UNSET) dur else _state.value.durationMs
-                                // If the user requested playback and stream resolution just finished,
-                                // ensure ExoPlayer immediately starts playing rather than staying paused.
                                 if (userRequestedPlay && !playWhenReady) {
                                     playWhenReady = true
                                     play()
@@ -716,10 +731,23 @@ class AudioPlayerManager(
                                 val activelyPlaying = userRequestedPlay && playWhenReady
                                 val hasRenderedVideo = _state.value.isVideoFrameRendered ||
                                     (videoSize.width > 0 && videoSize.height > 0)
+                                val pos = currentPosition.coerceAtLeast(0L)
+                                val rawBufPos = bufferedPosition.coerceAtLeast(pos)
+                                val isLocalOrDiskCached = _state.value.activeStream?.isLocal == true ||
+                                    _state.value.currentTrack?.isLocalOnlyTrack == true ||
+                                    _state.value.isStreamCachedOnDisk
+                                val inlineFrac = _state.value.currentTrack?.let {
+                                    com.seitharol.player.OuterTuneResolvingDataSource.getInlineBufferedFraction(it.id, it.isVideoTrack || _state.value.isVideoMode)
+                                } ?: 0f
+                                val exoFrac = if (safeDur > 0L) (rawBufPos.toFloat() / safeDur.toFloat()).coerceIn(0f, 1f) else 0f
+                                val realBufFrac = if (isLocalOrDiskCached) 1f else maxOf(exoFrac, inlineFrac).coerceIn(0f, 1f)
+                                val realBufPos = if (isLocalOrDiskCached) safeDur else maxOf(rawBufPos, (realBufFrac * safeDur).toLong())
                                 _state.value = _state.value.copy(
                                     isBuffering = false,
                                     isPlaying = activelyPlaying,
                                     durationMs = safeDur,
+                                    bufferedPositionMs = realBufPos,
+                                    bufferedFraction = realBufFrac,
                                     isVideoFrameRendered = hasRenderedVideo
                                 )
                                 trackRetryCount = 0
@@ -900,14 +928,14 @@ class AudioPlayerManager(
                             delay(40L)
                             if (!isActive || !userRequestedPlay || _state.value.currentTrack?.id != current.id) return@launch
                             try {
-                                val freshStream = withTimeout(20_000L) {
+                                val freshStream = withTimeoutOrNull(14_000L) {
                                     resolveStreamForTrack(
                                         track = current.copy(audioUrl = ""),
                                         isVideo = isVideo,
                                         preferredQuality = getPreferredAudioQuality(),
                                         forceRefresh = true
                                     )
-                                }
+                                } ?: throw IllegalStateException("Stream resolution timed out")
                                 if (!isActive || !userRequestedPlay || _state.value.currentTrack?.id != current.id) return@launch
                                 _state.value = _state.value.copy(activeStream = freshStream, isBuffering = true)
                                 setupAndPlaySource(freshStream.streamUrl, current, startPositionMs = resumePositionMs)
@@ -916,8 +944,8 @@ class AudioPlayerManager(
                                 Log.e(TAG, "Retry attempt $trackRetryCount failed: ${e.message}", e)
                                 if (trackRetryCount <= 2) {
                                     trackRetryCount++
-                                    runCatching {
-                                        val secondStream = withTimeout(20_000L) {
+                                    val secondStream = runCatching {
+                                        withTimeoutOrNull(12_000L) {
                                             resolveStreamForTrack(
                                                 track = current.copy(audioUrl = ""),
                                                 isVideo = isVideo,
@@ -925,11 +953,11 @@ class AudioPlayerManager(
                                                 forceRefresh = true
                                             )
                                         }
-                                        if (isActive && userRequestedPlay && _state.value.currentTrack?.id == current.id) {
-                                            _state.value = _state.value.copy(activeStream = secondStream, isBuffering = true)
-                                            setupAndPlaySource(secondStream.streamUrl, current, startPositionMs = resumePositionMs)
-                                            return@launch
-                                        }
+                                    }.getOrNull()
+                                    if (secondStream != null && isActive && userRequestedPlay && _state.value.currentTrack?.id == current.id) {
+                                        _state.value = _state.value.copy(activeStream = secondStream, isBuffering = true)
+                                        setupAndPlaySource(secondStream.streamUrl, current, startPositionMs = resumePositionMs)
+                                        return@launch
                                     }
                                 }
                                 bufferingWatchdogJob?.cancel()
@@ -1076,10 +1104,19 @@ class AudioPlayerManager(
 
     private fun stopVideoPlayer() {
         runCatching {
+            attachedTextureView?.let { tv ->
+                runCatching { videoExoPlayer?.clearVideoTextureView(tv) }
+            }
+            videoExoPlayer?.clearVideoSurface()
             videoExoPlayer?.playWhenReady = false
             videoExoPlayer?.pause()
             videoExoPlayer?.stop()
             videoExoPlayer?.clearMediaItems()
+            videoExoPlayer?.release()
+        }
+        videoExoPlayer = null
+        if (attachedTexturePlayer !== exoPlayer) {
+            attachedTexturePlayer = null
         }
     }
 
@@ -1149,6 +1186,18 @@ class AudioPlayerManager(
 
             // Enable hardware video decoding directly on main exoPlayer when playing muxed MP4 / local MP4 / HLS video!
             val enableVideoOnMainPlayer = isVideo && !isSplitMergedAv
+            if (!isVideo) {
+                // Playing an audio song: detach any stale video surface and release secondary video decoder
+                // so a prior video or destroyed TextureView never blocks audio playback!
+                stopVideoPlayer()
+                attachedTextureView?.let { tv ->
+                    runCatching { player.clearVideoTextureView(tv) }
+                }
+                runCatching { player.clearVideoSurface() }
+                attachedTextureView = null
+                attachedTexturePlayer = null
+            }
+
             runCatching {
                 player.trackSelectionParameters = player.trackSelectionParameters
                     .buildUpon()
@@ -1159,11 +1208,17 @@ class AudioPlayerManager(
             if (enableVideoOnMainPlayer) {
                 stopVideoPlayer()
                 attachedTextureView?.let { tv ->
-                    runCatching { videoExoPlayer?.clearVideoTextureView(tv) }
                     runCatching {
                         player.setVideoTextureView(tv)
                         attachedTexturePlayer = player
                     }
+                }
+            }
+
+            if (player.playerError != null || player.playbackState == Player.STATE_IDLE) {
+                runCatching {
+                    player.stop()
+                    player.clearMediaItems()
                 }
             }
 
@@ -1259,9 +1314,27 @@ class AudioPlayerManager(
                             }
                         }
                     }
+                    val effectiveDur = if (safeDur > 0L) safeDur else _state.value.durationMs
+                    val rawBufPos = player.bufferedPosition.coerceAtLeast(pos)
+                    val curTrack = _state.value.currentTrack
+                    val isLocalOrCached = _state.value.activeStream?.isLocal == true ||
+                        curTrack?.isLocalOnlyTrack == true ||
+                        curTrack?.isDownloaded == true ||
+                        _state.value.isStreamCachedOnDisk ||
+                        (curTrack != null && com.seitharol.player.OuterTuneResolvingDataSource.getCompletedCacheFile(context, curTrack.id, curTrack.isVideoTrack || _state.value.isVideoMode) != null)
+                    val inlineFrac = curTrack?.let {
+                        com.seitharol.player.OuterTuneResolvingDataSource.getInlineBufferedFraction(it.id, it.isVideoTrack || _state.value.isVideoMode)
+                    } ?: 0f
+                    val exoFrac = if (effectiveDur > 0L) (rawBufPos.toFloat() / effectiveDur.toFloat()).coerceIn(0f, 1f) else 0f
+                    val realBufFrac = if (isLocalOrCached) 1f else maxOf(exoFrac, inlineFrac).coerceIn(0f, 1f)
+                    val realBufPos = if (isLocalOrCached) effectiveDur else maxOf(rawBufPos, (realBufFrac * effectiveDur).toLong())
+
                     _state.value = _state.value.copy(
                         currentPositionMs = pos,
-                        durationMs = if (safeDur > 0L) safeDur else _state.value.durationMs,
+                        durationMs = effectiveDur,
+                        bufferedPositionMs = realBufPos,
+                        bufferedFraction = realBufFrac,
+                        isStreamCachedOnDisk = isLocalOrCached,
                         activeLyricIndex = activeIdx,
                         isVideoFrameRendered = _state.value.isVideoFrameRendered || hasVideoSize
                     )
@@ -1358,12 +1431,19 @@ class AudioPlayerManager(
     fun playTrack(track: Track) {
         val current = _state.value.currentTrack
         val p = exoPlayer
-        // If tapping the exact song that is already loaded, do NOT restart from 0:00!
-        if (current != null && current.id == track.id && p != null && p.playbackState != Player.STATE_IDLE && p.currentMediaItem != null) {
-            if (!_state.value.isPlaying) {
-                togglePlayPause()
+        // If tapping the exact song that is already healthy and ready, resume instead of restarting from 0:00.
+        // If it was stalled/buffering in background or had an error, force a fresh reload at the current position!
+        if (current != null && current.id == track.id && p != null && p.currentMediaItem != null) {
+            if (p.playbackState == Player.STATE_READY && p.playerError == null && !_state.value.isBuffering && !isRetryingOrLoading) {
+                if (!_state.value.isPlaying || !p.isPlaying) {
+                    togglePlayPause()
+                }
+                return
+            } else if (!_state.value.isPlaying || !p.isPlaying) {
+                val resumePos = _state.value.currentPositionMs.coerceAtLeast(0L)
+                loadAndPlayCurrent(resumePositionMs = resumePos, forceRefresh = true)
+                return
             }
-            return
         }
 
         hasUserInitiatedPlaybackThisSession = true
@@ -1395,12 +1475,18 @@ class AudioPlayerManager(
         if (index in q.indices) {
             val target = q[index]
             val p = exoPlayer
-            // If tapping the currently active queue item, resume if paused rather than restarting from 0:00
-            if (index == _state.value.currentIndex && _state.value.currentTrack?.id == target.id && p != null && p.playbackState != Player.STATE_IDLE && p.currentMediaItem != null) {
-                if (!_state.value.isPlaying) {
-                    togglePlayPause()
+            // If tapping the currently active queue item, resume if ready, or force reload if stalled in background
+            if (index == _state.value.currentIndex && _state.value.currentTrack?.id == target.id && p != null && p.currentMediaItem != null) {
+                if (p.playbackState == Player.STATE_READY && p.playerError == null && !_state.value.isBuffering && !isRetryingOrLoading) {
+                    if (!_state.value.isPlaying || !p.isPlaying) {
+                        togglePlayPause()
+                    }
+                    return
+                } else if (!_state.value.isPlaying || !p.isPlaying) {
+                    val resumePos = _state.value.currentPositionMs.coerceAtLeast(0L)
+                    loadAndPlayCurrent(resumePositionMs = resumePos, forceRefresh = true)
+                    return
                 }
-                return
             }
 
             hasUserInitiatedPlaybackThisSession = true
@@ -1574,13 +1660,16 @@ class AudioPlayerManager(
         persistCurrentPlaybackState()
     }
 
-    private fun loadAndPlayCurrent(resumePositionMs: Long = 0L) {
+    private fun loadAndPlayCurrent(resumePositionMs: Long = 0L, forceRefresh: Boolean = false) {
         val current = _state.value.queue.getOrNull(_state.value.currentIndex) ?: _state.value.currentTrack ?: return
         prefetchedTrackId = null
         userRequestedPlay = true
+        lastLoadStartedAtMs = System.currentTimeMillis()
+        bufferingStartedAtMs = System.currentTimeMillis()
         loadTrackJob?.cancel()
         retryJob?.cancel()
         bufferingWatchdogJob?.cancel()
+        seekRecoveryJob?.cancel()
         isRetryingOrLoading = true
 
         val stopImmediately = settingsManager.state.value.stopImmediatelyOnNewTrack
@@ -1655,18 +1744,20 @@ class AudioPlayerManager(
                         }
                     }
 
-                    val resolvedStream = try {
-                        withTimeout(if (isVideoTrack) 10_000L else 6_500L) {
+                    val firstTry = runCatching {
+                        withTimeoutOrNull(if (isVideoTrack) 11_000L else 7_500L) {
                             resolveStreamForTrack(
                                 track = resolvedLocalTrack,
                                 isVideo = isVideoTrack,
                                 preferredQuality = preferredQuality,
-                                forceRefresh = false
+                                forceRefresh = forceRefresh
                             )
                         }
-                    } catch (firstErr: Exception) {
+                    }.getOrNull()
+
+                    val resolvedStream = firstTry ?: run {
                         // Fast failover with rotated client & JioSaavn fallback
-                        withTimeout(if (isVideoTrack) 10_000L else 6_500L) {
+                        withTimeoutOrNull(if (isVideoTrack) 12_000L else 8_500L) {
                             if (!isVideoTrack) {
                                 resolverEngine.resolveTrack(
                                     track = resolvedLocalTrack.copy(audioUrl = ""),
@@ -1682,7 +1773,7 @@ class AudioPlayerManager(
                                     forceRefresh = true
                                 )
                             }
-                        }
+                        } ?: throw IllegalStateException("Unable to resolve playable stream for '${resolvedLocalTrack.title}'")
                     }
                     resolvedLocalTrack to resolvedStream
                 }
@@ -1695,9 +1786,12 @@ class AudioPlayerManager(
                     return@launch
                 }
 
+                val isDiskCached = stream.isLocal || safeTrack.isDownloaded || safeTrack.isLocalOnlyTrack
                 _state.value = _state.value.copy(
                     currentTrack = safeTrack,
                     activeStream = stream,
+                    isStreamCachedOnDisk = isDiskCached,
+                    bufferedFraction = if (isDiskCached) 1f else 0f,
                     isBuffering = true
                 )
                 persistCurrentPlaybackState()
@@ -1977,34 +2071,39 @@ class AudioPlayerManager(
         ensurePlayerInitialized()
         val player = exoPlayer ?: return
         // Only pause when audio is actively playing!
-        // When paused, buffering, or loading, tapping toggle MUST start/resume playback, never pause.
+        // When paused, buffering, or stalled in background, tapping toggle MUST start/resume playback.
         if (_state.value.isPlaying && player.isPlaying) {
             pause()
         } else {
             userRequestedPlay = true
-            val savedResumePos = _state.value.currentPositionMs.coerceAtLeast(0L)
+            val savedResumePos = (player.currentPosition.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
             val current = _state.value.currentTrack
 
             if (current != null) {
-                if (player.playbackState == Player.STATE_BUFFERING) {
+                val activelyResolving = loadTrackJob?.isActive == true &&
+                    (System.currentTimeMillis() - lastLoadStartedAtMs) < 3_000L
+
+                if (activelyResolving) {
                     requestAudioFocus()
-                    player.playWhenReady = true
-                    player.play()
                     _state.value = _state.value.copy(isBuffering = true)
                     MediaPlaybackService.startService(context)
                     return
                 }
+
+                // If player was stalled in STATE_BUFFERING, STATE_IDLE, STATE_ENDED, or had an error
+                // (e.g. after background auto-pause or socket drop), reload cleanly at savedResumePos!
                 val isPlayerStalledOrNeedsReload = player.playbackState == Player.STATE_IDLE ||
+                    player.playbackState == Player.STATE_ENDED ||
+                    player.playbackState == Player.STATE_BUFFERING ||
+                    player.playerError != null ||
                     player.mediaItemCount == 0 ||
                     player.currentMediaItem == null
 
                 if (isPlayerStalledOrNeedsReload) {
-                    loadAndPlayCurrent(resumePositionMs = savedResumePos)
+                    val needsFreshStream = player.playbackState == Player.STATE_BUFFERING || player.playerError != null
+                    loadAndPlayCurrent(resumePositionMs = savedResumePos, forceRefresh = needsFreshStream)
                 } else {
                     requestAudioFocus()
-                    if (player.playerError != null) {
-                        player.prepare()
-                    }
                     if (savedResumePos > 0L && kotlin.math.abs(player.currentPosition - savedResumePos) > 1500L) {
                         player.seekTo(savedResumePos)
                     }
@@ -2018,8 +2117,20 @@ class AudioPlayerManager(
                         }
                     }
                     _state.value = _state.value.copy(isPlaying = true, isBuffering = false)
+                    startPositionTracker()
                     persistCurrentPlaybackState()
                     MediaPlaybackService.startService(context)
+
+                    // Verify hardware playback actually resumed within 2.5s; if background socket expired, reload seamlessly
+                    seekRecoveryJob?.cancel()
+                    seekRecoveryJob = coroutineScope.launch {
+                        delay(2_500L)
+                        val p = exoPlayer ?: return@launch
+                        if (userRequestedPlay && _state.value.currentTrack?.id == current.id && !p.isPlaying) {
+                            val pos = (p.currentPosition.takeIf { it > 0L } ?: savedResumePos).coerceAtLeast(0L)
+                            loadAndPlayCurrent(resumePositionMs = pos, forceRefresh = true)
+                        }
+                    }
                 }
             } else if (_state.value.queue.isNotEmpty()) {
                 loadAndPlayCurrent(resumePositionMs = savedResumePos)
@@ -2030,11 +2141,47 @@ class AudioPlayerManager(
     fun seekTo(positionMs: Long) {
         val clamped = positionMs.coerceAtLeast(0L)
         lastUserSeekTimestamp = System.currentTimeMillis()
-        exoPlayer?.seekTo(clamped)
-        runCatching { videoExoPlayer?.seekTo(clamped) }
         val activeIdx = _state.value.lyricLines.indexOfLast { it.timestampMs <= clamped + _state.value.lyricOffsetMs }
         _state.value = _state.value.copy(currentPositionMs = clamped, activeLyricIndex = activeIdx)
         persistCurrentPlaybackState()
+
+        val player = exoPlayer
+        val current = _state.value.currentTrack
+        if (player == null || player.playbackState == Player.STATE_IDLE || player.currentMediaItem == null || player.playerError != null) {
+            if (current != null && (userRequestedPlay || _state.value.isPlaying)) {
+                loadAndPlayCurrent(resumePositionMs = clamped, forceRefresh = player?.playerError != null)
+            }
+            return
+        }
+
+        player.seekTo(clamped)
+        runCatching { videoExoPlayer?.seekTo(clamped) }
+        if (userRequestedPlay) {
+            requestAudioFocus()
+            player.playWhenReady = true
+            player.play()
+        }
+
+        // Seek watchdog: if ExoPlayer stays in STATE_BUFFERING for > 3.8s after a seek,
+        // seamlessly re-open the stream at the exact target seek position so it never hangs loading!
+        seekRecoveryJob?.cancel()
+        if (userRequestedPlay && current != null) {
+            val expectedId = current.id
+            seekRecoveryJob = coroutineScope.launch {
+                delay(3_800L)
+                val p = exoPlayer ?: return@launch
+                if (isActive && userRequestedPlay && _state.value.currentTrack?.id == expectedId && !p.isPlaying &&
+                    (p.playbackState == Player.STATE_BUFFERING || _state.value.isBuffering || p.playerError != null)
+                ) {
+                    val activeUrl = _state.value.activeStream?.streamUrl
+                    if (!activeUrl.isNullOrBlank() && p.playerError == null) {
+                        setupAndPlaySource(activeUrl, current, startPositionMs = clamped)
+                    } else {
+                        loadAndPlayCurrent(resumePositionMs = clamped, forceRefresh = true)
+                    }
+                }
+            }
+        }
     }
 
     fun next() {
@@ -2447,21 +2594,30 @@ class AudioPlayerManager(
     fun attachVideoTextureView(textureView: android.view.TextureView?) {
         try {
             ensurePlayerInitialized()
-            val targetPlayer = if (activeVideoUsesSplitPlayer) {
-                ensureVideoPlayerInitialized()
-            } else {
-                exoPlayer
-            } ?: return
-
             if (textureView == null) {
                 attachedTextureView?.let { oldTv ->
                     runCatching { exoPlayer?.clearVideoTextureView(oldTv) }
                     runCatching { videoExoPlayer?.clearVideoTextureView(oldTv) }
                 }
+                runCatching { exoPlayer?.clearVideoSurface() }
                 attachedTextureView = null
                 attachedTexturePlayer = null
                 return
             }
+
+            // Never attach a video surface if the current track is an audio track!
+            val isCurrentVideo = _state.value.isVideoMode || _state.value.currentTrack?.isVideoTrack == true
+            if (!isCurrentVideo) {
+                runCatching { exoPlayer?.clearVideoTextureView(textureView) }
+                runCatching { exoPlayer?.clearVideoSurface() }
+                return
+            }
+
+            val targetPlayer = if (activeVideoUsesSplitPlayer) {
+                ensureVideoPlayerInitialized()
+            } else {
+                exoPlayer
+            } ?: return
 
             if (attachedTexturePlayer != null && attachedTexturePlayer !== targetPlayer) {
                 attachedTextureView?.let { oldTv ->
@@ -2481,7 +2637,7 @@ class AudioPlayerManager(
 
     /**
      * Periodically invoked by MediaPlaybackService to ensure background playback never mid-stops
-     * while the notification claims it is playing, and recovers from transient background stalls.
+     * while the notification claims it is playing, and automatically recovers from background stalls.
      */
     fun verifyAndSyncBackgroundPlayback() {
         try {
@@ -2489,19 +2645,31 @@ class AudioPlayerManager(
             val s = _state.value
             if (s.currentTrack == null) return
 
-            if (userRequestedPlay) {
-                if (player.playbackState == Player.STATE_READY && !player.isPlaying && !isPhoneCallActive()) {
+            if (userRequestedPlay && !isPhoneCallActive()) {
+                val now = System.currentTimeMillis()
+                val livePos = (player.currentPosition.takeIf { it > 0L } ?: s.currentPositionMs).coerceAtLeast(0L)
+                if (player.playbackState == Player.STATE_READY && !player.isPlaying) {
                     requestAudioFocus()
                     player.playWhenReady = true
                     player.play()
                     _state.value = s.copy(isPlaying = true, isBuffering = false)
+                    startPositionTracker()
                 } else if (player.playbackState == Player.STATE_IDLE &&
-                    !isRetryingOrLoading &&
                     loadTrackJob?.isActive != true &&
-                    retryJob?.isActive != true &&
-                    !isPhoneCallActive()
+                    retryJob?.isActive != true
                 ) {
-                    loadAndPlayCurrent(resumePositionMs = s.currentPositionMs.coerceAtLeast(0L))
+                    loadAndPlayCurrent(resumePositionMs = livePos, forceRefresh = true)
+                } else if ((player.playbackState == Player.STATE_BUFFERING || s.isBuffering) &&
+                    !player.isPlaying &&
+                    loadTrackJob?.isActive != true &&
+                    retryJob?.isActive != true
+                ) {
+                    if (bufferingStartedAtMs == 0L) {
+                        bufferingStartedAtMs = now
+                    } else if (now - bufferingStartedAtMs > 6_500L) {
+                        bufferingStartedAtMs = now
+                        loadAndPlayCurrent(resumePositionMs = livePos, forceRefresh = true)
+                    }
                 }
             } else {
                 if (s.isPlaying || s.isBuffering) {

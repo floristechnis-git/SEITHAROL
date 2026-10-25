@@ -162,6 +162,7 @@ fun SeitharolSkip10sBadgeOverlay(
 @Composable
 fun SeitharolProProgressBar(
     progress: Float,
+    bufferedFraction: Float = 0f,
     displayPositionMs: Long,
     totalDurationMs: Long,
     isDragging: Boolean,
@@ -188,7 +189,8 @@ fun SeitharolProProgressBar(
     }
 
     val safeProgress = progress.coerceIn(0f, 1f)
-    val bufferedProgress = (safeProgress + 0.16f).coerceIn(0f, 1f)
+    val safeBuffered = if (bufferedFraction.isNaN() || bufferedFraction.isInfinite()) 0f else bufferedFraction.coerceIn(0f, 1f)
+    val bufferedProgress = safeBuffered.coerceIn(safeProgress, 1f)
 
     val trackHeightDp by animateDpAsState(
         targetValue = if (isDragging) 7.dp else 4.5.dp,
@@ -753,9 +755,11 @@ fun PlayerScreen(
                 val qualityText = when {
                     isVideoTrack && track.isLocalOnlyTrack -> "Local MP4 Video"
                     isVideoTrack && track.isDownloaded -> "Offline MP4 Video"
+                    isVideoTrack && playerState.isStreamCachedOnDisk -> "Cached MP4 Video"
                     isVideoTrack -> "HD Video Stream"
                     track.isLocalOnlyTrack -> "Local Device Audio"
                     track.isDownloaded -> "Offline Opus • Direct Audio"
+                    playerState.isStreamCachedOnDisk -> "Cached Audio • Instant Play"
                     currentTempQuality != null -> "Quality: ${currentTempQuality.label} (Temp)"
                     else -> "Online Pure Stream"
                 }
@@ -1251,6 +1255,7 @@ fun PlayerScreen(
         // ────────────────────────────────────────────────────────────
         SeitharolProProgressBar(
             progress = sliderProgress,
+            bufferedFraction = playerState.bufferedFraction,
             displayPositionMs = displayPosition,
             totalDurationMs = totalDuration,
             isDragging = isUserDraggingSlider,
@@ -1782,6 +1787,13 @@ fun SeitharolRawVideoSurface(
     }
 
     val context = LocalContext.current
+    DisposableEffect(Unit) {
+        onDispose {
+            if (!viewModel.isFullscreenVideo.value) {
+                viewModel.attachVideoTextureView(null)
+            }
+        }
+    }
     Surface(
         modifier = modifier
             .fillMaxWidth()
@@ -2382,6 +2394,7 @@ fun SeitharolFullscreenVideoModal(
                         // Bottom pro scrubber progress bar
                         SeitharolProProgressBar(
                             progress = progress,
+                            bufferedFraction = playerState.bufferedFraction,
                             displayPositionMs = displayPosition,
                             totalDurationMs = totalDuration,
                             isDragging = isDraggingSlider,
@@ -2704,6 +2717,7 @@ fun ExpandedLyricsModal(
                     ) {
                         SeitharolProProgressBar(
                             progress = sliderProgress,
+                            bufferedFraction = playerState.bufferedFraction,
                             displayPositionMs = displayPosition,
                             totalDurationMs = totalDuration,
                             isDragging = isUserDraggingSlider,

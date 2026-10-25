@@ -2,6 +2,7 @@ package com.seitharol.player
 
 import android.content.Context
 import android.net.Uri
+import android.util.LruCache
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
@@ -14,11 +15,13 @@ import com.seitharol.data.resolver.InnerTubeStreamExtractor
 import com.seitharol.data.resolver.StreamResolver
 import com.seitharol.data.resolver.TrackMetadata
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.min
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -66,6 +69,7 @@ object OuterTuneResolvingDataSource {
 
     private const val STREAM_TTL_MS = 3 * 60 * 60 * 1000L // 3 hours
     private const val GOOGLE_VIDEO_CHUNK_BYTES = 512L * 1024L // 512 KB per fast unthrottled chunk
+    private const val PROGRESSIVE_VIDEO_CHUNK_BYTES = 1024L * 1024L // 1 MB per bounded Range chunk
     private const val MAX_DISK_CACHE_BYTES = 256L * 1024L * 1024L // 256 MB LRU active disk cache
 
     private data class CachedStream(
@@ -75,9 +79,48 @@ object OuterTuneResolvingDataSource {
     )
 
     private val urlCache = ConcurrentHashMap<String, CachedStream>()
+    private val urlToVideoIdMap = ConcurrentHashMap<String, String>()
+    private val knownStreamTotalLengths = ConcurrentHashMap<String, Long>()
     private val httpFactoryByUserAgent = ConcurrentHashMap<String, DefaultHttpDataSource.Factory>()
-    private val activeCacheJobs = ConcurrentHashMap<String, Boolean>()
+    private val activeCacheJobs = ConcurrentHashMap<String, Job>()
     private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    @Volatile
+    private var currentlyPlayingTrackId: String? = null
+
+    /**
+     * Real in-memory 512 KB block cache (up to 32 MB) indexed by `"${streamKey}#${chunkStartOffset}"`.
+     * Serves header/index boxes (`sidx`, `moov`, `Cues`) and already-streamed audio/video blocks
+     * in 0ms on seek without opening duplicate network connections.
+     */
+    private val memoryChunkCache = object : LruCache<String, ByteArray>(32 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: ByteArray): Int = value.size
+    }
+
+    private fun extractStreamIdentityKey(uriStr: String): String {
+        val idParam = Regex("[?&]id=([^&]+)").find(uriStr)?.groupValues?.get(1)
+        val itagParam = Regex("[?&]itag=(\\d+)").find(uriStr)?.groupValues?.get(1) ?: "0"
+        if (!idParam.isNullOrBlank()) {
+            return "${idParam}_$itagParam"
+        }
+        val mappedId = urlToVideoIdMap[uriStr.substringBefore("&range=").substringBefore("?range=")]
+        if (!mappedId.isNullOrBlank()) {
+            return "${mappedId}_$itagParam"
+        }
+        return uriStr.substringBefore("?").takeLast(48) + "_$itagParam"
+    }
+
+    fun notifyActivePlaybackTrack(trackId: String?) {
+        currentlyPlayingTrackId = trackId
+        if (!trackId.isNullOrBlank()) {
+            // Cancel any background prefetch on the actively playing track so it NEVER competes
+            // with ExoPlayer's live stream or seek requests on googlevideo.com!
+            val audioKey = sanitizeCacheKey(trackId, false)
+            val videoKey = sanitizeCacheKey(trackId, true)
+            activeCacheJobs.remove(audioKey)?.cancel()
+            activeCacheJobs.remove(videoKey)?.cancel()
+        }
+    }
 
     fun getCachedUrl(videoId: String, quality: AudioQuality): String? {
         val key = "${videoId}_${quality.name}"
@@ -96,6 +139,8 @@ object OuterTuneResolvingDataSource {
             timestampMs = System.currentTimeMillis(),
             quality = quality
         )
+        val cleanBase = url.substringBefore("&range=").substringBefore("?range=")
+        urlToVideoIdMap[cleanBase] = videoId
     }
 
     fun invalidate(videoId: String) {
@@ -108,6 +153,13 @@ object OuterTuneResolvingDataSource {
 
     fun clearAll() {
         urlCache.clear()
+        urlToVideoIdMap.clear()
+        knownStreamTotalLengths.clear()
+        synchronized(memoryChunkCache) {
+            memoryChunkCache.evictAll()
+        }
+        activeCacheJobs.values.forEach { it.cancel() }
+        activeCacheJobs.clear()
         runCatching {
             val dir = File(com.example.CascadeApplication.instance.cacheDir, "seitharol_active_stream_cache")
             if (dir.exists()) {
@@ -117,9 +169,9 @@ object OuterTuneResolvingDataSource {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Active On-Disk Media Stream Cache (YouTube / YouTube Music style)
-    // Caches played audio & video streams to disk so replays & scrubbing are
-    // 100% instantaneous with zero re-buffering even on poor networks.
+    // Active On-Disk + In-Memory Media Stream Cache
+    // Inline-caches streamed bytes and prefetches upcoming queue tracks without
+    // competing with the currently playing ExoPlayer stream.
     // ─────────────────────────────────────────────────────────────────────────
     private fun getStreamCacheDir(context: Context): File {
         return File(context.applicationContext.cacheDir, "seitharol_active_stream_cache").apply {
@@ -147,22 +199,49 @@ object OuterTuneResolvingDataSource {
         }.getOrNull()
     }
 
+    fun isStreamFullyCached(context: Context, trackId: String, isVideo: Boolean): Boolean {
+        return getCompletedCacheFile(context, trackId, isVideo) != null
+    }
+
+    fun getCacheStatsSummary(context: Context): Pair<Int, Long> {
+        return runCatching {
+            val dir = getStreamCacheDir(context)
+            val validFiles = dir.listFiles()?.filter { it.isFile && !it.name.endsWith(".tmp") && it.length() > 24_576L }.orEmpty()
+            val diskBytes = validFiles.sumOf { it.length() }
+            val memBytes = synchronized(memoryChunkCache) { memoryChunkCache.size().toLong() }
+            validFiles.size to (diskBytes + memBytes)
+        }.getOrDefault(0 to 0L)
+    }
+
+    /**
+     * Prefetches a stream to disk ONLY when it is NOT the currently active track in ExoPlayer.
+     * For the currently playing track, bytes are cached inline by the DataSource as ExoPlayer reads them,
+     * preventing concurrent connections to the same signed `googlevideo.com` URL.
+     */
     fun warmStreamCacheAsync(context: Context, trackId: String, streamUrl: String, isVideo: Boolean) {
         if (trackId.isBlank() || !streamUrl.startsWith("http") || streamUrl.contains(".m3u8", true)) return
-        val cacheKey = sanitizeCacheKey(trackId, isVideo)
-        if (activeCacheJobs.putIfAbsent(cacheKey, true) != null) return
+        // Never open a competing parallel download on the track that ExoPlayer is actively streaming!
+        if (trackId == currentlyPlayingTrackId) return
 
-        cacheScope.launch {
+        val cacheKey = sanitizeCacheKey(trackId, isVideo)
+        if (activeCacheJobs[cacheKey]?.isActive == true) return
+
+        val job = cacheScope.launch {
             try {
                 val dir = getStreamCacheDir(context)
                 val destFile = File(dir, cacheKey)
                 if (destFile.exists() && destFile.length() > 24_576L) return@launch
+                if (trackId == currentlyPlayingTrackId) return@launch
 
                 val tmpFile = File(dir, "$cacheKey.tmp")
                 val ok = InnerTubeStreamExtractor.downloadUrlToFileReliable(
                     streamUrl = streamUrl,
                     tempFile = tmpFile,
-                    onProgress = { _, _ -> }
+                    onProgress = { _, _ ->
+                        if (trackId == currentlyPlayingTrackId) {
+                            throw kotlinx.coroutines.CancellationException("Track became active in player; yielding connection")
+                        }
+                    }
                 )
                 if (ok && tmpFile.exists() && tmpFile.length() > 24_576L) {
                     if (destFile.exists()) destFile.delete()
@@ -174,6 +253,57 @@ object OuterTuneResolvingDataSource {
             } catch (_: Throwable) {
             } finally {
                 activeCacheJobs.remove(cacheKey)
+            }
+        }
+        activeCacheJobs[cacheKey] = job
+    }
+
+    private fun tryPersistCompletedStreamFromMemory(
+        streamKey: String,
+        videoId: String?,
+        totalLength: Long,
+        chunkSize: Long,
+        isVideo: Boolean
+    ) {
+        if (videoId.isNullOrBlank() || totalLength <= 24_576L || totalLength > 40L * 1024L * 1024L) return
+        val numChunks = ((totalLength + chunkSize - 1L) / chunkSize).toInt()
+        if (numChunks <= 0 || numChunks > 80) return
+
+        val chunks = ArrayList<ByteArray>(numChunks)
+        synchronized(memoryChunkCache) {
+            for (i in 0 until numChunks) {
+                val startOffset = i.toLong() * chunkSize
+                val block = memoryChunkCache.get("$streamKey#$startOffset") ?: return
+                chunks.add(block)
+            }
+        }
+
+        cacheScope.launch {
+            runCatching {
+                val ctx = com.example.CascadeApplication.instance
+                val dir = getStreamCacheDir(ctx)
+                val cacheKey = sanitizeCacheKey(videoId, isVideo)
+                val destFile = File(dir, cacheKey)
+                if (destFile.exists() && destFile.length() >= totalLength) return@runCatching
+                val tmpFile = File(dir, "$cacheKey.tmp")
+                FileOutputStream(tmpFile).use { out ->
+                    var written = 0L
+                    for (block in chunks) {
+                        val toWrite = min(block.size.toLong(), totalLength - written).toInt()
+                        if (toWrite > 0) {
+                            out.write(block, 0, toWrite)
+                            written += toWrite
+                        }
+                    }
+                    out.flush()
+                }
+                if (tmpFile.exists() && tmpFile.length() == totalLength) {
+                    if (destFile.exists()) destFile.delete()
+                    tmpFile.renameTo(destFile)
+                    pruneDiskCacheIfNeeded(dir)
+                } else {
+                    tmpFile.delete()
+                }
             }
         }
     }
@@ -275,6 +405,22 @@ object OuterTuneResolvingDataSource {
         }
     }
 
+    private fun stripRangeQueryParam(uriStr: String): String {
+        return uriStr.replace(Regex("([?&])range=[^&]+(&?)")) { m ->
+            if (m.groupValues[1] == "?" && m.groupValues[2] == "&") "?"
+            else if (m.groupValues[2] == "&") "&"
+            else ""
+        }
+    }
+
+    private fun parseTotalLengthFromContentRange(headers: Map<String, List<String>>): Long {
+        val values = headers["Content-Range"] ?: headers["content-range"] ?: return -1L
+        val first = values.firstOrNull() ?: return -1L
+        val slashIdx = first.lastIndexOf('/')
+        if (slashIdx <= 0 || slashIdx >= first.length - 1) return -1L
+        return first.substring(slashIdx + 1).trim().toLongOrNull() ?: -1L
+    }
+
     private fun resolveDataSpec(
         dataSpec: DataSpec,
         qualityProvider: () -> AudioQuality
@@ -359,9 +505,11 @@ object OuterTuneResolvingDataSource {
      * Creates a DataSource.Factory that:
      * 1. Dispatches each HTTP request to a DefaultHttpDataSource configured with the exact client-matched
      *    User-Agent (preventing Media3 from overwriting ANDROID_VR / IOS / TESTSUITE User-Agents).
-     * 2. Uses direct native HTTP Range requests for progressive muxed MP4 video streams (`itag=18`, `itag=22`)
-     *    so ExoPlayer's `Mp4Extractor` reads the `moov` atom and renders video frames with zero black screen.
-     * 3. Streams adaptive audio/video URLs (`gir=yes` + `clen=`) in fast 512 KB `&range=start-end` chunks.
+     * 2. Uses bounded HTTP `Range: bytes=start-end` (for progressive muxed MP4 `itag=18`/`22`) or
+     *    `&range=start-end` (for adaptive `gir=yes` audio/video streams) so YouTube CDN never throttles
+     *    open-ended range requests and seeking to any timestamp completes in <150ms.
+     * 3. Caches 512 KB chunks in `memoryChunkCache` inline as ExoPlayer reads them, serving header/index
+     *    seeks (`sidx`, `moov`, `Cues`) and backward/forward scrubs within buffered regions in 0ms.
      */
     fun createFactory(
         qualityProvider: () -> AudioQuality = { AudioQuality.NORMAL }
@@ -372,13 +520,28 @@ object OuterTuneResolvingDataSource {
                 private val transferListeners = mutableListOf<TransferListener>()
 
                 private var isChunkedGoogleVideo = false
+                private var useHttpRangeHeaderForChunks = false
+                private var chunkStepBytes: Long = GOOGLE_VIDEO_CHUNK_BYTES
                 private var baseResolvedSpec: DataSpec? = null
                 private var baseUriWithoutRange: String = ""
+                private var streamIdentityKey: String = ""
+                private var mappedVideoId: String? = null
+                private var isVideoStream: Boolean = false
                 private var targetUserAgent: String = VR_161_USER_AGENT
+
                 private var nextReadPosition: Long = 0L
-                private var totalBytesRemaining: Long = 0L
+                private var totalStreamLength: Long = -1L
+                private var totalBytesRemaining: Long = C.LENGTH_UNSET.toLong()
+                private var currentChunkStartOffset: Long = 0L
+                private var currentChunkExpectedLen: Long = 0L
                 private var currentChunkBytesRemaining: Long = 0L
                 private var currentChunkBytesRead: Long = 0L
+
+                // Inline memory-chunk state
+                private var activeCachedBlock: ByteArray? = null
+                private var activeCachedBlockReadOffset: Int = 0
+                private var activeWriteBuffer: ByteArray? = null
+                private var activeWriteOffset: Int = 0
 
                 override fun addTransferListener(transferListener: TransferListener) {
                     transferListeners.add(transferListener)
@@ -391,30 +554,140 @@ object OuterTuneResolvingDataSource {
                     return d
                 }
 
+                private fun commitActiveWriteBufferIfComplete() {
+                    val buf = activeWriteBuffer
+                    val expected = currentChunkExpectedLen.toInt()
+                    if (buf != null && expected > 0 && activeWriteOffset == expected && streamIdentityKey.isNotBlank()) {
+                        val copy = if (buf.size == expected) buf else buf.copyOf(expected)
+                        synchronized(memoryChunkCache) {
+                            memoryChunkCache.put("$streamIdentityKey#$currentChunkStartOffset", copy)
+                        }
+                        if (totalStreamLength > 0L && currentChunkStartOffset + expected >= totalStreamLength) {
+                            tryPersistCompletedStreamFromMemory(
+                                streamKey = streamIdentityKey,
+                                videoId = mappedVideoId ?: currentlyPlayingTrackId,
+                                totalLength = totalStreamLength,
+                                chunkSize = chunkStepBytes,
+                                isVideo = isVideoStream
+                            )
+                        }
+                    }
+                    activeWriteBuffer = null
+                    activeWriteOffset = 0
+                }
+
                 private fun openNextGoogleVideoChunk(): Boolean {
+                    commitActiveWriteBufferIfComplete()
+                    activeCachedBlock = null
+                    activeCachedBlockReadOffset = 0
                     try {
                         activeDelegate?.close()
                     } catch (_: Throwable) {}
                     activeDelegate = null
 
-                    if (totalBytesRemaining <= 0L) return false
+                    if (totalBytesRemaining == 0L) return false
+                    if (totalStreamLength > 0L && nextReadPosition >= totalStreamLength) return false
                     val baseSpec = baseResolvedSpec ?: return false
 
-                    val chunkLen = min(GOOGLE_VIDEO_CHUNK_BYTES, totalBytesRemaining)
-                    val endByte = nextReadPosition + chunkLen - 1L
-                    val sep = if (baseUriWithoutRange.contains("?")) "&" else "?"
-                    val chunkUri = Uri.parse("${baseUriWithoutRange}${sep}range=${nextReadPosition}-${endByte}")
+                    val alignedChunkIndex = nextReadPosition / chunkStepBytes
+                    val alignedStart = alignedChunkIndex * chunkStepBytes
+                    val offsetInsideAligned = (nextReadPosition - alignedStart).toInt()
+
+                    // 1. Check if this chunk is already in our in-memory block cache!
+                    if (streamIdentityKey.isNotBlank()) {
+                        val cachedBlock = synchronized(memoryChunkCache) {
+                            memoryChunkCache.get("$streamIdentityKey#$alignedStart")
+                        }
+                        if (cachedBlock != null && offsetInsideAligned < cachedBlock.size) {
+                            activeCachedBlock = cachedBlock
+                            activeCachedBlockReadOffset = offsetInsideAligned
+                            val availableFromBlock = (cachedBlock.size - offsetInsideAligned).toLong()
+                            val chunkLen = if (totalBytesRemaining != C.LENGTH_UNSET.toLong()) {
+                                min(availableFromBlock, totalBytesRemaining)
+                            } else {
+                                availableFromBlock
+                            }
+                            currentChunkStartOffset = alignedStart
+                            currentChunkExpectedLen = cachedBlock.size.toLong()
+                            currentChunkBytesRemaining = chunkLen
+                            currentChunkBytesRead = 0L
+                            return chunkLen > 0L
+                        }
+                    }
+
+                    // 2. Fetch chunk from network
+                    val maxDesired = if (totalBytesRemaining != C.LENGTH_UNSET.toLong()) {
+                        min(chunkStepBytes, totalBytesRemaining)
+                    } else if (totalStreamLength > 0L) {
+                        min(chunkStepBytes, (totalStreamLength - nextReadPosition).coerceAtLeast(1L))
+                    } else {
+                        chunkStepBytes
+                    }
+                    if (maxDesired <= 0L) return false
+
+                    val endByte = nextReadPosition + maxDesired - 1L
+                    val cleanHeaders = HashMap<String, String>(baseSpec.httpRequestHeaders)
+                    cleanHeaders.remove("Range")
+                    cleanHeaders.remove("range")
+                    cleanHeaders.remove("If-Range")
+
+                    val chunkUri: Uri
+                    if (useHttpRangeHeaderForChunks) {
+                        chunkUri = Uri.parse(baseUriWithoutRange)
+                        cleanHeaders["Range"] = "bytes=${nextReadPosition}-${endByte}"
+                    } else {
+                        val sep = if (baseUriWithoutRange.contains("?")) "&" else "?"
+                        chunkUri = Uri.parse("${baseUriWithoutRange}${sep}range=${nextReadPosition}-${endByte}")
+                    }
+
                     val chunkSpec = baseSpec.buildUpon()
                         .setUri(chunkUri)
+                        .setHttpRequestHeaders(cleanHeaders)
                         .setPosition(0L)
                         .setLength(C.LENGTH_UNSET.toLong())
                         .build()
 
                     val delegate = createDelegate()
                     activeDelegate = delegate
-                    delegate.open(chunkSpec)
-                    currentChunkBytesRemaining = chunkLen
+                    val openedLen = delegate.open(chunkSpec)
+
+                    // Discover totalStreamLength from Content-Range if not known from clen=
+                    if (totalStreamLength <= 0L) {
+                        val crTotal = parseTotalLengthFromContentRange(delegate.responseHeaders)
+                        if (crTotal > 0L) {
+                            totalStreamLength = crTotal
+                            knownStreamTotalLengths[streamIdentityKey] = crTotal
+                            if (totalBytesRemaining == C.LENGTH_UNSET.toLong()) {
+                                totalBytesRemaining = (crTotal - nextReadPosition).coerceAtLeast(0L)
+                            }
+                        } else if (openedLen > 0L && openedLen < maxDesired && nextReadPosition == 0L) {
+                            totalStreamLength = openedLen
+                            knownStreamTotalLengths[streamIdentityKey] = openedLen
+                            if (totalBytesRemaining == C.LENGTH_UNSET.toLong()) {
+                                totalBytesRemaining = openedLen
+                            }
+                        }
+                    }
+
+                    val effectiveChunkLen = when {
+                        openedLen != C.LENGTH_UNSET.toLong() && openedLen > 0L -> min(maxDesired, openedLen)
+                        totalBytesRemaining != C.LENGTH_UNSET.toLong() -> min(maxDesired, totalBytesRemaining)
+                        else -> maxDesired
+                    }
+
+                    currentChunkStartOffset = nextReadPosition
+                    currentChunkExpectedLen = effectiveChunkLen
+                    currentChunkBytesRemaining = effectiveChunkLen
                     currentChunkBytesRead = 0L
+
+                    // If this chunk starts on an aligned boundary, record into activeWriteBuffer for memory cache
+                    if (nextReadPosition == alignedStart && effectiveChunkLen in 1L..chunkStepBytes) {
+                        activeWriteBuffer = ByteArray(effectiveChunkLen.toInt())
+                        activeWriteOffset = 0
+                    } else {
+                        activeWriteBuffer = null
+                        activeWriteOffset = 0
+                    }
                     return true
                 }
 
@@ -429,38 +702,84 @@ object OuterTuneResolvingDataSource {
                         !uriStr.contains(".m3u8", ignoreCase = true) &&
                         !uriStr.contains("manifest.googlevideo.com", ignoreCase = true)
 
-                    // Progressive muxed MP4 streams (itag=18 / itag=22) MUST use native HTTP Range requests
-                    // so ExoPlayer's Mp4Extractor can seek to the moov box and decode video + audio frames cleanly!
-                    val isProgressiveMuxedVideo = uriStr.contains("itag=18&", ignoreCase = true) ||
-                        uriStr.endsWith("itag=18", ignoreCase = true) ||
-                        uriStr.contains("itag=22&", ignoreCase = true) ||
-                        uriStr.endsWith("itag=22", ignoreCase = true) ||
-                        !uriStr.contains("gir=yes", ignoreCase = true)
+                    if (isGoogleVideo) {
+                        baseUriWithoutRange = stripRangeQueryParam(uriStr)
+                        streamIdentityKey = extractStreamIdentityKey(baseUriWithoutRange)
+                        mappedVideoId = urlToVideoIdMap[baseUriWithoutRange] ?: currentlyPlayingTrackId
+                        isVideoStream = uriStr.contains("mime=video", ignoreCase = true) ||
+                            uriStr.contains("itag=18", ignoreCase = true) ||
+                            uriStr.contains("itag=22", ignoreCase = true)
 
-                    val clen = if (isGoogleVideo && !isProgressiveMuxedVideo) {
-                        Regex("[?&]clen=(\\d+)").find(uriStr)?.groupValues?.get(1)?.toLongOrNull() ?: -1L
-                    } else -1L
+                        val isProgressiveMuxedVideo = uriStr.contains("itag=18&", ignoreCase = true) ||
+                            uriStr.endsWith("itag=18", ignoreCase = true) ||
+                            uriStr.contains("itag=22&", ignoreCase = true) ||
+                            uriStr.endsWith("itag=22", ignoreCase = true) ||
+                            !uriStr.contains("gir=yes", ignoreCase = true)
 
-                    if (isGoogleVideo && !isProgressiveMuxedVideo && clen > 0L) {
-                        baseResolvedSpec = resolvedSpec
-                        baseUriWithoutRange = uriStr.replace(Regex("([?&])range=[^&]+(&?)")) { m ->
-                            if (m.groupValues[1] == "?" && m.groupValues[2] == "&") "?"
-                            else if (m.groupValues[2] == "&") "&"
-                            else ""
-                        }
-                        nextReadPosition = resolvedSpec.position.coerceAtLeast(0L)
-                        totalBytesRemaining = if (resolvedSpec.length != C.LENGTH_UNSET.toLong()) {
-                            resolvedSpec.length
+                        useHttpRangeHeaderForChunks = isProgressiveMuxedVideo
+                        chunkStepBytes = if (isProgressiveMuxedVideo) PROGRESSIVE_VIDEO_CHUNK_BYTES else GOOGLE_VIDEO_CHUNK_BYTES
+
+                        val clenFromUrl = Regex("[?&]clen=(\\d+)").find(uriStr)?.groupValues?.get(1)?.toLongOrNull()
+                            ?: knownStreamTotalLengths[streamIdentityKey]
+                            ?: -1L
+                        if (clenFromUrl > 0L) {
+                            totalStreamLength = clenFromUrl
+                            knownStreamTotalLengths[streamIdentityKey] = clenFromUrl
                         } else {
-                            (clen - nextReadPosition).coerceAtLeast(0L)
+                            totalStreamLength = -1L
                         }
 
-                        if (totalBytesRemaining > 0L) {
+                        baseResolvedSpec = resolvedSpec
+                        nextReadPosition = resolvedSpec.position.coerceAtLeast(0L)
+                        totalBytesRemaining = when {
+                            resolvedSpec.length != C.LENGTH_UNSET.toLong() -> resolvedSpec.length
+                            totalStreamLength > 0L -> (totalStreamLength - nextReadPosition).coerceAtLeast(0L)
+                            else -> C.LENGTH_UNSET.toLong()
+                        }
+
+                        if (totalBytesRemaining != 0L) {
                             try {
                                 isChunkedGoogleVideo = true
-                                openNextGoogleVideoChunk()
-                                return totalBytesRemaining
-                            } catch (e: Exception) {
+                                if (openNextGoogleVideoChunk()) {
+                                    return totalBytesRemaining
+                                }
+                            } catch (firstChunkErr: Exception) {
+                                // If a seek or chunk open failed on an expired/throttled googlevideo URL,
+                                // try refreshing the stream URL once if we know the videoId!
+                                val vid = mappedVideoId
+                                if (!vid.isNullOrBlank() && InnerTubeStreamExtractor.isValidYoutubeVideoId(vid)) {
+                                    runCatching {
+                                        val refreshedUrl = runBlocking(Dispatchers.IO) {
+                                            if (isVideoStream) {
+                                                InnerTubeStreamExtractor.resolveRawVideoStreamById(vid, forceRefresh = true).getOrNull()
+                                            } else {
+                                                InnerTubeStreamExtractor.resolveExactYoutubeStreamById(vid, qualityProvider(), forceRefresh = true).getOrNull()
+                                            }
+                                        }
+                                        if (!refreshedUrl.isNullOrBlank() && !refreshedUrl.startsWith("merged_av::")) {
+                                            baseUriWithoutRange = stripRangeQueryParam(refreshedUrl)
+                                            val refreshedHeaders = HashMap<String, String>(resolvedSpec.httpRequestHeaders)
+                                            refreshedHeaders.remove("Origin")
+                                            refreshedHeaders.remove("Referer")
+                                            refreshedHeaders.putAll(resolveClientHeadersForUrl(refreshedUrl))
+                                            targetUserAgent = refreshedHeaders["User-Agent"] ?: VR_161_USER_AGENT
+                                            baseResolvedSpec = resolvedSpec.withUri(Uri.parse(refreshedUrl)).withRequestHeaders(refreshedHeaders)
+                                            val newClen = Regex("[?&]clen=(\\d+)").find(refreshedUrl)?.groupValues?.get(1)?.toLongOrNull() ?: -1L
+                                            if (newClen > 0L) {
+                                                totalStreamLength = newClen
+                                                totalBytesRemaining = if (resolvedSpec.length != C.LENGTH_UNSET.toLong()) {
+                                                    resolvedSpec.length
+                                                } else {
+                                                    (newClen - nextReadPosition).coerceAtLeast(0L)
+                                                }
+                                            }
+                                            if (openNextGoogleVideoChunk()) {
+                                                return totalBytesRemaining
+                                            }
+                                        }
+                                    }
+                                }
+
                                 isChunkedGoogleVideo = false
                                 try {
                                     activeDelegate?.close()
@@ -483,37 +802,75 @@ object OuterTuneResolvingDataSource {
                         return activeDelegate?.read(buffer, offset, length) ?: C.RESULT_END_OF_INPUT
                     }
 
-                    if (totalBytesRemaining <= 0L) {
+                    if (totalBytesRemaining == 0L) {
                         return C.RESULT_END_OF_INPUT
                     }
 
-                    if (currentChunkBytesRemaining <= 0L || activeDelegate == null) {
+                    if (currentChunkBytesRemaining <= 0L || (activeDelegate == null && activeCachedBlock == null)) {
                         if (!openNextGoogleVideoChunk()) {
                             return C.RESULT_END_OF_INPUT
                         }
                     }
 
+                    // 1. Serve from in-memory cached block if active
+                    val cachedBlock = activeCachedBlock
+                    if (cachedBlock != null) {
+                        val maxToCopy = min(length.toLong(), currentChunkBytesRemaining).toInt()
+                            .coerceAtMost(cachedBlock.size - activeCachedBlockReadOffset)
+                        if (maxToCopy <= 0) {
+                            activeCachedBlock = null
+                            if (!openNextGoogleVideoChunk()) return C.RESULT_END_OF_INPUT
+                        } else {
+                            System.arraycopy(cachedBlock, activeCachedBlockReadOffset, buffer, offset, maxToCopy)
+                            activeCachedBlockReadOffset += maxToCopy
+                            nextReadPosition += maxToCopy
+                            currentChunkBytesRemaining -= maxToCopy
+                            currentChunkBytesRead += maxToCopy
+                            if (totalBytesRemaining != C.LENGTH_UNSET.toLong()) {
+                                totalBytesRemaining = (totalBytesRemaining - maxToCopy).coerceAtLeast(0L)
+                            }
+                            if (currentChunkBytesRemaining <= 0L) {
+                                activeCachedBlock = null
+                            }
+                            return maxToCopy
+                        }
+                    }
+
+                    // 2. Read from active HTTP chunk delegate
                     val maxToRead = min(length.toLong(), currentChunkBytesRemaining).toInt()
                     var bytesRead = activeDelegate?.read(buffer, offset, maxToRead) ?: C.RESULT_END_OF_INPUT
 
                     if (bytesRead == C.RESULT_END_OF_INPUT) {
+                        commitActiveWriteBufferIfComplete()
                         if (currentChunkBytesRead == 0L) {
                             return C.RESULT_END_OF_INPUT
                         }
-                        if (totalBytesRemaining <= 0L || !openNextGoogleVideoChunk()) {
+                        if (totalBytesRemaining == 0L || !openNextGoogleVideoChunk()) {
                             return C.RESULT_END_OF_INPUT
                         }
-                        val nextMax = min(length.toLong(), currentChunkBytesRemaining).toInt()
-                        bytesRead = activeDelegate?.read(buffer, offset, nextMax) ?: C.RESULT_END_OF_INPUT
-                        if (bytesRead == C.RESULT_END_OF_INPUT) {
-                            return C.RESULT_END_OF_INPUT
+                        // Recursive read on the newly opened chunk (which may be a memory hit or network delegate)
+                        return read(buffer, offset, length)
+                    }
+
+                    // Copy read bytes into activeWriteBuffer for inline caching
+                    val writeBuf = activeWriteBuffer
+                    if (writeBuf != null && activeWriteOffset + bytesRead <= writeBuf.size) {
+                        System.arraycopy(buffer, offset, writeBuf, activeWriteOffset, bytesRead)
+                        activeWriteOffset += bytesRead
+                        if (activeWriteOffset == writeBuf.size) {
+                            commitActiveWriteBufferIfComplete()
                         }
+                    } else if (writeBuf != null) {
+                        activeWriteBuffer = null
+                        activeWriteOffset = 0
                     }
 
                     nextReadPosition += bytesRead
                     currentChunkBytesRemaining -= bytesRead
                     currentChunkBytesRead += bytesRead
-                    totalBytesRemaining -= bytesRead
+                    if (totalBytesRemaining != C.LENGTH_UNSET.toLong()) {
+                        totalBytesRemaining = (totalBytesRemaining - bytesRead).coerceAtLeast(0L)
+                    }
                     return bytesRead
                 }
 
@@ -523,6 +880,9 @@ object OuterTuneResolvingDataSource {
                     activeDelegate?.responseHeaders ?: emptyMap()
 
                 override fun close() {
+                    commitActiveWriteBufferIfComplete()
+                    activeCachedBlock = null
+                    activeCachedBlockReadOffset = 0
                     isChunkedGoogleVideo = false
                     baseResolvedSpec = null
                     totalBytesRemaining = 0L

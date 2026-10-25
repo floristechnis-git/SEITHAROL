@@ -45,7 +45,7 @@ data class Track(
                 lowerPath.endsWith(".mov") ||
                 lowerPath.endsWith(".m4v") ||
                 lowerPath.contains("/video/") ||
-                lowerAudioUrl.endsWith(".mp4") ||
+                (!lowerAudioUrl.contains("saavncdn.com") && lowerAudioUrl.endsWith(".mp4")) ||
                 lowerAudioUrl.contains("/video/")
         }
 

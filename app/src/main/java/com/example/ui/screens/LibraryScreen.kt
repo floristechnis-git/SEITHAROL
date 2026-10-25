@@ -365,8 +365,20 @@ fun LibraryScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                        val dlVideoCount = downloadedTracks.count { it.isVideoTrack }
+                        val dlAudioCount = (downloadedTracks.size - dlVideoCount).coerceAtLeast(0)
+                        val dlSummaryText = buildString {
+                            if (dlAudioCount > 0 && dlVideoCount > 0) {
+                                append("$dlAudioCount song${if (dlAudioCount == 1) "" else "s"} • $dlVideoCount MP4 video${if (dlVideoCount == 1) "" else "s"}")
+                            } else if (dlVideoCount > 0) {
+                                append("$dlVideoCount MP4 video${if (dlVideoCount == 1) "" else "s"}")
+                            } else {
+                                append("$dlAudioCount offline song${if (dlAudioCount == 1) "" else "s"}")
+                            }
+                            if (inProgressCount > 0) append(" • $inProgressCount downloading...")
+                        }
                         Text(
-                            text = if (inProgressCount > 0) "${downloadedTracks.size} offline songs • $inProgressCount downloading..." else "${downloadedTracks.size} offline songs",
+                            text = dlSummaryText,
                             style = MaterialTheme.typography.bodySmall,
                             color = if (inProgressCount > 0) MaterialTheme.colorScheme.primary else SeitharolTextSecondary
                         )
@@ -399,7 +411,7 @@ fun LibraryScreen(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "Scan & play local audio from phone storage",
+                            text = "Scan & play local audio & MP4 videos from phone storage",
                             style = MaterialTheme.typography.bodySmall,
                             color = SeitharolTextSecondary
                         )

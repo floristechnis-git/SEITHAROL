@@ -171,10 +171,17 @@ fun LocalMusicScreen(
                     style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
                     color = MaterialTheme.colorScheme.onBackground
                 )
+                val shownAudioCount = displayedTracks.count { it.videoType != "MUSIC_VIDEO_TYPE_OMV" }
+                val shownVideoCount = displayedTracks.count { it.videoType == "MUSIC_VIDEO_TYPE_OMV" }
                 Text(
                     text = buildString {
-                        append("$audioCount audio")
-                        if (videoCount > 0) append(" • $videoCount MP4 video${if (videoCount > 1) "s" else ""}")
+                        if (shownAudioCount > 0 && shownVideoCount > 0) {
+                            append("$shownAudioCount audio • $shownVideoCount MP4 video${if (shownVideoCount > 1) "s" else ""}")
+                        } else if (shownVideoCount > 0) {
+                            append("$shownVideoCount MP4 video${if (shownVideoCount > 1) "s" else ""}")
+                        } else {
+                            append("$shownAudioCount audio")
+                        }
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -515,6 +522,50 @@ private suspend fun scanDeviceMediaFiles(context: Context): List<CandidateStream
                             albumName = cleanAlbum,
                             durationSeconds = durationSec,
                             videoType = if (isMp4OrVideo) "MUSIC_VIDEO_TYPE_OMV" else "LOCAL_AUDIO",
+                            thumbnailUrl = "",
+                            isVerifiedArtist = false
+                        )
+                    )
+                }
+            }
+        }
+
+        // 3. Direct filesystem scan of public Download & Movies folders to catch any MP4/video or audio files
+        //    not yet indexed by MediaStore (ensuring MP4 in Download folder is always treated as MP4 Video, never audio!)
+        runCatching {
+            val dirs = listOfNotNull(
+                android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS),
+                android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MOVIES)
+            )
+            for (dir in dirs) {
+                if (!dir.exists() || !dir.isDirectory) continue
+                val isDownloadDir = dir.name.contains("Download", ignoreCase = true)
+                dir.listFiles()?.forEach { file ->
+                    if (!file.isFile || file.length() <= 10_240L || file.name.startsWith(".")) return@forEach
+                    val ext = file.extension.lowercase()
+                    val isVid = ext in setOf("mp4", "mkv", "webm", "mov", "m4v")
+                    val isAud = ext in setOf("mp3", "m4a", "aac", "flac", "wav", "ogg", "opus")
+                    if (!isVid && !isAud) return@forEach
+                    val cleanTitle = file.nameWithoutExtension.trim().ifBlank { file.name }
+                    val key = cleanTitle.lowercase()
+                    if (seenVideoKeys.contains(key) || list.any { it.title.equals(cleanTitle, ignoreCase = true) }) {
+                        return@forEach
+                    }
+                    val fileUri = android.net.Uri.fromFile(file).toString()
+                    list.add(
+                        CandidateStream(
+                            videoId = fileUri,
+                            title = cleanTitle,
+                            artist = "Unknown Artist",
+                            channelName = if (isDownloadDir) "Download Folder" else dir.name,
+                            albumName = when {
+                                isVid && isDownloadDir -> "Download • MP4 Video"
+                                isVid -> "MP4 Video"
+                                isDownloadDir -> "Download Folder"
+                                else -> "Local Audio"
+                            },
+                            durationSeconds = 210,
+                            videoType = if (isVid) "MUSIC_VIDEO_TYPE_OMV" else "LOCAL_AUDIO",
                             thumbnailUrl = "",
                             isVerifiedArtist = false
                         )

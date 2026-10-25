@@ -1847,8 +1847,8 @@ fun SeitharolRawVideoSurface(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Artwork backdrop shown ONLY before first video frame renders
-            if (track != null && !playerState.isVideoFrameRendered) {
+            // Artwork backdrop shown ONLY while loading/buffering before first video frame renders
+            if (track != null && !playerState.isVideoFrameRendered && (playerState.isBuffering || !playerState.isPlaying)) {
                 val upgradedArt = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
                 if (upgradedArt.isNotBlank()) {
                     AsyncImage(
@@ -2162,7 +2162,7 @@ fun SeitharolFullscreenVideoModal(
                     }
                 )
 
-                if (!playerState.isVideoFrameRendered) {
+                if (!playerState.isVideoFrameRendered && (playerState.isBuffering || !playerState.isPlaying)) {
                     val upgradedArt = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
                     if (upgradedArt.isNotBlank()) {
                         AsyncImage(

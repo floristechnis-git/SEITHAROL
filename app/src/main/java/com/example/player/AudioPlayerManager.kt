@@ -20,6 +20,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import com.example.data.local.CascadeDatabase
 import com.example.data.model.LyricsLine
@@ -565,11 +566,38 @@ class AudioPlayerManager(
             if (forceRefresh) {
                 InnerTubeStreamExtractor.invalidateVideoStreamCache(targetVid)
             }
-            val videoUrl = InnerTubeStreamExtractor.resolveRawVideoStreamById(
+            var videoUrl = InnerTubeStreamExtractor.resolveRawVideoStreamById(
                 videoId = targetVid,
                 forceRefresh = forceRefresh,
                 allowHlsFallback = true
             ).getOrNull()
+
+            if (videoUrl.isNullOrBlank() && !forceRefresh) {
+                videoUrl = InnerTubeStreamExtractor.resolveRawVideoStreamById(
+                    videoId = targetVid,
+                    forceRefresh = true,
+                    allowHlsFallback = true
+                ).getOrNull()
+            }
+
+            if (videoUrl.isNullOrBlank() && track.title.isNotBlank()) {
+                val searched = runCatching {
+                    InnerTubeStreamExtractor.searchAllYoutubeVideos("${track.title} ${track.artist}".trim(), limit = 3)
+                }.getOrDefault(emptyList())
+                for (cand in searched) {
+                    if (cand.videoId.isNotBlank() && cand.videoId != targetVid) {
+                        val altUrl = InnerTubeStreamExtractor.resolveRawVideoStreamById(
+                            videoId = cand.videoId,
+                            forceRefresh = false,
+                            allowHlsFallback = true
+                        ).getOrNull()
+                        if (!altUrl.isNullOrBlank()) {
+                            videoUrl = altUrl
+                            break
+                        }
+                    }
+                }
+            }
 
             if (!videoUrl.isNullOrBlank()) {
                 val isHls = videoUrl.contains(".m3u8", ignoreCase = true)
@@ -578,32 +606,14 @@ class AudioPlayerManager(
                     streamUrl = videoUrl,
                     itag = 18,
                     codec = if (isHls) "HLS Video" else "MP4",
-                    bitrate = "720p / 360p",
+                    bitrate = "720p / 480p / 360p",
                     expiresAtMs = System.currentTimeMillis() + 6 * 3600 * 1000L,
                     isLocal = false,
                     resolvedBy = "Direct Video Stream",
                     latencyMs = 10
                 )
             }
-            // Fallback to audio/adaptive stream if progressive MP4 is unavailable for this video
-            val fallbackAudioUrl = InnerTubeStreamExtractor.resolveExactYoutubeStreamById(
-                videoId = targetVid,
-                preferredQuality = preferredQuality,
-                forceRefresh = forceRefresh
-            ).getOrNull()
-            if (!fallbackAudioUrl.isNullOrBlank()) {
-                return ResolvedStream(
-                    videoId = targetVid,
-                    streamUrl = fallbackAudioUrl,
-                    itag = 140,
-                    codec = "AAC",
-                    bitrate = "160 kbps",
-                    expiresAtMs = System.currentTimeMillis() + 6 * 3600 * 1000L,
-                    isLocal = false,
-                    resolvedBy = "YouTube Stream Fallback",
-                    latencyMs = 15
-                )
-            }
+            throw IllegalStateException("Unable to resolve playable video stream for '${track.title}'")
         }
         return resolverEngine.resolveTrack(
             track = if (forceRefresh) track.copy(audioUrl = "") else track,
@@ -1149,19 +1159,9 @@ class AudioPlayerManager(
             player.volume = if (_state.value.isMuted) 0f else 1.0f
 
             val isVideo = track.isVideoTrack || _state.value.isVideoMode
-            val isSplitMergedAv = isVideo && sourceUrl.startsWith("merged_av::")
-            activeVideoUsesSplitPlayer = isSplitMergedAv
-
-            val videoRawUrl: String?
-            val audioRawUrl: String
-            if (isSplitMergedAv) {
-                val parts = sourceUrl.removePrefix("merged_av::").split("|||")
-                videoRawUrl = parts[0]
-                audioRawUrl = parts.getOrElse(1) { parts[0] }
-            } else {
-                videoRawUrl = null
-                audioRawUrl = sourceUrl
-            }
+            val isMergedAv = isVideo && sourceUrl.startsWith("merged_av::")
+            activeVideoUsesSplitPlayer = false
+            stopVideoPlayer()
 
             // Notify DataSource of the active track so it caches chunks inline as ExoPlayer reads them
             // and never opens a competing parallel connection on the same signed googlevideo URL!
@@ -1178,12 +1178,9 @@ class AudioPlayerManager(
                 else -> Uri.parse(raw)
             }
 
-            // Enable hardware video decoding directly on main exoPlayer when playing muxed MP4 / local MP4 / HLS video!
-            val enableVideoOnMainPlayer = isVideo && !isSplitMergedAv
             if (!isVideo) {
-                // Playing an audio song: detach any stale video surface and release secondary video decoder
-                // so a prior video or destroyed TextureView never blocks audio playback!
-                stopVideoPlayer()
+                // Playing an audio song: detach any stale video surface so a prior video or
+                // destroyed TextureView never blocks audio playback!
                 attachedTextureView?.let { tv ->
                     runCatching { player.clearVideoTextureView(tv) }
                 }
@@ -1192,19 +1189,23 @@ class AudioPlayerManager(
                 attachedTexturePlayer = null
             }
 
+            // Enable hardware video decoding directly on main exoPlayer for ALL video tracks
+            // (both progressive muxed MP4 itag=18/22 and adaptive MergingMediaSource merged_av::)!
             runCatching {
                 player.trackSelectionParameters = player.trackSelectionParameters
                     .buildUpon()
-                    .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, !enableVideoOnMainPlayer)
+                    .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, !isVideo)
+                    .clearVideoSizeConstraints()
                     .build()
             }
 
-            if (enableVideoOnMainPlayer) {
-                stopVideoPlayer()
+            if (isVideo) {
                 attachedTextureView?.let { tv ->
-                    runCatching {
-                        player.setVideoTextureView(tv)
-                        attachedTexturePlayer = player
+                    if (attachedTexturePlayer !== player) {
+                        runCatching {
+                            player.setVideoTextureView(tv)
+                            attachedTexturePlayer = player
+                        }
                     }
                 }
             }
@@ -1216,49 +1217,44 @@ class AudioPlayerManager(
                 }
             }
 
-            // 1. Setup MediaItem on main exoPlayer
-            val parsedAudioUri = parseSourceUri(audioRawUrl)
-            val audioMediaItem = track.toMediaItem(parsedAudioUri)
-            if (startPositionMs > 0L) {
-                player.setMediaItem(audioMediaItem, startPositionMs)
+            val factory = exoMediaSourceFactory
+            if (isMergedAv && factory != null) {
+                val parts = sourceUrl.removePrefix("merged_av::").split("|||")
+                val videoRawUrl = parts[0]
+                val audioRawUrl = parts.getOrElse(1) { parts[0] }
+                val videoMediaItem = track.toMediaItem(parseSourceUri(videoRawUrl))
+                val audioMediaItem = track.toMediaItem(parseSourceUri(audioRawUrl))
+                val videoSource = factory.createMediaSource(videoMediaItem)
+                val audioSource = factory.createMediaSource(audioMediaItem)
+                val mergedSource = MergingMediaSource(
+                    /* adjustPeriodTimeOffsets = */ true,
+                    /* clipDurations = */ true,
+                    videoSource,
+                    audioSource
+                )
+                if (startPositionMs > 0L) {
+                    player.setMediaSource(mergedSource, startPositionMs)
+                } else {
+                    player.setMediaSource(mergedSource)
+                }
             } else {
-                player.setMediaItem(audioMediaItem)
+                val singleUrl = if (sourceUrl.startsWith("merged_av::")) {
+                    sourceUrl.removePrefix("merged_av::").substringBefore("|||")
+                } else {
+                    sourceUrl
+                }
+                val parsedUri = parseSourceUri(singleUrl)
+                val mediaItem = track.toMediaItem(parsedUri)
+                if (startPositionMs > 0L) {
+                    player.setMediaItem(mediaItem, startPositionMs)
+                } else {
+                    player.setMediaItem(mediaItem)
+                }
             }
             player.playWhenReady = userRequestedPlay
             player.prepare()
             if (userRequestedPlay) {
                 player.play()
-            }
-
-            // 2. Only use secondary videoExoPlayer when stream is split merged_av::
-            if (isSplitMergedAv && !videoRawUrl.isNullOrBlank()) {
-                videoRetryCount = 0
-                val vp = ensureVideoPlayerInitialized()
-                if (vp != null) {
-                    attachedTextureView?.let { tv ->
-                        runCatching { player.clearVideoTextureView(tv) }
-                        if (attachedTexturePlayer !== vp) {
-                            attachedTexturePlayer = vp
-                            runCatching { vp.setVideoTextureView(tv) }
-                        }
-                    }
-                    vp.volume = 0f
-                    vp.repeatMode = player.repeatMode
-                    val parsedVideoUri = parseSourceUri(videoRawUrl)
-                    val videoMediaItem = track.toMediaItem(parsedVideoUri)
-                    if (startPositionMs > 0L) {
-                        vp.setMediaItem(videoMediaItem, startPositionMs)
-                    } else {
-                        vp.setMediaItem(videoMediaItem)
-                    }
-                    vp.playWhenReady = userRequestedPlay
-                    vp.prepare()
-                    if (userRequestedPlay) {
-                        vp.play()
-                    }
-                }
-            } else if (!enableVideoOnMainPlayer) {
-                stopVideoPlayer()
             }
 
             startPositionTracker()
@@ -1417,7 +1413,9 @@ class AudioPlayerManager(
             currentTrack = tracks[validIndex],
             currentPositionMs = 0L,
             isSingleTrackPlayback = !isPlaylist,
-            isPartOfPlaylist = isPlaylist
+            isPartOfPlaylist = isPlaylist,
+            isVideoMode = tracks[validIndex].isVideoTrack,
+            isVideoFrameRendered = false
         )
         loadAndPlayCurrent(resumePositionMs = 0L)
     }
@@ -2607,16 +2605,29 @@ class AudioPlayerManager(
                 return
             }
 
-            val targetPlayer = if (activeVideoUsesSplitPlayer) {
-                ensureVideoPlayerInitialized()
-            } else {
-                exoPlayer
-            } ?: return
-
-            if (attachedTexturePlayer != null && attachedTexturePlayer !== targetPlayer) {
-                attachedTextureView?.let { oldTv ->
-                    runCatching { attachedTexturePlayer?.clearVideoTextureView(oldTv) }
+            val targetPlayer = exoPlayer ?: return
+            runCatching {
+                if (targetPlayer.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_VIDEO)) {
+                    targetPlayer.trackSelectionParameters = targetPlayer.trackSelectionParameters
+                        .buildUpon()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
+                        .clearVideoSizeConstraints()
+                        .build()
                 }
+            }
+
+            // CRITICAL: Do NOT call setVideoTextureView again if the exact same TextureView is already attached!
+            // ExoPlayerImpl.setVideoTextureView() unconditionally calls removeSurfaceCallbacks() and creates
+            // a new Surface(surfaceTexture), which tears down MediaCodec's output surface on every recomposition!
+            if (attachedTextureView === textureView && attachedTexturePlayer === targetPlayer) {
+                if (targetPlayer.videoSize.width > 0 && targetPlayer.videoSize.height > 0 && !_state.value.isVideoFrameRendered) {
+                    _state.value = _state.value.copy(isVideoFrameRendered = true)
+                }
+                return
+            }
+
+            if (attachedTexturePlayer != null && attachedTextureView != null && attachedTextureView !== textureView) {
+                runCatching { attachedTexturePlayer?.clearVideoTextureView(attachedTextureView) }
             }
             attachedTextureView = textureView
             attachedTexturePlayer = targetPlayer
@@ -2715,8 +2726,8 @@ class AudioPlayerManager(
                             ytId = searched.firstOrNull()?.videoId
                         }
                         if (!ytId.isNullOrBlank()) {
-                            InnerTubeStreamExtractor.resolveRawVideoStreamById(ytId).getOrNull()
-                                ?: InnerTubeStreamExtractor.resolveExactYoutubeStreamById(ytId, getPreferredAudioQuality()).getOrNull()
+                            InnerTubeStreamExtractor.resolveRawVideoStreamById(ytId, forceRefresh = false, allowHlsFallback = true).getOrNull()
+                                ?: InnerTubeStreamExtractor.resolveRawVideoStreamById(ytId, forceRefresh = true, allowHlsFallback = true).getOrNull()
                         } else null
                     }
                     if (!rawStreamUrl.isNullOrBlank() && isActive && _state.value.currentTrack?.id == current.id) {

@@ -211,11 +211,6 @@ object InnerTubeStreamExtractor {
         }
         videoStreamCache.remove(clean)?.first?.let { failedUrl ->
             failedSet.add(failedUrl)
-            if (failedUrl.startsWith("merged_av::")) {
-                failedSet.add("TYPE_MERGED_AV")
-            } else {
-                failedSet.add("TYPE_PROGRESSIVE_MP4")
-            }
         }
         videoStreamCache.remove(videoId.trim())
     }
@@ -337,17 +332,44 @@ object InnerTubeStreamExtractor {
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
-            clientName = "ANDROID_TESTSUITE",
-            clientVersion = "1.9",
-            userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 12L; US) gzip",
-            clientId = "30",
-            deviceMake = "Google",
-            deviceModel = "Pixel 7",
+            clientName = "ANDROID_VR",
+            clientVersion = "1.43.32",
+            userAgent = "com.google.android.apps.youtube.vr.oculus/1.43.32 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+            clientId = "28",
+            deviceMake = "Oculus",
+            deviceModel = "Quest 3",
             osName = "Android",
             osVersion = "12L",
             androidSdkVersion = 32,
             params = null,
             glOverride = "US",
+            sendOriginHeaders = false
+        ),
+        InnerTubeClientConfig(
+            clientName = "VISIONOS",
+            clientVersion = "0.1",
+            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+            clientId = "101",
+            deviceMake = "Apple",
+            deviceModel = "RealityDevice14,1",
+            osName = "visionOS",
+            osVersion = "1.3.21O771",
+            params = null,
+            glOverride = null,
+            sendOriginHeaders = true
+        ),
+        InnerTubeClientConfig(
+            clientName = "ANDROID",
+            clientVersion = "20.10.38",
+            userAgent = "com.google.android.youtube/20.10.38 (Linux; U; Android 14; en_US) gzip",
+            clientId = "3",
+            deviceMake = "Google",
+            deviceModel = "Pixel 8",
+            osName = "Android",
+            osVersion = "14",
+            androidSdkVersion = 34,
+            params = "CgIIAQ==",
+            glOverride = null,
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
@@ -364,20 +386,6 @@ object InnerTubeStreamExtractor {
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
-            clientName = "ANDROID_VR",
-            clientVersion = "1.43.32",
-            userAgent = "com.google.android.apps.youtube.vr.oculus/1.43.32 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
-            clientId = "28",
-            deviceMake = "Oculus",
-            deviceModel = "Quest 3",
-            osName = "Android",
-            osVersion = "12L",
-            androidSdkVersion = 32,
-            params = null,
-            glOverride = "US",
-            sendOriginHeaders = false
-        ),
-        InnerTubeClientConfig(
             clientName = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
             clientVersion = "2.0",
             userAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/11.50) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.0 Safari/605.1.15",
@@ -388,20 +396,6 @@ object InnerTubeStreamExtractor {
             sendOriginHeaders = true
         ),
         InnerTubeClientConfig(
-            clientName = "ANDROID",
-            clientVersion = "19.44.38",
-            userAgent = "com.google.android.youtube/19.44.38 (Linux; U; Android 14; en_US) gzip",
-            clientId = "3",
-            deviceMake = "Google",
-            deviceModel = "Pixel 8",
-            osName = "Android",
-            osVersion = "14",
-            androidSdkVersion = 34,
-            params = "CgIIAQ==",
-            glOverride = null,
-            sendOriginHeaders = false
-        ),
-        InnerTubeClientConfig(
             clientName = "WEB_EMBEDDED_PLAYER",
             clientVersion = "1.20250310.01.00",
             userAgent = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
@@ -409,19 +403,6 @@ object InnerTubeStreamExtractor {
             params = null,
             glOverride = null,
             isEmbedded = true,
-            sendOriginHeaders = true
-        ),
-        InnerTubeClientConfig(
-            clientName = "VISIONOS",
-            clientVersion = "0.1",
-            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
-            clientId = "101",
-            deviceMake = "Apple",
-            deviceModel = "RealityDevice14,1",
-            osName = "visionOS",
-            osVersion = "1.3.21O771",
-            params = null,
-            glOverride = null,
             sendOriginHeaders = true
         )
     )
@@ -465,7 +446,7 @@ object InnerTubeStreamExtractor {
                 !url.endsWith("itag=22", ignoreCase = true)
 
             val probeStart = if (clen <= 0L || clen > 100_000L) 65_536L else 0L
-            val probeEnd = probeStart + 1023L
+            val probeEnd = probeStart + 255L
 
             val targetUrl = if (!isHls && isAdaptiveGir && !url.contains("&range=")) {
                 val sep = if (url.contains("?")) "&" else "?"
@@ -482,8 +463,13 @@ object InnerTubeStreamExtractor {
 
             probeHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
                 if (resp.code in 200..206) {
-                    val b = resp.body?.byteStream()?.read() ?: -1
-                    b != -1
+                    val bytes = if (isHls) {
+                        val b = resp.body?.byteStream()?.read() ?: -1
+                        if (b != -1) ByteArray(1) else ByteArray(0)
+                    } else {
+                        resp.body?.bytes() ?: ByteArray(0)
+                    }
+                    bytes.isNotEmpty()
                 } else {
                     false
                 }
@@ -2331,11 +2317,6 @@ object InnerTubeStreamExtractor {
         if (forceRefresh) {
             videoStreamCache.remove(cleanVideoId)?.first?.let { failedUrl ->
                 failedSet.add(failedUrl)
-                if (failedUrl.startsWith("merged_av::")) {
-                    failedSet.add("TYPE_MERGED_AV")
-                } else {
-                    failedSet.add("TYPE_PROGRESSIVE_MP4")
-                }
             }
         } else {
             videoStreamCache[cleanVideoId]?.let { (cachedUrl, ts) ->
@@ -2348,7 +2329,7 @@ object InnerTubeStreamExtractor {
             }
         }
 
-        val preferMuxedOnly = !allowHlsFallback || failedSet.contains("TYPE_MERGED_AV")
+        val allowAdaptive = allowHlsFallback
         val startIdx = if (forceRefresh) {
             videoClientRotation.incrementAndGet() % VIDEO_CLIENTS.size
         } else {
@@ -2356,40 +2337,61 @@ object InnerTubeStreamExtractor {
         }
 
         var hlsFallbackCandidate: String? = null
-        var adaptiveMuxedFallback: String? = null
+        var verifiedAdaptiveMergedCandidate: String? = null
 
         val orderedClients = VIDEO_CLIENTS.indices.map { offset ->
             VIDEO_CLIENTS[(startIdx + offset) % VIDEO_CLIENTS.size]
         }
 
-        // Pass 1: Fast Progressive Muxed MP4 (itag=18 / itag=22) across primary clients.
-        // Muxed MP4 contains both H.264 video and AAC audio in a single stream, so main ExoPlayer
-        // decodes video + audio on one hardware pipeline with zero split-player sync/surface bugs!
-        for (client in orderedClients.take(5)) {
-            val muxedCandidate = extractProgressiveVideoWithClient(
+        // Single-pass intelligent extraction across ordered clients:
+        // 1. If the client returns a verified progressive muxed MP4 (itag=18 / itag=22), return it immediately!
+        // 2. If progressive muxed MP4 is omitted for this video, extract and verify adaptive H.264 MP4 + M4A
+        //    (merged_av::videoUrl|||audioUrl with exact clen= and distinct cpn) from the SAME response!
+        for (client in orderedClients) {
+            val candidate = extractProgressiveVideoWithClient(
                 cleanVideoId = cleanVideoId,
                 client = client,
                 cpn = generateCpn(),
-                includeVisitorData = false,
-                allowAdaptiveMerge = false
+                includeVisitorData = client.isEmbedded,
+                allowAdaptiveMerge = allowAdaptive,
+                failedUrls = failedSet
             ) { hls ->
                 if (isHlsSupported && hlsFallbackCandidate.isNullOrBlank() && hls.isNotBlank()) {
                     hlsFallbackCandidate = hls
                 }
             }
-            if (!muxedCandidate.isNullOrBlank() && !failedSet.contains(muxedCandidate)) {
-                val needsProbe = forceRefresh || client.clientName in setOf("ANDROID", "VISIONOS", "WEB_EMBEDDED_PLAYER")
-                if (!needsProbe || verifyVideoStreamPlayable(muxedCandidate)) {
-                    com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, AudioQuality.HIGH, muxedCandidate)
-                    videoStreamCache[cleanVideoId] = muxedCandidate to now
-                    return@withContext Result.success(muxedCandidate)
-                } else {
-                    failedSet.add(muxedCandidate)
+
+            if (!candidate.isNullOrBlank() && !failedSet.contains(candidate)) {
+                if (!candidate.startsWith("merged_av::")) {
+                    // Progressive muxed MP4 (itag=18/22): verify and return immediately!
+                    if (verifyVideoStreamPlayable(candidate)) {
+                        com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, AudioQuality.HIGH, candidate)
+                        videoStreamCache[cleanVideoId] = candidate to now
+                        return@withContext Result.success(candidate)
+                    } else {
+                        failedSet.add(candidate)
+                    }
+                } else if (allowAdaptive) {
+                    // Adaptive H.264 video + M4A audio (merged_av::) for Media3 MergingMediaSource:
+                    if (verifyVideoStreamPlayable(candidate)) {
+                        val parts = candidate.removePrefix("merged_av::").split("|||")
+                        if (parts.size >= 2) {
+                            com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, AudioQuality.HIGH, parts[0])
+                            com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, AudioQuality.NORMAL, parts[1])
+                        }
+                        videoStreamCache[cleanVideoId] = candidate to now
+                        return@withContext Result.success(candidate)
+                    } else {
+                        if (verifiedAdaptiveMergedCandidate == null) {
+                            verifiedAdaptiveMergedCandidate = candidate
+                        }
+                        failedSet.add(candidate)
+                    }
                 }
             }
         }
 
-        // Pass 2: If HLS manifest was discovered from IOS / VISIONOS and HLS is supported, use it on main ExoPlayer
+        // Fallback 2: If HLS manifest was discovered and HLS is supported, use it on main ExoPlayer
         if (allowHlsFallback && isHlsSupported && !hlsFallbackCandidate.isNullOrBlank()) {
             val hls = hlsFallbackCandidate!!
             if (!failedSet.contains(hls)) {
@@ -2398,34 +2400,16 @@ object InnerTubeStreamExtractor {
             }
         }
 
-        // Pass 3: Federated Piped / Invidious muxed MP4
+        // Fallback 3: Federated Piped / Invidious muxed MP4
         val federatedMp4 = resolvePipedOrInvidiousMuxedVideo(cleanVideoId)
         if (!federatedMp4.isNullOrBlank() && !failedSet.contains(federatedMp4)) {
             videoStreamCache[cleanVideoId] = federatedMp4 to now
             return@withContext Result.success(federatedMp4)
         }
 
-        // Pass 4: Try remaining clients including adaptive merge fallback if needed
-        for (client in orderedClients) {
-            val mergedOrMuxed = extractProgressiveVideoWithClient(
-                cleanVideoId = cleanVideoId,
-                client = client,
-                cpn = generateCpn(),
-                includeVisitorData = client.isEmbedded,
-                allowAdaptiveMerge = !preferMuxedOnly
-            )
-            if (!mergedOrMuxed.isNullOrBlank() && !failedSet.contains(mergedOrMuxed)) {
-                if (verifyVideoStreamPlayable(mergedOrMuxed)) {
-                    videoStreamCache[cleanVideoId] = mergedOrMuxed to now
-                    return@withContext Result.success(mergedOrMuxed)
-                }
-                if (adaptiveMuxedFallback == null) adaptiveMuxedFallback = mergedOrMuxed
-            }
-        }
-
-        if (adaptiveMuxedFallback != null) {
-            videoStreamCache[cleanVideoId] = adaptiveMuxedFallback!! to now
-            return@withContext Result.success(adaptiveMuxedFallback!!)
+        if (verifiedAdaptiveMergedCandidate != null) {
+            videoStreamCache[cleanVideoId] = verifiedAdaptiveMergedCandidate!! to now
+            return@withContext Result.success(verifiedAdaptiveMergedCandidate!!)
         }
 
         Result.failure(IllegalStateException("No verified video stream found for videoId=$cleanVideoId"))
@@ -2437,6 +2421,7 @@ object InnerTubeStreamExtractor {
         cpn: String,
         includeVisitorData: Boolean = false,
         allowAdaptiveMerge: Boolean = true,
+        failedUrls: Set<String> = emptySet(),
         onHlsDiscovered: (String) -> Unit = {}
     ): String? {
         return runCatching {
@@ -2525,7 +2510,7 @@ object InnerTubeStreamExtractor {
             val hlsUrl = streamingData.optString("hlsManifestUrl", "")
             if (hlsUrl.isNotBlank() && isHlsSupported) onHlsDiscovered(hlsUrl)
 
-            fun resolveFormatUrl(fmt: JSONObject, allowCipher: Boolean): String {
+            fun resolveFormatUrl(fmt: JSONObject, allowCipher: Boolean, customCpn: String = cpn): String {
                 var rawUrl = fmt.optString("url", "")
                 if (rawUrl.isBlank() && allowCipher) {
                     val cipherStr = fmt.optString("signatureCipher").ifBlank { fmt.optString("cipher") }
@@ -2555,7 +2540,12 @@ object InnerTubeStreamExtractor {
                 }
                 if (rawUrl.isNotBlank() && !rawUrl.contains("cpn=")) {
                     val sep = if (rawUrl.contains("?")) "&" else "?"
-                    rawUrl = "$rawUrl${sep}cpn=$cpn"
+                    rawUrl = "$rawUrl${sep}cpn=$customCpn"
+                }
+                val jsonClen = fmt.optString("contentLength", "").toLongOrNull() ?: -1L
+                if (rawUrl.isNotBlank() && jsonClen > 0L && !rawUrl.contains("clen=")) {
+                    val sep = if (rawUrl.contains("?")) "&" else "?"
+                    rawUrl = "${rawUrl}${sep}clen=$jsonClen"
                 }
                 return rawUrl
             }
@@ -2610,34 +2600,38 @@ object InnerTubeStreamExtractor {
 
             fun findAdaptiveMergedAv(): String? {
                 if (!allowAdaptiveMerge) return null
-                if (client.clientName == "ANDROID" || client.clientName == "IOS") return null
+                if (client.clientName == "IOS") return null
                 val adaptive = streamingData.optJSONArray("adaptiveFormats") ?: return null
                 val videoCandidates = mutableListOf<Pair<Int, String>>()
                 val audioCandidates = mutableListOf<Pair<Int, String>>()
+                val audioCpn = generateCpn()
                 for (allowCipher in cipherPasses) {
                     for (i in 0 until adaptive.length()) {
                         val fmt = adaptive.optJSONObject(i) ?: continue
                         val mime = fmt.optString("mimeType", "")
                         val itag = fmt.optInt("itag", 0)
-                        val url = resolveFormatUrl(fmt, allowCipher = allowCipher)
-                        if (url.isBlank()) continue
                         val isMp4Avc = mime.startsWith("video/mp4", ignoreCase = true) &&
                             (mime.contains("avc1", ignoreCase = true) || itag in listOf(134, 135, 136, 160, 298))
                         val isWebmVp9 = mime.startsWith("video/webm", ignoreCase = true) &&
                             (mime.contains("vp9", ignoreCase = true) || itag in listOf(242, 243, 244, 247))
                         if (isMp4Avc || isWebmVp9) {
+                            val url = resolveFormatUrl(fmt, allowCipher = allowCipher, customCpn = cpn)
+                            if (url.isBlank()) continue
                             val height = fmt.optInt("height", 360)
-                            if (height in 240..720) {
-                                val codecBonus = if (isMp4Avc) 2000 else 1000
+                            if (height in 144..720) {
+                                val codecBonus = if (isMp4Avc) 5000 else 2000
                                 val resScore = when (height) {
-                                    360 -> 500
-                                    480 -> 480
-                                    720 -> 400
+                                    480 -> 600
+                                    360 -> 550
+                                    720 -> 500
+                                    240 -> 300
                                     else -> height
                                 }
                                 videoCandidates.add((codecBonus + resScore) to url)
                             }
                         } else if (mime.startsWith("audio/", ignoreCase = true) || itag in listOf(140, 251, 250, 249, 139)) {
+                            val url = resolveFormatUrl(fmt, allowCipher = allowCipher, customCpn = audioCpn)
+                            if (url.isBlank()) continue
                             val isM4a = itag == 140 || mime.contains("mp4a", ignoreCase = true)
                             val score = (if (isM4a) 10_000 else 5_000) + (fmt.optInt("bitrate", 128000) / 1000)
                             audioCandidates.add(score to url)
@@ -2652,11 +2646,11 @@ object InnerTubeStreamExtractor {
                 } else null
             }
 
-            // Always prioritize direct progressive muxed MP4 (itag 18 / 22) first so main ExoPlayer
-            // decodes both video and audio on a single hardware pipeline with zero black frames!
-            findMuxedMp4()?.let { return@runCatching it }
+            // 1. Prioritize direct progressive muxed MP4 (itag 18 / 22) if present and not marked failed
+            findMuxedMp4()?.takeIf { !failedUrls.contains(it) }?.let { return@runCatching it }
+            // 2. Otherwise immediately use adaptive H.264 MP4 + M4A audio (merged_av::) from the same response!
             if (allowAdaptiveMerge) {
-                findAdaptiveMergedAv()?.let { return@runCatching it }
+                findAdaptiveMergedAv()?.takeIf { !failedUrls.contains(it) }?.let { return@runCatching it }
             }
             null
         }.getOrNull()

@@ -47,17 +47,6 @@ class DeviceInnerTubeResolver : Resolver {
             ),
             ClientAttempt(
                 endpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-                clientName = "ANDROID_TESTSUITE",
-                clientVersion = "1.9",
-                clientId = "30",
-                userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 12L; US) gzip",
-                gl = "US",
-                sendOrigin = false,
-                includePoToken = false,
-                params = "CgIIAQ=="
-            ),
-            ClientAttempt(
-                endpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
                 clientName = "ANDROID_VR",
                 clientVersion = "1.43.32",
                 clientId = "28",
@@ -295,6 +284,10 @@ class DeviceInnerTubeResolver : Resolver {
                             directUrl = "$directUrl&pot=$poToken"
                         }
 
+                        val jsonClen = f.optString("contentLength", "").toLongOrNull() ?: -1L
+                        if (jsonClen > 0L) {
+                            com.seitharol.player.OuterTuneResolvingDataSource.recordKnownStreamLength(directUrl, jsonClen)
+                        }
                         val isOpus = mime.contains("opus", ignoreCase = true) || itagInt in listOf(249, 250, 251)
                         val codec = if (isOpus) "opus" else "aac"
                         candidateFormats.add(
@@ -310,16 +303,17 @@ class DeviceInnerTubeResolver : Resolver {
                 }
             }
 
-            processFormatArray(adaptiveFormats)
             processFormatArray(legacyFormats)
+            processFormatArray(adaptiveFormats)
 
             if (candidateFormats.isEmpty()) {
                 throw IllegalStateException("No usable audio streams found")
             }
 
-            // Prefer M4A AAC (itag 140) first for universal hardware MediaCodec support, then high-bitrate Opus (itag 251)
+            // Prefer progressive MP4 (itag 18 with ratebypass=yes) first, then M4A AAC (itag 140), then Opus (itag 251)
             candidateFormats.sortWith(
-                compareByDescending<FormatItem> { it.id == "140" || it.codec == "aac" }
+                compareByDescending<FormatItem> { it.id == "18" }
+                    .thenByDescending { it.id == "140" || it.codec == "aac" }
                     .thenByDescending { it.bitrate }
             )
 

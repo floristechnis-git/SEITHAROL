@@ -44,7 +44,7 @@ object InnerTubeResolver {
             if (!directStream.isNullOrBlank()) return@withContext directStream
 
             // 2. Direct ANDROID_VR player endpoint fallback
-            val vrStream = fetchAudioUrlFromPlayer(validVideoId, clientName = "ANDROID_VR", clientVersion = "1.60.19")
+            val vrStream = fetchAudioUrlFromPlayer(validVideoId, clientName = "ANDROID_VR", clientVersion = "1.61.48")
             if (!vrStream.isNullOrBlank()) return@withContext vrStream
 
             // 3. Piped instance fallback

@@ -79,9 +79,8 @@ class MusicRepository(
     suspend fun recordPlayHistory(track: Track) = withContext(Dispatchers.IO) {
         // Never record local device songs/videos into history or Home feed seeds!
         if (track.isLocalOnlyTrack) return@withContext
-        val fiveMinutesAgo = System.currentTimeMillis() - 5 * 60 * 1000L
-        val existing = historyDao.getRecentHistoryForTrack(track.id, fiveMinutesAgo)
-        if (existing != null) return@withContext
+        // Deduplicate previous entry for this track so most recently played song always moves to index 0 immediately
+        runCatching { historyDao.deleteHistoryByTrackId(track.id) }
 
         val existingTrack = trackDao.getTrackById(track.id)
         val mergedTrack = track.copy(

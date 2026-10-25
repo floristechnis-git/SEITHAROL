@@ -218,7 +218,8 @@ class ResolverEngine {
             return@withContext resolved
         }
 
-        val cleanYtId = com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(rawId)
+        val isExplicitSaavn = rawId.startsWith("saavn_") || rawId.startsWith("saavn_clip:") || track.audioUrl.contains("saavncdn.com")
+        val cleanYtId = if (isExplicitSaavn) null else com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(rawId)
         val isYouTubeId = !cleanYtId.isNullOrBlank()
         val targetVideoId = cleanYtId ?: rawId
         val targetKbps = preferredQuality.maxBitrateKbps
@@ -283,6 +284,29 @@ class ResolverEngine {
                     }
                 } catch (e: Exception) {
                     failures.add("JioSaavnFastFallback: ${e.message}")
+                }
+            }
+
+            // If preferNonYoutubeFallback was true and JioSaavn didn't have the song (e.g. Manipuri/YouTube track),
+            // always try InnerTubeStreamExtractor directly before secondary resolvers!
+            if (preferNonYoutubeFallback) {
+                val retryDirect = com.seitharol.data.resolver.InnerTubeStreamExtractor
+                    .resolveExactYoutubeStreamById(targetVideoId, preferredQuality, forceRefresh = true)
+                if (retryDirect.isSuccess) {
+                    val url = retryDirect.getOrThrow()
+                    val resolved = ResolvedStream(
+                        videoId = targetVideoId,
+                        streamUrl = url,
+                        itag = if (url.contains("itag=18")) 18 else if (url.contains("opus") || url.contains("webm")) 251 else 140,
+                        codec = if (url.contains("opus") || url.contains("webm")) "Opus" else "AAC",
+                        bitrate = "${targetKbps} kbps",
+                        expiresAtMs = now + (6 * 3600 * 1000L),
+                        isLocal = false,
+                        resolvedBy = "YouTube Music InnerTube (Direct Recovery)",
+                        latencyMs = 12
+                    )
+                    streamCache[cacheKey] = resolved
+                    return@withContext resolved
                 }
             }
 

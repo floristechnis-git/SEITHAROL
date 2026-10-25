@@ -710,7 +710,7 @@ class AudioPlayerManager(
                 }
 
                 stallRecoveryCount++
-                val useFallback = (stallRecoveryCount >= 2 || resumePos > 45_000L) && !isVideo
+                val useFallback = stallRecoveryCount >= 2 && !isVideo
                 Log.w(TAG, "Buffering watchdog attempt $stallRecoveryCount (fallback=$useFallback) for '${current.title}' at ${resumePos}ms")
                 resolverEngine.invalidateTrack(current.id)
                 InnerTubeStreamExtractor.invalidateVideoStreamCache(current.id)
@@ -754,19 +754,17 @@ class AudioPlayerManager(
                 .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(/* minimumLoadableRetryCount = */ 4))
             exoMediaSourceFactory = mediaSourceFactory
 
-            // Buffer tuned so an entire 3-10 minute song buffers continuously in one burst (maxBufferMs = 600s)
-            // without pausing HTTP socket reads at 65 seconds (which previously caused mid-song NAT/CDN drops),
-            // while retaining 300s back-buffer for instant 0ms backward/forward seeking:
+            // Standard streaming buffer window (20s-60s ahead, 60s back-buffer) for responsive HTTP Range
+            // streaming and instant seeking without forcing an upfront full-song download.
             val loadControl = DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
-                    /* minBufferMs = */ 600_000,
-                    /* maxBufferMs = */ 600_000,
-                    /* bufferForPlaybackMs = */ 400,
-                    /* bufferForPlaybackAfterRebufferMs = */ 800
+                    /* minBufferMs = */ 20_000,
+                    /* maxBufferMs = */ 60_000,
+                    /* bufferForPlaybackMs = */ 350,
+                    /* bufferForPlaybackAfterRebufferMs = */ 700
                 )
-                .setTargetBufferBytes(64 * 1024 * 1024)
                 .setPrioritizeTimeOverSizeThresholds(true)
-                .setBackBuffer(/* backBufferDurationMs = */ 300_000, /* retainBackBufferFromKeyframe = */ true)
+                .setBackBuffer(/* backBufferDurationMs = */ 60_000, /* retainBackBufferFromKeyframe = */ true)
                 .build()
 
             val builder = ExoPlayer.Builder(context)
@@ -1420,7 +1418,8 @@ class AudioPlayerManager(
         positionJob = coroutineScope.launch {
             while (isActive) {
                 val player = exoPlayer ?: break
-                if (!player.isPlaying && !_state.value.isPlaying) {
+                val isSeekingOrBuffering = userRequestedPlay && (player.playbackState == Player.STATE_BUFFERING || (System.currentTimeMillis() - lastUserSeekTimestamp) < 2500L)
+                if (!player.isPlaying && !_state.value.isPlaying && !isSeekingOrBuffering) {
                     break
                 }
                 val isPastGracePeriod = (System.currentTimeMillis() - lastUserSeekTimestamp) > 700L
@@ -2426,17 +2425,21 @@ class AudioPlayerManager(
             startPositionTracker()
         }
 
-        // Only recover if ExoPlayer encountered an actual error or remained stuck in STATE_ENDED/STATE_IDLE after seeking
+        // Recover if ExoPlayer encountered an error or remained stuck in STATE_BUFFERING/STATE_IDLE/STATE_ENDED after seeking
         seekRecoveryJob?.cancel()
         if (userRequestedPlay && current != null) {
             val expectedId = current.id
             seekRecoveryJob = coroutineScope.launch {
-                delay(5_500L)
+                delay(5_000L)
                 val p = exoPlayer ?: return@launch
                 if (isActive && userRequestedPlay && _state.value.currentTrack?.id == expectedId && !p.isPlaying &&
-                    (p.playerError != null || p.playbackState == Player.STATE_IDLE || p.playbackState == Player.STATE_ENDED)
+                    (p.playerError != null || p.playbackState == Player.STATE_IDLE || p.playbackState == Player.STATE_ENDED || p.playbackState == Player.STATE_BUFFERING)
                 ) {
-                    loadAndPlayCurrent(resumePositionMs = clamped, forceRefresh = p.playerError != null)
+                    loadAndPlayCurrent(
+                        resumePositionMs = clamped,
+                        forceRefresh = true,
+                        preferNonYoutubeFallback = false
+                    )
                 }
             }
         }

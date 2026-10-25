@@ -79,13 +79,19 @@ fun PlayerControlsSection(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Scrub-safe Slider
-        Slider(
-            value = displayedPosition.coerceIn(0f, totalDuration),
-            valueRange = 0f..totalDuration,
-            onValueChange = { newPos ->
+        // Wave Scrubber Progress Bar
+        val rawFrac = displayedPosition.coerceIn(0f, totalDuration) / totalDuration
+        val safeFrac = if (rawFrac.isNaN() || rawFrac.isInfinite()) 0f else rawFrac.coerceIn(0f, 1f)
+        com.example.ui.screens.SeitharolProProgressBar(
+            progress = safeFrac,
+            bufferedFraction = playerState.bufferedFraction,
+            displayPositionMs = displayedPosition.toLong().coerceAtLeast(0L),
+            totalDurationMs = playerState.durationMs.coerceAtLeast(1000L),
+            isDragging = isScrubbing,
+            isPlaying = playerState.isPlaying && !playerState.isBuffering,
+            onValueChange = { frac ->
                 isScrubbing = true
-                scrubPositionMs = newPos
+                scrubPositionMs = frac * totalDuration
             },
             onValueChangeFinished = {
                 onSeekTo(scrubPositionMs.toLong())

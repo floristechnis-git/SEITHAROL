@@ -667,63 +667,69 @@ object OuterTuneResolvingDataSource {
                     cleanHeaders.remove("range")
                     cleanHeaders.remove("If-Range")
 
-                    // When totalStreamLength is not yet known, send HTTP Range header on the first chunk
-                    // so googlevideo.com responds with 206 Partial Content + Content-Range: bytes start-end/total!
-                    val useRangeHeader = totalStreamLength <= 0L
-                    val chunkUri: Uri
-                    if (useRangeHeader) {
-                        chunkUri = Uri.parse(baseUriWithoutRange)
-                        cleanHeaders["Range"] = "bytes=${nextReadPosition}-${endByte}"
-                    } else {
-                        val sep = if (baseUriWithoutRange.contains("?")) "&" else "?"
-                        chunkUri = Uri.parse("${baseUriWithoutRange}${sep}range=${nextReadPosition}-${endByte}")
+                    // Always use a BOUNDED range request.
+                    // Prefer native DataSpec position + length (which sends HTTP Range: bytes=nextReadPosition-endByte
+                    // and validates 206 Partial Content / skips if 200 OK so seeking NEVER receives byte 0 by mistake),
+                    // with &range=nextReadPosition-endByte query param as fast fallback.
+                    fun buildRangeHeaderSpec(): DataSpec {
+                        return baseSpec.buildUpon()
+                            .setUri(Uri.parse(baseUriWithoutRange))
+                            .setHttpRequestHeaders(cleanHeaders)
+                            .setPosition(nextReadPosition)
+                            .setLength(maxDesired)
+                            .build()
                     }
 
-                    val chunkSpec = baseSpec.buildUpon()
-                        .setUri(chunkUri)
-                        .setHttpRequestHeaders(cleanHeaders)
-                        .setPosition(0L)
-                        .setLength(C.LENGTH_UNSET.toLong())
-                        .build()
+                    fun buildQueryRangeSpec(): DataSpec {
+                        val sep = if (baseUriWithoutRange.contains("?")) "&" else "?"
+                        val chunkUri = Uri.parse("${baseUriWithoutRange}${sep}range=${nextReadPosition}-${endByte}")
+                        return baseSpec.buildUpon()
+                            .setUri(chunkUri)
+                            .setHttpRequestHeaders(cleanHeaders)
+                            .setPosition(0L)
+                            .setLength(C.LENGTH_UNSET.toLong())
+                            .build()
+                    }
+
+                    val primarySpec = buildRangeHeaderSpec()
+                    val fallbackSpec = buildQueryRangeSpec()
 
                     var delegate = createDelegate()
                     activeDelegate = delegate
                     val openedLen = try {
-                        delegate.open(chunkSpec)
-                    } catch (rangeParamErr: Exception) {
+                        delegate.open(primarySpec)
+                    } catch (primaryErr: Exception) {
                         try {
                             delegate.close()
                         } catch (_: Throwable) {}
-                        if (!useRangeHeader) {
-                            // Fallback to standard HTTP Range header if &range= query param was rejected
-                            val fallbackHeaders = HashMap<String, String>(cleanHeaders)
-                            fallbackHeaders["Range"] = "bytes=${nextReadPosition}-${endByte}"
-                            val fallbackSpec = baseSpec.buildUpon()
-                                .setUri(Uri.parse(baseUriWithoutRange))
-                                .setHttpRequestHeaders(fallbackHeaders)
-                                .setPosition(0L)
-                                .setLength(C.LENGTH_UNSET.toLong())
-                                .build()
-                            delegate = createDelegate()
-                            activeDelegate = delegate
-                            delegate.open(fallbackSpec)
-                        } else {
-                            throw rangeParamErr
-                        }
+                        delegate = createDelegate()
+                        activeDelegate = delegate
+                        delegate.open(fallbackSpec)
                     }
 
-                    // Discover totalStreamLength from Content-Range if not known from clen=
+                    // Discover totalStreamLength from Content-Range or short final chunk if not known from clen=
                     if (totalStreamLength <= 0L) {
                         val crTotal = parseTotalLengthFromContentRange(delegate.responseHeaders)
                         if (crTotal > 0L) {
                             totalStreamLength = crTotal
                             knownStreamTotalLengths[streamIdentityKey] = crTotal
+                            knownStreamTotalLengths[baseUriWithoutRange] = crTotal
+                            val trackKey = mappedVideoId ?: currentlyPlayingTrackId
+                            if (!trackKey.isNullOrBlank()) {
+                                inlineTotalLengthByTrackId[trackKey] = crTotal
+                            }
                             if (totalBytesRemaining == C.LENGTH_UNSET.toLong()) {
                                 totalBytesRemaining = (crTotal - nextReadPosition).coerceAtLeast(0L)
                             }
-                        } else if (openedLen > 0L && openedLen < maxDesired && nextReadPosition == 0L) {
-                            totalStreamLength = openedLen
-                            knownStreamTotalLengths[streamIdentityKey] = openedLen
+                        } else if (openedLen > 0L && openedLen < maxDesired) {
+                            val discoveredEnd = nextReadPosition + openedLen
+                            totalStreamLength = discoveredEnd
+                            knownStreamTotalLengths[streamIdentityKey] = discoveredEnd
+                            knownStreamTotalLengths[baseUriWithoutRange] = discoveredEnd
+                            val trackKey = mappedVideoId ?: currentlyPlayingTrackId
+                            if (!trackKey.isNullOrBlank()) {
+                                inlineTotalLengthByTrackId[trackKey] = discoveredEnd
+                            }
                             if (totalBytesRemaining == C.LENGTH_UNSET.toLong()) {
                                 totalBytesRemaining = openedLen
                             }
@@ -777,9 +783,11 @@ object OuterTuneResolvingDataSource {
                         }
                     }
 
-                    // Fallback: Refresh signed stream URL for the current track and resume at exact nextReadPosition
+                    // Fallback: Refresh signed stream URL for the current track (requiring the exact same container itag!)
+                    // and resume at exact nextReadPosition
                     val vid = mappedVideoId ?: currentlyPlayingTrackId
                     val baseSpec = baseResolvedSpec
+                    val currentItag = Regex("[?&]itag=(\\d+)").find(baseUriWithoutRange)?.groupValues?.get(1)?.toIntOrNull()
                     if (!vid.isNullOrBlank() && baseSpec != null && InnerTubeStreamExtractor.isValidYoutubeVideoId(vid)) {
                         val refreshedUrl = runCatching {
                             invalidate(vid)
@@ -788,7 +796,12 @@ object OuterTuneResolvingDataSource {
                                 if (isVideoStream) {
                                     InnerTubeStreamExtractor.resolveRawVideoStreamById(vid, forceRefresh = true).getOrNull()
                                 } else {
-                                    InnerTubeStreamExtractor.resolveExactYoutubeStreamById(vid, qualityProvider(), forceRefresh = true).getOrNull()
+                                    InnerTubeStreamExtractor.resolveExactYoutubeStreamById(
+                                        videoId = vid,
+                                        preferredQuality = qualityProvider(),
+                                        forceRefresh = true,
+                                        requiredItag = currentItag
+                                    ).getOrNull()
                                 }
                             }
                             when {
@@ -801,7 +814,9 @@ object OuterTuneResolvingDataSource {
                             }
                         }.getOrNull()
 
-                        if (!refreshedUrl.isNullOrBlank()) {
+                        val refreshedItag = refreshedUrl?.let { Regex("[?&]itag=(\\d+)").find(it)?.groupValues?.get(1)?.toIntOrNull() }
+                        val isCompatibleContainer = currentItag == null || refreshedItag == null || currentItag == refreshedItag
+                        if (!refreshedUrl.isNullOrBlank() && isCompatibleContainer) {
                             return try {
                                 baseUriWithoutRange = stripRangeQueryParam(refreshedUrl)
                                 streamIdentityKey = extractStreamIdentityKey(baseUriWithoutRange)
@@ -815,6 +830,7 @@ object OuterTuneResolvingDataSource {
                                 if (newClen > 0L && totalStreamLength <= 0L) {
                                     totalStreamLength = newClen
                                     knownStreamTotalLengths[streamIdentityKey] = newClen
+                                    knownStreamTotalLengths[baseUriWithoutRange] = newClen
                                     if (totalBytesRemaining == C.LENGTH_UNSET.toLong()) {
                                         totalBytesRemaining = (newClen - nextReadPosition).coerceAtLeast(0L)
                                     }
@@ -830,14 +846,7 @@ object OuterTuneResolvingDataSource {
 
                 override fun open(dataSpec: DataSpec): Long {
                     consecutiveEmptyChunkRetries = 0
-                    val rawResolvedSpec = resolveDataSpec(dataSpec, qualityProvider)
-                    val rawUriStr = rawResolvedSpec.uri.toString()
-                    val cleanUriStr = stripRangeQueryParam(rawUriStr)
-                    val resolvedSpec = if (cleanUriStr != rawUriStr) {
-                        rawResolvedSpec.withUri(Uri.parse(cleanUriStr))
-                    } else {
-                        rawResolvedSpec
-                    }
+                    val resolvedSpec = resolveDataSpec(dataSpec, qualityProvider)
                     val uriStr = resolvedSpec.uri.toString()
                     targetUserAgent = resolvedSpec.httpRequestHeaders["User-Agent"]
                         ?: resolveClientHeadersForUrl(uriStr)["User-Agent"]
@@ -848,14 +857,18 @@ object OuterTuneResolvingDataSource {
                         !uriStr.contains("manifest.googlevideo.com", ignoreCase = true)
 
                     if (isGoogleVideo) {
-                        baseUriWithoutRange = cleanUriStr
+                        baseUriWithoutRange = stripRangeQueryParam(uriStr)
                         streamIdentityKey = extractStreamIdentityKey(baseUriWithoutRange)
                         mappedVideoId = urlToVideoIdMap[baseUriWithoutRange] ?: currentlyPlayingTrackId
                         isVideoStream = uriStr.contains("mime=video", ignoreCase = true) ||
                             uriStr.contains("itag=18", ignoreCase = true) ||
                             uriStr.contains("itag=22", ignoreCase = true)
 
-                        isProgressiveMuxedMp4 = true
+                        isProgressiveMuxedMp4 = uriStr.contains("itag=18&", ignoreCase = true) ||
+                            uriStr.endsWith("itag=18", ignoreCase = true) ||
+                            uriStr.contains("itag=22&", ignoreCase = true) ||
+                            uriStr.endsWith("itag=22", ignoreCase = true) ||
+                            !uriStr.contains("gir=yes", ignoreCase = true)
 
                         val clenFromUrl = Regex("[?&]clen=(\\d+)").find(uriStr)?.groupValues?.get(1)?.toLongOrNull()
                             ?: knownStreamTotalLengths[streamIdentityKey]
@@ -864,11 +877,6 @@ object OuterTuneResolvingDataSource {
                         if (clenFromUrl > 0L) {
                             totalStreamLength = clenFromUrl
                             knownStreamTotalLengths[streamIdentityKey] = clenFromUrl
-                            knownStreamTotalLengths[baseUriWithoutRange] = clenFromUrl
-                            val trackKey = mappedVideoId ?: currentlyPlayingTrackId
-                            if (!trackKey.isNullOrBlank()) {
-                                inlineTotalLengthByTrackId[trackKey] = clenFromUrl
-                            }
                         } else {
                             totalStreamLength = -1L
                         }
@@ -876,256 +884,233 @@ object OuterTuneResolvingDataSource {
                         baseResolvedSpec = resolvedSpec
                         nextReadPosition = resolvedSpec.position.coerceAtLeast(0L)
 
-                        // Use direct DefaultHttpDataSource streaming with native HTTP Range headers for both
-                        // YouTube Videos and YouTube Music Audio streams! This eliminates the 1:04 (~1 MB)
-                        // ?range= query-parameter stall and allows instant seeking to any position in the song.
-                        isChunkedGoogleVideo = false
-                        val delegate = createDelegate()
-                        activeDelegate = delegate
-                        return try {
-                            val openedLen = delegate.open(resolvedSpec)
-                            val discoveredTotal = parseTotalLengthFromContentRange(delegate.responseHeaders)
-                                .takeIf { it > 0L }
-                                ?: parseContentLengthHeader(delegate.responseHeaders).takeIf { it > 0L && nextReadPosition == 0L }
-                                ?: openedLen.takeIf { it > 0L && nextReadPosition == 0L }
-                                ?: totalStreamLength
-                            if (discoveredTotal > 0L) {
-                                totalStreamLength = discoveredTotal
-                                knownStreamTotalLengths[streamIdentityKey] = discoveredTotal
-                                knownStreamTotalLengths[baseUriWithoutRange] = discoveredTotal
-                                val trackKey = mappedVideoId ?: currentlyPlayingTrackId
-                                if (!trackKey.isNullOrBlank()) {
-                                    inlineTotalLengthByTrackId[trackKey] = discoveredTotal
+                        // Progressive muxed MP4 streams (itag=18 / itag=22) have ratebypass=yes on googlevideo.com.
+                        // Open them directly via DefaultHttpDataSource without artificial chunk splitting so
+                        // Mp4Extractor reads moov/mdat atoms and seeks natively with zero black frames!
+                        if (isProgressiveMuxedMp4) {
+                            isChunkedGoogleVideo = false
+                            val delegate = createDelegate()
+                            activeDelegate = delegate
+                            return try {
+                                val openedLen = delegate.open(resolvedSpec)
+                                val discoveredTotal = parseTotalLengthFromContentRange(delegate.responseHeaders)
+                                    .takeIf { it > 0L }
+                                    ?: parseContentLengthHeader(delegate.responseHeaders).takeIf { it > 0L && nextReadPosition == 0L }
+                                    ?: openedLen.takeIf { it > 0L && nextReadPosition == 0L }
+                                    ?: totalStreamLength
+                                if (discoveredTotal > 0L) {
+                                    totalStreamLength = discoveredTotal
+                                    knownStreamTotalLengths[streamIdentityKey] = discoveredTotal
+                                    val trackKey = mappedVideoId ?: currentlyPlayingTrackId
+                                    if (!trackKey.isNullOrBlank()) {
+                                        inlineTotalLengthByTrackId[trackKey] = discoveredTotal
+                                    }
                                 }
+                                openedLen
+                            } catch (err: Exception) {
+                                try {
+                                    delegate.close()
+                                } catch (_: Throwable) {}
+                                activeDelegate = null
+                                val vid = mappedVideoId ?: currentlyPlayingTrackId
+                                if (!vid.isNullOrBlank() && InnerTubeStreamExtractor.isValidYoutubeVideoId(vid)) {
+                                    val refreshedRaw = runCatching {
+                                        runBlocking(Dispatchers.IO) {
+                                            if (isVideoStream) {
+                                                InnerTubeStreamExtractor.resolveRawVideoStreamById(vid, forceRefresh = true).getOrNull()
+                                            } else {
+                                                InnerTubeStreamExtractor.resolveExactYoutubeStreamById(vid, qualityProvider(), forceRefresh = true).getOrNull()
+                                            }
+                                        }
+                                    }.getOrNull()
+                                    val refreshedSingle = when {
+                                        refreshedRaw.isNullOrBlank() -> null
+                                        refreshedRaw.startsWith("merged_av::") -> {
+                                            val parts = refreshedRaw.removePrefix("merged_av::").split("|||")
+                                            if (isVideoStream) parts.firstOrNull() else parts.getOrNull(1)
+                                        }
+                                        else -> refreshedRaw
+                                    }
+                                    if (!refreshedSingle.isNullOrBlank()) {
+                                        val refreshedHeaders = HashMap<String, String>(resolvedSpec.httpRequestHeaders)
+                                        refreshedHeaders.remove("Origin")
+                                        refreshedHeaders.remove("Referer")
+                                        refreshedHeaders.putAll(resolveClientHeadersForUrl(refreshedSingle))
+                                        targetUserAgent = refreshedHeaders["User-Agent"] ?: VR_161_USER_AGENT
+                                        val retrySpec = resolvedSpec.withUri(Uri.parse(refreshedSingle)).withRequestHeaders(refreshedHeaders)
+                                        val retryDelegate = createDelegate()
+                                        activeDelegate = retryDelegate
+                                        return retryDelegate.open(retrySpec)
+                                    }
+                                }
+                                throw err
                             }
-                            totalBytesRemaining = when {
-                                resolvedSpec.length != C.LENGTH_UNSET.toLong() -> resolvedSpec.length
-                                openedLen != C.LENGTH_UNSET.toLong() && openedLen > 0L -> openedLen
-                                totalStreamLength > 0L -> (totalStreamLength - nextReadPosition).coerceAtLeast(0L)
-                                else -> C.LENGTH_UNSET.toLong()
-                            }
-                            openedLen
-                        } catch (err: Exception) {
+                        }
+
+                        // Adaptive gir=yes streams (itag=134/135/136 H.264 fMP4, itag=140 M4A, itag=251 Opus):
+                        // Stream in fast 512 KB &range=start-end chunks with inline memory block caching.
+                        chunkStepBytes = GOOGLE_VIDEO_CHUNK_BYTES
+                        totalBytesRemaining = when {
+                            resolvedSpec.length != C.LENGTH_UNSET.toLong() -> resolvedSpec.length
+                            totalStreamLength > 0L -> (totalStreamLength - nextReadPosition).coerceAtLeast(0L)
+                            else -> C.LENGTH_UNSET.toLong()
+                        }
+
+                        if (totalBytesRemaining != 0L) {
                             try {
-                                delegate.close()
-                            } catch (_: Throwable) {}
-                            activeDelegate = null
-                            val vid = mappedVideoId ?: currentlyPlayingTrackId
-                            val currentItag = Regex("[?&]itag=(\\d+)").find(baseUriWithoutRange)?.groupValues?.get(1)?.toIntOrNull()
-                            if (!vid.isNullOrBlank() && InnerTubeStreamExtractor.isValidYoutubeVideoId(vid)) {
-                                val refreshedRaw = runCatching {
-                                    invalidate(vid)
-                                    InnerTubeStreamExtractor.invalidateVideoStreamCache(vid)
-                                    runBlocking(Dispatchers.IO) {
-                                        if (isVideoStream) {
-                                            InnerTubeStreamExtractor.resolveRawVideoStreamById(vid, forceRefresh = true).getOrNull()
-                                        } else {
-                                            InnerTubeStreamExtractor.resolveExactYoutubeStreamById(
-                                                videoId = vid,
-                                                preferredQuality = qualityProvider(),
-                                                forceRefresh = true,
-                                                requiredItag = currentItag
-                                            ).getOrNull()
-                                        }
+                                isChunkedGoogleVideo = true
+                                if (openNextGoogleVideoChunk()) {
+                                    if (resolvedSpec.length == C.LENGTH_UNSET.toLong() && totalStreamLength > 0L) {
+                                        totalBytesRemaining = (totalStreamLength - nextReadPosition).coerceAtLeast(0L)
                                     }
-                                }.getOrNull()
-                                val refreshedSingle = when {
-                                    refreshedRaw.isNullOrBlank() -> null
-                                    refreshedRaw.startsWith("merged_av::") -> {
-                                        val parts = refreshedRaw.removePrefix("merged_av::").split("|||")
-                                        if (isVideoStream) parts.firstOrNull() else parts.getOrNull(1)
+                                    val trackKey = mappedVideoId ?: currentlyPlayingTrackId
+                                    if (!trackKey.isNullOrBlank() && totalStreamLength > 0L) {
+                                        inlineTotalLengthByTrackId[trackKey] = totalStreamLength
                                     }
-                                    else -> refreshedRaw
+                                    return totalBytesRemaining
                                 }
-                                val refreshedItag = refreshedSingle?.let { Regex("[?&]itag=(\\d+)").find(it)?.groupValues?.get(1)?.toIntOrNull() }
-                                val sameContainer = currentItag == null || refreshedItag == null || currentItag == refreshedItag || nextReadPosition == 0L
-                                if (!refreshedSingle.isNullOrBlank() && sameContainer) {
-                                    val cleanRefreshed = stripRangeQueryParam(refreshedSingle)
-                                    baseUriWithoutRange = cleanRefreshed
-                                    streamIdentityKey = extractStreamIdentityKey(cleanRefreshed)
-                                    val refreshedHeaders = HashMap<String, String>(resolvedSpec.httpRequestHeaders)
-                                    refreshedHeaders.remove("Origin")
-                                    refreshedHeaders.remove("Referer")
-                                    refreshedHeaders.putAll(resolveClientHeadersForUrl(cleanRefreshed))
-                                    targetUserAgent = refreshedHeaders["User-Agent"] ?: VR_161_USER_AGENT
-                                    val retrySpec = resolvedSpec.withUri(Uri.parse(cleanRefreshed)).withRequestHeaders(refreshedHeaders)
-                                    baseResolvedSpec = retrySpec
-                                    val retryDelegate = createDelegate()
-                                    activeDelegate = retryDelegate
-                                    val openedLen = retryDelegate.open(retrySpec)
-                                    val discoveredTotal = parseTotalLengthFromContentRange(retryDelegate.responseHeaders)
-                                        .takeIf { it > 0L }
-                                        ?: parseContentLengthHeader(retryDelegate.responseHeaders).takeIf { it > 0L && nextReadPosition == 0L }
-                                        ?: openedLen.takeIf { it > 0L && nextReadPosition == 0L }
-                                        ?: totalStreamLength
-                                    if (discoveredTotal > 0L) {
-                                        totalStreamLength = discoveredTotal
-                                        knownStreamTotalLengths[streamIdentityKey] = discoveredTotal
-                                        knownStreamTotalLengths[baseUriWithoutRange] = discoveredTotal
-                                        val trackKey = mappedVideoId ?: currentlyPlayingTrackId
-                                        if (!trackKey.isNullOrBlank()) {
-                                            inlineTotalLengthByTrackId[trackKey] = discoveredTotal
+                            } catch (firstChunkErr: Exception) {
+                                val vid = mappedVideoId ?: currentlyPlayingTrackId
+                                val currentItag = Regex("[?&]itag=(\\d+)").find(baseUriWithoutRange)?.groupValues?.get(1)?.toIntOrNull()
+                                if (!vid.isNullOrBlank() && InnerTubeStreamExtractor.isValidYoutubeVideoId(vid)) {
+                                    val recovered = runCatching {
+                                        invalidate(vid)
+                                        InnerTubeStreamExtractor.invalidateVideoStreamCache(vid)
+                                        val refreshedRaw = runBlocking(Dispatchers.IO) {
+                                            if (isVideoStream) {
+                                                InnerTubeStreamExtractor.resolveRawVideoStreamById(vid, forceRefresh = true).getOrNull()
+                                            } else {
+                                                InnerTubeStreamExtractor.resolveExactYoutubeStreamById(
+                                                    videoId = vid,
+                                                    preferredQuality = qualityProvider(),
+                                                    forceRefresh = true,
+                                                    requiredItag = if (nextReadPosition > 0L) currentItag else null
+                                                ).getOrNull()
+                                            }
                                         }
+                                        val refreshedUrl = when {
+                                            refreshedRaw.isNullOrBlank() -> null
+                                            refreshedRaw.startsWith("merged_av::") -> {
+                                                val parts = refreshedRaw.removePrefix("merged_av::").split("|||")
+                                                if (isVideoStream) parts.firstOrNull() else parts.getOrNull(1) ?: parts.firstOrNull()
+                                            }
+                                            else -> refreshedRaw
+                                        }
+                                        if (!refreshedUrl.isNullOrBlank()) {
+                                            baseUriWithoutRange = stripRangeQueryParam(refreshedUrl)
+                                            streamIdentityKey = extractStreamIdentityKey(baseUriWithoutRange)
+                                            val refreshedHeaders = HashMap<String, String>(resolvedSpec.httpRequestHeaders)
+                                            refreshedHeaders.remove("Origin")
+                                            refreshedHeaders.remove("Referer")
+                                            refreshedHeaders.putAll(resolveClientHeadersForUrl(refreshedUrl))
+                                            targetUserAgent = refreshedHeaders["User-Agent"] ?: VR_161_USER_AGENT
+                                            baseResolvedSpec = resolvedSpec.withUri(Uri.parse(refreshedUrl)).withRequestHeaders(refreshedHeaders)
+                                            val newClen = Regex("[?&]clen=(\\d+)").find(refreshedUrl)?.groupValues?.get(1)?.toLongOrNull() ?: -1L
+                                            if (newClen > 0L) {
+                                                totalStreamLength = newClen
+                                                knownStreamTotalLengths[streamIdentityKey] = newClen
+                                                knownStreamTotalLengths[baseUriWithoutRange] = newClen
+                                                totalBytesRemaining = if (resolvedSpec.length != C.LENGTH_UNSET.toLong()) {
+                                                    resolvedSpec.length
+                                                } else {
+                                                    (newClen - nextReadPosition).coerceAtLeast(0L)
+                                                }
+                                            }
+                                            openNextGoogleVideoChunk()
+                                        } else false
+                                    }.getOrDefault(false)
+                                    if (recovered) {
+                                        if (resolvedSpec.length == C.LENGTH_UNSET.toLong() && totalStreamLength > 0L) {
+                                            totalBytesRemaining = (totalStreamLength - nextReadPosition).coerceAtLeast(0L)
+                                        }
+                                        return totalBytesRemaining
                                     }
-                                    totalBytesRemaining = when {
-                                        retrySpec.length != C.LENGTH_UNSET.toLong() -> retrySpec.length
-                                        openedLen != C.LENGTH_UNSET.toLong() && openedLen > 0L -> openedLen
-                                        totalStreamLength > 0L -> (totalStreamLength - nextReadPosition).coerceAtLeast(0L)
-                                        else -> C.LENGTH_UNSET.toLong()
-                                    }
-                                    return openedLen
                                 }
+                                isChunkedGoogleVideo = false
+                                try {
+                                    activeDelegate?.close()
+                                } catch (_: Throwable) {}
+                                activeDelegate = null
+                                throw firstChunkErr
                             }
-                            throw err
                         }
                     }
 
                     isChunkedGoogleVideo = false
                     baseResolvedSpec = resolvedSpec
                     nextReadPosition = resolvedSpec.position.coerceAtLeast(0L)
+                    mappedVideoId = currentlyPlayingTrackId
                     val delegate = createDelegate()
                     activeDelegate = delegate
-                    return delegate.open(resolvedSpec)
-                }
-
-                private fun reopenDirectDelegateAtCurrentPosition(): Boolean {
-                    val baseSpec = baseResolvedSpec ?: return false
-                    try {
-                        activeDelegate?.close()
-                    } catch (_: Throwable) {}
-                    activeDelegate = null
-
-                    val remLen = when {
-                        baseSpec.length != C.LENGTH_UNSET.toLong() ->
-                            (baseSpec.length - (nextReadPosition - baseSpec.position)).coerceAtLeast(1L)
-                        totalBytesRemaining != C.LENGTH_UNSET.toLong() && totalBytesRemaining > 0L ->
-                            totalBytesRemaining
-                        else -> C.LENGTH_UNSET.toLong()
-                    }
-
-                    // 1. Try reopening the current stream URL at exact nextReadPosition using standard HTTP Range
-                    for (attempt in 1..2) {
-                        try {
-                            val retryDelegate = createDelegate()
-                            activeDelegate = retryDelegate
-                            retryDelegate.open(
-                                baseSpec.buildUpon()
-                                    .setUri(Uri.parse(baseUriWithoutRange.ifBlank { baseSpec.uri.toString() }))
-                                    .setPosition(nextReadPosition)
-                                    .setLength(remLen)
-                                    .build()
-                            )
-                            return true
-                        } catch (_: Throwable) {
-                            try {
-                                activeDelegate?.close()
-                            } catch (_: Throwable) {}
-                            activeDelegate = null
-                            if (attempt == 1) {
-                                try {
-                                    Thread.sleep(60L)
-                                } catch (_: Throwable) {}
-                            }
+                    val openedLen = delegate.open(resolvedSpec)
+                    val discoveredTotal = parseTotalLengthFromContentRange(delegate.responseHeaders)
+                        .takeIf { it > 0L }
+                        ?: parseContentLengthHeader(delegate.responseHeaders).takeIf { it > 0L && nextReadPosition == 0L }
+                        ?: openedLen.takeIf { it > 0L && nextReadPosition == 0L }
+                        ?: totalStreamLength
+                    if (discoveredTotal > 0L) {
+                        totalStreamLength = discoveredTotal
+                        val trackKey = mappedVideoId ?: currentlyPlayingTrackId
+                        if (!trackKey.isNullOrBlank()) {
+                            inlineTotalLengthByTrackId[trackKey] = discoveredTotal
                         }
                     }
-
-                    // 2. If the signed URL expired mid-song, refresh a stream with the SAME itag and resume at nextReadPosition
-                    val vid = mappedVideoId ?: currentlyPlayingTrackId
-                    val currentItag = Regex("[?&]itag=(\\d+)").find(baseUriWithoutRange)?.groupValues?.get(1)?.toIntOrNull()
-                    if (!vid.isNullOrBlank() && InnerTubeStreamExtractor.isValidYoutubeVideoId(vid)) {
-                        val refreshedRaw = runCatching {
-                            invalidate(vid)
-                            InnerTubeStreamExtractor.invalidateVideoStreamCache(vid)
-                            runBlocking(Dispatchers.IO) {
-                                if (isVideoStream) {
-                                    InnerTubeStreamExtractor.resolveRawVideoStreamById(vid, forceRefresh = true).getOrNull()
-                                } else {
-                                    InnerTubeStreamExtractor.resolveExactYoutubeStreamById(
-                                        videoId = vid,
-                                        preferredQuality = qualityProvider(),
-                                        forceRefresh = true,
-                                        requiredItag = currentItag
-                                    ).getOrNull()
-                                }
-                            }
-                        }.getOrNull()
-                        val refreshedUrl = when {
-                            refreshedRaw.isNullOrBlank() -> null
-                            refreshedRaw.startsWith("merged_av::") -> {
-                                val parts = refreshedRaw.removePrefix("merged_av::").split("|||")
-                                if (isVideoStream) parts.firstOrNull() else parts.getOrNull(1) ?: parts.firstOrNull()
-                            }
-                            else -> refreshedRaw
-                        }
-                        val refreshedItag = refreshedUrl?.let { Regex("[?&]itag=(\\d+)").find(it)?.groupValues?.get(1)?.toIntOrNull() }
-                        if (!refreshedUrl.isNullOrBlank() && (currentItag == null || refreshedItag == null || currentItag == refreshedItag)) {
-                            return try {
-                                val cleanRefreshed = stripRangeQueryParam(refreshedUrl)
-                                baseUriWithoutRange = cleanRefreshed
-                                streamIdentityKey = extractStreamIdentityKey(cleanRefreshed)
-                                val refreshedHeaders = HashMap<String, String>(baseSpec.httpRequestHeaders)
-                                refreshedHeaders.remove("Origin")
-                                refreshedHeaders.remove("Referer")
-                                refreshedHeaders.putAll(resolveClientHeadersForUrl(cleanRefreshed))
-                                targetUserAgent = refreshedHeaders["User-Agent"] ?: VR_161_USER_AGENT
-                                val updatedBase = baseSpec.withUri(Uri.parse(cleanRefreshed)).withRequestHeaders(refreshedHeaders)
-                                baseResolvedSpec = updatedBase
-                                val retryDelegate = createDelegate()
-                                activeDelegate = retryDelegate
-                                retryDelegate.open(
-                                    updatedBase.buildUpon()
-                                        .setPosition(nextReadPosition)
-                                        .setLength(remLen)
-                                        .build()
-                                )
-                                true
-                            } catch (_: Throwable) {
-                                false
-                            }
-                        }
-                    }
-                    return false
+                    return openedLen
                 }
 
                 override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
                     if (length == 0) return 0
 
                     if (!isChunkedGoogleVideo) {
-                        if (totalBytesRemaining == 0L) return C.RESULT_END_OF_INPUT
-                        val maxToRead = if (totalBytesRemaining != C.LENGTH_UNSET.toLong()) {
-                            min(length.toLong(), totalBytesRemaining).toInt()
-                        } else {
-                            length
-                        }
                         var r = try {
-                            activeDelegate?.read(buffer, offset, maxToRead) ?: C.RESULT_END_OF_INPUT
+                            activeDelegate?.read(buffer, offset, length) ?: C.RESULT_END_OF_INPUT
                         } catch (ioe: IOException) {
-                            if (nextReadPosition > 0L && reopenDirectDelegateAtCurrentPosition()) {
-                                activeDelegate?.read(buffer, offset, maxToRead) ?: C.RESULT_END_OF_INPUT
+                            val baseSpec = baseResolvedSpec
+                            if (baseSpec != null && nextReadPosition > 0L) {
+                                try {
+                                    activeDelegate?.close()
+                                } catch (_: Throwable) {}
+                                val retryDelegate = createDelegate()
+                                activeDelegate = retryDelegate
+                                val remLen = if (baseSpec.length != C.LENGTH_UNSET.toLong()) {
+                                    (baseSpec.length - (nextReadPosition - baseSpec.position)).coerceAtLeast(1L)
+                                } else {
+                                    C.LENGTH_UNSET.toLong()
+                                }
+                                retryDelegate.open(baseSpec.buildUpon().setPosition(nextReadPosition).setLength(remLen).build())
+                                retryDelegate.read(buffer, offset, length)
                             } else {
                                 throw ioe
                             }
                         }
-
-                        // If the CDN closed the socket early (before totalStreamLength was reached), transparently reopen at nextReadPosition!
+                        // Recover transparently if carrier NAT closed an idle socket before the true end of the stream
                         if (r == C.RESULT_END_OF_INPUT &&
                             totalStreamLength > 0L &&
-                            nextReadPosition in 1L until totalStreamLength &&
-                            (totalBytesRemaining == C.LENGTH_UNSET.toLong() || totalBytesRemaining > 0L)
+                            nextReadPosition in 1L until (totalStreamLength - 2048L) &&
+                            consecutiveEmptyChunkRetries < 3
                         ) {
-                            consecutiveEmptyChunkRetries++
-                            if (consecutiveEmptyChunkRetries <= 3 && reopenDirectDelegateAtCurrentPosition()) {
-                                r = activeDelegate?.read(buffer, offset, maxToRead) ?: C.RESULT_END_OF_INPUT
+                            val baseSpec = baseResolvedSpec
+                            if (baseSpec != null) {
+                                consecutiveEmptyChunkRetries++
+                                runCatching {
+                                    try {
+                                        activeDelegate?.close()
+                                    } catch (_: Throwable) {}
+                                    val retryDelegate = createDelegate()
+                                    activeDelegate = retryDelegate
+                                    val remLen = if (baseSpec.length != C.LENGTH_UNSET.toLong()) {
+                                        (baseSpec.length - (nextReadPosition - baseSpec.position)).coerceAtLeast(1L)
+                                    } else {
+                                        C.LENGTH_UNSET.toLong()
+                                    }
+                                    retryDelegate.open(baseSpec.buildUpon().setPosition(nextReadPosition).setLength(remLen).build())
+                                    r = retryDelegate.read(buffer, offset, length)
+                                }
                             }
-                        } else if (r > 0) {
-                            consecutiveEmptyChunkRetries = 0
                         }
-
                         if (r > 0) {
+                            consecutiveEmptyChunkRetries = 0
                             nextReadPosition += r
-                            if (totalBytesRemaining != C.LENGTH_UNSET.toLong()) {
-                                totalBytesRemaining = (totalBytesRemaining - r).coerceAtLeast(0L)
-                            }
                             val trackKey = mappedVideoId ?: currentlyPlayingTrackId
                             if (!trackKey.isNullOrBlank() && totalStreamLength > 0L) {
                                 inlineTotalLengthByTrackId[trackKey] = totalStreamLength
@@ -1143,7 +1128,14 @@ object OuterTuneResolvingDataSource {
                     }
 
                     if (currentChunkBytesRemaining <= 0L || (activeDelegate == null && activeCachedBlock == null)) {
+                        val reachedTrueEnd = totalBytesRemaining == 0L || (totalStreamLength > 0L && nextReadPosition >= totalStreamLength)
+                        if (reachedTrueEnd) {
+                            return C.RESULT_END_OF_INPUT
+                        }
                         if (!openNextGoogleVideoChunkWithRetry()) {
+                            if (totalStreamLength > 0L && nextReadPosition < totalStreamLength) {
+                                throw IOException("Unable to open next audio chunk at byte $nextReadPosition / $totalStreamLength")
+                            }
                             return C.RESULT_END_OF_INPUT
                         }
                     }
@@ -1210,6 +1202,9 @@ object OuterTuneResolvingDataSource {
                         if (currentChunkBytesRead == 0L) {
                             consecutiveEmptyChunkRetries++
                             if (consecutiveEmptyChunkRetries > 3) {
+                                if (totalStreamLength > 0L && nextReadPosition < totalStreamLength) {
+                                    throw IOException("Empty chunk response at byte $nextReadPosition / $totalStreamLength")
+                                }
                                 return C.RESULT_END_OF_INPUT
                             }
                         } else {
@@ -1217,7 +1212,13 @@ object OuterTuneResolvingDataSource {
                         }
                         val hasMoreStreamBytes = (totalBytesRemaining == C.LENGTH_UNSET.toLong() || totalBytesRemaining > 0L) &&
                             (totalStreamLength <= 0L || nextReadPosition < totalStreamLength)
-                        if (!hasMoreStreamBytes || !openNextGoogleVideoChunkWithRetry()) {
+                        if (!hasMoreStreamBytes) {
+                            return C.RESULT_END_OF_INPUT
+                        }
+                        if (!openNextGoogleVideoChunkWithRetry()) {
+                            if (totalStreamLength > 0L && nextReadPosition < totalStreamLength) {
+                                throw IOException("Stream chunk transition failed at byte $nextReadPosition / $totalStreamLength")
+                            }
                             return C.RESULT_END_OF_INPUT
                         }
                         // Recursive read on the newly opened chunk (which may be a memory hit or network delegate)

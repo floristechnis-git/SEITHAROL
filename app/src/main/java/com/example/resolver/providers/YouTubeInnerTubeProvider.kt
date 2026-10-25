@@ -63,27 +63,7 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                         put("utcOffsetMinutes", 0)
                     }
                 ),
-                ClientProfile(
-                    name = "ANDROID_VR",
-                    version = "1.61.48",
-                    clientId = "28",
-                    userAgent = "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
-                    playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-                    clientJson = JSONObject().apply {
-                        put("clientName", "ANDROID_VR")
-                        put("clientVersion", "1.61.48")
-                        put("userAgent", "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip")
-                        put("deviceMake", "Oculus")
-                        put("deviceModel", "Quest 3")
-                        put("androidSdkVersion", 32)
-                        put("osName", "Android")
-                        put("osVersion", "12L")
-                        put("hl", "en")
-                        put("gl", deviceGl)
-                        put("timeZone", "UTC")
-                        put("utcOffsetMinutes", 0)
-                    }
-                ),
+
                 ClientProfile(
                     name = "IOS",
                     version = "20.10.4",
@@ -456,6 +436,10 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                         streamUrl = "$streamUrl${sep}cpn=$cpn"
                     }
 
+                    val jsonClen = f.optString("contentLength", "").toLongOrNull() ?: -1L
+                    if (jsonClen > 0L) {
+                        com.seitharol.player.OuterTuneResolvingDataSource.recordKnownStreamLength(streamUrl, jsonClen)
+                    }
                     val itag = f.optInt("itag", 140)
                     val bitrate = f.optInt("bitrate", 128000)
                     val isAac = mime.contains("mp4a") || mime.contains("aac") || itag in listOf(140, 141, 139, 18)
@@ -464,27 +448,21 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                 }
             }
 
-            inspectFormats(adaptiveFormats)
             inspectFormats(legacyFormats)
+            inspectFormats(adaptiveFormats)
 
             val sorted = candidates.sortedWith(
-                compareByDescending<CandidateFmt> { it.itag == 140 || it.isAac }
+                compareByDescending<CandidateFmt> { it.itag == 18 }
+                    .thenByDescending { it.itag == 140 || it.isAac }
                     .thenByDescending { it.bitrate }
             )
 
             var verifiedCandidate: CandidateFmt? = null
-            for (cand in sorted.distinctBy { it.itag }.take(2)) {
+            for (cand in sorted.distinctBy { it.itag }.take(3)) {
                 val verifiedUrl = com.seitharol.data.resolver.InnerTubeStreamExtractor.verifyStreamPlayable(cand.url)
                 if (!verifiedUrl.isNullOrBlank()) {
                     verifiedCandidate = cand.copy(url = verifiedUrl)
                     break
-                }
-            }
-
-            if (verifiedCandidate == null) {
-                val hlsUrl = streamingData.optString("hlsManifestUrl", "")
-                if (hlsUrl.isNotBlank()) {
-                    verifiedCandidate = CandidateFmt(hlsUrl, 140, 128000, "HLS AAC", true)
                 }
             }
 

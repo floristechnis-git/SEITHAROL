@@ -192,22 +192,117 @@ fun HomeScreen(
         emptySet<String>()
     }
 
-    // Prepare Trending Items (Deduplicated, excluding local songs)
-    val trendingItems = remember(deduplicatedTrendingHits, deduplicatedAllTracks, excludedHeroIds) {
-        val pool = if (deduplicatedTrendingHits.isNotEmpty()) deduplicatedTrendingHits else deduplicatedAllTracks
-        pool.filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }.take(24).map { it.toHomeMediaItem() }
+    val bannedKeywords = remember {
+        setOf(
+            "local artist", "local audio", "local video", "device storage", "downloaded in seitharol",
+            "<unknown>", "unknown artist", "unknown", "various artists", "various", "download", "seitharol"
+        )
     }
 
-    // Prepare Fresh New Music Items (Deduplicated, excluding local songs)
-    val freshItems = remember(freshReleases, deduplicatedTrendingHits, deduplicatedAllTracks, excludedHeroIds, isOfflineMode) {
+    // Prepare Spotify-Style 2-Column "Speed Dial / Quick Picks" Bento Items (2x3 grid = 6 items)
+    // Dynamically blends the user's most recent online plays, liked tracks, and personalized recommendations
+    // so Quick Dial updates immediately as the user plays or likes music!
+    val quickDialItems = remember(personalizedTracks, activeHistory, likedTracks, deduplicatedTrendingHits, downloadedTracks, isOfflineMode, recentSearches, excludedHeroIds) {
+        if (isOfflineMode) {
+            return@remember downloadedTracks
+                .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
+                .map { it.toHomeMediaItem() }
+                .distinctBy { it.id }
+                .take(6)
+        }
+
+        fun isAuthenticCleanSong(item: HomeMediaItem): Boolean {
+            if (item.originalTrack?.isLocalOnlyTrack == true) return false
+            val a = item.subtitle.lowercase().trim()
+            val t = item.title.lowercase().trim()
+            val id = item.id.lowercase().trim()
+            if (item.isMix || item.isAlbumOrPlaylist) return false
+            if (id.startsWith("local_") || id.startsWith("file_") || id.startsWith("vidfile_") || id.startsWith("content://") || id.startsWith("file://")) return false
+            if (t.contains("supermix") || t.contains("radio") || t.contains("mix")) return false
+            if (a.contains("supermix") || a.contains("radio") || a.contains("mix")) return false
+            if (id.startsWith("rdamvm") || id.startsWith("vl") || id.startsWith("pl") || id.startsWith("mpreb_") || id.startsWith("olak5uy_")) return false
+            if (bannedKeywords.any { b -> a.contains(b) || t.contains(b) }) return false
+            return true
+        }
+
+        val items = mutableListOf<HomeMediaItem>()
+        fun addUniqueItem(cand: HomeMediaItem) {
+            if (items.size >= 6) return
+            val exists = items.any {
+                it.id == cand.id || (it.title.equals(cand.title, ignoreCase = true) && it.subtitle.equals(cand.subtitle, ignoreCase = true))
+            }
+            if (!exists) items.add(cand)
+        }
+
+        // 1. Most recently played online tracks (up to 2 slots so playing a song immediately updates Quick Dial)
+        activeHistory
+            .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
+            .map { it.toHomeMediaItem() }
+            .filter(::isAuthenticCleanSong)
+            .take(2)
+            .forEach(::addUniqueItem)
+
+        // 2. Most recently liked online track (up to 1 slot)
+        likedTracks
+            .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
+            .map { it.toHomeMediaItem() }
+            .filter(::isAuthenticCleanSong)
+            .take(1)
+            .forEach(::addUniqueItem)
+
+        // 3. Personalized recommendations from live YTM + automix + artist/search seeds
+        personalizedTracks
+            .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
+            .map { it.toHomeMediaItem() }
+            .filter(::isAuthenticCleanSong)
+            .forEach(::addUniqueItem)
+
+        // 4. Fallback to remaining active history or trending hits to guarantee 6 clean playable tracks
+        if (items.size < 6) {
+            activeHistory
+                .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
+                .map { it.toHomeMediaItem() }
+                .filter(::isAuthenticCleanSong)
+                .forEach(::addUniqueItem)
+        }
+        if (items.size < 6) {
+            deduplicatedTrendingHits
+                .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
+                .map { it.toHomeMediaItem() }
+                .filter(::isAuthenticCleanSong)
+                .forEach(::addUniqueItem)
+        }
+
+        items.take(6)
+    }
+
+    val quickDialIdSet = remember(quickDialItems) {
+        quickDialItems.map { it.id }.toSet()
+    }
+
+    // Prepare Trending Items (Deduplicated, excluding Quick Dial items so shelves never duplicate each other)
+    val trendingItems = remember(deduplicatedTrendingHits, personalizedTracks, deduplicatedAllTracks, excludedHeroIds, quickDialIdSet) {
+        val basePool = if (deduplicatedTrendingHits.isNotEmpty()) {
+            (deduplicatedTrendingHits + personalizedTracks).distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
+        } else {
+            deduplicatedAllTracks
+        }
+        val filtered = basePool.filterNot { it.id in excludedHeroIds || it.id in quickDialIdSet || it.isLocalOnlyTrack }
+        val effectivePool = if (filtered.size >= 8) filtered else basePool.filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
+        effectivePool.take(24).map { it.toHomeMediaItem() }
+    }
+
+    // Prepare Fresh New Music Items (Deduplicated, excluding Quick Dial items & local songs)
+    val freshItems = remember(freshReleases, deduplicatedTrendingHits, deduplicatedAllTracks, excludedHeroIds, quickDialIdSet, isOfflineMode) {
         val pool = if (isOfflineMode) {
             deduplicatedAllTracks.take(12)
         } else if (freshReleases.isNotEmpty()) {
             freshReleases
-                .filterNot { it.isLocalOnlyTrack }
+                .filterNot { it.isLocalOnlyTrack || it.id in quickDialIdSet }
                 .distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
+                .ifEmpty { freshReleases.filterNot { it.isLocalOnlyTrack } }
         } else if (deduplicatedTrendingHits.isNotEmpty()) {
-            deduplicatedTrendingHits.take(12)
+            deduplicatedTrendingHits.filterNot { it.id in quickDialIdSet }.take(12)
         } else {
             deduplicatedAllTracks.take(12)
         }
@@ -251,81 +346,6 @@ fun HomeScreen(
                 }
         )
         list
-    }
-
-    val bannedKeywords = remember {
-        setOf(
-            "local artist", "local audio", "local video", "device storage", "downloaded in seitharol",
-            "<unknown>", "unknown artist", "unknown", "various artists", "various", "download", "seitharol"
-        )
-    }
-
-    // Prepare Spotify-Style 2-Column "Speed Dial / Quick Picks" Bento Items (2x3 grid = 6 items)
-    // Strictly never includes local songs, even immediately after playing a local song!
-    val quickDialItems = remember(personalizedTracks, activeHistory, trendingItems, downloadedTracks, isOfflineMode, recentSearches, excludedHeroIds) {
-        if (isOfflineMode) {
-            return@remember downloadedTracks
-                .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
-                .map { it.toHomeMediaItem() }
-                .distinctBy { it.id }
-                .take(6)
-        }
-
-        fun isAuthenticCleanSong(item: HomeMediaItem): Boolean {
-            if (item.originalTrack?.isLocalOnlyTrack == true) return false
-            val a = item.subtitle.lowercase().trim()
-            val t = item.title.lowercase().trim()
-            val id = item.id.lowercase().trim()
-            if (item.isMix || item.isAlbumOrPlaylist) return false
-            if (id.startsWith("local_") || id.startsWith("file_") || id.startsWith("vidfile_") || id.startsWith("content://") || id.startsWith("file://")) return false
-            if (t.contains("supermix") || t.contains("radio") || t.contains("mix")) return false
-            if (a.contains("supermix") || a.contains("radio") || a.contains("mix")) return false
-            if (id.startsWith("rdamvm") || id.startsWith("vl") || id.startsWith("pl") || id.startsWith("mpreb_") || id.startsWith("olak5uy_")) return false
-            if (bannedKeywords.any { b -> a.contains(b) || t.contains(b) }) return false
-            return true
-        }
-
-        val items = mutableListOf<HomeMediaItem>()
-
-        // 1. Genuine songs from online personalized recommendations
-        personalizedTracks
-            .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
-            .map { it.toHomeMediaItem() }
-            .filter(::isAuthenticCleanSong)
-            .distinctBy { "${it.title.lowercase().trim()}|${it.subtitle.lowercase().trim()}" }
-            .take(6)
-            .forEach { items.add(it) }
-
-        // 2. Fallback to online-only active history tracks (NEVER local tracks!)
-        if (items.size < 6) {
-            activeHistory
-                .filterNot { it.isLocalOnlyTrack }
-                .distinctBy { it.id }
-                .filterNot { it.id in excludedHeroIds }
-                .map { it.toHomeMediaItem() }
-                .filter(::isAuthenticCleanSong)
-                .distinctBy { "${it.title.lowercase().trim()}|${it.subtitle.lowercase().trim()}" }
-                .forEach { histItem ->
-                    if (items.size < 6 && !items.any { it.id == histItem.id || (it.title.equals(histItem.title, true) && it.subtitle.equals(histItem.subtitle, true)) }) {
-                        items.add(histItem)
-                    }
-                }
-        }
-
-        // 3. Fallback to trending hits to guarantee 6 clean playable tracks
-        if (items.size < 6) {
-            trendingItems
-                .filterNot { it.id in excludedHeroIds }
-                .filter(::isAuthenticCleanSong)
-                .distinctBy { "${it.title.lowercase().trim()}|${it.subtitle.lowercase().trim()}" }
-                .forEach { trendItem ->
-                    if (items.size < 6 && !items.any { it.id == trendItem.id || (it.title.equals(trendItem.title, true) && it.subtitle.equals(trendItem.subtitle, true)) }) {
-                        items.add(trendItem)
-                    }
-                }
-        }
-
-        items.distinctBy { it.id }.take(6)
     }
 
     // Dynamic suggested artists strictly personalized from online listening history and liked songs (never local songs!)

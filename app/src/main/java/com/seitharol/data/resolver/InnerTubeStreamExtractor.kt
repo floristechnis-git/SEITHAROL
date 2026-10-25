@@ -138,28 +138,16 @@ object InnerTubeStreamExtractor {
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
-            clientName = "VISIONOS",
-            clientVersion = "0.1",
-            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
-            clientId = "101",
-            deviceMake = "Apple",
-            deviceModel = "RealityDevice14,1",
-            osName = "visionOS",
-            osVersion = "1.3.21O771",
-            glOverride = null,
-            sendOriginHeaders = true
-        ),
-        InnerTubeClientConfig(
             clientName = "ANDROID",
-            clientVersion = "19.44.38",
-            userAgent = "com.google.android.youtube/19.44.38 (Linux; U; Android 14; en_US) gzip",
+            clientVersion = "20.10.38",
+            userAgent = "com.google.android.youtube/20.10.38 (Linux; U; Android 14; en_US) gzip",
             clientId = "3",
             deviceMake = "Google",
             deviceModel = "Pixel 8",
             osName = "Android",
             osVersion = "14",
             androidSdkVersion = 34,
-            params = null,
+            params = "CgIIAQ==",
             glOverride = null,
             sendOriginHeaders = false
         ),
@@ -176,6 +164,18 @@ object InnerTubeStreamExtractor {
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
+            clientName = "VISIONOS",
+            clientVersion = "0.1",
+            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+            clientId = "101",
+            deviceMake = "Apple",
+            deviceModel = "RealityDevice14,1",
+            osName = "visionOS",
+            osVersion = "1.3.21O771",
+            glOverride = null,
+            sendOriginHeaders = true
+        ),
+        InnerTubeClientConfig(
             clientName = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
             clientVersion = "2.0",
             userAgent = "Mozilla/5.0 (PlayStation; PlayStation 4/11.50) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.0 Safari/605.1.15",
@@ -185,18 +185,13 @@ object InnerTubeStreamExtractor {
             sendOriginHeaders = true
         ),
         InnerTubeClientConfig(
-            clientName = "ANDROID_TESTSUITE",
-            clientVersion = "1.9",
-            userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 12L; US) gzip",
-            clientId = "30",
-            deviceMake = "Google",
-            deviceModel = "Pixel 7",
-            osName = "Android",
-            osVersion = "12L",
-            androidSdkVersion = 32,
-            params = null,
-            glOverride = "US",
-            sendOriginHeaders = false
+            clientName = "WEB_EMBEDDED_PLAYER",
+            clientVersion = "1.20250310.01.00",
+            userAgent = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+            clientId = "56",
+            glOverride = null,
+            isEmbedded = true,
+            sendOriginHeaders = true
         )
     )
 
@@ -418,26 +413,36 @@ object InnerTubeStreamExtractor {
 
     private fun verifySingleStreamUrl(url: String, isHls: Boolean = false): Boolean {
         return runCatching {
-            val cleanUrl = url.replace(Regex("([?&])range=[^&]+(&?)")) { m ->
-                if (m.groupValues[1] == "?" && m.groupValues[2] == "&") "?"
-                else if (m.groupValues[2] == "&") "&"
-                else ""
-            }
-            val headers = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(cleanUrl)
-            val clen = Regex("[?&]clen=(\\d+)").find(cleanUrl)?.groupValues?.get(1)?.toLongOrNull() ?: -1L
+            val headers = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(url)
+            val clen = Regex("[?&]clen=(\\d+)").find(url)?.groupValues?.get(1)?.toLongOrNull() ?: -1L
+            val isAdaptiveGir = url.contains("gir=yes", ignoreCase = true) &&
+                !url.contains("itag=18&", ignoreCase = true) &&
+                !url.endsWith("itag=18", ignoreCase = true) &&
+                !url.contains("itag=22&", ignoreCase = true) &&
+                !url.endsWith("itag=22", ignoreCase = true)
 
-            // Probe past the 1 MB (~1:04) boundary using standard HTTP Range header when clen > 1.2 MB
-            // so we verify the CDN supports standard HTTP Range requests beyond 1:04!
+            // For adaptive gir=yes streams, probe past the ~1 MiB (1:04) GVS cap (at 1,150,000 bytes).
+            // For progressive ratebypass=yes MP4 streams (itag=18/22 where clen is often absent from sparams),
+            // probe bytes 0..255 so we never send an out-of-range offset on short tracks.
             val probeStart = when {
-                clen > 1_200_000L -> 1_048_576L
-                clen <= 0L || clen > 100_000L -> 65_536L
+                !isAdaptiveGir -> 0L
+                clen > 1_200_000L -> 1_150_000L
+                clen <= 0L -> 1_150_000L
+                clen > 100_000L -> 65_536L
                 else -> 0L
             }
             val probeEnd = probeStart + 255L
 
-            val reqBuilder = okhttp3.Request.Builder().url(cleanUrl).get()
+            val targetUrl = if (!isHls && isAdaptiveGir && !url.contains("&range=")) {
+                val sep = if (url.contains("?")) "&" else "?"
+                "${url}${sep}range=${probeStart}-${probeEnd}"
+            } else {
+                url
+            }
+
+            val reqBuilder = okhttp3.Request.Builder().url(targetUrl).get()
             headers.forEach { (k, v) -> reqBuilder.header(k, v) }
-            if (!isHls) {
+            if (!isHls && !isAdaptiveGir) {
                 reqBuilder.header("Range", "bytes=${probeStart}-${probeEnd}")
             }
 
@@ -448,7 +453,7 @@ object InnerTubeStreamExtractor {
                     if (slashIdx > 0 && slashIdx < crHeader.length - 1) {
                         val discoveredTotal = crHeader.substring(slashIdx + 1).trim().toLongOrNull() ?: -1L
                         if (discoveredTotal > 0L) {
-                            com.seitharol.player.OuterTuneResolvingDataSource.recordKnownStreamLength(cleanUrl, discoveredTotal)
+                            com.seitharol.player.OuterTuneResolvingDataSource.recordKnownStreamLength(url, discoveredTotal)
                         }
                     }
                     val bytes = if (isHls) {
@@ -458,6 +463,19 @@ object InnerTubeStreamExtractor {
                         resp.body?.bytes() ?: ByteArray(0)
                     }
                     bytes.isNotEmpty()
+                } else if (resp.code == 416 && clen <= 0L && probeStart > 0L) {
+                    // Short clip (<1.15 MB): verify byte 0..255 with bounded range
+                    val shortUrl = if (!isHls && isAdaptiveGir && !url.contains("&range=")) {
+                        val sep = if (url.contains("?")) "&" else "?"
+                        "${url}${sep}range=0-255"
+                    } else url
+                    val shortReq = okhttp3.Request.Builder().url(shortUrl).get().apply {
+                        headers.forEach { (k, v) -> header(k, v) }
+                        if (!isHls && !isAdaptiveGir) header("Range", "bytes=0-255")
+                    }.build()
+                    probeHttpClient.newCall(shortReq).execute().use { r2 ->
+                        r2.code in 200..206 && (r2.body?.bytes()?.isNotEmpty() == true)
+                    }
                 } else {
                     false
                 }
@@ -523,7 +541,7 @@ object InnerTubeStreamExtractor {
                 put("cpn", cpn)
                 put("contentCheckOk", true)
                 put("racyCheckOk", true)
-                if (client.params != null && client.params != "CgIIAQ==") {
+                if (!client.params.isNullOrBlank()) {
                     put("params", client.params)
                 }
                 if (client.isEmbedded) {
@@ -624,7 +642,7 @@ object InnerTubeStreamExtractor {
                     }
                     if (rawUrl.isBlank()) continue
 
-                    var finalUrl = if (!rawUrl.contains("cpn=")) {
+                    val finalUrl = if (!rawUrl.contains("cpn=")) {
                         val sep = if (rawUrl.contains("?")) "&" else "?"
                         "$rawUrl${sep}cpn=$cpn"
                     } else {
@@ -637,7 +655,7 @@ object InnerTubeStreamExtractor {
 
                     val kbps = fmt.optInt("bitrate", 128000) / 1000
                     val isAacMp4 = mime.contains("mp4a", ignoreCase = true) || itag in listOf(140, 141, 139)
-                    val isProgressiveMp4 = isLegacy || itag == 18
+                    val isProgressiveMp4 = isLegacy || itag == 18 || itag == 22 || !finalUrl.contains("gir=yes", ignoreCase = true)
                     val isOpus = mime.contains("opus", ignoreCase = true) || itag in listOf(249, 250, 251)
                     audioStreams.add(
                         AudioStreamCandidate(
@@ -653,16 +671,19 @@ object InnerTubeStreamExtractor {
             }
 
             // Pass 1: Collect direct unciphered URLs first (zero JS overhead)
-            collectStreams(adaptiveFormats, isLegacy = false, allowCipher = false)
             collectStreams(legacyFormats, isLegacy = true, allowCipher = false)
+            collectStreams(adaptiveFormats, isLegacy = false, allowCipher = false)
 
             // Pass 2: Inspect ciphered streams on embedded clients if Pass 1 returned zero direct URLs
             if (audioStreams.isEmpty() && client.isEmbedded) {
-                collectStreams(adaptiveFormats, isLegacy = false, allowCipher = true)
                 collectStreams(legacyFormats, isLegacy = true, allowCipher = true)
+                collectStreams(adaptiveFormats, isLegacy = false, allowCipher = true)
             }
 
             val failedForVideo = failedAudioStreamsByVideoId[videoId].orEmpty()
+            // Prioritize progressive MP4 (itag=18 with ratebypass=yes and full moov seek table at byte 0)
+            // because it is 100% exempt from YouTube GVS's 1 MiB (1:04) adaptive gir=yes cap and seeks
+            // instantaneously via standard HTTP Range requests in DefaultHttpDataSource!
             val sortedCandidates = audioStreams
                 .filter { cand ->
                     requiredItag == null || cand.itag == requiredItag
@@ -673,13 +694,19 @@ object InnerTubeStreamExtractor {
                 }
                 .sortedWith(
                     compareByDescending<AudioStreamCandidate> { requiredItag != null && it.itag == requiredItag }
-                        .thenByDescending { it.itag == 140 || (it.isAacMp4 && !it.isProgressiveMp4) }
+                        .thenByDescending { it.isProgressiveMp4 && it.itag == 18 }
                         .thenByDescending { it.isProgressiveMp4 }
+                        .thenByDescending { it.itag == 140 || it.isAacMp4 }
                         .thenBy { kotlin.math.abs(it.kbps - preferredQuality.maxBitrateKbps) }
                 )
 
             for (cand in sortedCandidates.take(4)) {
-                val verified = verifyStreamPlayable(cand.url)
+                val isFastVrProgressive = cand.isProgressiveMp4 && client.clientName == "ANDROID_VR" && requiredItag == null
+                val verified = if (isFastVrProgressive) {
+                    cand.url
+                } else {
+                    verifyStreamPlayable(cand.url)
+                }
                 if (!verified.isNullOrBlank()) {
                     return@runCatching verified
                 } else {
@@ -716,7 +743,9 @@ object InnerTubeStreamExtractor {
             com.seitharol.player.OuterTuneResolvingDataSource.invalidate(cleanVideoId)
         } else if (requiredItag == null) {
             com.seitharol.player.OuterTuneResolvingDataSource.getCachedUrl(cleanVideoId, preferredQuality)?.let { cached ->
-                return@withContext Result.success(cached)
+                if (!cached.contains(".m3u8", ignoreCase = true) && !cached.contains("manifest.googlevideo.com", ignoreCase = true)) {
+                    return@withContext Result.success(cached)
+                }
             }
         }
 
@@ -727,14 +756,16 @@ object InnerTubeStreamExtractor {
             0
         }
 
-        // Fast Path: Try primary rotated client first (~300ms)
+        // Fast Path: Try primary rotated client first (ANDROID_VR 1.61.48 ~250ms).
+        // Never use muxed HLS manifests for audio-only playback (allowHls = false) because
+        // disabling C.TRACK_TYPE_VIDEO on ExoPlayer causes muxed HLS variants to stall in STATE_BUFFERING.
         val primaryClient = VERIFIED_CLIENTS[startOffset % VERIFIED_CLIENTS.size]
         val fastUrl = extractStreamWithConfig(
             videoId = cleanVideoId,
             client = primaryClient,
             preferredQuality = preferredQuality,
             cpn = cpn,
-            allowHls = isHlsSupported && requiredItag == null,
+            allowHls = false,
             includeVisitorData = primaryClient.isEmbedded,
             requiredItag = requiredItag
         )
@@ -743,7 +774,7 @@ object InnerTubeStreamExtractor {
             return@withContext Result.success(fastUrl)
         }
 
-        // Sequential Client Failover across all verified clients (ANDROID_VR 1.43.32, VISIONOS, ANDROID, IOS, TVHTML5)
+        // Sequential Client Failover across all verified clients
         val remainingClients = VERIFIED_CLIENTS.indices
             .filter { it != (startOffset % VERIFIED_CLIENTS.size) }
             .map { VERIFIED_CLIENTS[it] }
@@ -753,7 +784,7 @@ object InnerTubeStreamExtractor {
                 client = client,
                 preferredQuality = preferredQuality,
                 cpn = generateCpn(),
-                allowHls = isHlsSupported && requiredItag == null,
+                allowHls = false,
                 includeVisitorData = client.isEmbedded,
                 requiredItag = requiredItag
             )
@@ -795,77 +826,241 @@ object InnerTubeStreamExtractor {
         parseAutomixPlaylistPanel(root, seedVideoId).take(limit)
     }
 
+    /**
+     * Fetches live dynamic music shelves directly from YouTube Music's `FEmusic_home` and `FEmusic_explore`
+     * browse endpoints so cold starts and refreshes always reflect real-time dynamic YTM charts & recommendations.
+     */
+    suspend fun fetchLiveYtmHomeAndExploreTracks(limit: Int = 28): List<CandidateStream> = withContext(Dispatchers.IO) {
+        val discovered = mutableListOf<CandidateStream>()
+        val browseIds = listOf("FEmusic_home", "FEmusic_explore")
+        for (bId in browseIds) {
+            runCatching {
+                val payload = webRemixPayload().apply { put("browseId", bId) }
+                val root = postWebRemix("https://music.youtube.com/youtubei/v1/browse?prettyPrint=false", payload)
+                    ?: return@runCatching
+                val responsiveItems = mutableListOf<JSONObject>()
+                val twoRowItems = mutableListOf<JSONObject>()
+                fun collectBrowseNodes(node: Any?) {
+                    if (responsiveItems.size + twoRowItems.size >= 80) return
+                    when (node) {
+                        is JSONObject -> {
+                            node.optJSONObject("musicResponsiveListItemRenderer")?.let {
+                                responsiveItems.add(it)
+                                return
+                            }
+                            node.optJSONObject("musicTwoRowItemRenderer")?.let {
+                                twoRowItems.add(it)
+                                return
+                            }
+                            val keys = node.keys()
+                            while (keys.hasNext()) {
+                                collectBrowseNodes(node.opt(keys.next()))
+                            }
+                        }
+                        is JSONArray -> {
+                            for (i in 0 until node.length()) {
+                                collectBrowseNodes(node.opt(i))
+                            }
+                        }
+                    }
+                }
+                collectBrowseNodes(root)
+                for (item in responsiveItems) {
+                    parseSingleResponsiveSongItem(item)?.let { discovered.add(it) }
+                }
+                for (twoRow in twoRowItems) {
+                    val vid = extractVideoId(
+                        twoRow.optJSONObject("navigationEndpoint")?.optJSONObject("watchEndpoint")?.optString("videoId")
+                            ?: twoRow.optJSONObject("thumbnailOverlay")
+                                ?.optJSONObject("musicItemThumbnailOverlayRenderer")
+                                ?.optJSONObject("content")
+                                ?.optJSONObject("musicPlayButtonRenderer")
+                                ?.optJSONObject("playNavigationEndpoint")
+                                ?.optJSONObject("watchEndpoint")
+                                ?.optString("videoId")
+                    ) ?: continue
+                    val title = extractSimpleOrRunsText(twoRow.optJSONObject("title")).takeIf { it.isNotBlank() } ?: continue
+                    val subRuns = twoRow.optJSONObject("subtitle")?.optJSONArray("runs")
+                    var artist = "Artist"
+                    if (subRuns != null) {
+                        for (r in 0 until subRuns.length()) {
+                            val t = subRuns.optJSONObject(r)?.optString("text")?.trim().orEmpty()
+                            if (t.isNotBlank() && t != "•" && !t.equals("Song", true) && !t.equals("Video", true) && !t.equals("Single", true)) {
+                                artist = t
+                                break
+                            }
+                        }
+                    }
+                    val thumb = extractBestThumbnail(
+                        twoRow.optJSONObject("thumbnailRenderer")
+                            ?.optJSONObject("musicThumbnailRenderer")
+                            ?.optJSONObject("thumbnail")
+                            ?.optJSONArray("thumbnails")
+                    ).ifBlank { "https://i.ytimg.com/vi/$vid/hqdefault.jpg" }
+                    discovered.add(
+                        CandidateStream(
+                            videoId = vid,
+                            title = title,
+                            artist = artist,
+                            channelName = "$artist - Topic",
+                            albumName = null,
+                            durationSeconds = 210,
+                            videoType = "MUSIC_VIDEO_TYPE_ATV",
+                            thumbnailUrl = thumb,
+                            isVerifiedArtist = true
+                        )
+                    )
+                }
+            }
+            if (discovered.size >= limit) break
+        }
+        CanonicalAudioResolver.deduplicateTracks(discovered).shuffled().take(limit)
+    }
+
     suspend fun buildPersonalizedHomeFeed(
         seedVideoIds: List<String>,
         favoriteArtists: List<String>,
-        moodCategory: String
+        moodCategory: String,
+        recentSearchQueries: List<String> = emptyList()
     ): List<CandidateStream> = coroutineScope {
-        val validSeeds = seedVideoIds.filter { it.length == 11 }.distinct().take(4)
+        val validSeeds = seedVideoIds.filter { it.length == 11 }.distinct().take(5)
         val cleanArtists = favoriteArtists
             .map { it.removeSuffix("- Topic").trim() }
             .filter { it.isNotBlank() && !it.equals("Unknown Artist", true) }
             .distinct()
+        val cleanSearches = recentSearchQueries
+            .map { it.trim() }
+            .filter { it.length >= 2 }
+            .distinct()
+            .take(3)
 
         val isGeneralFeed = moodCategory.equals("All", true) || moodCategory.equals("For You", true)
+        val hourOfDay = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
 
-        val automixSeeds: List<String> = if (isGeneralFeed) validSeeds else emptyList()
-        val automixJobs = automixSeeds.map { seedId -> async { fetchAutomixQueue(seedId, limit = 12) } }
-
-        val ytmCategoryPlaylistJob = async {
-            if (!isGeneralFeed) {
-                fetchMoodCategoryPlaylistTracks(moodCategory)
-            } else {
-                emptyList<CandidateStream>()
+        // 1. Automix radio continuations from the user's most recent played/liked tracks
+        val automixSeeds: List<String> = if (isGeneralFeed) validSeeds else validSeeds.take(2)
+        val automixJobs = automixSeeds.map { seedId ->
+            async {
+                fetchAutomixQueue(seedId, limit = 12).shuffled()
             }
         }
+
+        // 2. Live YouTube Music Home / Explore dynamic feed OR Mood Category Playlist
+        val liveBrowseOrCategoryJob = async {
+            if (!isGeneralFeed) {
+                fetchMoodCategoryPlaylistTracks(moodCategory).shuffled()
+            } else {
+                fetchLiveYtmHomeAndExploreTracks(limit = 22)
+            }
+        }
+
+        // 3. Dynamic Time-of-Day + Randomized Discovery Pool (so first load on every phone is unique and fresh)
+        val timeOfDayQueries = when (hourOfDay) {
+            in 5..10 -> listOf(
+                "Morning feel good acoustic official songs",
+                "Fresh morning Manipuri & Indian melodies",
+                "Upbeat morning pop & indie hits",
+                "Peaceful acoustic morning official audio"
+            )
+            in 11..16 -> listOf(
+                "Midday upbeat pop & indie official songs",
+                "Manipuri modern hit songs official",
+                "Trending daytime chart hits India & global",
+                "Feel good rhythm & pop tracks"
+            )
+            in 17..21 -> listOf(
+                "Evening chill pop & romantic official songs",
+                "Sunset acoustic & Manipuri soulful songs",
+                "Trending evening hits official audio",
+                "Smooth R&B & indie evening vibes"
+            )
+            else -> listOf(
+                "Late night chill & emotional official songs",
+                "Midnight acoustic & Manipuri love songs",
+                "After hours smooth pop & soul tracks",
+                "Night drive melodic hit songs"
+            )
+        }
+
+        val dynamicDiscoveryPool = listOf(
+            "Manipuri new official music releases",
+            "Imphal trending Manipuri songs official",
+            "Manipuri modern folk & indie pop songs",
+            "Manipuri romantic melodies official audio",
+            "Northeast India indie & pop hit songs",
+            "Top viral Indian & global songs official",
+            "Fresh indie pop & acoustic hits",
+            "Billboard & global hot hits official audio",
+            "Trending acoustic ballads & duets",
+            "Viral streaming hits official audio"
+        )
+
+        val artistModifiers = listOf("official audio", "latest songs", "top hit songs", "best tracks")
 
         val searchQueries = when {
             moodCategory.equals("Manipuri Song", true) -> listOf(
                 "Manipuri latest official hit songs",
                 "Imphal Manipuri trending songs",
                 "Manipuri romantic & modern folk songs",
-                "Manipuri classic & new official audio"
-            )
+                "Manipuri classic & new official audio",
+                "Manipuri indie & acoustic hit songs"
+            ).shuffled().take(4)
             moodCategory.equals("Trending", true) -> listOf(
                 "Trending viral hit songs official audio",
                 "Top chart songs India & global official",
-                "Manipuri & Indian trending hits"
-            )
+                "Manipuri & Indian trending hits",
+                "Viral streaming chart toppers official"
+            ).shuffled().take(3)
             moodCategory.equals("Energize", true) -> listOf(
                 "Energize upbeat pop dance hit songs",
                 "High energy feel good official songs",
-                "Upbeat party & energetic hits"
-            )
+                "Upbeat party & energetic hits",
+                "Fast tempo electro pop & dance anthems"
+            ).shuffled().take(3)
             moodCategory.equals("Sad", true) -> listOf(
                 "Sad emotional heartbreak songs official",
                 "Acoustic sad songs & melancholic ballads",
-                "Broken heart emotional hit songs"
-            )
+                "Broken heart emotional hit songs",
+                "Soulful melancholic indie & pop songs"
+            ).shuffled().take(3)
             moodCategory.equals("Chill", true) -> listOf(
                 "Chill vibes relaxing indie & R&B songs",
                 "Late night chill acoustic official songs",
-                "Smooth chillout pop & soul tracks"
-            )
+                "Smooth chillout pop & soul tracks",
+                "Laidback indie & acoustic chill hits"
+            ).shuffled().take(3)
             moodCategory.equals("Romantic", true) -> listOf(
                 "Romantic love songs official audio",
                 "Best acoustic love ballads & duets",
-                "Manipuri & Indian romantic hit songs"
-            )
+                "Manipuri & Indian romantic hit songs",
+                "Heartfelt love songs & acoustic duets"
+            ).shuffled().take(3)
             moodCategory.equals("Workout", true) -> listOf(
                 "Workout gym motivation phonk & hip hop songs",
                 "High tempo running & training hits",
-                "Power workout official audio tracks"
-            )
+                "Power workout official audio tracks",
+                "Cardio & lifting hype anthems"
+            ).shuffled().take(3)
             moodCategory.equals("Lo-Fi", true) -> listOf(
                 "Lofi chill beats study & relax",
                 "Late night lo-fi hip hop & aesthetic beats",
-                "Chill lofi instrumental & vocal mixes"
-            )
+                "Chill lofi instrumental & vocal mixes",
+                "Cozy rain lofi & mellow beats"
+            ).shuffled().take(3)
             isGeneralFeed -> {
-                if (cleanArtists.isNotEmpty()) {
-                    cleanArtists.take(4).map { "$it official audio" } + listOf("Manipuri hit songs")
+                val userPersonalizedQueries = mutableListOf<String>()
+                cleanSearches.take(2).forEach { q ->
+                    userPersonalizedQueries.add("$q official audio")
+                }
+                cleanArtists.take(4).forEachIndexed { idx, artist ->
+                    val mod = artistModifiers[(idx + System.currentTimeMillis().toInt().and(0x7fffffff)) % artistModifiers.size]
+                    userPersonalizedQueries.add("$artist $mod")
+                }
+                val sampledDiscovery = (timeOfDayQueries.shuffled().take(1) + dynamicDiscoveryPool.shuffled().take(2)).distinct()
+                if (userPersonalizedQueries.isNotEmpty()) {
+                    (userPersonalizedQueries.distinct().take(4) + sampledDiscovery.take(2)).distinct()
                 } else {
-                    listOf("Manipuri hit songs", "Top Indian Official Hits", "Global Viral Songs Official")
+                    (timeOfDayQueries.shuffled().take(2) + dynamicDiscoveryPool.shuffled().take(3)).distinct()
                 }
             }
             else -> listOf(
@@ -875,14 +1070,22 @@ object InnerTubeStreamExtractor {
             )
         }
 
-        val searchJobs = searchQueries.map { q -> async { searchOfficialYtmSongs(q, limit = 14) } }
-        val playlistBatch: List<CandidateStream> = ytmCategoryPlaylistJob.await()
-        val batches = mutableListOf<List<CandidateStream>>()
-        if (playlistBatch.isNotEmpty()) {
-            batches.add(playlistBatch)
+        val searchJobs = searchQueries.map { q ->
+            async {
+                searchOfficialYtmSongs(q, limit = 14).shuffled()
+            }
         }
-        batches.addAll(automixJobs.awaitAll())
-        batches.addAll(searchJobs.awaitAll())
+        val liveOrPlaylistBatch: List<CandidateStream> = liveBrowseOrCategoryJob.await()
+        val automixBatches = automixJobs.awaitAll().filter { it.isNotEmpty() }
+        val searchBatches = searchJobs.awaitAll().filter { it.isNotEmpty() }
+
+        val batches = mutableListOf<List<CandidateStream>>()
+        // Prioritize user's personal automix & search-driven batches first, then live YTM browse/discovery
+        batches.addAll(automixBatches)
+        batches.addAll(searchBatches)
+        if (liveOrPlaylistBatch.isNotEmpty()) {
+            batches.add(liveOrPlaylistBatch)
+        }
 
         val interleaved = mutableListOf<CandidateStream>()
         val maxLen = batches.maxOfOrNull { it.size } ?: 0
@@ -2770,10 +2973,6 @@ object InnerTubeStreamExtractor {
                     rawUrl = "$rawUrl${sep}cpn=$customCpn"
                 }
                 val jsonClen = fmt.optString("contentLength", "").toLongOrNull() ?: -1L
-                if (rawUrl.isNotBlank() && jsonClen > 0L && !rawUrl.contains("clen=")) {
-                    val sep = if (rawUrl.contains("?")) "&" else "?"
-                    rawUrl = "${rawUrl}${sep}clen=$jsonClen"
-                }
                 if (rawUrl.isNotBlank() && jsonClen > 0L) {
                     com.seitharol.player.OuterTuneResolvingDataSource.recordKnownStreamLength(rawUrl, jsonClen)
                 }
@@ -2946,8 +3145,8 @@ object InnerTubeStreamExtractor {
         if (!targetYtId.isNullOrBlank()) {
             addCandidate(com.seitharol.player.OuterTuneResolvingDataSource.getCachedUrl(targetYtId, preferredQuality))
 
-            val binaryOrderedClients = VERIFIED_CLIENTS.filter { it.clientName != "VISIONOS" } +
-                VERIFIED_CLIENTS.filter { it.clientName == "VISIONOS" }
+            val binaryOrderedClients = VERIFIED_CLIENTS.filter { it.clientName != "ANDROID_VR" } +
+                VERIFIED_CLIENTS.filter { it.clientName == "ANDROID_VR" }
             for (client in binaryOrderedClients) {
                 val url = extractStreamWithConfig(
                     videoId = targetYtId,
@@ -3008,9 +3207,10 @@ object InnerTubeStreamExtractor {
                             if (!ctx[kotlinx.coroutines.Job]!!.isActive) throw kotlinx.coroutines.CancellationException()
                         }
                         val endByte = (downloaded + chunkSize - 1L).coerceAtMost(clenFromUrl - 1L)
-                        val reqBuilder = okhttp3.Request.Builder().url(streamUrl)
+                        val sep = if (streamUrl.contains("?")) "&" else "?"
+                        val chunkUrl = "${streamUrl}${sep}range=$downloaded-$endByte"
+                        val reqBuilder = okhttp3.Request.Builder().url(chunkUrl)
                         headers.forEach { (k, v) -> reqBuilder.header(k, v) }
-                        reqBuilder.header("Range", "bytes=$downloaded-$endByte")
                         com.example.network.NetworkClients.okHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
                             if (!resp.isSuccessful) {
                                 throw IllegalStateException("HTTP ${resp.code} on chunk $downloaded-$endByte")

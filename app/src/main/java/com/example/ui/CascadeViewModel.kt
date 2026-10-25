@@ -551,7 +551,7 @@ class CascadeViewModel(
     private val playedTrackKeys = mutableSetOf<String>()
     private fun Track.sessionKey(): String = "${id}_${title.trim().lowercase()}|${artist.trim().lowercase()}"
 
-    private val recommendationRepository = object : com.example.player.RecommendationRepository {
+    private val recommendationRepository: com.example.player.RecommendationRepository = object : com.example.player.RecommendationRepository {
         override suspend fun getRelatedTracks(seedTrack: Track): List<Track> {
             if (seedTrack.isLocalOnlyTrack) return emptyList()
             return try {
@@ -608,7 +608,7 @@ class CascadeViewModel(
         override suspend fun getRelatedPlaylists(seedTrack: Track): List<com.example.player.SuggestedPlaylist> = emptyList()
     }
 
-    val autoSuggestManager = com.example.player.AutoSuggestQueueManager(recommendationRepository)
+    val autoSuggestManager: com.example.player.AutoSuggestQueueManager = com.example.player.AutoSuggestQueueManager(recommendationRepository)
     val isAutoSuggestEnabled: StateFlow<Boolean> = autoSuggestManager.isAutoSuggestEnabled
     val suggestedPlaylists: StateFlow<List<com.example.player.SuggestedPlaylist>> = autoSuggestManager.suggestedPlaylists
 

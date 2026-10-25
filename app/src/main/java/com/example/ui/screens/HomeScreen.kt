@@ -486,7 +486,7 @@ fun HomeScreen(
                                 NotificationBellAlertSvgIcon(
                                     tint = if (hasUnreadNotifications) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                                     hasUnreadAlert = hasUnreadNotifications,
-                                    alertDotColor = Color(0xFFFFB74D),
+                                    alertDotColor = Color(0xFFE53935),
                                     modifier = Modifier.size(21.dp)
                                 )
                             }
@@ -819,28 +819,12 @@ fun HomeScreen(
                 }
             } else {
                 item {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 20.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column {
-                            Text(
-                                text = "$selectedMood Hits",
-                                fontFamily = SyneFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 20.sp,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
-                            Text(
-                                text = "Filtered specifically for $selectedMood vibes",
-                                fontFamily = OutfitFontFamily,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
                         Surface(
                             shape = RoundedCornerShape(16.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant,
@@ -848,12 +832,41 @@ fun HomeScreen(
                                 .clip(RoundedCornerShape(16.dp))
                                 .clickable { viewModel.selectHomeMood("All") }
                         ) {
-                            Text(
-                                text = "Clear",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary,
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Clear Category",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = "Clear",
+                                    fontSize = 12.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = "$selectedMood Hits",
+                                fontFamily = SyneFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 20.sp,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "Filtered specifically for $selectedMood vibes",
+                                fontFamily = OutfitFontFamily,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -1021,6 +1034,164 @@ fun HomeScreen(
             }
         )
     }
+
+    var showDeveloperWelcomePopup by remember(userSettings.hasSeenDeveloperWelcomePopup) {
+        mutableStateOf(!userSettings.hasSeenDeveloperWelcomePopup)
+    }
+    if (showDeveloperWelcomePopup) {
+        DeveloperWelcomePopupModal(
+            userName = userSettings.userName.trim().ifBlank { "Friend" },
+            onDismiss = {
+                showDeveloperWelcomePopup = false
+                appPreferences.markDeveloperWelcomePopupSeen()
+            }
+        )
+    }
+}
+
+@Composable
+fun DeveloperWelcomePopupModal(
+    userName: String,
+    onDismiss: () -> Unit
+) {
+    var countdownSeconds by remember { mutableIntStateOf(5) }
+    LaunchedEffect(Unit) {
+        while (countdownSeconds > 0) {
+            kotlinx.coroutines.delay(1000L)
+            countdownSeconds--
+        }
+    }
+    val canDismissWithCross = countdownSeconds <= 0
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = {
+            if (canDismissWithCross) {
+                onDismiss()
+            }
+        },
+        properties = androidx.compose.ui.window.DialogProperties(
+            dismissOnBackPress = canDismissWithCross,
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                modifier = Modifier
+                    .widthIn(max = 430.dp)
+                    .fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp,
+                shadowElevation = 18.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 22.dp, vertical = 20.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Image(
+                                painter = painterResource(id = R.drawable.ic_splash_logo),
+                                contentDescription = "Seitharol Logo",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                            )
+                            Text(
+                                text = "SEITHAROL",
+                                fontFamily = SyneFontFamily,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 15.sp,
+                                letterSpacing = 1.sp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .then(
+                                    if (canDismissWithCross) {
+                                        Modifier.clickable { onDismiss() }
+                                    } else {
+                                        Modifier
+                                    }
+                                )
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                if (canDismissWithCross) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Close",
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                } else {
+                                    Text(
+                                        text = "${countdownSeconds}s",
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = "Welcome $userName, I'm Yumkhaibam Johnson Singh. I dedicated 71 days to developing this app for you. My hope is to provide an ad-free and limitless experience, serving as a supportive background companion for your work and an emotional stabilizer for those with broken hearts.",
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.Normal,
+                        fontSize = 15.sp,
+                        lineHeight = 22.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Spacer(modifier = Modifier.height(22.dp))
+
+                    Button(
+                        onClick = onDismiss,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                    ) {
+                        Text(
+                            text = "Got it",
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -1163,27 +1334,33 @@ fun TrendingSongsHorizontalShelf(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        LazyHorizontalGrid(
-            rows = GridCells.Fixed(4),
-            state = gridState,
-            flingBehavior = snapBehavior,
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(280.dp)
-        ) {
-            itemsIndexed(tracks, key = { idx, item -> "${item.id}_$idx" }) { _, track ->
-                val isPlaying = currentPlayingId == track.id
-                var showMenu by remember { mutableStateOf(false) }
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val cardWidth = if (maxWidth >= 600.dp) {
+                (maxWidth * 0.45f).coerceIn(280.dp, 360.dp)
+            } else {
+                (maxWidth - 40.dp).coerceIn(260.dp, 344.dp)
+            }
+            LazyHorizontalGrid(
+                rows = GridCells.Fixed(4),
+                state = gridState,
+                flingBehavior = snapBehavior,
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(280.dp)
+            ) {
+                itemsIndexed(tracks, key = { idx, item -> "${item.id}_$idx" }) { _, track ->
+                    val isPlaying = currentPlayingId == track.id
+                    var showMenu by remember { mutableStateOf(false) }
 
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (isPlaying) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier
-                        .width(344.dp)
-                        .height(62.dp)
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isPlaying) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier
+                            .width(cardWidth)
+                            .height(62.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .clickable { onTrackClick(track) }
                 ) {
@@ -1336,6 +1513,7 @@ fun TrendingSongsHorizontalShelf(
                 }
             }
         }
+        }
     }
 }
 
@@ -1476,7 +1654,11 @@ fun QuickDialBentoSection(
     val columns = topItems.chunked(2)
     val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val cardWidth = (maxWidth * 0.74f).coerceIn(248.dp, 320.dp)
+        val cardWidth = if (maxWidth >= 600.dp) {
+            (maxWidth * 0.44f).coerceIn(260.dp, 340.dp)
+        } else {
+            (maxWidth * 0.74f).coerceIn(248.dp, 320.dp)
+        }
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),

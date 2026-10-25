@@ -134,7 +134,7 @@ class CascadeViewModel(
                 }
             }
         }
-        trackMap.values.distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
+        trackMap.values.distinctBy { it.title.lowercase().trim() }
     }.flowOn(Dispatchers.IO).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val downloadedTracksById: StateFlow<Map<String, Track>> = downloadedTracks
@@ -922,27 +922,28 @@ class CascadeViewModel(
         selectedMood.value = targetMood
         if (isOfflineMode.value) return
         moodFetchJob?.cancel()
+        if (targetMood.equals("All", ignoreCase = true)) {
+            loadHomeScreenMusic()
+            return
+        }
         moodFetchJob = viewModelScope.launch(vmExceptionHandler) {
             isLoadingHome.value = true
             try {
-                val realHistory = musicRepository.getActiveHistory().firstOrNull().orEmpty()
-                    .filterNot { it.isLocalOnlyTrack }
-                val seedIds = realHistory.take(3).map { it.id }.filter { it.length == 11 }
-                val topArtists = realHistory.map { it.artist }.filter { it.isNotBlank() && it.lowercase() !in nonNavigableArtists }.distinct().take(3)
                 val likedIds = likedTrackIds.value
                 val dlMap = downloadedTracksById.value
 
                 val feed = InnerTubeStreamExtractor.buildPersonalizedHomeFeed(
-                    seedVideoIds = seedIds,
-                    favoriteArtists = topArtists,
+                    seedVideoIds = emptyList(),
+                    favoriteArtists = emptyList(),
                     moodCategory = targetMood
                 ).map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
                     .filterNot { it.isLocalOnlyTrack }
+                    .distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
 
                 if (feed.isNotEmpty()) {
                     personalizedTracks.value = feed
-                    trendingHits.value = feed.take(10)
-                    freshReleases.value = feed.drop(10).ifEmpty { feed.take(6) }
+                    trendingHits.value = feed.take(20)
+                    freshReleases.value = feed.drop(20).ifEmpty { feed.reversed().take(12) }
                 }
             } catch (e: Exception) {
                 Log.w("CascadeViewModel", "Mood switch failed: ${e.message}")
@@ -1380,6 +1381,7 @@ class CascadeViewModel(
     fun setVideoMode(enabled: Boolean) = playerManager.setVideoMode(enabled)
     fun setPlaybackSpeed(speed: Float) = playerManager.setPlaybackSpeed(speed)
     fun attachVideoTextureView(textureView: android.view.TextureView?) = playerManager.attachVideoTextureView(textureView)
+    fun detachVideoTextureView(textureView: android.view.TextureView?) = playerManager.detachVideoTextureView(textureView)
     fun setTemporaryTrackQuality(quality: AudioQuality) = playerManager.setTemporaryTrackQuality(quality)
     fun getTemporaryTrackQuality(): AudioQuality? = playerManager.getTemporaryTrackQuality()
 

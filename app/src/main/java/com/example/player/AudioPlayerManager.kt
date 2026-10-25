@@ -78,6 +78,7 @@ data class PlayerState(
     val isPartOfPlaylist: Boolean = false,
     val isVideoMode: Boolean = false,
     val isVideoFrameRendered: Boolean = false,
+    val videoAspectRatio: Float = 16f / 9f,
     val isMuted: Boolean = false,
     val playbackSpeed: Float = 1.0f,
     val bufferedPositionMs: Long = 0L,
@@ -134,6 +135,51 @@ class AudioPlayerManager(
     private var lastFailedTrackId: String? = null
     private val sessionPlayedIds = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
     private val sessionPlayedSignatures = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
+
+    private fun computeVideoAspectRatio(videoSize: androidx.media3.common.VideoSize): Float? {
+        if (videoSize.width <= 0 || videoSize.height <= 0) return null
+        val par = if (videoSize.pixelWidthHeightRatio > 0f && !videoSize.pixelWidthHeightRatio.isNaN()) {
+            videoSize.pixelWidthHeightRatio
+        } else {
+            1f
+        }
+        val rawRatio = (videoSize.width.toFloat() * par) / videoSize.height.toFloat()
+        return if (!rawRatio.isNaN() && !rawRatio.isInfinite() && rawRatio in 0.25f..4.0f) {
+            rawRatio
+        } else {
+            null
+        }
+    }
+
+    private fun extractLocalVideoAspectRatio(localPathOrUri: String?): Float? {
+        if (localPathOrUri.isNullOrBlank()) return null
+        val retriever = android.media.MediaMetadataRetriever()
+        return try {
+            when {
+                localPathOrUri.startsWith("content://") -> {
+                    retriever.setDataSource(context, Uri.parse(localPathOrUri))
+                }
+                localPathOrUri.startsWith("file://") -> {
+                    val path = Uri.parse(localPathOrUri).path ?: localPathOrUri.removePrefix("file://")
+                    retriever.setDataSource(path)
+                }
+                localPathOrUri.startsWith("/") -> {
+                    retriever.setDataSource(localPathOrUri)
+                }
+                else -> return null
+            }
+            val w = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toFloatOrNull() ?: return null
+            val h = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toFloatOrNull() ?: return null
+            val rot = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+            if (w <= 0f || h <= 0f) return null
+            val ratio = if (rot == 90 || rot == 270) h / w else w / h
+            ratio.takeIf { !it.isNaN() && !it.isInfinite() && it in 0.25f..4.0f }
+        } catch (_: Throwable) {
+            null
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
 
     private fun recordSessionPlayed(track: Track) {
         if (track.id.isNotBlank()) sessionPlayedIds.add(track.id)
@@ -632,11 +678,12 @@ class AudioPlayerManager(
 
         bufferingWatchdogJob = coroutineScope.launch {
             val isVid = _state.value.isVideoMode || _state.value.currentTrack?.isVideoTrack == true
-            delay(if (isVid) 5_500L else 12_000L)
+            delay(if (isVid) 15_000L else 12_000L)
             if (!isActive || !userRequestedPlay) return@launch
             val current = _state.value.currentTrack ?: return@launch
             val p = exoPlayer ?: return@launch
-            if (current.id == expectedTrackId && (_state.value.isBuffering || isRetryingOrLoading) && !p.isPlaying) {
+            val alreadyRenderingVideo = isVid && (_state.value.isVideoFrameRendered || p.playbackState == Player.STATE_READY || p.currentPosition > 100L)
+            if (current.id == expectedTrackId && (_state.value.isBuffering || isRetryingOrLoading) && !p.isPlaying && !alreadyRenderingVideo) {
                 Log.w(TAG, "Initial load watchdog triggered after 25s for '${current.title}', retrying stream...")
                 val resumePos = (p.currentPosition.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
                 val isVideo = current.isVideoTrack || _state.value.isVideoMode
@@ -739,8 +786,8 @@ class AudioPlayerManager(
                                     play()
                                 }
                                 val activelyPlaying = userRequestedPlay && playWhenReady
-                                val hasRenderedVideo = _state.value.isVideoFrameRendered ||
-                                    (videoSize.width > 0 && videoSize.height > 0)
+                                val detectedRatio = computeVideoAspectRatio(videoSize)
+                                val hasRenderedVideo = _state.value.isVideoFrameRendered || detectedRatio != null
                                 val pos = currentPosition.coerceAtLeast(0L)
                                 val rawBufPos = bufferedPosition.coerceAtLeast(pos)
                                 val isLocalOrDiskCached = _state.value.activeStream?.isLocal == true ||
@@ -758,7 +805,8 @@ class AudioPlayerManager(
                                     durationMs = safeDur,
                                     bufferedPositionMs = realBufPos,
                                     bufferedFraction = realBufFrac,
-                                    isVideoFrameRendered = hasRenderedVideo
+                                    isVideoFrameRendered = hasRenderedVideo,
+                                    videoAspectRatio = detectedRatio ?: _state.value.videoAspectRatio
                                 )
                                 trackRetryCount = 0
                                 lastFailedTrackId = null
@@ -784,14 +832,20 @@ class AudioPlayerManager(
                     }
 
                     override fun onRenderedFirstFrame() {
-                        if (!_state.value.isVideoFrameRendered) {
-                            _state.value = _state.value.copy(isVideoFrameRendered = true)
-                        }
+                        val detectedRatio = computeVideoAspectRatio(videoSize)
+                        _state.value = _state.value.copy(
+                            isVideoFrameRendered = true,
+                            videoAspectRatio = detectedRatio ?: _state.value.videoAspectRatio
+                        )
                     }
 
                     override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
-                        if (videoSize.width > 0 && videoSize.height > 0 && !_state.value.isVideoFrameRendered) {
-                            _state.value = _state.value.copy(isVideoFrameRendered = true)
+                        val detectedRatio = computeVideoAspectRatio(videoSize)
+                        if (detectedRatio != null) {
+                            _state.value = _state.value.copy(
+                                isVideoFrameRendered = true,
+                                videoAspectRatio = detectedRatio
+                            )
                         }
                     }
 
@@ -813,12 +867,14 @@ class AudioPlayerManager(
                                     vp.play()
                                 }
                             }
-                            val hasVideoSize = (videoSize.width > 0 && videoSize.height > 0) ||
-                                (videoExoPlayer?.let { it.videoSize.width > 0 && it.videoSize.height > 0 } == true)
+                            val detectedRatio = computeVideoAspectRatio(videoSize)
+                                ?: videoExoPlayer?.let { computeVideoAspectRatio(it.videoSize) }
+                            val hasVideoSize = detectedRatio != null
                             _state.value = _state.value.copy(
                                 isPlaying = true,
                                 isBuffering = false,
-                                isVideoFrameRendered = _state.value.isVideoFrameRendered || hasVideoSize
+                                isVideoFrameRendered = _state.value.isVideoFrameRendered || hasVideoSize,
+                                videoAspectRatio = detectedRatio ?: _state.value.videoAspectRatio
                             )
                             persistCurrentPlaybackState()
                             startPositionTracker()
@@ -995,7 +1051,8 @@ class AudioPlayerManager(
                 runCatching {
                     trackSelectionParameters = trackSelectionParameters
                         .buildUpon()
-                        .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true)
+                        .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
+                        .clearVideoSizeConstraints()
                         .build()
                 }
             }
@@ -1140,6 +1197,7 @@ class AudioPlayerManager(
             ensurePlayerInitialized()
             val player = exoPlayer ?: return
             isRetryingOrLoading = true
+            bufferingStartedAtMs = System.currentTimeMillis()
             startBufferingWatchdog(track.id)
             player.repeatMode = when (_state.value.repeatMode) {
                 RepeatMode.OFF -> Player.REPEAT_MODE_OFF
@@ -1190,13 +1248,17 @@ class AudioPlayerManager(
             }
 
             // Enable hardware video decoding directly on main exoPlayer for ALL video tracks
-            // (both progressive muxed MP4 itag=18/22 and adaptive MergingMediaSource merged_av::)!
+            // Only mutate trackSelectionParameters when state actually differs so we never trigger a renderer reset!
             runCatching {
-                player.trackSelectionParameters = player.trackSelectionParameters
-                    .buildUpon()
-                    .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, !isVideo)
-                    .clearVideoSizeConstraints()
-                    .build()
+                val isCurrentlyDisabled = player.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_VIDEO)
+                val shouldDisable = !isVideo
+                if (isCurrentlyDisabled != shouldDisable) {
+                    player.trackSelectionParameters = player.trackSelectionParameters
+                        .buildUpon()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, shouldDisable)
+                        .clearVideoSizeConstraints()
+                        .build()
+                }
             }
 
             if (isVideo) {
@@ -1291,8 +1353,9 @@ class AudioPlayerManager(
                     val activeIdx = currentLyrics.indexOfLast { it.timestampMs <= adjustedPos }
 
                     val vp = videoExoPlayer
-                    val hasVideoSize = (vp != null && vp.videoSize.width > 0 && vp.videoSize.height > 0) ||
-                        (player.videoSize.width > 0 && player.videoSize.height > 0)
+                    val detectedRatio = computeVideoAspectRatio(player.videoSize)
+                        ?: vp?.let { computeVideoAspectRatio(it.videoSize) }
+                    val hasVideoSize = detectedRatio != null
                     if (vp != null && (_state.value.isVideoMode || _state.value.currentTrack?.isVideoTrack == true)) {
                         if (vp.playbackState == Player.STATE_READY) {
                             if (!vp.isPlaying && player.isPlaying) {
@@ -1326,7 +1389,8 @@ class AudioPlayerManager(
                         bufferedFraction = realBufFrac,
                         isStreamCachedOnDisk = isLocalOrCached,
                         activeLyricIndex = activeIdx,
-                        isVideoFrameRendered = _state.value.isVideoFrameRendered || hasVideoSize
+                        isVideoFrameRendered = _state.value.isVideoFrameRendered || hasVideoSize,
+                        videoAspectRatio = detectedRatio ?: _state.value.videoAspectRatio
                     )
 
                     val now = System.currentTimeMillis()
@@ -1657,7 +1721,7 @@ class AudioPlayerManager(
         prefetchedTrackId = null
         userRequestedPlay = true
         lastLoadStartedAtMs = System.currentTimeMillis()
-        bufferingStartedAtMs = System.currentTimeMillis()
+        bufferingStartedAtMs = 0L
         loadTrackJob?.cancel()
         retryJob?.cancel()
         bufferingWatchdogJob?.cancel()
@@ -1718,8 +1782,11 @@ class AudioPlayerManager(
                 }
 
                 val preferredQuality = getPreferredAudioQuality()
-                val (safeTrack, stream) = withContext(Dispatchers.IO) {
+                val (safeTrack, stream, initialLocalAspectRatio) = withContext(Dispatchers.IO) {
                     val resolvedLocalTrack = resolveLocalTrackIfAvailable(current)
+                    val localRatio = if (isVideoTrack) {
+                        extractLocalVideoAspectRatio(resolvedLocalTrack.localPath ?: current.localPath)
+                    } else null
 
                     launch {
                         runCatching {
@@ -1767,7 +1834,7 @@ class AudioPlayerManager(
                             }
                         } ?: throw IllegalStateException("Unable to resolve playable stream for '${resolvedLocalTrack.title}'")
                     }
-                    resolvedLocalTrack to resolvedStream
+                    Triple(resolvedLocalTrack, resolvedStream, localRatio)
                 }
 
                 if (!isActive || !userRequestedPlay || _state.value.currentTrack?.id != current.id) {
@@ -1784,6 +1851,7 @@ class AudioPlayerManager(
                     activeStream = stream,
                     isStreamCachedOnDisk = isDiskCached,
                     bufferedFraction = if (isDiskCached) 1f else 0f,
+                    videoAspectRatio = initialLocalAspectRatio ?: _state.value.videoAspectRatio,
                     isBuffering = true
                 )
                 persistCurrentPlaybackState()
@@ -2620,8 +2688,12 @@ class AudioPlayerManager(
             // ExoPlayerImpl.setVideoTextureView() unconditionally calls removeSurfaceCallbacks() and creates
             // a new Surface(surfaceTexture), which tears down MediaCodec's output surface on every recomposition!
             if (attachedTextureView === textureView && attachedTexturePlayer === targetPlayer) {
-                if (targetPlayer.videoSize.width > 0 && targetPlayer.videoSize.height > 0 && !_state.value.isVideoFrameRendered) {
-                    _state.value = _state.value.copy(isVideoFrameRendered = true)
+                val detectedRatio = computeVideoAspectRatio(targetPlayer.videoSize)
+                if (detectedRatio != null && (!_state.value.isVideoFrameRendered || _state.value.videoAspectRatio != detectedRatio)) {
+                    _state.value = _state.value.copy(
+                        isVideoFrameRendered = true,
+                        videoAspectRatio = detectedRatio
+                    )
                 }
                 return
             }
@@ -2632,11 +2704,22 @@ class AudioPlayerManager(
             attachedTextureView = textureView
             attachedTexturePlayer = targetPlayer
             targetPlayer.setVideoTextureView(textureView)
-            if (targetPlayer.videoSize.width > 0 && targetPlayer.videoSize.height > 0 && !_state.value.isVideoFrameRendered) {
-                _state.value = _state.value.copy(isVideoFrameRendered = true)
+            val detectedRatio = computeVideoAspectRatio(targetPlayer.videoSize)
+            if (detectedRatio != null) {
+                _state.value = _state.value.copy(
+                    isVideoFrameRendered = true,
+                    videoAspectRatio = detectedRatio
+                )
             }
         } catch (t: Throwable) {
             Log.w(TAG, "attachVideoTextureView error: ${t.message}")
+        }
+    }
+
+    fun detachVideoTextureView(textureView: android.view.TextureView?) {
+        if (textureView == null) return
+        if (attachedTextureView === textureView) {
+            attachVideoTextureView(null)
         }
     }
 
@@ -2669,9 +2752,11 @@ class AudioPlayerManager(
                     loadTrackJob?.isActive != true &&
                     retryJob?.isActive != true
                 ) {
+                    val isVid = s.isVideoMode || s.currentTrack.isVideoTrack
+                    val stallLimitMs = if (isVid) 15_000L else 10_000L
                     if (bufferingStartedAtMs == 0L) {
                         bufferingStartedAtMs = now
-                    } else if (now - bufferingStartedAtMs > 6_500L) {
+                    } else if (now - bufferingStartedAtMs > stallLimitMs && (!isVid || !s.isVideoFrameRendered)) {
                         bufferingStartedAtMs = now
                         loadAndPlayCurrent(resumePositionMs = livePos, forceRefresh = true)
                     }

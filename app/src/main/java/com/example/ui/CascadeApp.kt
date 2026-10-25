@@ -145,12 +145,24 @@ fun CascadeApp(
     // When Activity enters native Android Picture-in-Picture mode, display 100% video surface
     // without status bar, navigation bar, or extra UI overlays so it floats cleanly outside the app.
     if (isInPiPMode) {
-        Box(
+        val pipRatio = playerState.videoAspectRatio.takeIf { !it.isNaN() && !it.isInfinite() && it in 0.25f..4.0f } ?: (16f / 9f)
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
+            val containerRatio = if (maxHeight > 0.dp) maxWidth / maxHeight else (16f / 9f)
+            val matchHeightFirst = containerRatio > pipRatio
+            val pipAspectMod = if (matchHeightFirst) {
+                Modifier
+                    .fillMaxHeight()
+                    .aspectRatio(pipRatio, matchHeightConstraintsFirst = true)
+            } else {
+                Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(pipRatio, matchHeightConstraintsFirst = false)
+            }
             AndroidView(
                 factory = { ctx ->
                     android.view.TextureView(ctx).apply {
@@ -160,7 +172,7 @@ fun CascadeApp(
                 update = { tv ->
                     viewModel.attachVideoTextureView(tv)
                 },
-                modifier = Modifier.fillMaxSize()
+                modifier = pipAspectMod
             )
         }
         return
@@ -1005,6 +1017,56 @@ fun CascadeApp(
                     pendingTrackForNewPlaylist = null
                 }
             )
+        }
+
+        // Full-bleed root landscape video overlay (zIndex 500f):
+        // Rotates the Activity to SCREEN_ORIENTATION_SENSOR_LANDSCAPE and fills 100% of the screen frame like YouTube.
+        if (isFullscreenVideo && playerState.currentTrack != null) {
+            val fsTrack = playerState.currentTrack!!
+            val totalDur = (if (playerState.durationMs > 0L) playerState.durationMs else (fsTrack.durationMs.takeIf { it > 0L } ?: 210_000L)).coerceAtLeast(1000L)
+            val dispPos = playerState.currentPositionMs.coerceAtLeast(0L)
+            val fullscreenNextTrack = when {
+                playerState.currentIndex in 0 until playerState.queue.size - 1 ->
+                    playerState.queue[playerState.currentIndex + 1]
+                playerState.repeatMode == com.example.player.RepeatMode.ALL && playerState.queue.size > 1 ->
+                    playerState.queue.firstOrNull()
+                else -> null
+            }
+            val fullscreenRemainingMs = (totalDur - dispPos).coerceAtLeast(0L)
+            var dismissedFullscreenCountdown by remember(fsTrack.id) { mutableStateOf(false) }
+            val showFullscreenCountdown = playerState.isPlaying &&
+                !playerState.isBuffering &&
+                totalDur >= 15_000L &&
+                fullscreenRemainingMs in 1L..10_000L &&
+                fullscreenNextTrack != null &&
+                !dismissedFullscreenCountdown
+            val fullscreenCountdownSec = ((fullscreenRemainingMs + 999L) / 1000L).toInt().coerceIn(1, 10)
+            val fullscreenCountdownProg = (fullscreenRemainingMs.toFloat() / 10_000f).coerceIn(0f, 1f)
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(500f)
+                    .background(Color.Black)
+            ) {
+                SeitharolFullscreenVideoModal(
+                    viewModel = viewModel,
+                    playerState = playerState,
+                    isZoomCrop = false,
+                    onToggleZoomCrop = {},
+                    nextTrack = fullscreenNextTrack,
+                    showNextCountdown = showFullscreenCountdown,
+                    countdownSeconds = fullscreenCountdownSec,
+                    countdownProgress = fullscreenCountdownProg,
+                    onDismissCountdown = { dismissedFullscreenCountdown = true },
+                    onOpenVideoDescription = {},
+                    onEnterPiP = {
+                        viewModel.setFullscreenVideo(false)
+                        (context.findActivity() as? com.example.MainActivity)?.enterPiPMode()
+                    },
+                    onDismiss = { viewModel.setFullscreenVideo(false) }
+                )
+            }
         }
     }
 }

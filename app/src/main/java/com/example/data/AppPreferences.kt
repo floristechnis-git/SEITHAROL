@@ -23,7 +23,8 @@ data class UserSettings(
     val eqEnabled: Boolean = false,
     val gaplessPlayback: Boolean = true,
     val audioNormalization: Boolean = false,
-    val stopImmediatelyOnNewTrack: Boolean = true
+    val stopImmediatelyOnNewTrack: Boolean = true,
+    val hasSeenDeveloperWelcomePopup: Boolean = false
 )
 
 class AppPreferences private constructor(context: Context) {
@@ -80,12 +81,18 @@ class AppPreferences private constructor(context: Context) {
             eqEnabled = prefs.getBoolean("eq_enabled", false),
             gaplessPlayback = prefs.getBoolean("gapless_playback", true),
             audioNormalization = prefs.getBoolean("audio_normalization", false),
-            stopImmediatelyOnNewTrack = prefs.getBoolean("stop_immediately_on_new_track", true)
+            stopImmediatelyOnNewTrack = prefs.getBoolean("stop_immediately_on_new_track", true),
+            hasSeenDeveloperWelcomePopup = prefs.getBoolean("seen_dev_welcome_popup_v1", false)
         )
     }
 
     fun setStopImmediatelyOnNewTrack(enabled: Boolean) {
         prefs.edit().putBoolean("stop_immediately_on_new_track", enabled).apply()
+        _settings.value = loadSettings()
+    }
+
+    fun markDeveloperWelcomePopupSeen() {
+        prefs.edit().putBoolean("seen_dev_welcome_popup_v1", true).apply()
         _settings.value = loadSettings()
     }
 

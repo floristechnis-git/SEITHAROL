@@ -752,7 +752,7 @@ fun NotificationsModal(
                                             .size(10.dp)
                                             .align(Alignment.TopEnd)
                                             .clip(CircleShape)
-                                            .background(Color(0xFFFFB74D))
+                                            .background(Color(0xFFE53935))
                                     )
                                 }
                             }
@@ -774,19 +774,13 @@ fun NotificationsModal(
                                         modifier = Modifier.weight(1f)
                                     )
                                     if (item.isUnread) {
-                                        Surface(
-                                            color = Color(0xFFFFB74D).copy(alpha = 0.22f),
-                                            shape = RoundedCornerShape(6.dp)
-                                        ) {
-                                            Text(
-                                                text = "ALERT",
-                                                fontSize = 9.sp,
-                                                fontFamily = OutfitFontFamily,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                color = Color(0xFFFFB74D),
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .size(8.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFFE53935))
+                                        )
                                     }
                                 }
                                 Spacer(modifier = Modifier.height(3.dp))

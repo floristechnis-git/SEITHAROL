@@ -119,10 +119,76 @@ fun LocalMusicScreen(
         }
     }
 
+    // Deduplicate: If a song/video loaded from device storage matches the name of a song stored by our app,
+    // ALWAYS keep the app's set up entry (`defaultAppDownloads`) and remove the device-loaded duplicate!
     val mergedLocalTracks = remember(defaultAppDownloads, scannedDeviceTracks) {
-        (defaultAppDownloads + scannedDeviceTracks).distinctBy {
-            "${it.title.lowercase().trim()}|${it.videoType}"
+        fun normalizeSongName(raw: String): String {
+            return raw.lowercase()
+                .substringBeforeLast(".mp4")
+                .substringBeforeLast(".m4a")
+                .substringBeforeLast(".mp3")
+                .substringBeforeLast(".opus")
+                .substringBeforeLast(".flac")
+                .substringBeforeLast(".webm")
+                .substringBeforeLast(".mkv")
+                .map { ch -> if (ch.isLetterOrDigit()) ch else ' ' }
+                .joinToString("")
+                .split(" ").filter { it.isNotBlank() }.joinToString(" ")
+                .trim()
         }
+
+        val appExactTitles = HashSet<String>()
+        val appNormalizedTitles = HashSet<String>()
+        val appLocalPaths = HashSet<String>()
+
+        defaultAppDownloads.forEach { appItem ->
+            val rawLower = appItem.title.lowercase().trim()
+            val normTitle = normalizeSongName(appItem.title)
+            val normWithArtist = normalizeSongName("${appItem.artist} - ${appItem.title}")
+            if (rawLower.isNotBlank()) appExactTitles.add(rawLower)
+            if (normTitle.isNotBlank()) appNormalizedTitles.add(normTitle)
+            if (normWithArtist.isNotBlank()) appNormalizedTitles.add(normWithArtist)
+            if (appItem.videoId.isNotBlank()) appLocalPaths.add(appItem.videoId.lowercase().trim())
+        }
+
+        val filteredDeviceTracks = scannedDeviceTracks.filterNot { dev ->
+            val devRawTitle = dev.title.lowercase().trim()
+            val devNormTitle = normalizeSongName(dev.title)
+            val devAfterDash = if (dev.title.contains(" - ")) dev.title.substringAfter(" - ").trim() else ""
+            val devNormAfterDash = if (devAfterDash.isNotBlank()) normalizeSongName(devAfterDash) else ""
+            val devWithArtistNorm = normalizeSongName("${dev.artist} - ${dev.title}")
+
+            appLocalPaths.contains(dev.videoId.lowercase().trim()) ||
+                appExactTitles.contains(devRawTitle) ||
+                (devAfterDash.isNotBlank() && appExactTitles.contains(devAfterDash.lowercase())) ||
+                appNormalizedTitles.contains(devNormTitle) ||
+                (devNormAfterDash.isNotBlank() && appNormalizedTitles.contains(devNormAfterDash)) ||
+                appNormalizedTitles.contains(devWithArtistNorm) ||
+                defaultAppDownloads.any { appItem ->
+                    val appT = appItem.title.lowercase().trim()
+                    appT.isNotBlank() && (
+                        devRawTitle == appT ||
+                            devRawTitle == "${appItem.artist.lowercase().trim()} - $appT" ||
+                            devRawTitle.endsWith(" - $appT")
+                        )
+                }
+        }
+
+        val combined = ArrayList<CandidateStream>(defaultAppDownloads.size + filteredDeviceTracks.size)
+        val seenNames = HashSet<String>()
+        for (item in defaultAppDownloads) {
+            val key = normalizeSongName(item.title).ifBlank { item.videoId }
+            if (seenNames.add(key)) {
+                combined.add(item)
+            }
+        }
+        for (item in filteredDeviceTracks) {
+            val key = normalizeSongName(item.title).ifBlank { item.videoId }
+            if (seenNames.add(key)) {
+                combined.add(item)
+            }
+        }
+        combined
     }
 
     val audioCount = remember(mergedLocalTracks) {

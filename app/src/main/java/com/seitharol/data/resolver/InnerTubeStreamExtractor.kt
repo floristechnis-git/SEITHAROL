@@ -797,19 +797,88 @@ object InnerTubeStreamExtractor {
 
         val isGeneralFeed = moodCategory.equals("All", true) || moodCategory.equals("For You", true)
 
+        // When a specific category/mood is active on HomeScreen, NEVER inject unrelated history automix seeds!
+        // Instead, load authentic YouTube Music WEB_REMIX mood playlist tracks + official YTM category songs like OuterTune.
         val automixJobs = if (isGeneralFeed) {
             validSeeds.map { seedId -> async { fetchAutomixQueue(seedId, limit = 12) } }
         } else {
-            validSeeds.take(2).map { seedId -> async { fetchAutomixQueue(seedId, limit = 6) } }
+            emptyList()
         }
 
-        val searchQueries = when {
-            moodCategory.equals("Manipuri Song", true) -> buildList {
-                cleanArtists.take(2).forEach { add("$it Manipuri song") }
-                add("Manipuri official song new")
-                add("Imphal Manipuri hit songs")
-                add("Manipuri modern folk acoustic")
+        val ytmCategoryPlaylistJob = if (!isGeneralFeed) {
+            async {
+                runCatching {
+                    val moodQuery = when {
+                        moodCategory.equals("Manipuri Song", true) -> "Manipuri Hit Songs"
+                        moodCategory.equals("Trending", true) -> "Top 100 Songs India & Global"
+                        moodCategory.equals("Energize", true) -> "Energize Pop & Dance Hits"
+                        moodCategory.equals("Sad", true) -> "Sad Heartbreak Songs Official"
+                        moodCategory.equals("Chill", true) -> "Chill Vibes Official Songs"
+                        moodCategory.equals("Romantic", true) -> "Romantic Love Songs Official"
+                        moodCategory.equals("Workout", true) -> "Workout Gym Hype Songs"
+                        moodCategory.equals("Lo-Fi", true) -> "Lo-Fi Chill Beats & Late Night Vibes"
+                        else -> "$moodCategory Official Hit Songs"
+                    }
+                    val playlists = searchYtmCollections(
+                        query = moodQuery,
+                        filterParams = "EgWKAQIoAWoKEAkQChADEAUQBA==",
+                        type = "PLAYLIST",
+                        limit = 3
+                    )
+                    val firstPl = playlists.firstOrNull()
+                    if (firstPl != null) {
+                        fetchPlaylistAlbumOrMixDetails(firstPl.browseId, firstPl.title, firstPl.thumbnailUrl)
+                            .tracks
+                            .take(20)
+                    } else {
+                        emptyList()
+                    }
+                }.getOrDefault(emptyList())
             }
+        } else null
+
+        val searchQueries = when {
+            moodCategory.equals("Manipuri Song", true) -> listOf(
+                "Manipuri latest official hit songs",
+                "Imphal Manipuri trending songs",
+                "Manipuri romantic & modern folk songs",
+                "Manipuri classic & new official audio"
+            )
+            moodCategory.equals("Trending", true) -> listOf(
+                "Trending viral hit songs official audio",
+                "Top chart songs India & global official",
+                "Manipuri & Indian trending hits"
+            )
+            moodCategory.equals("Energize", true) -> listOf(
+                "Energize upbeat pop dance hit songs",
+                "High energy feel good official songs",
+                "Upbeat party & energetic hits"
+            )
+            moodCategory.equals("Sad", true) -> listOf(
+                "Sad emotional heartbreak songs official",
+                "Acoustic sad songs & melancholic ballads",
+                "Broken heart emotional hit songs"
+            )
+            moodCategory.equals("Chill", true) -> listOf(
+                "Chill vibes relaxing indie & R&B songs",
+                "Late night chill acoustic official songs",
+                "Smooth chillout pop & soul tracks"
+            )
+            moodCategory.equals("Romantic", true) -> listOf(
+                "Romantic love songs official audio",
+                "Best acoustic love ballads & duets",
+                "Manipuri & Indian romantic hit songs"
+            )
+            moodCategory.equals("Workout", true) -> listOf(
+                "Workout gym motivation phonk & hip hop songs",
+                "High tempo running & training hits",
+                "Power workout official audio tracks"
+            )
+            moodCategory.equals("Lo-Fi", true) -> listOf(
+                "Lofi chill beats study & relax",
+                "Late night lo-fi hip hop & aesthetic beats",
+                "Chill lofi instrumental & vocal mixes"
+            )
             isGeneralFeed -> {
                 if (cleanArtists.isNotEmpty()) {
                     cleanArtists.take(4).map { "$it official audio" } + listOf("Manipuri hit songs")
@@ -817,17 +886,20 @@ object InnerTubeStreamExtractor {
                     listOf("Manipuri hit songs", "Top Indian Official Hits", "Global Viral Songs Official")
                 }
             }
-            else -> buildList {
-                cleanArtists.take(2).forEach { artist ->
-                    add("$artist $moodCategory songs")
-                }
-                add("$moodCategory official songs")
-                add("$moodCategory Manipuri & Indian songs")
-            }
+            else -> listOf(
+                "$moodCategory official hit songs",
+                "$moodCategory trending music",
+                "$moodCategory top tracks"
+            )
         }
 
-        val searchJobs = searchQueries.map { q -> async { searchOfficialYtmSongs(q, limit = 10) } }
-        val batches = automixJobs.awaitAll() + searchJobs.awaitAll()
+        val searchJobs = searchQueries.map { q -> async { searchOfficialYtmSongs(q, limit = 14) } }
+        val playlistBatch = ytmCategoryPlaylistJob?.await().orEmpty()
+        val batches = buildList {
+            if (playlistBatch.isNotEmpty()) add(playlistBatch)
+            addAll(automixJobs.awaitAll())
+            addAll(searchJobs.awaitAll())
+        }
 
         val interleaved = mutableListOf<CandidateStream>()
         val maxLen = batches.maxOfOrNull { it.size } ?: 0
@@ -2363,8 +2435,10 @@ object InnerTubeStreamExtractor {
 
             if (!candidate.isNullOrBlank() && !failedSet.contains(candidate)) {
                 if (!candidate.startsWith("merged_av::")) {
-                    // Progressive muxed MP4 (itag=18/22): verify and return immediately!
-                    if (verifyVideoStreamPlayable(candidate)) {
+                    // Progressive muxed MP4 (itag=18/22): for ANDROID_VR on initial load, return directly without
+                    // opening a competing pre-probe connection so ExoPlayer starts immediately without double-open!
+                    val isStatelessVrInitial = !forceRefresh && client.clientName == "ANDROID_VR"
+                    if (isStatelessVrInitial || verifyVideoStreamPlayable(candidate)) {
                         com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, AudioQuality.HIGH, candidate)
                         videoStreamCache[cleanVideoId] = candidate to now
                         return@withContext Result.success(candidate)

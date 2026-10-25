@@ -62,8 +62,11 @@ class MainActivity : ComponentActivity() {
             runCatching {
                 requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                 isInPiPMode = true
+                val rawRatio = viewModel.playerState.value.videoAspectRatio
+                    .takeIf { !it.isNaN() && !it.isInfinite() && it > 0.25f } ?: (16f / 9f)
+                val clampedRatio = rawRatio.coerceIn(0.42f, 2.38f)
                 val builder = PictureInPictureParams.Builder()
-                    .setAspectRatio(Rational(16, 9))
+                    .setAspectRatio(Rational((clampedRatio * 1000f).toInt(), 1000))
                 videoSourceRectHint?.takeIf { !it.isEmpty }?.let { rect ->
                     builder.setSourceRectHint(rect)
                 }

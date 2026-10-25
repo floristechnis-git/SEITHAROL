@@ -759,12 +759,12 @@ class AudioPlayerManager(
             // while retaining 300s back-buffer for instant 0ms backward/forward seeking:
             val loadControl = DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
-                    /* minBufferMs = */ 60_000,
+                    /* minBufferMs = */ 600_000,
                     /* maxBufferMs = */ 600_000,
                     /* bufferForPlaybackMs = */ 400,
                     /* bufferForPlaybackAfterRebufferMs = */ 800
                 )
-                .setTargetBufferBytes(32 * 1024 * 1024)
+                .setTargetBufferBytes(64 * 1024 * 1024)
                 .setPrioritizeTimeOverSizeThresholds(true)
                 .setBackBuffer(/* backBufferDurationMs = */ 300_000, /* retainBackBufferFromKeyframe = */ true)
                 .build()
@@ -870,8 +870,6 @@ class AudioPlayerManager(
                                 val actualPos = currentPosition.coerceAtLeast(_state.value.currentPositionMs)
                                 val expectedDur = _state.value.durationMs.coerceAtLeast(curTrack?.durationMs ?: 0L)
                                 val isVideo = curTrack?.isVideoTrack == true || _state.value.isVideoMode
-                                // Guard against premature EOF mid-song (e.g. if an audio stream truncated at ~1:04 while song is >1:40):
-                                // seamlessly reload with a fresh stream / fallback at the exact position instead of stopping!
                                 if (userRequestedPlay &&
                                     curTrack != null &&
                                     !curTrack.isLocalOnlyTrack &&

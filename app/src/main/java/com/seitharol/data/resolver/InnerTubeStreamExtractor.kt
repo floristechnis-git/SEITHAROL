@@ -418,36 +418,39 @@ object InnerTubeStreamExtractor {
 
     private fun verifySingleStreamUrl(url: String, isHls: Boolean = false): Boolean {
         return runCatching {
-            val headers = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(url)
-            val clen = Regex("[?&]clen=(\\d+)").find(url)?.groupValues?.get(1)?.toLongOrNull() ?: -1L
-            val isAdaptiveGir = url.contains("gir=yes", ignoreCase = true) &&
-                !url.contains("itag=18&", ignoreCase = true) &&
-                !url.endsWith("itag=18", ignoreCase = true) &&
-                !url.contains("itag=22&", ignoreCase = true) &&
-                !url.endsWith("itag=22", ignoreCase = true)
+            val cleanUrl = url.replace(Regex("([?&])range=[^&]+(&?)")) { m ->
+                if (m.groupValues[1] == "?" && m.groupValues[2] == "&") "?"
+                else if (m.groupValues[2] == "&") "&"
+                else ""
+            }
+            val headers = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(cleanUrl)
+            val clen = Regex("[?&]clen=(\\d+)").find(cleanUrl)?.groupValues?.get(1)?.toLongOrNull() ?: -1L
 
+            // Probe past the 1 MB (~1:04) boundary using standard HTTP Range header when clen > 1.2 MB
+            // so we verify the CDN supports standard HTTP Range requests beyond 1:04!
             val probeStart = when {
-                clen > 1_200_000L -> 1_048_576L // Probe past the 1 MB (1:04) boundary to reject throttled/1-minute-capped URLs!
+                clen > 1_200_000L -> 1_048_576L
                 clen <= 0L || clen > 100_000L -> 65_536L
                 else -> 0L
             }
             val probeEnd = probeStart + 255L
 
-            val targetUrl = if (!isHls && isAdaptiveGir && !url.contains("&range=")) {
-                val sep = if (url.contains("?")) "&" else "?"
-                "${url}${sep}range=${probeStart}-${probeEnd}"
-            } else {
-                url
-            }
-
-            val reqBuilder = okhttp3.Request.Builder().url(targetUrl).get()
+            val reqBuilder = okhttp3.Request.Builder().url(cleanUrl).get()
             headers.forEach { (k, v) -> reqBuilder.header(k, v) }
-            if (!isHls && !isAdaptiveGir) {
+            if (!isHls) {
                 reqBuilder.header("Range", "bytes=${probeStart}-${probeEnd}")
             }
 
             probeHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
                 if (resp.code in 200..206) {
+                    val crHeader = resp.header("Content-Range").orEmpty()
+                    val slashIdx = crHeader.lastIndexOf('/')
+                    if (slashIdx > 0 && slashIdx < crHeader.length - 1) {
+                        val discoveredTotal = crHeader.substring(slashIdx + 1).trim().toLongOrNull() ?: -1L
+                        if (discoveredTotal > 0L) {
+                            com.seitharol.player.OuterTuneResolvingDataSource.recordKnownStreamLength(cleanUrl, discoveredTotal)
+                        }
+                    }
                     val bytes = if (isHls) {
                         val b = resp.body?.byteStream()?.read() ?: -1
                         if (b != -1) ByteArray(1) else ByteArray(0)
@@ -628,10 +631,6 @@ object InnerTubeStreamExtractor {
                         rawUrl
                     }
                     val jsonClen = fmt.optString("contentLength", "").toLongOrNull() ?: -1L
-                    if (jsonClen > 0L && !finalUrl.contains("clen=")) {
-                        val sep = if (finalUrl.contains("?")) "&" else "?"
-                        finalUrl = "${finalUrl}${sep}clen=$jsonClen"
-                    }
                     if (jsonClen > 0L) {
                         com.seitharol.player.OuterTuneResolvingDataSource.recordKnownStreamLength(finalUrl, jsonClen)
                     }
@@ -3009,10 +3008,9 @@ object InnerTubeStreamExtractor {
                             if (!ctx[kotlinx.coroutines.Job]!!.isActive) throw kotlinx.coroutines.CancellationException()
                         }
                         val endByte = (downloaded + chunkSize - 1L).coerceAtMost(clenFromUrl - 1L)
-                        val sep = if (streamUrl.contains("?")) "&" else "?"
-                        val chunkUrl = "${streamUrl}${sep}range=$downloaded-$endByte"
-                        val reqBuilder = okhttp3.Request.Builder().url(chunkUrl)
+                        val reqBuilder = okhttp3.Request.Builder().url(streamUrl)
                         headers.forEach { (k, v) -> reqBuilder.header(k, v) }
+                        reqBuilder.header("Range", "bytes=$downloaded-$endByte")
                         com.example.network.NetworkClients.okHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
                             if (!resp.isSuccessful) {
                                 throw IllegalStateException("HTTP ${resp.code} on chunk $downloaded-$endByte")

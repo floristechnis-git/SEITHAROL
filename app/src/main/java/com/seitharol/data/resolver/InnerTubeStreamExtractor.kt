@@ -83,6 +83,14 @@ data class YtmCollectionPageData(
     val tracks: List<CandidateStream>
 )
 
+data class VideoDescriptionMetadata(
+    val videoId: String,
+    val title: String,
+    val author: String,
+    val viewCountText: String = "",
+    val description: String = ""
+)
+
 object InnerTubeStreamExtractor {
 
     private val bgScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -2467,6 +2475,22 @@ object InnerTubeStreamExtractor {
             if (conn.responseCode != 200) return@runCatching null
             val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
 
+            val videoDetails = json.optJSONObject("videoDetails")
+            if (videoDetails != null) {
+                val vdTitle = videoDetails.optString("title", "")
+                val vdAuthor = videoDetails.optString("author", "")
+                val vdViews = videoDetails.optString("viewCount", "")
+                val vdDesc = videoDetails.optString("shortDescription", "")
+                if (vdTitle.isNotBlank() || vdDesc.isNotBlank()) {
+                    videoDescriptionCache[cleanVideoId] = VideoDescriptionMetadata(
+                        videoId = cleanVideoId,
+                        title = vdTitle,
+                        author = vdAuthor,
+                        viewCountText = vdViews,
+                        description = vdDesc
+                    )
+                }
+            }
             val status = json.optJSONObject("playabilityStatus")?.optString("status")
             if (status != "OK") return@runCatching null
             val streamingData = json.optJSONObject("streamingData") ?: return@runCatching null
@@ -2581,11 +2605,10 @@ object InnerTubeStreamExtractor {
                 } else null
             }
 
-            if (client.clientName == "ANDROID_VR" && allowAdaptiveMerge) {
-                findAdaptiveMergedAv()?.let { return@runCatching it }
-                findMuxedMp4()?.let { return@runCatching it }
-            } else {
-                findMuxedMp4()?.let { return@runCatching it }
+            // Always prioritize direct progressive muxed MP4 (itag 18 / 22) first so main ExoPlayer
+            // decodes both video and audio on a single hardware pipeline with zero black frames!
+            findMuxedMp4()?.let { return@runCatching it }
+            if (allowAdaptiveMerge) {
                 findAdaptiveMergedAv()?.let { return@runCatching it }
             }
             null
@@ -3006,6 +3029,71 @@ object InnerTubeStreamExtractor {
     private fun extractBestThumbnail(arr: JSONArray?): String {
         if (arr == null || arr.length() == 0) return ""
         return arr.optJSONObject(arr.length() - 1)?.optString("url").orEmpty()
+    }
+
+    private val videoDescriptionCache = ConcurrentHashMap<String, VideoDescriptionMetadata>()
+
+    suspend fun fetchVideoDetailsDescription(
+        videoId: String?,
+        fallbackTitle: String = "",
+        fallbackArtist: String = ""
+    ): VideoDescriptionMetadata = withContext(Dispatchers.IO) {
+        val cleanId = extractVideoId(videoId) ?: videoId.orEmpty().trim()
+        videoDescriptionCache[cleanId]?.takeIf { it.description.isNotBlank() }?.let { return@withContext it }
+
+        if (cleanId.length == 11) {
+            for (client in VIDEO_CLIENTS.take(2)) {
+                runCatching {
+                    val conn = (URL(client.playerEndpoint).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "POST"
+                        connectTimeout = 2500
+                        readTimeout = 2500
+                        doOutput = true
+                        setRequestProperty("Content-Type", "application/json")
+                        setRequestProperty("User-Agent", client.userAgent)
+                        setRequestProperty("X-YouTube-Client-Name", client.clientId)
+                        setRequestProperty("X-YouTube-Client-Version", client.clientVersion)
+                    }
+                    val payload = JSONObject().apply {
+                        put("videoId", cleanId)
+                        put("contentCheckOk", true)
+                        put("racyCheckOk", true)
+                        put("context", JSONObject().apply {
+                            put("client", JSONObject().apply {
+                                put("clientName", client.clientName)
+                                put("clientVersion", client.clientVersion)
+                                put("hl", "en")
+                                put("gl", client.glOverride ?: resolveDeviceGl())
+                            })
+                        })
+                    }
+                    conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+                    if (conn.responseCode == 200) {
+                        val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                        val vd = json.optJSONObject("videoDetails")
+                        if (vd != null) {
+                            val meta = VideoDescriptionMetadata(
+                                videoId = cleanId,
+                                title = vd.optString("title", fallbackTitle).ifBlank { fallbackTitle },
+                                author = vd.optString("author", fallbackArtist).ifBlank { fallbackArtist },
+                                viewCountText = vd.optString("viewCount", ""),
+                                description = vd.optString("shortDescription", "")
+                            )
+                            videoDescriptionCache[cleanId] = meta
+                            if (meta.description.isNotBlank()) return@withContext meta
+                        }
+                    }
+                }
+            }
+        }
+
+        videoDescriptionCache[cleanId] ?: VideoDescriptionMetadata(
+            videoId = cleanId,
+            title = fallbackTitle,
+            author = fallbackArtist,
+            viewCountText = "",
+            description = ""
+        )
     }
 
     private fun parseDurationSeconds(text: String): Int {

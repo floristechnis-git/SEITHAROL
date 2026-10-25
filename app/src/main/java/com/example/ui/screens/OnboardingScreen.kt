@@ -18,7 +18,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cake
-import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,6 +27,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
@@ -40,9 +40,8 @@ import java.util.Locale
 /**
  * Clean, perfectly fitted 2-Step Onboarding Screen:
  * - Fits any standard mobile viewport cleanly without requiring scrolling or causing overflow.
- * - Zero useless whitespace: proportional padding, compact logo surface, and streamlined feature points.
- * - Asks for Birthday instead of Age to schedule 5:30 AM Happy Birthday notification.
- * - The Continue button is only clickable after entering Name and selecting Birthday.
+ * - Single-line DOB placeholder ("Select Date of Birth") that never wraps to two rows.
+ * - No red Happy Birthday popup text when filling out Date of Birth.
  */
 @Composable
 fun OnboardingScreen(
@@ -281,7 +280,7 @@ fun OnboardingScreen(
                         Spacer(modifier = Modifier.height(6.dp))
 
                         Text(
-                            text = "Set up your profile to receive personalized Happy Birthday wishes delivered right at 5:30 AM.",
+                            text = "Set up your profile to personalize your listening experience.",
                             color = secondaryText,
                             fontSize = 13.sp,
                             lineHeight = 18.sp,
@@ -307,7 +306,10 @@ fun OnboardingScreen(
                                     text = "Enter your name",
                                     color = secondaryText.copy(alpha = 0.6f),
                                     fontFamily = OutfitFontFamily,
-                                    fontSize = 14.sp
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             },
                             singleLine = true,
@@ -318,6 +320,7 @@ fun OnboardingScreen(
                                 focusedContainerColor = surfaceColor,
                                 unfocusedContainerColor = surfaceColor,
                                 focusedTextColor = primaryText,
+                                focusedPlaceholderColor = secondaryText.copy(alpha = 0.6f),
                                 unfocusedTextColor = primaryText,
                                 cursorColor = primaryColor
                             ),
@@ -327,7 +330,7 @@ fun OnboardingScreen(
                         Spacer(modifier = Modifier.height(16.dp))
 
                         Text(
-                            text = "Birthday",
+                            text = "Date of Birth",
                             color = primaryText,
                             fontSize = 13.sp,
                             fontFamily = OutfitFontFamily,
@@ -348,17 +351,20 @@ fun OnboardingScreen(
                                 enabled = false,
                                 placeholder = {
                                     Text(
-                                        text = "Select your birthday (Date of Birth)",
+                                        text = "Select Date of Birth",
                                         color = secondaryText.copy(alpha = 0.6f),
                                         fontFamily = OutfitFontFamily,
-                                        fontSize = 14.sp
+                                        fontSize = 14.sp,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 },
                                 trailingIcon = {
                                     IconButton(onClick = { showDatePicker() }) {
                                         Icon(
                                             imageVector = Icons.Outlined.Cake,
-                                            contentDescription = "Select Birthday",
+                                            contentDescription = "Select Date of Birth",
                                             tint = if (birthdateIso.isNotBlank()) primaryColor else secondaryText
                                         )
                                     }
@@ -373,39 +379,6 @@ fun OnboardingScreen(
                                     disabledTrailingIconColor = if (birthdateIso.isNotBlank()) primaryColor else secondaryText
                                 ),
                                 modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        if (birthdateIso.isNotBlank()) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                modifier = Modifier.padding(start = 2.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.NotificationsActive,
-                                    contentDescription = null,
-                                    tint = primaryColor,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Text(
-                                    text = "Happy Birthday notification set for 5:30 AM (Age: $calculatedAge)",
-                                    color = primaryColor,
-                                    fontSize = 12.sp,
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                        } else {
-                            Text(
-                                text = "Our app delivers a personalized Happy Birthday wish at 5:30 AM on this exact date.",
-                                color = secondaryText,
-                                fontSize = 12.sp,
-                                lineHeight = 16.sp,
-                                fontFamily = OutfitFontFamily,
-                                modifier = Modifier.padding(start = 2.dp)
                             )
                         }
                     }

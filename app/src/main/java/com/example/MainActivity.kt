@@ -249,14 +249,22 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         if (!isChangingConfigurations) {
-            val appCtx = applicationContext
-            com.example.player.MediaPlaybackService.stopService(appCtx)
             val playerMgr = (application as? CascadeApplication)?.audioPlayerManager
-            runCatching { playerMgr?.onAppClearedFromRecents() }
-            runCatching {
-                val nm = appCtx.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
-                nm?.cancel(com.example.player.MediaPlaybackService.NOTIFICATION_ID)
-                nm?.cancelAll()
+            val isActivelyPlaying = playerMgr?.state?.value?.isPlaying == true ||
+                playerMgr?.state?.value?.isBuffering == true
+            // Only tear down playback if the user explicitly finished the activity while NOT actively playing
+            // in the background. When backgrounded during playback, MediaPlaybackService owns the foreground
+            // lifecycle and handles swipe-away via onTaskRemoved().
+            if (!isActivelyPlaying && isFinishing) {
+                val appCtx = applicationContext
+                com.example.player.MediaPlaybackService.stopService(appCtx)
+                runCatching { playerMgr?.onAppClearedFromRecents() }
+                runCatching {
+                    val nm = appCtx.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+                    nm?.cancel(com.example.player.MediaPlaybackService.NOTIFICATION_ID)
+                }
+            } else {
+                runCatching { playerMgr?.persistCurrentPlaybackState() }
             }
         }
         super.onDestroy()

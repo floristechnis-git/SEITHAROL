@@ -107,6 +107,7 @@ class CascadeViewModel(
                     it.title.equals(norm.title, ignoreCase = true)
                 }
                 if (existing == null) {
+                    val isMp4 = norm.localPath?.lowercase()?.endsWith(".mp4") == true
                     trackMap[canonId] = Track(
                         id = canonId,
                         title = norm.title,
@@ -118,7 +119,8 @@ class CascadeViewModel(
                         }.orEmpty(),
                         durationMs = norm.durationMs,
                         artUrl = norm.artUrl,
-                        genre = "Downloaded",
+                        genre = if (isMp4) "YouTube Video" else "Downloaded",
+                        codec = if (isMp4) "MP4" else "Opus",
                         isLiked = likedIds.contains(canonId) || norm.isLiked,
                         isDownloaded = true,
                         localPath = norm.localPath
@@ -181,6 +183,12 @@ class CascadeViewModel(
     val currentPackVersion: StateFlow<String> = resolverEngine.currentPackVersion
     val skipNotice: SharedFlow<String> = playerManager.skipEvent
 
+    // Hoisted fullscreen video state so landscape orientation changes never reset fullscreen mode
+    val isFullscreenVideo = MutableStateFlow(false)
+    fun setFullscreenVideo(fullscreen: Boolean) {
+        isFullscreenVideo.value = fullscreen
+    }
+
     private val _artistNavigationEvent = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val artistNavigationEvent: SharedFlow<String> = _artistNavigationEvent.asSharedFlow()
     val isArtistNavigationChannel = MutableStateFlow(false)
@@ -188,9 +196,29 @@ class CascadeViewModel(
     private val _playerExpandEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val playerExpandEvent: SharedFlow<Unit> = _playerExpandEvent.asSharedFlow()
 
+    private val nonNavigableArtists = setOf(
+        "unknown artist",
+        "<unknown>",
+        "unknown",
+        "local audio",
+        "local video",
+        "local artist",
+        "device storage",
+        "downloaded music",
+        "local storage",
+        "various artists"
+    )
+
     fun navigateToArtist(artistName: String, isChannel: Boolean = false) {
+        val cleanName = artistName.trim()
+        if (cleanName.isBlank() || cleanName.lowercase() in nonNavigableArtists) return
+        if (playerState.value.currentTrack?.isLocalOnlyTrack == true &&
+            playerState.value.currentTrack?.artist?.equals(cleanName, ignoreCase = true) == true
+        ) {
+            return
+        }
         isArtistNavigationChannel.value = isChannel
-        viewModelScope.launch(vmExceptionHandler) { _artistNavigationEvent.emit(artistName) }
+        viewModelScope.launch(vmExceptionHandler) { _artistNavigationEvent.emit(cleanName) }
     }
 
     fun openSharedTrackById(
@@ -241,15 +269,17 @@ class CascadeViewModel(
     val queueVideoSuggestions: StateFlow<List<Track>> = _queueVideoSuggestions.asStateFlow()
 
     fun refreshQueueSuggestions(seedTrack: Track?) {
-        val seed = seedTrack ?: playerState.value.currentTrack ?: return
-        if (isOfflineMode.value) {
+        val state = playerState.value
+        val seed = seedTrack ?: state.currentTrack
+        // Never generate suggestions when offline, when playing a local song, or when a single song is in the playback queue
+        if (seed == null || isOfflineMode.value || seed.isLocalOnlyTrack || state.isSingleTrackPlayback || state.queue.size <= 1) {
             _queueVideoSuggestions.value = emptyList()
             return
         }
         viewModelScope.launch(vmExceptionHandler) {
             runCatching {
                 val isVideo = seed.isVideoTrack
-                val queueMeta = playerState.value.queue.map {
+                val queueMeta = state.queue.map {
                     com.seitharol.data.resolver.TrackMetadata(
                         id = it.id,
                         title = it.title,
@@ -305,18 +335,25 @@ class CascadeViewModel(
                 val uriStr = uri.toString()
                 val detectedVideo = isVideo ||
                     uriStr.lowercase().endsWith(".mp4") ||
-                    uriStr.lowercase().contains("video") ||
-                    album.equals("YouTube Video", ignoreCase = true)
+                    uriStr.lowercase().endsWith(".mkv") ||
+                    uriStr.lowercase().endsWith(".webm") ||
+                    uriStr.lowercase().endsWith(".mov") ||
+                    uriStr.lowercase().contains("/video/") ||
+                    album.equals("YouTube Video", ignoreCase = true) ||
+                    album.equals("Local Video", ignoreCase = true) ||
+                    album.equals("MP4 Video", ignoreCase = true)
 
                 val trackId = if (detectedVideo) "vidfile_${uri.hashCode()}" else "file_${uri.hashCode()}"
                 val track = Track(
                     id = trackId,
                     title = title.ifBlank { if (detectedVideo) "Video File" else "Audio File" },
-                    artist = artist.ifBlank { if (detectedVideo) "Local Video" else "Local Audio" },
-                    album = album.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Audio", ignoreCase = true) }.orEmpty(),
+                    artist = artist.ifBlank { "Unknown Artist" },
+                    album = if (detectedVideo) "MP4 Video" else album.takeUnless {
+                        it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Audio", ignoreCase = true)
+                    }.orEmpty(),
                     durationMs = durationMs,
                     artUrl = "",
-                    genre = if (detectedVideo) "YouTube Video" else "Local Audio",
+                    genre = if (detectedVideo) "Local Video" else "Local Audio",
                     isDownloaded = true,
                     localPath = uriStr,
                     itag = if (detectedVideo) 18 else 251,
@@ -411,7 +448,6 @@ class CascadeViewModel(
                 }
                 val rawCandidates = when (filter) {
                     ProviderFilter.ALL -> {
-                        // STRICTLY AUDIO SONGS ONLY — Never include YouTube Videos in "All"
                         val ytDeferred = async {
                             InnerTubeStreamExtractor.searchOfficialYtmSongs(clean, limit = 18)
                                 .filterNot { it.videoType == "MUSIC_VIDEO_TYPE_OMV" || it.albumName == "YouTube Video" }
@@ -502,6 +538,7 @@ class CascadeViewModel(
 
     private val recommendationRepository = object : com.example.player.RecommendationRepository {
         override suspend fun getRelatedTracks(seedTrack: Track): List<Track> {
+            if (seedTrack.isLocalOnlyTrack) return emptyList()
             return try {
                 val automix = InnerTubeStreamExtractor.fetchAutomixQueue(seedTrack.id, limit = 12)
                     .map { it.toTrack() }
@@ -523,7 +560,6 @@ class CascadeViewModel(
     init {
         playerManager.isAutoplayEnabled = autoSuggestManager.isAutoSuggestEnabled.value && !isOfflineMode.value
         loadHomeScreenMusic()
-        // Stagger secondary background tasks on 2GB RAM phones so initial Home feed & audio playback have 100% CPU/network priority
         viewModelScope.launch(vmExceptionHandler) {
             delay(1500L)
             downloadRepository.rescanLocalDownloads()
@@ -592,7 +628,7 @@ class CascadeViewModel(
     fun loadHomeScreenMusic() {
         viewModelScope.launch(vmExceptionHandler) {
             if (isOfflineMode.value || !com.example.util.ErrorFormatter.isOnline(com.example.CascadeApplication.instance)) {
-                val offlineTracks = downloadedTracks.value
+                val offlineTracks = downloadedTracks.value.filterNot { it.isLocalOnlyTrack }
                 if (offlineTracks.isNotEmpty()) {
                     personalizedTracks.value = offlineTracks
                     trendingHits.value = offlineTracks
@@ -604,8 +640,12 @@ class CascadeViewModel(
             }
             isLoadingHome.value = true
             try {
+                // Strictly exclude local tracks (`isLocalOnlyTrack`) from history & liked seeds
+                // so Home feed never generates suggestions from local song names or artists!
                 val realHistory = musicRepository.getActiveHistory().firstOrNull().orEmpty()
+                    .filterNot { it.isLocalOnlyTrack }
                 val realLiked = musicRepository.getLikedTracks().firstOrNull().orEmpty()
+                    .filterNot { it.isLocalOnlyTrack }
                 val likedIds = realLiked.map { it.id }.toSet()
                 val dlMap = downloadedTracksById.value
 
@@ -616,8 +656,9 @@ class CascadeViewModel(
                 }
 
                 val bannedKeywords = setOf(
-                    "unknown artist", "unknown", "local artist", "device storage",
-                    "downloaded in seitharol", "<unknown>", "various artists", "various", "download", "seitharol"
+                    "unknown artist", "unknown", "local artist", "local audio", "local video",
+                    "device storage", "downloaded in seitharol", "<unknown>", "various artists",
+                    "various", "download", "seitharol"
                 )
 
                 val seedIds = (realHistory.take(5).map { it.id } + realLiked.take(3).map { it.id })
@@ -654,6 +695,7 @@ class CascadeViewModel(
                                 t.contains("supermix") || t.contains("radio")
                         }
                         .map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
+                        .filterNot { it.isLocalOnlyTrack }
                     personalizedTracks.value = mapped
                     trendingHits.value = mapped.take(12)
                 }
@@ -670,11 +712,13 @@ class CascadeViewModel(
                             bannedKeywords.any { b -> a.contains(b) || t.contains(b) }
                         }
                         .map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
+                        .filterNot { it.isLocalOnlyTrack }
                 }
                 if (personalizedTracks.value.isEmpty() && trendingHits.value.isEmpty()) {
                     delay(650L)
                     val fallbackSongs = InnerTubeStreamExtractor.searchOfficialYtmSongs("Manipuri & Indian Top Songs", limit = 16)
                         .map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
+                        .filterNot { it.isLocalOnlyTrack }
                     if (fallbackSongs.isNotEmpty()) {
                         personalizedTracks.value = fallbackSongs
                         trendingHits.value = fallbackSongs.take(12)
@@ -716,8 +760,12 @@ class CascadeViewModel(
         viewModelScope.launch(vmExceptionHandler) {
             if (isOfflineMode.value) return@launch
             try {
-                val hist = musicRepository.getActiveHistory().firstOrNull().orEmpty().map { it.toNormalizedTrack() }
-                val liked = musicRepository.getLikedTracks().firstOrNull().orEmpty().map { it.toNormalizedTrack() }
+                val hist = musicRepository.getActiveHistory().firstOrNull().orEmpty()
+                    .filterNot { it.isLocalOnlyTrack }
+                    .map { it.toNormalizedTrack() }
+                val liked = musicRepository.getLikedTracks().firstOrNull().orEmpty()
+                    .filterNot { it.isLocalOnlyTrack }
+                    .map { it.toNormalizedTrack() }
                 val feed = discoverFeedSeeder.generatePersonalizedFeed(hist, liked)
                 _discoverTracks.value = feed
             } catch (e: Exception) {
@@ -878,8 +926,9 @@ class CascadeViewModel(
             isLoadingHome.value = true
             try {
                 val realHistory = musicRepository.getActiveHistory().firstOrNull().orEmpty()
+                    .filterNot { it.isLocalOnlyTrack }
                 val seedIds = realHistory.take(3).map { it.id }.filter { it.length == 11 }
-                val topArtists = realHistory.map { it.artist }.filter { it.isNotBlank() }.distinct().take(3)
+                val topArtists = realHistory.map { it.artist }.filter { it.isNotBlank() && it.lowercase() !in nonNavigableArtists }.distinct().take(3)
                 val likedIds = likedTrackIds.value
                 val dlMap = downloadedTracksById.value
 
@@ -888,6 +937,7 @@ class CascadeViewModel(
                     favoriteArtists = topArtists,
                     moodCategory = targetMood
                 ).map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
+                    .filterNot { it.isLocalOnlyTrack }
 
                 if (feed.isNotEmpty()) {
                     personalizedTracks.value = feed
@@ -911,7 +961,7 @@ class CascadeViewModel(
     @OptIn(ExperimentalCoroutinesApi::class)
     val searchResults: StateFlow<List<Track>> = combine(
         combine(searchQuery, searchFilter, selectedProviderFilter, isOfflineMode) { q, filter, provider, offline ->
-             listOf(q, filter, provider, offline)
+            listOf(q, filter, provider, offline)
         },
         combine(downloadedTracks, onlineSearchResults, likedTrackIds) { downloaded, onlineTracks, likedIds ->
             Triple(downloaded, onlineTracks, likedIds)
@@ -937,7 +987,6 @@ class CascadeViewModel(
             }
             provider == ProviderFilter.YOUTUBE -> {
                 if (cleanQuery.isBlank()) {
-                    // Show downloaded MP4 videos when YouTube tab has an empty query
                     downloaded.filter { it.isVideoTrack }
                 } else {
                     val matchingLocalVideos = downloaded.filter {
@@ -948,7 +997,6 @@ class CascadeViewModel(
                 }
             }
             else -> {
-                // ALL, MUSIC, JIOSAAVN: Strictly exclude YouTube Videos!
                 if (cleanQuery.isBlank()) emptyList()
                 else {
                     val matchingLocalAudio = downloaded.filter {
@@ -989,8 +1037,9 @@ class CascadeViewModel(
             track.copy(isDownloaded = true, localPath = dlMatch.localPath)
         } else track
 
-        val isOffline = effectiveTrack.isDownloaded || !effectiveTrack.localPath.isNullOrBlank() || isOfflineMode.value
-        if (isOffline) {
+        // Single track playback: suppress queue suggestions and autoplay!
+        _queueVideoSuggestions.value = emptyList()
+        if (effectiveTrack.isLocalOnlyTrack || effectiveTrack.isDownloaded || !effectiveTrack.localPath.isNullOrBlank() || isOfflineMode.value) {
             autoSuggestManager.setAutoSuggestEnabled(false)
             playerManager.isAutoplayEnabled = false
         }
@@ -998,7 +1047,9 @@ class CascadeViewModel(
         playerManager.playTrack(effectiveTrack)
         automixFetchJob = viewModelScope.launch(vmExceptionHandler) {
             runCatching {
-                musicRepository.insertTrack(effectiveTrack)
+                if (!effectiveTrack.isLocalOnlyTrack) {
+                    musicRepository.insertTrack(effectiveTrack)
+                }
                 musicRepository.recordPlayHistory(effectiveTrack)
             }
         }
@@ -1007,15 +1058,18 @@ class CascadeViewModel(
     fun playQueue(tracks: List<Track>, startIndex: Int = 0, isPlaylist: Boolean = true) {
         val dlMap = downloadedTracksById.value
         val enrichedTracks = tracks.map { enrichTrackStatus(it, likedTrackIds.value, dlMap) }
-        val hasOffline = enrichedTracks.any { it.isDownloaded || !it.localPath.isNullOrBlank() } || isOfflineMode.value
-        if (hasOffline) {
+        val hasOffline = enrichedTracks.any { it.isLocalOnlyTrack || it.isDownloaded || !it.localPath.isNullOrBlank() } || isOfflineMode.value
+        if (hasOffline || enrichedTracks.size <= 1) {
+            _queueVideoSuggestions.value = emptyList()
             autoSuggestManager.setAutoSuggestEnabled(false)
             playerManager.isAutoplayEnabled = false
         }
         viewModelScope.launch(vmExceptionHandler) {
-            runCatching { enrichedTracks.forEach { musicRepository.insertTrack(it) } }
+            runCatching {
+                enrichedTracks.filterNot { it.isLocalOnlyTrack }.forEach { musicRepository.insertTrack(it) }
+            }
         }
-        playerManager.playQueue(enrichedTracks, startIndex, isPlaylist = isPlaylist)
+        playerManager.playQueue(enrichedTracks, startIndex, isPlaylist = isPlaylist && enrichedTracks.size > 1)
     }
 
     fun playPlaylistOrMix(playlistId: String) {
@@ -1090,11 +1144,15 @@ class CascadeViewModel(
     }
 
     fun startRadioMix(seedTrack: Track) {
+        if (seedTrack.isLocalOnlyTrack) {
+            playTrack(seedTrack)
+            return
+        }
         viewModelScope.launch(vmExceptionHandler) {
             runCatching {
                 musicRepository.insertTrack(seedTrack)
                 musicRepository.recordPlayHistory(seedTrack)
-                playerManager.playQueue(listOf(seedTrack), 0, isPlaylist = false)
+                playerManager.playQueue(listOf(seedTrack), 0, isPlaylist = true)
                 if (isOfflineMode.value) return@launch
                 val automix = InnerTubeStreamExtractor.fetchAutomixQueue(seedTrack.id, limit = 35)
                 val likedIds = likedTrackIds.value
@@ -1377,12 +1435,14 @@ class CascadeViewModel(
     }
 
     fun fetchAndAppendSuggestions() {
-        if (!isAutoSuggestEnabled.value || isOfflineMode.value) return
-        val seed = playerState.value.currentTrack ?: return
+        val state = playerState.value
+        val seed = state.currentTrack ?: return
+        if (!isAutoSuggestEnabled.value || isOfflineMode.value || seed.isLocalOnlyTrack || state.isSingleTrackPlayback || state.queue.size <= 1) return
         viewModelScope.launch(vmExceptionHandler) {
             runCatching {
-                val currentQueue = playerState.value.queue
+                val currentQueue = state.queue
                 val freshTracks = autoSuggestManager.fetchNextSuggestions(seed, currentQueue, maxTracksToAppend = 3)
+                    .filterNot { it.isLocalOnlyTrack }
                 freshTracks.forEach { track ->
                     musicRepository.insertTrack(track)
                     playerManager.addToQueue(track)

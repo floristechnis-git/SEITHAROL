@@ -53,9 +53,22 @@ fun PlaybackQueueSheet(
 ) {
     var suggestedTracks by remember { mutableStateOf<List<TrackMetadata>>(emptyList()) }
     var sheetDragOffsetY by remember { mutableFloatStateOf(0f) }
+    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
 
-    // Always fetch context-relevant recommendations whenever the current track or queue changes
-    LaunchedEffect(currentTrack?.id, queue.size) {
+    val isSingleOrLocal = remember(currentTrack, queue.size) {
+        val id = currentTrack?.id?.lowercase().orEmpty()
+        queue.size <= 1 ||
+            id.startsWith("local_") ||
+            id.startsWith("file_") ||
+            id.startsWith("vidfile_") ||
+            id.startsWith("content://")
+    }
+
+    LaunchedEffect(currentTrack?.id, queue.size, isSingleOrLocal) {
+        if (isSingleOrLocal) {
+            suggestedTracks = emptyList()
+            return@LaunchedEffect
+        }
         val seed = currentTrack ?: queue.firstOrNull() ?: return@LaunchedEffect
         suggestedTracks = QueueRecommendationEngine.fetchRelevantRecommendations(
             currentTrack = seed,
@@ -92,7 +105,6 @@ fun PlaybackQueueSheet(
             }
             .padding(horizontal = 16.dp)
     ) {
-        // Top Drag Handle Pill (Slide down anywhere on header/sheet to close)
         Spacer(modifier = Modifier.height(10.dp))
         Box(
             modifier = Modifier
@@ -104,7 +116,6 @@ fun PlaybackQueueSheet(
         )
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Queue Header
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -120,13 +131,12 @@ fun PlaybackQueueSheet(
             }
         }
         Text(
-            text = "Up Next • ${queue.size} tracks",
+            text = if (queue.size == 1) "Up Next • 1 track" else "Up Next • ${queue.size} tracks",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Reorderable Queue with 60fps edge auto-scrolling
         ReorderableQueueLazyColumn(
             queue = queue,
             currentTrackId = currentTrack?.id,
@@ -136,113 +146,114 @@ fun PlaybackQueueSheet(
             onSwipeDownAtTopToClose = onClose,
             modifier = Modifier.weight(1f)
         ) {
-            // Autoplay Toggle Card
-            item(key = "autoplay_toggle_card") {
-                Spacer(modifier = Modifier.height(6.dp))
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                            Text(
-                                text = "Autoplay",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = if (autoplayEnabled) {
-                                    "Automatically adding similar songs to Up Next"
-                                } else {
-                                    "Autoplay is off • Showing manual suggestions below"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = autoplayEnabled,
-                            onCheckedChange = onToggleAutoplay,
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color.White,
-                                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                                uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
-                                uncheckedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        )
-                    }
-                }
-            }
-
-            // Suggestions: ALWAYS rendered (whether Autoplay is ON or OFF)
-            if (suggestedTracks.isNotEmpty()) {
-                item(key = "suggested_header") {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Suggested for ${currentTrack?.title ?: "this queue"}",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                }
-                itemsIndexed(
-                    items = suggestedTracks,
-                    key = { index, item -> "suggest_${item.id}_$index" }
-                ) { _, suggestion ->
+            if (!isSingleOrLocal) {
+                item(key = "autoplay_toggle_card") {
+                    Spacer(modifier = Modifier.height(6.dp))
                     Surface(
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(16.dp),
                         color = MaterialTheme.colorScheme.surface,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(10.dp),
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            AsyncImage(
-                                model = suggestion.thumbnailUrl,
-                                contentDescription = suggestion.title,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .size(46.dp)
-                                    .clip(RoundedCornerShape(8.dp)),
-                                error = painterResource(id = R.drawable.ic_music_note),
-                                placeholder = painterResource(id = R.drawable.ic_music_note)
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                                 Text(
-                                    text = suggestion.title,
-                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    text = "Autoplay",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(
-                                    text = suggestion.artist,
+                                    text = if (autoplayEnabled) {
+                                        "Automatically adding similar songs to Up Next"
+                                    } else {
+                                        "Autoplay is off • Showing manual suggestions below"
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            IconButton(onClick = {
-                                onAddTrackToQueue(suggestion)
-                                suggestedTracks = suggestedTracks.filter { it.id != suggestion.id }
-                            }) {
-                                QueueAddSvgIcon(
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
+                            Switch(
+                                checked = autoplayEnabled,
+                                onCheckedChange = onToggleAutoplay,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                    uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    uncheckedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                            )
+                        }
+                    }
+                }
+
+                if (suggestedTracks.isNotEmpty()) {
+                    item(key = "suggested_header") {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Suggested for ${currentTrack?.title ?: "this queue"}",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                    }
+                    itemsIndexed(
+                        items = suggestedTracks,
+                        key = { index, item -> "suggest_${item.id}_$index" }
+                    ) { _, suggestion ->
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                AsyncImage(
+                                    model = suggestion.thumbnailUrl,
+                                    contentDescription = suggestion.title,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(46.dp)
+                                        .clip(RoundedCornerShape(8.dp)),
+                                    error = appLogoPainter,
+                                    placeholder = appLogoPainter,
+                                    fallback = appLogoPainter
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = suggestion.title,
+                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = suggestion.artist,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                IconButton(onClick = {
+                                    onAddTrackToQueue(suggestion)
+                                    suggestedTracks = suggestedTracks.filter { it.id != suggestion.id }
+                                }) {
+                                    QueueAddSvgIcon(
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -267,6 +278,7 @@ fun ReorderableQueueLazyColumn(
     val density = LocalDensity.current
     val edgeThresholdPx = with(density) { 72.dp.toPx() }
     val maxScrollSpeedPx = with(density) { 18.dp.toPx() }
+    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
 
     var draggingIndex by remember { mutableStateOf<Int?>(null) }
     var draggingOffsetY by remember { mutableFloatStateOf(0f) }
@@ -275,7 +287,6 @@ fun ReorderableQueueLazyColumn(
     val currentQueue by rememberUpdatedState(queue)
     val currentOnMove by rememberUpdatedState(onMoveTrack)
 
-    // Continuous smooth 60fps auto-scroll loop while dragging near top/bottom edges
     LaunchedEffect(autoScrollSpeed) {
         if (autoScrollSpeed == 0f) return@LaunchedEffect
         while (isActive && autoScrollSpeed != 0f) {
@@ -338,7 +349,6 @@ fun ReorderableQueueLazyColumn(
                         val viewportHeight = layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset
                         val pointerY = change.position.y
 
-                        // Compute smooth edge auto-scroll speed
                         autoScrollSpeed = when {
                             pointerY > viewportHeight - edgeThresholdPx -> {
                                 val ratio = ((pointerY - (viewportHeight - edgeThresholdPx)) / edgeThresholdPx).coerceIn(0f, 1f)
@@ -370,7 +380,6 @@ fun ReorderableQueueLazyColumn(
         contentPadding = PaddingValues(vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Unique key includes index so duplicate tracks in queue never crash LazyColumn
         itemsIndexed(queue, key = { index, track -> "queue_${track.id}_$index" }) { index, track ->
             val isDragging = index == draggingIndex
             val isPlaying = track.id == currentTrackId
@@ -411,14 +420,15 @@ fun ReorderableQueueLazyColumn(
                         }
                         Spacer(modifier = Modifier.width(6.dp))
                         AsyncImage(
-                            model = track.thumbnailUrl,
+                            model = track.thumbnailUrl.ifBlank { R.drawable.ic_splash_logo },
                             contentDescription = track.title,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .size(46.dp)
                                 .clip(RoundedCornerShape(8.dp)),
-                            error = painterResource(id = R.drawable.ic_music_note),
-                            placeholder = painterResource(id = R.drawable.ic_music_note)
+                            error = appLogoPainter,
+                            placeholder = appLogoPainter,
+                            fallback = appLogoPainter
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
@@ -455,7 +465,6 @@ fun ReorderableQueueLazyColumn(
                             )
                         }
 
-                        // Sleek '=' drag handle
                         Column(
                             verticalArrangement = Arrangement.spacedBy(3.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,

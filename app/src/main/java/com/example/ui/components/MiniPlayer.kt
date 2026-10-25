@@ -3,6 +3,7 @@ package com.example.ui.components
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -22,11 +23,13 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.R
 import com.example.data.remote.InnerTubeResolver
 import com.example.player.PlayerState
 import com.example.ui.theme.*
@@ -34,8 +37,7 @@ import com.example.ui.theme.*
 /**
  * YouTube / YouTube Music Floating MiniPlayer Pill:
  * - Height: 60.dp, pill rounded 30.dp, adaptive surfaceVariant container with crisp contrast in Light & Dark themes.
- * - Tapping the artwork/title area expands the Full Player screen (without intercepting Play/Pause/Skip buttons).
- * - Dragging downward past 45% height dismisses and stops playback cleanly, resetting state whenever track.id changes.
+ * - Uses the Seitharol app logo (`R.drawable.ic_splash_logo`) as placeholder/error/fallback for local audio and low-internet loads.
  */
 @Composable
 fun MiniPlayer(
@@ -48,6 +50,7 @@ fun MiniPlayer(
     modifier: Modifier = Modifier
 ) {
     val track = playerState.currentTrack ?: return
+    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
 
     val progress = if (playerState.durationMs > 0) {
         (playerState.currentPositionMs.toFloat() / playerState.durationMs.toFloat()).coerceIn(0f, 1f)
@@ -129,12 +132,25 @@ fun MiniPlayer(
                             .background(MaterialTheme.colorScheme.surface),
                         contentAlignment = Alignment.Center
                     ) {
-                        AsyncImage(
-                            model = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
-                            contentDescription = "Cover for ${track.title}",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
+                        val upgradedArt = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
+                        if (upgradedArt.isBlank()) {
+                            Image(
+                                painter = appLogoPainter,
+                                contentDescription = "Cover for ${track.title}",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            AsyncImage(
+                                model = upgradedArt,
+                                contentDescription = "Cover for ${track.title}",
+                                placeholder = appLogoPainter,
+                                error = appLogoPainter,
+                                fallback = appLogoPainter,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.width(10.dp))

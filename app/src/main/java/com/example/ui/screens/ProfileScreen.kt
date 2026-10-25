@@ -8,9 +8,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Locale
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
@@ -27,11 +24,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.example.data.AppPreferences
 import com.example.ui.CascadeViewModel
 import com.example.ui.components.ManipurCalendarNotificationEngine
 import com.example.ui.theme.*
 import com.seitharol.ui.components.NotificationBellAlertSvgIcon
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -70,7 +71,6 @@ fun ProfileScreen(
                 .testTag("profile_screen"),
             contentPadding = PaddingValues(bottom = 140.dp)
         ) {
-            // Top 300dp Adaptive Header
             item {
                 Box(
                     modifier = Modifier
@@ -79,7 +79,6 @@ fun ProfileScreen(
                         .clip(RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant)
                 ) {
-                    // Top Notification button on right with live Alert UI badge
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -105,7 +104,6 @@ fun ProfileScreen(
                         }
                     }
 
-                    // Decorative waveform audio bars behind avatar
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -127,7 +125,6 @@ fun ProfileScreen(
                         }
                     }
 
-                    // Centered 100dp Avatar + User Name + Status
                     Column(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -171,7 +168,6 @@ fun ProfileScreen(
                 }
             }
 
-            // 2x2 Grid of Theme-Adaptive Cards (Account, Engine Stats, Sleep Timer, Settings)
             item {
                 Column(
                     modifier = Modifier
@@ -179,12 +175,10 @@ fun ProfileScreen(
                         .padding(horizontal = 20.dp, vertical = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Row 1: Account & Engine Architecture
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        // Account Card (Opens Edit Name & Age dialog)
                         Surface(
                             modifier = Modifier
                                 .weight(1f)
@@ -218,7 +212,6 @@ fun ProfileScreen(
                             }
                         }
 
-                        // Engine Status Card
                         Surface(
                             modifier = Modifier
                                 .weight(1f)
@@ -253,12 +246,10 @@ fun ProfileScreen(
                         }
                     }
 
-                    // Row 2: Sleep Timer & Settings
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        // Sleep Timer Card
                         Surface(
                             modifier = Modifier
                                 .weight(1f)
@@ -292,7 +283,6 @@ fun ProfileScreen(
                             }
                         }
 
-                        // Settings Card (opens General Settings Screen)
                         Surface(
                             modifier = Modifier
                                 .weight(1f)
@@ -329,7 +319,6 @@ fun ProfileScreen(
                 }
             }
 
-            // Airplane Offline Mode Quick Toggle Card
             item {
                 Surface(
                     modifier = Modifier
@@ -392,7 +381,6 @@ fun ProfileScreen(
                 }
             }
 
-            // "About & Support" Clean Section
             item {
                 Spacer(modifier = Modifier.height(14.dp))
                 Text(
@@ -459,7 +447,6 @@ fun ProfileScreen(
                 }
             }
 
-            // Log Out / Clear Cache Button
             item {
                 Spacer(modifier = Modifier.height(24.dp))
                 Row(
@@ -489,7 +476,6 @@ fun ProfileScreen(
             }
         }
 
-        // Informative Bottom Sheet for Subscription & Standalone Engine Status
         if (showSubInfo) {
             ModalBottomSheet(
                 onDismissRequest = { showSubInfo = false },
@@ -523,8 +509,8 @@ fun ProfileScreen(
                         Pair("YouTube InnerTube On-Device", "Direct on-device search & unciphered stream extraction (ANDROID_VR). Zero python server required."),
                         Pair("JioSaavn Native DES Decryptor", "On-device DES/ECB/PKCS5Padding hardware decryption with 320kbps upgrade."),
                         Pair("Spotify Metadata Importer", "Cross-source TrackMatcher matching catalog tracks and canonical audio releases."),
-                        Pair("ExoPlayer Custom OkHttp Headers", "Full HTTP User-Agent and Range support eliminating 403 Forbidden errors."),
-                        Pair("High-Fi Offline Storage", "Real direct MediaStore byte streaming with verified binary audio containers (>10KB).")
+                        Pair("Active Media Disk Cache", "On-device disk stream cache for instant zero-rebuffer replay like YouTube."),
+                        Pair("High-Fi Offline Storage", "Real direct MediaStore byte streaming with verified binary audio & MP4 containers.")
                     )
 
                     features.forEach { (title, desc) ->
@@ -580,7 +566,6 @@ fun ProfileScreen(
             }
         }
 
-        // Confirmation Dialog for Clearing Stream Cache & History
         if (showClearCacheDialog) {
             AlertDialog(
                 onDismissRequest = { showClearCacheDialog = false },
@@ -597,7 +582,7 @@ fun ProfileScreen(
                 },
                 text = {
                     Text(
-                        text = "This will flush in-memory resolved audio streams, clear temporary search history, and reset playback checkpoints. Your downloaded offline songs will be preserved.",
+                        text = "This will flush cached audio/video streams, clear temporary search history, and reset playback checkpoints. Your downloaded offline songs will be preserved.",
                         fontFamily = OutfitFontFamily,
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -629,7 +614,6 @@ fun ProfileScreen(
             )
         }
 
-        // Edit Name, Age & Birthday Profile Dialog
         if (showEditProfileDialog) {
             EditProfileDialog(
                 initialName = userSettings.userName,
@@ -656,7 +640,18 @@ fun ProfileScreen(
             hostState = snackbarHostState,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 100.dp)
+                .padding(horizontal = 16.dp, vertical = 148.dp)
+                .zIndex(100f),
+            snackbar = { data ->
+                Snackbar(
+                    snackbarData = data,
+                    containerColor = Color(0xFF222426),
+                    contentColor = Color.White,
+                    actionColor = MaterialTheme.colorScheme.primary,
+                    dismissActionContentColor = Color.White,
+                    shape = RoundedCornerShape(14.dp)
+                )
+            }
         )
     }
 }
@@ -760,10 +755,10 @@ fun EditProfileDialog(
                         onValueChange = {},
                         readOnly = true,
                         enabled = false,
-                        label = { Text("Birthday (5:30 AM notification)", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                        label = { Text("Date of Birth", color = MaterialTheme.colorScheme.onSurfaceVariant) },
                         placeholder = {
                             Text(
-                                text = "Select your birthday",
+                                text = "Select Date of Birth",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                             )
                         },
@@ -771,7 +766,7 @@ fun EditProfileDialog(
                             IconButton(onClick = { showDatePicker() }) {
                                 Icon(
                                     imageVector = Icons.Outlined.Cake,
-                                    contentDescription = "Select Birthday",
+                                    contentDescription = "Select Date of Birth",
                                     tint = MaterialTheme.colorScheme.primary
                                 )
                             }

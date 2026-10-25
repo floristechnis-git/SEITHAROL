@@ -1,50 +1,26 @@
 package com.example.ui.components
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.widget.Toast
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import com.example.data.model.Track
-import com.example.ui.theme.*
 import com.seitharol.data.resolver.InnerTubeStreamExtractor
 import java.net.URLDecoder
 import java.net.URLEncoder
 
 /**
  * Universal HTTPS Share & Deep Link Helper for SEITHAROL:
- * - Replaces raw `seitharol://` text in shared messages (which messaging platforms like WhatsApp,
- *   Telegram, Instagram, and SMS treat as non-clickable plain text) with clean RFC-3986 `https://`
- *   URLs (`https://seitharol.app/share/...` and `https://music.youtube.com/watch?v=...`) that are
- *   100% clickable across every messaging platform.
- * - Supports opening shared tracks/artists via `Intent.ACTION_VIEW` (`https://`, `http://`, `seitharol://`),
- *   `Intent.ACTION_SEND` ("Share to Seitharol" from WhatsApp/Telegram), and pasting into Search.
+ * - Uses `https://seitharol.vercel.app` as the canonical web share & deep-link bridge host.
+ * - Replaces custom fake bottom-sheet share UI with native Android system share chooser (`Intent.createChooser`)
+ *   matching track share behavior.
+ * - Supports opening shared tracks/artists via `Intent.ACTION_VIEW` (`https://seitharol.vercel.app/...`,
+ *   `https://seitharol.app/...`, `seitharol://...`), `Intent.ACTION_SEND`, and pasting into Search.
  */
 object SeitharolDeepLinkHelper {
-    const val WEB_SHARE_HOST = "https://seitharol.app"
+    const val WEB_SHARE_HOST = "https://seitharol.vercel.app"
 
     fun buildTrackShareUrl(track: Track): String {
         val cleanId = InnerTubeStreamExtractor.extractVideoId(track.id) ?: track.id.trim()
@@ -81,6 +57,21 @@ object SeitharolDeepLinkHelper {
         val encId = encodeParam(playlistId)
         val launcherUrl = "$WEB_SHARE_HOST/share/playlist/$encId?title=$encTitle"
         return "Listen to \"$playlistTitle\" on SEITHAROL:\n$launcherUrl"
+    }
+
+    fun shareArtistSystemChooser(context: Context, artistName: String, browseId: String? = null) {
+        runCatching {
+            val shareText = buildArtistShareMessage(artistName, browseId)
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                putExtra(Intent.EXTRA_SUBJECT, "$artistName on Seitharol")
+                putExtra(Intent.EXTRA_TEXT, shareText)
+                type = "text/plain"
+            }
+            val chooserIntent = Intent.createChooser(sendIntent, "Share Artist").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooserIntent)
+        }
     }
 
     sealed interface DeepLinkTarget {
@@ -170,7 +161,9 @@ object SeitharolDeepLinkHelper {
                 title = resolved.title,
                 artist = resolved.artist,
                 durationMs = resolved.durationMs,
-                album = resolved.album.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Audio", ignoreCase = true) }.orEmpty(),
+                album = if (isVideo) "Local Video" else resolved.album.takeUnless {
+                    it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Audio", ignoreCase = true)
+                }.orEmpty(),
                 isVideo = isVideo
             )
         }
@@ -221,7 +214,7 @@ object SeitharolDeepLinkHelper {
             }
         }
 
-        // HTTPS / HTTP routes: /share/track/[id], /share/artist/[id], and YouTube / YouTube Music watch links
+        // HTTPS / HTTP routes: https://seitharol.vercel.app/share/track/[id], /share/artist/[id], query params, and YouTube links
         if (scheme == "https" || scheme == "http") {
             val shareIdx = segments.indexOfFirst { it.equals("share", ignoreCase = true) }
             if (shareIdx >= 0 && segments.size > shareIdx + 2) {
@@ -237,6 +230,23 @@ object SeitharolDeepLinkHelper {
                     return DeepLinkTarget.ArtistTarget(
                         artistName = name,
                         browseId = rawId.takeIf { it.startsWith("UC") || it.startsWith("MPLA") }
+                    )
+                }
+            }
+
+            if (host.contains("seitharol.vercel.app") || host.contains("seitharol.app")) {
+                val typeParam = uri.getQueryParameter("type")?.lowercase().orEmpty()
+                val idParam = uri.getQueryParameter("id")?.let(::decodeParam).orEmpty()
+                if (typeParam == "track" && idParam.isNotBlank()) {
+                    val title = uri.getQueryParameter("title")?.let(::decodeParam).orEmpty()
+                    val artist = uri.getQueryParameter("artist")?.let(::decodeParam).orEmpty()
+                    val art = uri.getQueryParameter("art")?.let(::decodeParam).orEmpty()
+                    return DeepLinkTarget.TrackTarget(idParam, title, artist, art)
+                } else if (typeParam == "artist" && (idParam.isNotBlank() || !uri.getQueryParameter("name").isNullOrBlank())) {
+                    val name = uri.getQueryParameter("name")?.let(::decodeParam)?.ifBlank { idParam } ?: idParam
+                    return DeepLinkTarget.ArtistTarget(
+                        artistName = name,
+                        browseId = idParam.takeIf { it.startsWith("UC") || it.startsWith("MPLA") }
                     )
                 }
             }
@@ -335,306 +345,20 @@ object SeitharolDeepLinkHelper {
         runCatching { URLDecoder.decode(value, "UTF-8") }.getOrDefault(value)
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Launches the native Android system share sheet (`Intent.createChooser`) immediately
+ * with the `https://seitharol.vercel.app/` artist link, eliminating the fake slide-up sheet.
+ */
 @Composable
 fun ShareArtistModal(
     artistName: String,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    val modalSheetState = rememberModalBottomSheetState()
-
-    val shareUrl = remember(artistName) {
-        SeitharolDeepLinkHelper.buildArtistShareUrl(artistName)
-    }
-
-    val shareText = remember(artistName) {
-        SeitharolDeepLinkHelper.buildArtistShareMessage(artistName)
-    }
-
-    val cachedAvatar = remember(artistName) {
-        ArtistAvatarCache.get(artistName).orEmpty()
-    }
-
-    fun triggerChooserShare() {
-        runCatching {
-            val sendIntent = Intent().apply {
-                action = Intent.ACTION_SEND
-                putExtra(Intent.EXTRA_SUBJECT, "$artistName on Seitharol")
-                putExtra(Intent.EXTRA_TEXT, shareText)
-                type = "text/plain"
-            }
-            val shareIntent = Intent.createChooser(sendIntent, "Share $artistName via")
-            context.startActivity(shareIntent)
+    LaunchedEffect(artistName) {
+        if (artistName.isNotBlank()) {
+            SeitharolDeepLinkHelper.shareArtistSystemChooser(context, artistName)
         }
         onDismiss()
-    }
-
-    fun shareToWhatsApp() {
-        try {
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                setPackage("com.whatsapp")
-                putExtra(Intent.EXTRA_TEXT, shareText)
-            }
-            context.startActivity(intent)
-            onDismiss()
-        } catch (_: Exception) {
-            triggerChooserShare()
-        }
-    }
-
-    fun shareToTelegram() {
-        try {
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                setPackage("org.telegram.messenger")
-                putExtra(Intent.EXTRA_TEXT, shareText)
-            }
-            context.startActivity(intent)
-            onDismiss()
-        } catch (_: Exception) {
-            triggerChooserShare()
-        }
-    }
-
-    fun copyToClipboard() {
-        try {
-            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            val clip = ClipData.newPlainText("Artist Link", shareUrl)
-            clipboard?.setPrimaryClip(clip)
-            Toast.makeText(context, "Shareable HTTPS link copied to clipboard", Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            Toast.makeText(context, "Failed to copy link", Toast.LENGTH_SHORT).show()
-        }
-        onDismiss()
-    }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = modalSheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        dragHandle = {
-            Box(
-                modifier = Modifier
-                    .padding(top = 12.dp, bottom = 14.dp)
-                    .width(40.dp)
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
-            )
-        }
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 8.dp)
-                .testTag("share_artist_modal"),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = "Share Artist",
-                fontFamily = SyneFontFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 20.sp,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Artist Preview Card
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp)),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (cachedAvatar.isNotBlank()) {
-                        AsyncImage(
-                            model = cachedAvatar,
-                            contentDescription = artistName,
-                            modifier = Modifier
-                                .size(50.dp)
-                                .clip(CircleShape)
-                        )
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .size(50.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(
-                                            MaterialTheme.colorScheme.primary,
-                                            MaterialTheme.colorScheme.primaryContainer
-                                        )
-                                    )
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            val initial = artistName.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "A"
-                            Text(
-                                text = initial,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                fontSize = 22.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(14.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = artistName,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            fontFamily = SyneFontFamily,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = shareUrl,
-                            fontSize = 12.sp,
-                            fontFamily = OutfitFontFamily,
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Row of share targets
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Telegram
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.clickable { shareToTelegram() }
-                ) {
-                    Surface(
-                        modifier = Modifier.size(54.dp),
-                        shape = CircleShape,
-                        color = Color(0xFF29B6F6)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.Send,
-                                contentDescription = "Telegram",
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "Telegram",
-                        fontSize = 12.sp,
-                        fontFamily = OutfitFontFamily,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-
-                // WhatsApp
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.clickable { shareToWhatsApp() }
-                ) {
-                    Surface(
-                        modifier = Modifier.size(54.dp),
-                        shape = CircleShape,
-                        color = Color(0xFF25D366)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.Chat,
-                                contentDescription = "WhatsApp",
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "WhatsApp",
-                        fontSize = 12.sp,
-                        fontFamily = OutfitFontFamily,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-
-                // Copy Link
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.clickable { copyToClipboard() }
-                ) {
-                    Surface(
-                        modifier = Modifier.size(54.dp),
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.Link,
-                                contentDescription = "Copy Link",
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "Copy Link",
-                        fontSize = 12.sp,
-                        fontFamily = OutfitFontFamily,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-
-                // More
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.clickable { triggerChooserShare() }
-                ) {
-                    Surface(
-                        modifier = Modifier.size(54.dp),
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceVariant
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.MoreHoriz,
-                                contentDescription = "More",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "More",
-                        fontSize = 12.sp,
-                        fontFamily = OutfitFontFamily,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(36.dp))
-        }
     }
 }

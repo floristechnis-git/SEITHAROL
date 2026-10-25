@@ -196,23 +196,15 @@ fun HistoryScreen(
                                     .background(MaterialTheme.colorScheme.surfaceVariant),
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (item.thumbnailUrl.isNotBlank()) {
-                                    AsyncImage(
-                                        model = item.thumbnailUrl,
-                                        contentDescription = item.title,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize(),
-                                        error = painterResource(id = R.drawable.ic_music_note),
-                                        placeholder = painterResource(id = R.drawable.ic_music_note)
-                                    )
-                                } else {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.ic_music_note),
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                }
+                                AsyncImage(
+                                    model = item.thumbnailUrl.ifBlank { R.drawable.ic_splash_logo },
+                                    contentDescription = item.title,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize(),
+                                    error = painterResource(id = R.drawable.ic_splash_logo),
+                                    placeholder = painterResource(id = R.drawable.ic_splash_logo),
+                                    fallback = painterResource(id = R.drawable.ic_splash_logo)
+                                )
                             }
 
                             Spacer(modifier = Modifier.width(12.dp))

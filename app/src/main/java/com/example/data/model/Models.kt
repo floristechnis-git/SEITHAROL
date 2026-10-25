@@ -28,11 +28,82 @@ data class Track(
         }
 
     val isVideoTrack: Boolean
-        get() = genre.equals("YouTube Video", ignoreCase = true) ||
-            genre.equals("Local Video", ignoreCase = true) ||
-            album.equals("YouTube Video", ignoreCase = true) ||
-            codec.equals("MP4", ignoreCase = true) ||
-            localPath?.lowercase()?.endsWith(".mp4") == true
+        get() {
+            val lowerPath = localPath?.lowercase().orEmpty()
+            val lowerAudioUrl = audioUrl.lowercase()
+            return genre.equals("YouTube Video", ignoreCase = true) ||
+                genre.equals("Local Video", ignoreCase = true) ||
+                genre.equals("MP4 Video", ignoreCase = true) ||
+                album.equals("YouTube Video", ignoreCase = true) ||
+                album.equals("Local Video", ignoreCase = true) ||
+                album.equals("MP4 Video", ignoreCase = true) ||
+                codec.equals("MP4", ignoreCase = true) ||
+                id.startsWith("vidfile_", ignoreCase = true) ||
+                lowerPath.endsWith(".mp4") ||
+                lowerPath.endsWith(".mkv") ||
+                lowerPath.endsWith(".webm") ||
+                lowerPath.endsWith(".mov") ||
+                lowerPath.endsWith(".m4v") ||
+                lowerPath.contains("/video/") ||
+                lowerAudioUrl.endsWith(".mp4") ||
+                lowerAudioUrl.contains("/video/")
+        }
+
+    /**
+     * True if this track originates from local device storage (Audio or Video) rather than an
+     * online YouTube / YouTube Music catalog stream.
+     */
+    val isLocalOnlyTrack: Boolean
+        get() {
+            val cleanId = id.trim()
+            if (cleanId.startsWith("local_", ignoreCase = true) ||
+                cleanId.startsWith("file_", ignoreCase = true) ||
+                cleanId.startsWith("vidfile_", ignoreCase = true) ||
+                cleanId.startsWith("content://", ignoreCase = true) ||
+                cleanId.startsWith("file://", ignoreCase = true)
+            ) {
+                return true
+            }
+            if (genre.equals("Local Audio", ignoreCase = true) ||
+                genre.equals("Local Video", ignoreCase = true) ||
+                genre.equals("MP4 Video", ignoreCase = true) ||
+                album.equals("Local Audio", ignoreCase = true) ||
+                album.equals("Local Video", ignoreCase = true) ||
+                album.equals("Device Storage", ignoreCase = true) ||
+                album.equals("Local Storage", ignoreCase = true) ||
+                artist.equals("Local Audio", ignoreCase = true) ||
+                artist.equals("Local Video", ignoreCase = true) ||
+                artist.equals("Unknown Artist", ignoreCase = true) ||
+                artist.equals("<unknown>", ignoreCase = true)
+            ) {
+                return true
+            }
+            val validYtId = cleanId.length == 11 && cleanId.all { it.isLetterOrDigit() || it == '_' || it == '-' }
+            if (!validYtId && (!localPath.isNullOrBlank() || audioUrl.startsWith("content://") || audioUrl.startsWith("/"))) {
+                return true
+            }
+            return false
+        }
+
+    val isNavigableArtist: Boolean
+        get() {
+            if (isLocalOnlyTrack) return false
+            val trimmed = artist.trim()
+            if (trimmed.isBlank()) return false
+            val blocked = setOf(
+                "unknown artist",
+                "<unknown>",
+                "unknown",
+                "local audio",
+                "local video",
+                "local artist",
+                "device storage",
+                "downloaded music",
+                "local storage",
+                "various artists"
+            )
+            return trimmed.lowercase() !in blocked
+        }
 }
 
 data class LyricsLine(
@@ -139,4 +210,3 @@ data class StreamInfo(
     val isLocal: Boolean = false,
     val latencyMs: Long = 0L
 )
-

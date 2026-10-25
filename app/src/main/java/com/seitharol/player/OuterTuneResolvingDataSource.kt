@@ -1,5 +1,6 @@
 package com.seitharol.player
 
+import android.content.Context
 import android.net.Uri
 import androidx.annotation.OptIn
 import androidx.media3.common.C
@@ -12,10 +13,15 @@ import com.seitharol.data.resolver.AudioQuality
 import com.seitharol.data.resolver.InnerTubeStreamExtractor
 import com.seitharol.data.resolver.StreamResolver
 import com.seitharol.data.resolver.TrackMetadata
-import kotlinx.coroutines.runBlocking
+import java.io.File
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.min
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 @OptIn(UnstableApi::class)
 object OuterTuneResolvingDataSource {
@@ -60,6 +66,7 @@ object OuterTuneResolvingDataSource {
 
     private const val STREAM_TTL_MS = 3 * 60 * 60 * 1000L // 3 hours
     private const val GOOGLE_VIDEO_CHUNK_BYTES = 512L * 1024L // 512 KB per fast unthrottled chunk
+    private const val MAX_DISK_CACHE_BYTES = 256L * 1024L * 1024L // 256 MB LRU active disk cache
 
     private data class CachedStream(
         val streamUrl: String,
@@ -69,6 +76,8 @@ object OuterTuneResolvingDataSource {
 
     private val urlCache = ConcurrentHashMap<String, CachedStream>()
     private val httpFactoryByUserAgent = ConcurrentHashMap<String, DefaultHttpDataSource.Factory>()
+    private val activeCacheJobs = ConcurrentHashMap<String, Boolean>()
+    private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun getCachedUrl(videoId: String, quality: AudioQuality): String? {
         val key = "${videoId}_${quality.name}"
@@ -99,6 +108,89 @@ object OuterTuneResolvingDataSource {
 
     fun clearAll() {
         urlCache.clear()
+        runCatching {
+            val dir = File(com.example.CascadeApplication.instance.cacheDir, "seitharol_active_stream_cache")
+            if (dir.exists()) {
+                dir.listFiles()?.forEach { it.delete() }
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Active On-Disk Media Stream Cache (YouTube / YouTube Music style)
+    // Caches played audio & video streams to disk so replays & scrubbing are
+    // 100% instantaneous with zero re-buffering even on poor networks.
+    // ─────────────────────────────────────────────────────────────────────────
+    private fun getStreamCacheDir(context: Context): File {
+        return File(context.applicationContext.cacheDir, "seitharol_active_stream_cache").apply {
+            if (!exists()) mkdirs()
+        }
+    }
+
+    private fun sanitizeCacheKey(trackId: String, isVideo: Boolean): String {
+        val clean = (InnerTubeStreamExtractor.extractVideoId(trackId) ?: trackId)
+            .replace(Regex("[^a-zA-Z0-9_-]"), "_")
+            .take(48)
+        val ext = if (isVideo) "mp4" else "audio"
+        return "${clean}.$ext"
+    }
+
+    fun getCompletedCacheFile(context: Context, trackId: String, isVideo: Boolean): File? {
+        if (trackId.isBlank()) return null
+        return runCatching {
+            val dir = getStreamCacheDir(context)
+            val file = File(dir, sanitizeCacheKey(trackId, isVideo))
+            if (file.exists() && file.length() > 24_576L) {
+                file.setLastModified(System.currentTimeMillis())
+                file
+            } else null
+        }.getOrNull()
+    }
+
+    fun warmStreamCacheAsync(context: Context, trackId: String, streamUrl: String, isVideo: Boolean) {
+        if (trackId.isBlank() || !streamUrl.startsWith("http") || streamUrl.contains(".m3u8", true)) return
+        val cacheKey = sanitizeCacheKey(trackId, isVideo)
+        if (activeCacheJobs.putIfAbsent(cacheKey, true) != null) return
+
+        cacheScope.launch {
+            try {
+                val dir = getStreamCacheDir(context)
+                val destFile = File(dir, cacheKey)
+                if (destFile.exists() && destFile.length() > 24_576L) return@launch
+
+                val tmpFile = File(dir, "$cacheKey.tmp")
+                val ok = InnerTubeStreamExtractor.downloadUrlToFileReliable(
+                    streamUrl = streamUrl,
+                    tempFile = tmpFile
+                )
+                if (ok && tmpFile.exists() && tmpFile.length() > 24_576L) {
+                    if (destFile.exists()) destFile.delete()
+                    tmpFile.renameTo(destFile)
+                    pruneDiskCacheIfNeeded(dir)
+                } else {
+                    if (tmpFile.exists()) tmpFile.delete()
+                }
+            } catch (_: Throwable) {
+            } finally {
+                activeCacheJobs.remove(cacheKey)
+            }
+        }
+    }
+
+    private fun pruneDiskCacheIfNeeded(dir: File) {
+        runCatching {
+            val files = dir.listFiles()?.filter { it.isFile } ?: return
+            var totalBytes = files.sumOf { it.length() }
+            if (totalBytes <= MAX_DISK_CACHE_BYTES) return
+            val sortedOldestFirst = files.sortedBy { it.lastModified() }
+            for (f in sortedOldestFirst) {
+                val len = f.length()
+                if (f.delete()) {
+                    totalBytes -= len
+                    if (totalBytes <= MAX_DISK_CACHE_BYTES * 0.80) break
+                }
+            }
+        }
     }
 
     /**
@@ -266,9 +358,9 @@ object OuterTuneResolvingDataSource {
      * Creates a DataSource.Factory that:
      * 1. Dispatches each HTTP request to a DefaultHttpDataSource configured with the exact client-matched
      *    User-Agent (preventing Media3 from overwriting ANDROID_VR / IOS / TESTSUITE User-Agents).
-     * 2. Automatically streams googlevideo.com adaptive URLs (which contain `clen=`) in fast 512 KB
-     *    `&range=start-end` chunks, eliminating GoogleVideo CDN HTTP 403 rejections and open-range throttling
-     *    so songs and videos start playing in < 1 second.
+     * 2. Uses direct native HTTP Range requests for progressive muxed MP4 video streams (`itag=18`, `itag=22`)
+     *    so ExoPlayer's `Mp4Extractor` reads the `moov` atom and renders video frames with zero black screen.
+     * 3. Streams adaptive audio/video URLs (`gir=yes` + `clen=`) in fast 512 KB `&range=start-end` chunks.
      */
     fun createFactory(
         qualityProvider: () -> AudioQuality = { AudioQuality.NORMAL }
@@ -279,7 +371,6 @@ object OuterTuneResolvingDataSource {
                 private val transferListeners = mutableListOf<TransferListener>()
 
                 private var isChunkedGoogleVideo = false
-                private var useHttpRangeHeaderForChunks = false
                 private var baseResolvedSpec: DataSpec? = null
                 private var baseUriWithoutRange: String = ""
                 private var targetUserAgent: String = VR_161_USER_AGENT
@@ -310,21 +401,13 @@ object OuterTuneResolvingDataSource {
 
                     val chunkLen = min(GOOGLE_VIDEO_CHUNK_BYTES, totalBytesRemaining)
                     val endByte = nextReadPosition + chunkLen - 1L
-                    val chunkSpec = if (useHttpRangeHeaderForChunks) {
-                        baseSpec.buildUpon()
-                            .setUri(Uri.parse(baseUriWithoutRange))
-                            .setPosition(nextReadPosition)
-                            .setLength(chunkLen)
-                            .build()
-                    } else {
-                        val sep = if (baseUriWithoutRange.contains("?")) "&" else "?"
-                        val chunkUri = Uri.parse("${baseUriWithoutRange}${sep}range=${nextReadPosition}-${endByte}")
-                        baseSpec.buildUpon()
-                            .setUri(chunkUri)
-                            .setPosition(0L)
-                            .setLength(C.LENGTH_UNSET.toLong())
-                            .build()
-                    }
+                    val sep = if (baseUriWithoutRange.contains("?")) "&" else "?"
+                    val chunkUri = Uri.parse("${baseUriWithoutRange}${sep}range=${nextReadPosition}-${endByte}")
+                    val chunkSpec = baseSpec.buildUpon()
+                        .setUri(chunkUri)
+                        .setPosition(0L)
+                        .setLength(C.LENGTH_UNSET.toLong())
+                        .build()
 
                     val delegate = createDelegate()
                     activeDelegate = delegate
@@ -344,18 +427,20 @@ object OuterTuneResolvingDataSource {
                     val isGoogleVideo = uriStr.contains("googlevideo.com", ignoreCase = true) &&
                         !uriStr.contains(".m3u8", ignoreCase = true) &&
                         !uriStr.contains("manifest.googlevideo.com", ignoreCase = true)
+
+                    // Progressive muxed MP4 streams (itag=18 / itag=22) MUST use native HTTP Range requests
+                    // so ExoPlayer's Mp4Extractor can seek to the moov box and decode video + audio frames cleanly!
                     val isProgressiveMuxedVideo = uriStr.contains("itag=18&", ignoreCase = true) ||
                         uriStr.endsWith("itag=18", ignoreCase = true) ||
                         uriStr.contains("itag=22&", ignoreCase = true) ||
                         uriStr.endsWith("itag=22", ignoreCase = true) ||
                         !uriStr.contains("gir=yes", ignoreCase = true)
-                    val clen = if (isGoogleVideo) {
+
+                    val clen = if (isGoogleVideo && !isProgressiveMuxedVideo) {
                         Regex("[?&]clen=(\\d+)").find(uriStr)?.groupValues?.get(1)?.toLongOrNull() ?: -1L
                     } else -1L
 
-                    useHttpRangeHeaderForChunks = isProgressiveMuxedVideo
-
-                    if (isGoogleVideo && clen > 0L) {
+                    if (isGoogleVideo && !isProgressiveMuxedVideo && clen > 0L) {
                         baseResolvedSpec = resolvedSpec
                         baseUriWithoutRange = uriStr.replace(Regex("([?&])range=[^&]+(&?)")) { m ->
                             if (m.groupValues[1] == "?" && m.groupValues[2] == "&") "?"
@@ -375,7 +460,6 @@ object OuterTuneResolvingDataSource {
                                 openNextGoogleVideoChunk()
                                 return totalBytesRemaining
                             } catch (e: Exception) {
-                                // Fallback to standard single-request mode if &range= chunking fails
                                 isChunkedGoogleVideo = false
                                 try {
                                     activeDelegate?.close()

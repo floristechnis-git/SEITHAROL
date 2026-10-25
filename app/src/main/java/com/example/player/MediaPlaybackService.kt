@@ -9,6 +9,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -18,6 +20,7 @@ import android.util.Log
 import android.util.LruCache
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import coil.request.ImageRequest
 import com.example.MainActivity
 import com.example.R
@@ -30,6 +33,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -37,15 +41,14 @@ import kotlinx.coroutines.withTimeoutOrNull
 /**
  * Crash-proof Foreground Service for background audio playback with synchronized media notification.
  *
- * Key fixes:
- * 1. Safe 2-stage foreground promotion (`ServiceCompat.startForeground` with fallback to 2-arg
- *    `startForeground` and `NotificationManager.notify`) so Android 12–15 NEVER throws
- *    `ForegroundServiceDidNotStartInTimeException` or `ForegroundServiceStartNotAllowedException`.
- * 2. Syncs Play/Pause icon and subtext strictly with `isPlaying` and `isBuffering`.
- * 3. Cancels `serviceScope` and sets `isTerminating = true` FIRST in `onTaskRemoved` before stopping
- *    playback, preventing any state emission race from re-posting the notification after swipe-close.
- * 4. Eliminates the 1-second artwork blink on uncached tracks by awaiting fast disk/memory Coil loads
- *    (up to 350ms) before posting, while strictly clearing any prior song's artwork on track change.
+ * Key upgrades:
+ * 1. Returns `START_STICKY` while playing and holds PARTIAL_WAKE_LOCK + WIFI_MODE_FULL_HIGH_PERF
+ *    so background playback never stops mid-track when the Activity is reclaimed.
+ * 2. Runs a 2-second playback state watchdog that synchronizes `AudioPlayerManager` and the
+ *    notification with the actual ExoPlayer engine state so the notification NEVER falsely claims
+ *    "Playing" if background playback paused or stalled.
+ * 3. Uses the Seitharol app logo (`R.drawable.ic_splash_logo`) as the fallback notification
+ *    largeIcon whenever playing local audio or when thumbnail loading fails on low internet.
  */
 class MediaPlaybackService : Service() {
 
@@ -57,8 +60,10 @@ class MediaPlaybackService : Service() {
     private var wifiLock: WifiManager.WifiLock? = null
     private var lockReleaseJob: Job? = null
     private var artLoadJob: Job? = null
+    private var watchdogJob: Job? = null
     private val artBitmapCache = LruCache<String, Bitmap>(24)
     private var currentArtBitmap: Bitmap? = null
+    private var fallbackLogoBitmap: Bitmap? = null
     private var currentTrackIdForArt: String? = null
     private var lastLoadedArtUrl: String? = null
     @Volatile private var isTerminating = false
@@ -115,11 +120,25 @@ class MediaPlaybackService : Service() {
         return applicationInfo.icon.takeIf { it != 0 } ?: R.drawable.ic_stat_music_note
     }
 
+    private fun getOrDecodeAppLogoBitmap(): Bitmap? {
+        fallbackLogoBitmap?.let { return it }
+        return runCatching {
+            BitmapFactory.decodeResource(resources, R.drawable.ic_splash_logo) ?: run {
+                val drawable = ContextCompat.getDrawable(this, R.drawable.ic_splash_logo) ?: return@run null
+                val bmp = Bitmap.createBitmap(144, 144, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bmp)
+                drawable.setBounds(0, 0, canvas.width, canvas.height)
+                drawable.draw(canvas)
+                bmp
+            }
+        }.getOrNull()?.also { fallbackLogoBitmap = it }
+    }
+
     private fun acquireWakeAndWifiLocks() {
         lockReleaseJob?.cancel()
         try {
             if (wakeLock?.isHeld != true) {
-                wakeLock?.acquire(4 * 60 * 60 * 1000L)
+                wakeLock?.acquire(6 * 60 * 60 * 1000L)
             }
             if (wifiLock?.isHeld != true) {
                 wifiLock?.acquire()
@@ -149,8 +168,13 @@ class MediaPlaybackService : Service() {
 
         val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         wifiLock = try {
-            @Suppress("DEPRECATION")
-            wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Seitharol::PlaybackWifiLock")?.apply {
+            val lockMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            } else {
+                @Suppress("DEPRECATION")
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            }
+            wifiManager?.createWifiLock(lockMode, "Seitharol::PlaybackWifiLock")?.apply {
                 setReferenceCounted(false)
             }
         } catch (t: Throwable) {
@@ -181,7 +205,7 @@ class MediaPlaybackService : Service() {
                         } else {
                             lockReleaseJob?.cancel()
                             lockReleaseJob = serviceScope.launch {
-                                delay(45_000L)
+                                delay(60_000L)
                                 val stillPaused = !(playerManager?.state?.value?.let { it.isPlaying || it.isBuffering } ?: false)
                                 if (stillPaused) {
                                     releaseWakeAndWifiLocks()
@@ -194,6 +218,17 @@ class MediaPlaybackService : Service() {
                         stopAndRemoveNotification()
                     }
                 }
+        }
+
+        // Background watchdog: keeps notification state 100% synchronized with ExoPlayer hardware state
+        // and recovers from any background buffer stall so notification never claims "Playing" when stopped.
+        watchdogJob = serviceScope.launch {
+            while (isActive && !isTerminating) {
+                delay(2000L)
+                if (isTerminating) break
+                val mgr = playerManager ?: (application as? com.example.CascadeApplication)?.audioPlayerManager
+                mgr?.verifyAndSyncBackgroundPlayback()
+            }
         }
     }
 
@@ -236,14 +271,11 @@ class MediaPlaybackService : Service() {
         if (!isInForeground && !isTerminating) {
             startForegroundSynchronously()
         }
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     private fun promoteOrNotifySafely(notification: Notification, forceStartForeground: Boolean = false) {
         if (isTerminating) return
-        // Always keep notification bound to startForeground (NEVER call STOP_FOREGROUND_DETACH!)
-        // so that when the app is swiped/closed from Recents or the process exits, Android OS
-        // automatically and unconditionally removes NOTIFICATION_ID from the status bar.
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 ServiceCompat.startForeground(
@@ -299,6 +331,7 @@ class MediaPlaybackService : Service() {
                 .setSmallIcon(resolveConsistentSmallIcon())
                 .setContentTitle("Seitharol")
                 .setContentText(if (isBuffering) "Loading track..." else "Ready to play")
+                .setLargeIcon(getOrDecodeAppLogoBitmap())
                 .setContentIntent(openPendingIntent)
                 .setOnlyAlertOnce(true)
                 .setSilent(true)
@@ -346,7 +379,6 @@ class MediaPlaybackService : Service() {
             return
         }
 
-        // Switching to a new track without cached artwork: clear previous song's bitmap immediately
         if (currentTrackIdForArt != track.id) {
             currentArtBitmap = null
             currentTrackIdForArt = track.id
@@ -362,7 +394,6 @@ class MediaPlaybackService : Service() {
         artLoadJob?.cancel()
         artLoadJob = serviceScope.launch {
             if (isTerminating) return@launch
-            // Try fast disk/memory load within 320ms so notification posts with art on the first update (no blink!)
             val fastBitmap = withTimeoutOrNull(320L) {
                 fetchTrackArtBitmap(track.artUrl)
             }
@@ -379,7 +410,6 @@ class MediaPlaybackService : Service() {
                 return@launch
             }
 
-            // If network fetch takes longer than 320ms, post notification immediately and update when art arrives
             updateNotification(track, isPlaying, isBuffering)
             val slowBitmap = fetchTrackArtBitmap(track.artUrl)
             if (slowBitmap != null) {
@@ -464,7 +494,8 @@ class MediaPlaybackService : Service() {
 
         val art = (if (track.id.isNotBlank()) artBitmapCache.get(track.id) else null)
             ?: (if (track.artUrl.isNotBlank()) artBitmapCache.get(track.artUrl) else null)
-            ?: if (currentTrackIdForArt == track.id) currentArtBitmap else null
+            ?: (if (currentTrackIdForArt == track.id) currentArtBitmap else null)
+            ?: getOrDecodeAppLogoBitmap()
 
         if (art != null) {
             builder.setLargeIcon(art)
@@ -514,6 +545,7 @@ class MediaPlaybackService : Service() {
         isInForeground = false
         lockReleaseJob?.cancel()
         artLoadJob?.cancel()
+        watchdogJob?.cancel()
         releaseWakeAndWifiLocks()
         runCatching {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -537,12 +569,11 @@ class MediaPlaybackService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // Set terminating flags and cancel collectors FIRST so onAppClearedFromRecents()
-        // cannot trigger a state-collection notification repost!
         isTerminating = true
         isRunning = false
         lockReleaseJob?.cancel()
         artLoadJob?.cancel()
+        watchdogJob?.cancel()
         serviceScope.cancel()
         runCatching {
             playerManager?.onAppClearedFromRecents()
@@ -557,10 +588,8 @@ class MediaPlaybackService : Service() {
         if (activeInstance === this) activeInstance = null
         lockReleaseJob?.cancel()
         artLoadJob?.cancel()
+        watchdogJob?.cancel()
         serviceScope.cancel()
-        runCatching {
-            playerManager?.onAppClearedFromRecents()
-        }
         stopAndRemoveNotification()
         super.onDestroy()
     }

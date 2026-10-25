@@ -2,7 +2,9 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.*
@@ -23,21 +25,20 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.foundation.border
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import com.example.ui.components.SeitharolPullToRefreshBox
 import coil.compose.AsyncImage
+import com.example.R
 import com.example.data.model.DownloadTier
 import com.example.data.model.Track
 import com.example.player.PlayerState
@@ -45,6 +46,7 @@ import com.example.ui.CascadeViewModel
 import com.example.ui.components.AddToPlaylistModal
 import com.example.ui.components.CreatePlaylistModal
 import com.example.ui.components.ManipurCalendarNotificationEngine
+import com.example.ui.components.SeitharolPullToRefreshBox
 import com.example.ui.components.SuggestedArtistItem
 import com.example.ui.theme.*
 import com.seitharol.ui.components.HeadphoneSvgIcon
@@ -128,11 +130,9 @@ fun HomeMediaItem.toTrack(): Track {
 
 /**
  * Modern, multi-tiered streaming home screen architecture inspired by YouTube Music, Spotify, and Amazon Music.
- * Uses the SEITHAROL dark theme palette:
- * - Background: #1B1C1C
- * - Elevated surfaces: #232526 / #282A2A
- * - Primary text: #E3E4E2
- * - Accent: #FFB74D
+ * - Strictly excludes local device tracks (`isLocalOnlyTrack`) from online Home feed suggestions and Quick Dial.
+ * - Ensures 2-row titles in QuickDialBentoSection never overflow or hide the artist subtitle.
+ * - Uses the Seitharol app logo (`R.drawable.ic_splash_logo`) as placeholder/error/fallback for thumbnails.
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -170,54 +170,55 @@ fun HomeScreen(
         }
     }
 
-    // Deduplicate pools to ensure no duplicate songs appear; in Offline Mode filter strictly to downloaded tracks
+    // Deduplicate pools to ensure no duplicate songs appear; in Online Mode strictly exclude local-only files
     val deduplicatedAllTracks = remember(allTracks, downloadedTracks, isOfflineMode) {
         val basePool = if (isOfflineMode) {
-            downloadedTracks
+            downloadedTracks.filterNot { it.isLocalOnlyTrack }
         } else {
-            (downloadedTracks + allTracks)
+            allTracks.filterNot { it.isLocalOnlyTrack }
         }
         basePool.distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
     }
     val deduplicatedTrendingHits = remember(trendingHits, downloadedTracks, isOfflineMode) {
         val basePool = if (isOfflineMode) {
-            downloadedTracks
+            downloadedTracks.filterNot { it.isLocalOnlyTrack }
         } else {
-            trendingHits
+            trendingHits.filterNot { it.isLocalOnlyTrack }
         }
         basePool.distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
     }
 
-    val currentlyPlayingSongId = playerState.currentTrack?.id
     val excludedHeroIds = remember {
         emptySet<String>()
     }
 
-    // Prepare Trending Items (Deduplicated, excluding Hero & Currently Playing)
+    // Prepare Trending Items (Deduplicated, excluding local songs)
     val trendingItems = remember(deduplicatedTrendingHits, deduplicatedAllTracks, excludedHeroIds) {
         val pool = if (deduplicatedTrendingHits.isNotEmpty()) deduplicatedTrendingHits else deduplicatedAllTracks
-        pool.filterNot { it.id in excludedHeroIds }.take(24).map { it.toHomeMediaItem() }
+        pool.filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }.take(24).map { it.toHomeMediaItem() }
     }
 
-    // Prepare Fresh New Music Items (Deduplicated, excluding Hero & Currently Playing)
+    // Prepare Fresh New Music Items (Deduplicated, excluding local songs)
     val freshItems = remember(freshReleases, deduplicatedTrendingHits, deduplicatedAllTracks, excludedHeroIds, isOfflineMode) {
         val pool = if (isOfflineMode) {
             deduplicatedAllTracks.take(12)
         } else if (freshReleases.isNotEmpty()) {
-            freshReleases.distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
+            freshReleases
+                .filterNot { it.isLocalOnlyTrack }
+                .distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
         } else if (deduplicatedTrendingHits.isNotEmpty()) {
             deduplicatedTrendingHits.take(12)
         } else {
             deduplicatedAllTracks.take(12)
         }
-        pool.filterNot { it.id in excludedHeroIds }.take(12).map { it.toHomeMediaItem() }
+        pool.filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }.take(12).map { it.toHomeMediaItem() }
     }
 
     // Prepare YouTube Mixes Shelf (only authentic continuous mixes from YouTube Music when online)
     val youtubeMixes = remember(personalizedTracks, isOfflineMode) {
         if (isOfflineMode) emptyList()
         else personalizedTracks
-            .filter { it.id.startsWith("RD") }
+            .filter { it.id.startsWith("RD") && !it.isLocalOnlyTrack }
             .map { it.toHomeMediaItem(isMix = true) }
             .distinctBy { it.id }
             .take(6)
@@ -254,26 +255,29 @@ fun HomeScreen(
 
     val bannedKeywords = remember {
         setOf(
-            "local artist", "device storage", "downloaded in seitharol",
+            "local artist", "local audio", "local video", "device storage", "downloaded in seitharol",
             "<unknown>", "unknown artist", "unknown", "various artists", "various", "download", "seitharol"
         )
     }
 
     // Prepare Spotify-Style 2-Column "Speed Dial / Quick Picks" Bento Items (2x3 grid = 6 items)
+    // Strictly never includes local songs, even immediately after playing a local song!
     val quickDialItems = remember(personalizedTracks, activeHistory, trendingItems, downloadedTracks, isOfflineMode, recentSearches, excludedHeroIds) {
         if (isOfflineMode) {
             return@remember downloadedTracks
-                .filterNot { it.id in excludedHeroIds }
+                .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
                 .map { it.toHomeMediaItem() }
                 .distinctBy { it.id }
                 .take(6)
         }
 
         fun isAuthenticCleanSong(item: HomeMediaItem): Boolean {
+            if (item.originalTrack?.isLocalOnlyTrack == true) return false
             val a = item.subtitle.lowercase().trim()
             val t = item.title.lowercase().trim()
             val id = item.id.lowercase().trim()
             if (item.isMix || item.isAlbumOrPlaylist) return false
+            if (id.startsWith("local_") || id.startsWith("file_") || id.startsWith("vidfile_") || id.startsWith("content://") || id.startsWith("file://")) return false
             if (t.contains("supermix") || t.contains("radio") || t.contains("mix")) return false
             if (a.contains("supermix") || a.contains("radio") || a.contains("mix")) return false
             if (id.startsWith("rdamvm") || id.startsWith("vl") || id.startsWith("pl") || id.startsWith("mpreb_") || id.startsWith("olak5uy_")) return false
@@ -283,18 +287,19 @@ fun HomeScreen(
 
         val items = mutableListOf<HomeMediaItem>()
 
-        // 1. Genuine songs similar to recent listening & searches (from personalized recommendations)
+        // 1. Genuine songs from online personalized recommendations
         personalizedTracks
-            .filterNot { it.id in excludedHeroIds }
+            .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
             .map { it.toHomeMediaItem() }
             .filter(::isAuthenticCleanSong)
             .distinctBy { "${it.title.lowercase().trim()}|${it.subtitle.lowercase().trim()}" }
             .take(6)
             .forEach { items.add(it) }
 
-        // 2. Fallback to clean active history tracks if personalized recommendations have fewer than 6
+        // 2. Fallback to online-only active history tracks (NEVER local tracks!)
         if (items.size < 6) {
             activeHistory
+                .filterNot { it.isLocalOnlyTrack }
                 .distinctBy { it.id }
                 .filterNot { it.id in excludedHeroIds }
                 .map { it.toHomeMediaItem() }
@@ -323,10 +328,10 @@ fun HomeScreen(
         items.distinctBy { it.id }.take(6)
     }
 
-    // Dynamic suggested artists strictly personalized from user's listening history and liked songs (strictly max 4)
+    // Dynamic suggested artists strictly personalized from online listening history and liked songs (never local songs!)
     val dynamicArtists = remember(activeHistory, likedTracks, trendingHits, downloadedTracks) {
         val bannedArtistKeywords = setOf(
-            "local artist", "device storage", "downloaded in seitharol",
+            "local artist", "local audio", "local video", "device storage", "downloaded in seitharol",
             "<unknown>", "unknown artist", "unknown", "various artists", "various", "download", "seitharol",
             "video", "official", "audio", "records", "music", "entertainment", "channel", "production",
             "vevo", "topic", "remix", "slowed", "reverb", "mashup", "playlist", "compilation", "soundtrack",
@@ -345,19 +350,19 @@ fun HomeScreen(
         }
 
         val artistScores = mutableMapOf<String, Int>()
-        likedTracks.forEach { track ->
+        likedTracks.filterNot { it.isLocalOnlyTrack }.forEach { track ->
             val a = track.artist.trim()
             if (isValidArtist(a)) {
                 artistScores[a] = (artistScores[a] ?: 0) + 3
             }
         }
-        activeHistory.forEach { track ->
+        activeHistory.filterNot { it.isLocalOnlyTrack }.forEach { track ->
             val a = track.artist.trim()
             if (isValidArtist(a)) {
                 artistScores[a] = (artistScores[a] ?: 0) + 2
             }
         }
-        downloadedTracks.forEach { track ->
+        downloadedTracks.filterNot { it.isLocalOnlyTrack }.forEach { track ->
             val a = track.artist.trim()
             if (isValidArtist(a)) {
                 artistScores[a] = (artistScores[a] ?: 0) + 1
@@ -373,6 +378,7 @@ fun HomeScreen(
             personalized.take(4)
         } else {
             trendingHits
+                .filterNot { it.isLocalOnlyTrack }
                 .map { it.artist.trim() }
                 .filter { isValidArtist(it) }
                 .distinct()
@@ -421,8 +427,6 @@ fun HomeScreen(
             .statusBarsPadding()
             .testTag("home_screen")
     ) {
-        // ContentPadding bottom is 0.dp so the Kangla Gate footer image sits flush against
-        // the exact bottommost edge of the HomeScreen; artist spacing is added inside the artist section.
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 0.dp),
@@ -672,9 +676,6 @@ fun HomeScreen(
                 }
             }
 
-            // ────────────────────────────────────────────────────────────
-            // First-launch loading / empty state (never shows internet warning before first load finishes)
-            // ────────────────────────────────────────────────────────────
             if (trendingItems.isEmpty() && freshItems.isEmpty() && quickDialItems.isEmpty()) {
                 if (!hasCompletedInitialHomeLoad || isLoadingHome) {
                     item {
@@ -945,14 +946,12 @@ fun HomeScreen(
             }
 
             // ────────────────────────────────────────────────────────────
-            // 7. "Suggested Artists" (with dedicated bottom spacing for artists)
-            //    + Kangla Gate Aesthetic Footer Image pinned flush to the very bottom edge (0.dp)!
+            // 7. "Suggested Artists" + Kangla Gate Aesthetic Footer Image
             // ────────────────────────────────────────────────────────────
             item {
                 Box(
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    // Kangla Gate Aesthetic Footer Image placed FIRST with lower zIndex(0f) so it always sits behind foreground UI
                     HomeScreenKanglaFooterImage(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1024,9 +1023,6 @@ fun HomeScreen(
     }
 }
 
-/**
- * Standalone AestheticMusicHomeScreen implementation as requested in the design specification.
- */
 @Composable
 fun AestheticMusicHomeScreen(
     trendingSongs: List<HomeMediaItem>,
@@ -1051,7 +1047,6 @@ fun AestheticMusicHomeScreen(
         contentPadding = PaddingValues(bottom = 0.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp)
     ) {
-        // 1. Mood & Genre Filter Chips (YouTube Music / Spotify style)
         item {
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
@@ -1077,7 +1072,6 @@ fun AestheticMusicHomeScreen(
             }
         }
 
-        // 2. Spotify-Style 2-Column Quick Dial Bento Grid
         if (cleanBentoItems.size >= 4) {
             item {
                 QuickDialBentoSection(
@@ -1090,7 +1084,6 @@ fun AestheticMusicHomeScreen(
             }
         }
 
-        // 3. TRENDING SONGS FOR YOU — 4-Row Horizontal Snap Pager (YT Music Architecture)
         item {
             TrendingSongsHorizontalShelf(
                 tracks = trendingSongs,
@@ -1099,7 +1092,6 @@ fun AestheticMusicHomeScreen(
             )
         }
 
-        // 4. FRESH NEW MUSIC — High-Res Editorial Cards with Headphone SVG
         item {
             FreshNewMusicShelf(
                 tracks = freshNewMusic,
@@ -1107,7 +1099,6 @@ fun AestheticMusicHomeScreen(
             )
         }
 
-        // 5. YOUTUBE MIXES — Dedicated Unfiltered Mixes Shelf
         if (youtubeMixes.isNotEmpty()) {
             item {
                 MediaCarouselShelf(
@@ -1120,7 +1111,6 @@ fun AestheticMusicHomeScreen(
             }
         }
 
-        // 6. FEATURED ALBUMS & PLAYLISTS
         if (albumsAndPlaylists.isNotEmpty()) {
             item {
                 MediaCarouselShelf(
@@ -1146,9 +1136,6 @@ fun AestheticMusicHomeScreen(
     }
 }
 
-/**
- * YouTube Music / Amazon Music style 4-row horizontal snap grid for "Trending Songs for You"
- */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TrendingSongsHorizontalShelf(
@@ -1166,6 +1153,7 @@ fun TrendingSongsHorizontalShelf(
 ) {
     val gridState = rememberLazyGridState()
     val snapBehavior = rememberSnapFlingBehavior(lazyGridState = gridState)
+    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
 
     Column(modifier = Modifier.fillMaxWidth()) {
         SectionHeader(
@@ -1205,19 +1193,32 @@ fun TrendingSongsHorizontalShelf(
                             .fillMaxSize()
                             .padding(horizontal = 6.dp)
                     ) {
-                        // Crisp High-Res Album Art (52.dp square, RoundedCornerShape(10.dp))
-                        AsyncImage(
-                            model = upgradeThumbnail(track.thumbnailUrl),
-                            contentDescription = track.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .size(52.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                        )
+                        val thumbUrl = upgradeThumbnail(track.thumbnailUrl)
+                        if (thumbUrl.isBlank()) {
+                            Image(
+                                painter = appLogoPainter,
+                                contentDescription = track.title,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(52.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                            )
+                        } else {
+                            AsyncImage(
+                                model = thumbUrl,
+                                contentDescription = track.title,
+                                placeholder = appLogoPainter,
+                                error = appLogoPainter,
+                                fallback = appLogoPainter,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(52.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                            )
+                        }
 
                         Spacer(modifier = Modifier.width(12.dp))
 
-                        // Song Title & Artist / Album
                         Column(
                             modifier = Modifier
                                 .weight(1f)
@@ -1240,7 +1241,6 @@ fun TrendingSongsHorizontalShelf(
                             )
                         }
 
-                        // Trailing Play / More Options Action
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(
                                 onClick = { onTrackClick(track) },
@@ -1267,7 +1267,7 @@ fun TrendingSongsHorizontalShelf(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.MoreVert,
-                                        contentDescription = "More options",
+                                        contentDescription = "More Options",
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(18.dp)
                                     )
@@ -1304,7 +1304,13 @@ fun TrendingSongsHorizontalShelf(
                                             }
                                         )
                                         val artistName = track.subtitle.split("•").firstOrNull()?.trim() ?: track.subtitle
-                                        if (artistName.isNotBlank() && artistName != "Unknown Artist") {
+                                        val isNavigable = track.originalTrack?.isNavigableArtist ?: (
+                                            artistName.isNotBlank() &&
+                                                !artistName.equals("Unknown Artist", true) &&
+                                                !artistName.equals("Local Audio", true) &&
+                                                !artistName.equals("Local Video", true)
+                                            )
+                                        if (isNavigable) {
                                             DropdownMenuItem(
                                                 text = { Text("Go to Artist", color = MaterialTheme.colorScheme.onSurface) },
                                                 leadingIcon = { Icon(Icons.Default.Person, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -1333,14 +1339,12 @@ fun TrendingSongsHorizontalShelf(
     }
 }
 
-/**
- * Redesigned "Fresh New Music" Shelf — High-Res Square Cards (176.dp) with Headphone SVG Badge
- */
 @Composable
 fun FreshNewMusicShelf(
     tracks: List<HomeMediaItem>,
     onTrackClick: (HomeMediaItem) -> Unit
 ) {
+    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
     Column(modifier = Modifier.fillMaxWidth()) {
         SectionHeader(
             title = "Fresh New Music",
@@ -1365,15 +1369,26 @@ fun FreshNewMusicShelf(
                             .size(196.dp)
                             .clip(RoundedCornerShape(14.dp))
                     ) {
-                        // Full-bleed High-Res Cover Art
-                        AsyncImage(
-                            model = upgradeThumbnail(track.thumbnailUrl),
-                            contentDescription = track.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
+                        val thumbUrl = upgradeThumbnail(track.thumbnailUrl)
+                        if (thumbUrl.isBlank()) {
+                            Image(
+                                painter = appLogoPainter,
+                                contentDescription = track.title,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            AsyncImage(
+                                model = thumbUrl,
+                                contentDescription = track.title,
+                                placeholder = appLogoPainter,
+                                error = appLogoPainter,
+                                fallback = appLogoPainter,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
 
-                        // Bottom gradient scrim for depth
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -1388,7 +1403,6 @@ fun FreshNewMusicShelf(
                                 )
                         )
 
-                        // "NEW" Pill Badge (Top-Left)
                         Surface(
                             color = Color.Black.copy(alpha = 0.65f),
                             shape = RoundedCornerShape(6.dp),
@@ -1405,7 +1419,6 @@ fun FreshNewMusicShelf(
                             )
                         }
 
-                        // Floating Rounded Square Headphone SVG Action (Bottom-Right)
                         Surface(
                             color = MaterialTheme.colorScheme.primary,
                             shape = RoundedCornerShape(10.dp),
@@ -1449,7 +1462,10 @@ fun FreshNewMusicShelf(
 }
 
 /**
- * Spotify-style 2-Column "Speed Dial / Quick Picks" Bento Grid (56.dp height cards, 2x3 compact grid)
+ * Spotify-style 2-Column "Speed Dial / Quick Picks" Bento Grid:
+ * - Uses 76.dp card height with tight lineHeight (15.sp title, 13.sp subtitle) so a 2-row song title
+ *   NEVER overflows or clips the artist name below it.
+ * - Uses Seitharol app logo (`R.drawable.ic_splash_logo`) as placeholder/error/fallback.
  */
 @Composable
 fun QuickDialBentoSection(
@@ -1458,6 +1474,7 @@ fun QuickDialBentoSection(
 ) {
     val topItems = items.take(12)
     val columns = topItems.chunked(2)
+    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val cardWidth = (maxWidth * 0.74f).coerceIn(248.dp, 320.dp)
         LazyRow(
@@ -1477,37 +1494,57 @@ fun QuickDialBentoSection(
                             color = MaterialTheme.colorScheme.surfaceVariant,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(68.dp)
+                                .height(76.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .clickable { onItemClick(item) }
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                AsyncImage(
-                                    model = upgradeThumbnail(item.thumbnailUrl),
-                                    contentDescription = item.title,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.size(68.dp)
-                                )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                val thumbUrl = upgradeThumbnail(item.thumbnailUrl)
+                                if (thumbUrl.isBlank()) {
+                                    Image(
+                                        painter = appLogoPainter,
+                                        contentDescription = item.title,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.size(76.dp)
+                                    )
+                                } else {
+                                    AsyncImage(
+                                        model = thumbUrl,
+                                        contentDescription = item.title,
+                                        placeholder = appLogoPainter,
+                                        error = appLogoPainter,
+                                        fallback = appLogoPainter,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.size(76.dp)
+                                    )
+                                }
                                 Column(
                                     modifier = Modifier
-                                        .padding(horizontal = 12.dp, vertical = 4.dp)
-                                        .weight(1f),
+                                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                                        .weight(1f)
+                                        .fillMaxHeight(),
                                     verticalArrangement = Arrangement.Center
                                 ) {
                                     Text(
                                         text = item.title,
                                         color = MaterialTheme.colorScheme.onSurface,
                                         fontSize = 13.sp,
+                                        lineHeight = 15.sp,
                                         fontFamily = SyneFontFamily,
                                         fontWeight = FontWeight.SemiBold,
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     if (item.subtitle.isNotBlank() && !item.subtitle.equals(item.title, ignoreCase = true)) {
+                                        Spacer(modifier = Modifier.height(2.dp))
                                         Text(
                                             text = item.subtitle,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
                                             fontSize = 11.sp,
+                                            lineHeight = 13.sp,
                                             fontFamily = OutfitFontFamily,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
@@ -1523,9 +1560,6 @@ fun QuickDialBentoSection(
     }
 }
 
-/**
- * Reusable Carousel for YouTube Mixes ("Mixed for You") and Featured Albums/Playlists
- */
 @Composable
 fun MediaCarouselShelf(
     title: String,
@@ -1622,11 +1656,6 @@ private fun SectionHeader(title: String, subtitle: String) {
     }
 }
 
-/**
- * Renders the Kangla Gate aesthetic footer image (`app/src/main/res/drawable/HomeScreen-footer.png`
- * or normalized `homescreen_footer`) with its bottom edge strictly flush at the bottommost edge
- * (`0.dp`) of the HomeScreen.
- */
 @Composable
 fun HomeScreenKanglaFooterImage(modifier: Modifier = Modifier) {
     val context = androidx.compose.ui.platform.LocalContext.current

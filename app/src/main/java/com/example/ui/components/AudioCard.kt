@@ -167,7 +167,9 @@ fun SeitharolPullToRefreshBox(
 
 /**
  * Standard Track Row from SEITHAROL design:
- * Clean 56dp height row with rank/thumbnail, track title, artist / play count, direct download icon, like, and options.
+ * - Removes the direct download SVG from the row so song and video titles have full horizontal room.
+ * - Uses the app logo (`R.drawable.ic_splash_logo`) as placeholder/error/fallback for local audio and low-internet loads.
+ * - Suppresses artist/channel navigation when playing local tracks or "Unknown Artist".
  */
 @Composable
 fun TrackCard(
@@ -189,6 +191,7 @@ fun TrackCard(
     var showMenu by remember { mutableStateOf(false) }
     var showDownloadFormatSheet by remember { mutableStateOf(false) }
     var hasRequestedDownload by remember(track.id, track.isDownloaded) { mutableStateOf(false) }
+    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
 
     Surface(
         modifier = modifier
@@ -223,12 +226,25 @@ fun TrackCard(
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
-                AsyncImage(
-                    model = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
-                    contentDescription = "Cover for ${track.title}",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
+                val upgradedArt = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
+                if (upgradedArt.isBlank()) {
+                    Image(
+                        painter = appLogoPainter,
+                        contentDescription = "Cover for ${track.title}",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    AsyncImage(
+                        model = upgradedArt,
+                        contentDescription = "Cover for ${track.title}",
+                        placeholder = appLogoPainter,
+                        error = appLogoPainter,
+                        fallback = appLogoPainter,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
                 if (isPlaying) {
                     Box(
                         modifier = Modifier
@@ -283,49 +299,11 @@ fun TrackCard(
                 }
             }
 
-            // Direct 1-Tap Download Button
-            IconButton(
-                onClick = {
-                    if (track.isDownloaded) {
-                        onRemoveDownloadClick?.invoke()
-                    } else if (!hasRequestedDownload) {
-                        showDownloadFormatSheet = true
-                    }
-                },
-                modifier = Modifier.size(36.dp)
-            ) {
-                when {
-                    track.isDownloaded -> {
-                        Icon(
-                            imageVector = Icons.Default.DownloadDone,
-                            contentDescription = "Downloaded",
-                            tint = Color(0xFF00C853),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    hasRequestedDownload -> {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    else -> {
-                        Icon(
-                            imageVector = Icons.Outlined.Download,
-                            contentDescription = "Download",
-                            tint = SeitharolTextSecondary,
-                            modifier = Modifier.size(19.dp)
-                        )
-                    }
-                }
-            }
-
             // Like action
             IconButton(
                 onClick = onLikeClick,
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(34.dp)
                     .testTag("track_like_btn_${track.id}")
             ) {
                 Icon(
@@ -336,13 +314,13 @@ fun TrackCard(
                 )
             }
 
-            // Options menu
+            // Options menu (Download remains available here while keeping the card title wide & uncluttered)
             Box {
                 IconButton(
                     onClick = {
                         if (onOptionsClick != null) onOptionsClick() else showMenu = true
                     },
-                    modifier = Modifier.size(34.dp)
+                    modifier = Modifier.size(32.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.MoreHoriz,
@@ -393,7 +371,7 @@ fun TrackCard(
                             }
                         )
                     }
-                    if (onGoToArtistClick != null && track.artist.isNotBlank()) {
+                    if (onGoToArtistClick != null && track.isNavigableArtist) {
                         DropdownMenuItem(
                             text = {
                                 Text(
@@ -425,7 +403,7 @@ fun TrackCard(
                                 onRemoveDownloadClick?.invoke()
                             }
                         )
-                    } else {
+                    } else if (!track.isLocalOnlyTrack) {
                         DropdownMenuItem(
                             text = { Text("Download (Choose Format & Quality)", color = SeitharolTextPrimary) },
                             leadingIcon = {
@@ -527,6 +505,7 @@ fun HitCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
     Surface(
         modifier = modifier
             .width(136.dp)
@@ -545,12 +524,25 @@ fun HitCard(
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
-                AsyncImage(
-                    model = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
-                    contentDescription = track.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
+                val upgradedArt = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
+                if (upgradedArt.isBlank()) {
+                    Image(
+                        painter = appLogoPainter,
+                        contentDescription = track.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    AsyncImage(
+                        model = upgradedArt,
+                        contentDescription = track.title,
+                        placeholder = appLogoPainter,
+                        error = appLogoPainter,
+                        fallback = appLogoPainter,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
 
                 if (isPlaying) {
                     Box(
@@ -601,20 +593,36 @@ fun FreshNewMusicCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
     Column(
         modifier = modifier
             .width(160.dp)
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
     ) {
-        AsyncImage(
-            model = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
-            contentDescription = track.title,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(160.dp)
-                .clip(RoundedCornerShape(12.dp))
-        )
+        val upgradedArt = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
+        if (upgradedArt.isBlank()) {
+            Image(
+                painter = appLogoPainter,
+                contentDescription = track.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(160.dp)
+                    .clip(RoundedCornerShape(12.dp))
+            )
+        } else {
+            AsyncImage(
+                model = upgradedArt,
+                contentDescription = track.title,
+                placeholder = appLogoPainter,
+                error = appLogoPainter,
+                fallback = appLogoPainter,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(160.dp)
+                    .clip(RoundedCornerShape(12.dp))
+            )
+        }
         Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = track.title,
@@ -645,6 +653,7 @@ fun FreshMusicCard(
     onPlayClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
     Box(
         modifier = modifier
             .width(280.dp)
@@ -657,6 +666,9 @@ fun FreshMusicCard(
             AsyncImage(
                 model = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(imageUrl),
                 contentDescription = title,
+                placeholder = appLogoPainter,
+                error = appLogoPainter,
+                fallback = appLogoPainter,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )

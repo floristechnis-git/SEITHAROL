@@ -529,6 +529,22 @@ class AudioPlayerManager(
         preferredQuality: com.seitharol.data.resolver.AudioQuality,
         forceRefresh: Boolean
     ): ResolvedStream {
+        if (!forceRefresh) {
+            val cachedDiskFile = com.seitharol.player.OuterTuneResolvingDataSource.getCompletedCacheFile(context, track.id, isVideo)
+            if (cachedDiskFile != null && cachedDiskFile.exists() && cachedDiskFile.length() > 24_576L) {
+                return ResolvedStream(
+                    videoId = track.id,
+                    streamUrl = Uri.fromFile(cachedDiskFile).toString(),
+                    itag = if (isVideo) 18 else 251,
+                    codec = if (isVideo) "MP4" else "Opus",
+                    bitrate = if (isVideo) "Cached Video" else "Cached Audio",
+                    expiresAtMs = Long.MAX_VALUE,
+                    isLocal = true,
+                    resolvedBy = "Active Disk Cache",
+                    latencyMs = 1
+                )
+            }
+        }
         if (isVideo && !track.isDownloaded && track.localPath.isNullOrBlank()) {
             var ytId = InnerTubeStreamExtractor.extractVideoId(track.id)
             if (ytId.isNullOrBlank() && track.title.isNotBlank()) {
@@ -698,11 +714,13 @@ class AudioPlayerManager(
                                     play()
                                 }
                                 val activelyPlaying = userRequestedPlay && playWhenReady
+                                val hasRenderedVideo = _state.value.isVideoFrameRendered ||
+                                    (videoSize.width > 0 && videoSize.height > 0)
                                 _state.value = _state.value.copy(
                                     isBuffering = false,
                                     isPlaying = activelyPlaying,
                                     durationMs = safeDur,
-                                    isVideoFrameRendered = _state.value.isVideoFrameRendered || activelyPlaying
+                                    isVideoFrameRendered = hasRenderedVideo
                                 )
                                 trackRetryCount = 0
                                 lastFailedTrackId = null
@@ -757,10 +775,12 @@ class AudioPlayerManager(
                                     vp.play()
                                 }
                             }
+                            val hasVideoSize = (videoSize.width > 0 && videoSize.height > 0) ||
+                                (videoExoPlayer?.let { it.videoSize.width > 0 && it.videoSize.height > 0 } == true)
                             _state.value = _state.value.copy(
                                 isPlaying = true,
                                 isBuffering = false,
-                                isVideoFrameRendered = true
+                                isVideoFrameRendered = _state.value.isVideoFrameRendered || hasVideoSize
                             )
                             persistCurrentPlaybackState()
                             startPositionTracker()
@@ -1092,15 +1112,28 @@ class AudioPlayerManager(
             player.volume = if (_state.value.isMuted) 0f else 1.0f
 
             val isVideo = track.isVideoTrack || _state.value.isVideoMode
+            val isSplitMergedAv = isVideo && sourceUrl.startsWith("merged_av::")
+            activeVideoUsesSplitPlayer = isSplitMergedAv
+
             val videoRawUrl: String?
             val audioRawUrl: String
-            if (sourceUrl.startsWith("merged_av::")) {
+            if (isSplitMergedAv) {
                 val parts = sourceUrl.removePrefix("merged_av::").split("|||")
                 videoRawUrl = parts[0]
                 audioRawUrl = parts.getOrElse(1) { parts[0] }
             } else {
-                videoRawUrl = if (isVideo) sourceUrl else null
+                videoRawUrl = null
                 audioRawUrl = sourceUrl
+            }
+
+            // Warm active on-disk stream cache in background (like YouTube) for instant replay & scrubbing
+            if (!track.isLocalOnlyTrack && audioRawUrl.startsWith("http") && !isSplitMergedAv) {
+                com.seitharol.player.OuterTuneResolvingDataSource.warmStreamCacheAsync(
+                    context = context,
+                    trackId = track.id,
+                    streamUrl = audioRawUrl,
+                    isVideo = isVideo
+                )
             }
 
             fun parseSourceUri(raw: String): Uri = when {
@@ -1114,7 +1147,27 @@ class AudioPlayerManager(
                 else -> Uri.parse(raw)
             }
 
-            // 1. Setup Audio on main exoPlayer (100% single MediaItem, zero MergingMediaSource deadlock!)
+            // Enable hardware video decoding directly on main exoPlayer when playing muxed MP4 / local MP4 / HLS video!
+            val enableVideoOnMainPlayer = isVideo && !isSplitMergedAv
+            runCatching {
+                player.trackSelectionParameters = player.trackSelectionParameters
+                    .buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, !enableVideoOnMainPlayer)
+                    .build()
+            }
+
+            if (enableVideoOnMainPlayer) {
+                stopVideoPlayer()
+                attachedTextureView?.let { tv ->
+                    runCatching { videoExoPlayer?.clearVideoTextureView(tv) }
+                    runCatching {
+                        player.setVideoTextureView(tv)
+                        attachedTexturePlayer = player
+                    }
+                }
+            }
+
+            // 1. Setup MediaItem on main exoPlayer
             val parsedAudioUri = parseSourceUri(audioRawUrl)
             val audioMediaItem = track.toMediaItem(parsedAudioUri)
             if (startPositionMs > 0L) {
@@ -1128,12 +1181,13 @@ class AudioPlayerManager(
                 player.play()
             }
 
-            // 2. Setup Video on dedicated videoExoPlayer (or stop videoExoPlayer when playing audio-only song)
-            if (isVideo && !videoRawUrl.isNullOrBlank()) {
+            // 2. Only use secondary videoExoPlayer when stream is split merged_av::
+            if (isSplitMergedAv && !videoRawUrl.isNullOrBlank()) {
                 videoRetryCount = 0
                 val vp = ensureVideoPlayerInitialized()
                 if (vp != null) {
                     attachedTextureView?.let { tv ->
+                        runCatching { player.clearVideoTextureView(tv) }
                         if (attachedTexturePlayer !== vp) {
                             attachedTexturePlayer = vp
                             runCatching { vp.setVideoTextureView(tv) }
@@ -1154,7 +1208,7 @@ class AudioPlayerManager(
                         vp.play()
                     }
                 }
-            } else {
+            } else if (!enableVideoOnMainPlayer) {
                 stopVideoPlayer()
             }
 
@@ -1242,12 +1296,20 @@ class AudioPlayerManager(
                 coroutineScope.launch(Dispatchers.IO) {
                     try {
                         val resolvedLocal = resolveLocalTrackIfAvailable(nextTrack)
-                        resolveStreamForTrack(
+                        val nextStream = resolveStreamForTrack(
                             track = resolvedLocal,
                             isVideo = resolvedLocal.isVideoTrack,
                             preferredQuality = getPreferredAudioQuality(),
                             forceRefresh = false
                         )
+                        if (!resolvedLocal.isLocalOnlyTrack && nextStream.streamUrl.startsWith("http")) {
+                            com.seitharol.player.OuterTuneResolvingDataSource.warmStreamCacheAsync(
+                                context = context,
+                                trackId = resolvedLocal.id,
+                                streamUrl = nextStream.streamUrl,
+                                isVideo = resolvedLocal.isVideoTrack
+                            )
+                        }
                     } catch (e: Exception) {
                         Log.w(TAG, "Prefetch failed for ${nextTrack.id}: ${e.message}")
                     }
@@ -2174,6 +2236,7 @@ class AudioPlayerManager(
     private fun prefetchAutoplayRecommendation() {
         if (isFetchingAutoplay || resolverEngine.isOfflineMode.value) return
         val current = _state.value.currentTrack ?: return
+        if (_state.value.isSingleTrackPlayback || _state.value.queue.size <= 1 || current.isLocalOnlyTrack) return
         val isOffline = current.isDownloaded || !current.localPath.isNullOrBlank() || _state.value.queue.any { it.isDownloaded || !it.localPath.isNullOrBlank() }
         if (isOffline || !isAutoplayEnabled) return
         isFetchingAutoplay = true
@@ -2242,7 +2305,8 @@ class AudioPlayerManager(
             _state.value = _state.value.copy(isPlaying = false, isBuffering = false, currentPositionMs = 0L)
             return
         }
-        val isOffline = current.isDownloaded || !current.localPath.isNullOrBlank() || _state.value.queue.any { it.isDownloaded || !it.localPath.isNullOrBlank() }
+        val isOffline = current.isLocalOnlyTrack || _state.value.isSingleTrackPlayback || _state.value.queue.size <= 1 ||
+            current.isDownloaded || !current.localPath.isNullOrBlank() || _state.value.queue.any { it.isDownloaded || !it.localPath.isNullOrBlank() }
         if (isOffline || !isAutoplayEnabled) {
             userRequestedPlay = false
             _state.value = _state.value.copy(isPlaying = false, isBuffering = false, currentPositionMs = 0L)
@@ -2375,24 +2439,76 @@ class AudioPlayerManager(
     }
 
 
+    @Volatile
+    private var activeVideoUsesSplitPlayer: Boolean = false
     private var attachedTextureView: android.view.TextureView? = null
     private var attachedTexturePlayer: ExoPlayer? = null
 
     fun attachVideoTextureView(textureView: android.view.TextureView?) {
         try {
-            val vp = ensureVideoPlayerInitialized() ?: return
+            ensurePlayerInitialized()
+            val targetPlayer = if (activeVideoUsesSplitPlayer) {
+                ensureVideoPlayerInitialized()
+            } else {
+                exoPlayer
+            } ?: return
+
             if (textureView == null) {
-                attachedTextureView?.let { vp.clearVideoTextureView(it) }
+                attachedTextureView?.let { oldTv ->
+                    runCatching { exoPlayer?.clearVideoTextureView(oldTv) }
+                    runCatching { videoExoPlayer?.clearVideoTextureView(oldTv) }
+                }
                 attachedTextureView = null
                 attachedTexturePlayer = null
-            } else if (attachedTextureView !== textureView || attachedTexturePlayer !== vp) {
-                attachedTextureView = textureView
-                attachedTexturePlayer = vp
-                vp.setVideoTextureView(textureView)
+                return
+            }
+
+            if (attachedTexturePlayer != null && attachedTexturePlayer !== targetPlayer) {
+                attachedTextureView?.let { oldTv ->
+                    runCatching { attachedTexturePlayer?.clearVideoTextureView(oldTv) }
+                }
+            }
+            attachedTextureView = textureView
+            attachedTexturePlayer = targetPlayer
+            targetPlayer.setVideoTextureView(textureView)
+            if (targetPlayer.videoSize.width > 0 && targetPlayer.videoSize.height > 0 && !_state.value.isVideoFrameRendered) {
+                _state.value = _state.value.copy(isVideoFrameRendered = true)
             }
         } catch (t: Throwable) {
             Log.w(TAG, "attachVideoTextureView error: ${t.message}")
         }
+    }
+
+    /**
+     * Periodically invoked by MediaPlaybackService to ensure background playback never mid-stops
+     * while the notification claims it is playing, and recovers from transient background stalls.
+     */
+    fun verifyAndSyncBackgroundPlayback() {
+        try {
+            val player = exoPlayer ?: return
+            val s = _state.value
+            if (s.currentTrack == null) return
+
+            if (userRequestedPlay) {
+                if (player.playbackState == Player.STATE_READY && !player.isPlaying && !isPhoneCallActive()) {
+                    requestAudioFocus()
+                    player.playWhenReady = true
+                    player.play()
+                    _state.value = s.copy(isPlaying = true, isBuffering = false)
+                } else if (player.playbackState == Player.STATE_IDLE &&
+                    !isRetryingOrLoading &&
+                    loadTrackJob?.isActive != true &&
+                    retryJob?.isActive != true &&
+                    !isPhoneCallActive()
+                ) {
+                    loadAndPlayCurrent(resumePositionMs = s.currentPositionMs.coerceAtLeast(0L))
+                }
+            } else {
+                if (s.isPlaying || s.isBuffering) {
+                    _state.value = s.copy(isPlaying = false, isBuffering = false)
+                }
+            }
+        } catch (_: Throwable) {}
     }
 
     fun toggleMute() {

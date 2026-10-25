@@ -1,10 +1,9 @@
 package com.example.ui.components
 
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -14,7 +13,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.*
@@ -31,12 +29,14 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
+import com.example.R
 import com.example.data.model.Track
 import com.example.data.remote.InnerTubeResolver
 import com.example.player.PlayerState
@@ -49,8 +49,9 @@ import kotlin.math.roundToInt
  * YouTube Music style Playback Queue with:
  * 1. Clean two-column header ("Up Next", "X tracks" on left, "Clear queue" on right).
  * 2. Drag-and-drop reordering with '=' handle, zIndex(10f), 24f elevation, landing indicator line.
- * 3. Proportional frame-synced edge auto-scrolling when dragged item is within 88.dp of top/bottom.
- * 4. Autoplay toggle card and dynamic "Auto-suggested" section placed below the active queue.
+ * 3. Suppresses queue suggestions whenever only a single song is played in the playback queue
+ *    or when playing a local song (`isLocalOnlyTrack`).
+ * 4. Uses the Seitharol app logo (`R.drawable.ic_splash_logo`) as placeholder/error/fallback for artwork.
  */
 @Composable
 fun PlaybackQueueModal(
@@ -61,6 +62,7 @@ fun PlaybackQueueModal(
 ) {
     val queue = playerState.queue
     val currentIndex = playerState.currentIndex
+    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
 
     // Drag state
     var draggingFromIndex by remember { mutableStateOf<Int?>(null) }
@@ -70,7 +72,6 @@ fun PlaybackQueueModal(
     val listState = rememberLazyListState()
     val density = LocalDensity.current
 
-    // LazyColumn measurements for edge auto-scroll
     var listTopWindowY by remember { mutableFloatStateOf(0f) }
     var listHeightPx by remember { mutableFloatStateOf(0f) }
 
@@ -79,16 +80,26 @@ fun PlaybackQueueModal(
     val trendingHits by viewModel.trendingHits.collectAsState()
     val videoSuggestions by viewModel.queueVideoSuggestions.collectAsState()
 
-    LaunchedEffect(playerState.currentTrack?.id, queue.size) {
-        viewModel.refreshQueueSuggestions(playerState.currentTrack)
+    // Never generate or show suggestions when a single song is played in the playback queue or when playing a local track
+    val shouldSuppressSuggestions = playerState.isSingleTrackPlayback ||
+        queue.size <= 1 ||
+        playerState.currentTrack?.isLocalOnlyTrack == true
+
+    LaunchedEffect(playerState.currentTrack?.id, queue.size, shouldSuppressSuggestions) {
+        if (!shouldSuppressSuggestions) {
+            viewModel.refreshQueueSuggestions(playerState.currentTrack)
+        }
     }
 
-    val suggestedTracks = remember(queue, personalizedTracks, trendingHits, videoSuggestions, playerState.currentTrack) {
+    val suggestedTracks = remember(queue, personalizedTracks, trendingHits, videoSuggestions, playerState.currentTrack, shouldSuppressSuggestions) {
+        if (shouldSuppressSuggestions) {
+            return@remember emptyList<Track>()
+        }
         val queueIds = queue.map { it.id }.toSet()
         val isCurrentVideo = playerState.currentTrack?.isVideoTrack == true
         val filteredSpecific = videoSuggestions
             .filter { cand ->
-                cand.id !in queueIds && (isCurrentVideo || !cand.isVideoTrack)
+                cand.id !in queueIds && !cand.isLocalOnlyTrack && (isCurrentVideo || !cand.isVideoTrack)
             }
             .distinctBy { it.id }
 
@@ -96,11 +107,12 @@ fun PlaybackQueueModal(
             filteredSpecific.take(14)
         } else {
             val fallbackPool = if (isCurrentVideo) {
-                videoSuggestions.distinctBy { it.id }
+                videoSuggestions.filterNot { it.isLocalOnlyTrack }.distinctBy { it.id }
             } else {
                 personalizedTracks
                     .filterNot {
-                        it.isVideoTrack ||
+                        it.isLocalOnlyTrack ||
+                            it.isVideoTrack ||
                             it.album.equals("YouTube Video", ignoreCase = true) ||
                             it.genre.equals("YouTube Video", ignoreCase = true) ||
                             it.codec.equals("MP4", ignoreCase = true)
@@ -113,7 +125,6 @@ fun PlaybackQueueModal(
 
     androidx.activity.compose.BackHandler(onBack = onDismiss)
 
-    // Calculate target drop index based on approximate item height (~72dp)
     val itemHeightPx = with(density) { 72.dp.toPx() }
     val targetDropIndex = remember(draggingFromIndex, dragOffsetY, queue.size) {
         val from = draggingFromIndex ?: return@remember null
@@ -121,7 +132,6 @@ fun PlaybackQueueModal(
         (from + offsetSlots).coerceIn(0, queue.lastIndex)
     }
 
-    // Edge Auto-Scroll Loop (scales quadratically: intensity^2 * maxSpeed)
     LaunchedEffect(draggingFromIndex) {
         if (draggingFromIndex != null) {
             val edgeZonePx = with(density) { 88.dp.toPx() }
@@ -132,13 +142,11 @@ fun PlaybackQueueModal(
                     if (listHeightPx > 0f && pointerWindowY > 0f) {
                         val pointerInListY = pointerWindowY - listTopWindowY
                         if (pointerInListY in 0f..edgeZonePx) {
-                            // Top edge
                             val distance = (edgeZonePx - pointerInListY).coerceIn(0f, edgeZonePx)
                             val intensity = distance / edgeZonePx
                             val scrollAmount = -(intensity * intensity * maxSpeedPx)
                             listState.dispatchRawDelta(scrollAmount)
                         } else if (pointerInListY in (listHeightPx - edgeZonePx)..listHeightPx) {
-                            // Bottom edge
                             val distance = (pointerInListY - (listHeightPx - edgeZonePx)).coerceIn(0f, edgeZonePx)
                             val intensity = distance / edgeZonePx
                             val scrollAmount = (intensity * intensity * maxSpeedPx)
@@ -162,9 +170,6 @@ fun PlaybackQueueModal(
                 .statusBarsPadding()
                 .navigationBarsPadding()
         ) {
-            // ────────────────────────────────────────────────────────────
-            // Top Modal Navigation Bar
-            // ────────────────────────────────────────────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -205,11 +210,6 @@ fun PlaybackQueueModal(
                 }
             }
 
-            // ────────────────────────────────────────────────────────────
-            // Clean 2-Column Header (YouTube Music Architecture)
-            // Left: "Up Next" + "X tracks"
-            // Right: Compact "Clear queue" pill button
-            // ────────────────────────────────────────────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -226,7 +226,7 @@ fun PlaybackQueueModal(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "${queue.size} tracks",
+                        text = if (queue.size == 1) "1 track" else "${queue.size} tracks",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontFamily = OutfitFontFamily,
                         fontSize = 12.sp,
@@ -256,9 +256,6 @@ fun PlaybackQueueModal(
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            // ────────────────────────────────────────────────────────────
-            // Queue List & Drag-and-Drop Area
-            // ────────────────────────────────────────────────────────────
             if (queue.isEmpty()) {
                 Box(
                     modifier = Modifier
@@ -291,7 +288,6 @@ fun PlaybackQueueModal(
                         val isPlaying = index == currentIndex
                         val isDragging = draggingFromIndex == index
 
-                        // Landing indicator line above this item
                         if ((draggingFromIndex?.let { targetDropIndex == index && targetDropIndex <= it } == true)) {
                             LandingDropIndicatorLine()
                         }
@@ -330,7 +326,6 @@ fun PlaybackQueueModal(
                                     .padding(horizontal = 10.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // Trash icon on the left (delete track from queue)
                                 IconButton(
                                     onClick = { viewModel.removeFromQueue(index) },
                                     modifier = Modifier.size(34.dp)
@@ -345,24 +340,35 @@ fun PlaybackQueueModal(
 
                                 Spacer(modifier = Modifier.width(6.dp))
 
-                                // Artwork thumbnail (50dp square, rounded 8dp)
                                 Box(
                                     modifier = Modifier
                                         .size(48.dp)
                                         .clip(RoundedCornerShape(8.dp))
                                         .background(MaterialTheme.colorScheme.surfaceVariant)
                                 ) {
-                                    AsyncImage(
-                                        model = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
-                                        contentDescription = track.title,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
+                                    val upgradedArt = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
+                                    if (upgradedArt.isBlank()) {
+                                        Image(
+                                            painter = appLogoPainter,
+                                            contentDescription = track.title,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    } else {
+                                        AsyncImage(
+                                            model = upgradedArt,
+                                            contentDescription = track.title,
+                                            placeholder = appLogoPainter,
+                                            error = appLogoPainter,
+                                            fallback = appLogoPainter,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    }
                                 }
 
                                 Spacer(modifier = Modifier.width(12.dp))
 
-                                // Track Title & Artist
                                 Column(modifier = Modifier.weight(1f)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
@@ -407,7 +413,6 @@ fun PlaybackQueueModal(
 
                                 Spacer(modifier = Modifier.width(8.dp))
 
-                                // Two-parallel-lines ('=') drag handle with long-press detection
                                 Box(
                                     modifier = Modifier
                                         .size(44.dp)
@@ -442,7 +447,6 @@ fun PlaybackQueueModal(
                                         },
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    // Custom '=' icon (two sleek parallel bars)
                                     Column(
                                         verticalArrangement = Arrangement.spacedBy(3.5.dp),
                                         horizontalAlignment = Alignment.CenterHorizontally
@@ -470,146 +474,155 @@ fun PlaybackQueueModal(
                             }
                         }
 
-                        // Landing indicator line below this item
                         if ((draggingFromIndex?.let { targetDropIndex == index && targetDropIndex > it } == true)) {
                             LandingDropIndicatorLine()
                         }
                     }
 
-                    // ────────────────────────────────────────────────────────────
-                    // Dedicated Autoplay / Auto-suggest Block at the Bottom
-                    // (Placed directly below the last track of the active queue)
-                    // ────────────────────────────────────────────────────────────
-                    item {
-                        Spacer(modifier = Modifier.height(14.dp))
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("queue_autoplay_card")
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                                    Text(
-                                        text = "Autoplay",
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        fontFamily = SyneFontFamily,
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = "Add similar songs to the end of the queue",
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontFamily = OutfitFontFamily,
-                                        fontSize = 12.sp
-                                    )
-                                }
-
-                                Switch(
-                                    checked = isAutoSuggest,
-                                    onCheckedChange = { viewModel.toggleAutoSuggest() },
-                                    colors = SwitchDefaults.colors(
-                                        checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                                        checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                        uncheckedThumbColor = MaterialTheme.colorScheme.primary,
-                                        uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
-                                        uncheckedBorderColor = MaterialTheme.colorScheme.outline
-                                    )
-                                )
-                            }
-                        }
-                    }
-
-                    // Dynamic "Auto-suggested" list section (Always visible)
-                    if (suggestedTracks.isNotEmpty()) {
+                    if (!shouldSuppressSuggestions) {
                         item {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "Auto-suggested",
-                                color = MaterialTheme.colorScheme.onBackground,
-                                fontFamily = SyneFontFamily,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
-                            )
-                        }
-
-                        itemsIndexed(suggestedTracks, key = { idx, track -> "suggested_${track.id}_$idx" }) { _, track ->
+                            Spacer(modifier = Modifier.height(14.dp))
                             Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .clickable {
-                                        val existingIdx = queue.indexOfFirst { it.id == track.id }
-                                        if (existingIdx >= 0) {
-                                            viewModel.playQueueIndex(existingIdx)
-                                        } else {
-                                            viewModel.addToQueue(track)
-                                            viewModel.playQueueIndex(queue.size)
-                                        }
-                                        onDismiss()
-                                    }
+                                    .testTag("queue_autoplay_card")
                             ) {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(42.dp)
-                                            .clip(RoundedCornerShape(6.dp))
-                                    ) {
-                                        AsyncImage(
-                                            model = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl),
-                                            contentDescription = track.title,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    }
-
-                                    Spacer(modifier = Modifier.width(12.dp))
-
-                                    Column(modifier = Modifier.weight(1f)) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                                         Text(
-                                            text = track.title,
+                                            text = "Autoplay",
                                             color = MaterialTheme.colorScheme.onSurface,
-                                            fontSize = 13.sp,
-                                            fontFamily = OutfitFontFamily,
-                                            fontWeight = FontWeight.Medium,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                            fontFamily = SyneFontFamily,
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Bold
                                         )
                                         Text(
-                                            text = track.artist,
+                                            text = "Add similar songs to the end of the queue",
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontSize = 11.sp,
                                             fontFamily = OutfitFontFamily,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                            fontSize = 12.sp
                                         )
                                     }
 
-                                    IconButton(
-                                        onClick = { viewModel.addToQueue(track) },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.PlaylistAdd,
-                                            contentDescription = "Add to Queue",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(20.dp)
+                                    Switch(
+                                        checked = isAutoSuggest,
+                                        onCheckedChange = { viewModel.toggleAutoSuggest() },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                            uncheckedThumbColor = MaterialTheme.colorScheme.primary,
+                                            uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                            uncheckedBorderColor = MaterialTheme.colorScheme.outline
                                         )
+                                    )
+                                }
+                            }
+                        }
+
+                        if (suggestedTracks.isNotEmpty()) {
+                            item {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Auto-suggested",
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    fontFamily = SyneFontFamily,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
+                                )
+                            }
+
+                            itemsIndexed(suggestedTracks, key = { idx, track -> "suggested_${track.id}_$idx" }) { _, track ->
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            val existingIdx = queue.indexOfFirst { it.id == track.id }
+                                            if (existingIdx >= 0) {
+                                                viewModel.playQueueIndex(existingIdx)
+                                            } else {
+                                                viewModel.addToQueue(track)
+                                                viewModel.playQueueIndex(queue.size)
+                                            }
+                                            onDismiss()
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(42.dp)
+                                                .clip(RoundedCornerShape(6.dp))
+                                        ) {
+                                            val upgradedArt = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
+                                            if (upgradedArt.isBlank()) {
+                                                Image(
+                                                    painter = appLogoPainter,
+                                                    contentDescription = track.title,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier.fillMaxSize()
+                                                )
+                                            } else {
+                                                AsyncImage(
+                                                    model = upgradedArt,
+                                                    contentDescription = track.title,
+                                                    placeholder = appLogoPainter,
+                                                    error = appLogoPainter,
+                                                    fallback = appLogoPainter,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier.fillMaxSize()
+                                                )
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.width(12.dp))
+
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = track.title,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                fontSize = 13.sp,
+                                                fontFamily = OutfitFontFamily,
+                                                fontWeight = FontWeight.Medium,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = track.artist,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                fontSize = 11.sp,
+                                                fontFamily = OutfitFontFamily,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+
+                                        IconButton(
+                                            onClick = { viewModel.addToQueue(track) },
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.PlaylistAdd,
+                                                contentDescription = "Add to Queue",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -625,9 +638,6 @@ fun PlaybackQueueModal(
     }
 }
 
-/**
- * Glowing horizontal insertion landing line with a leading dot for real-time drag-and-drop feedback.
- */
 @Composable
 private fun LandingDropIndicatorLine() {
     Row(
@@ -637,7 +647,6 @@ private fun LandingDropIndicatorLine() {
             .padding(horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Glowing leading dot
         Box(
             modifier = Modifier
                 .size(6.dp)
@@ -645,7 +654,6 @@ private fun LandingDropIndicatorLine() {
                 .background(MaterialTheme.colorScheme.primary)
         )
         Spacer(modifier = Modifier.width(4.dp))
-        // Glowing 2.5dp insertion line
         Box(
             modifier = Modifier
                 .fillMaxWidth()

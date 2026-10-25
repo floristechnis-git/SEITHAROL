@@ -42,24 +42,23 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Custom Protocol Scheme: seitharol://track/[id] & seitharol://artist/[id] -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="seitharol" />
-            </intent-filter>
+            <!-- Custom Scheme Deep Link (triggered by index.html Open App prompt) -->
+<intent-filter>
+    <action android:name="android.intent.action.VIEW" />
+    <category android:name="android.intent.category.DEFAULT" />
+    <category android:name="android.intent.category.BROWSABLE" />
+    <data android:scheme="seitharol" />
+</intent-filter>
 
-            <!-- HTTPS / HTTP Intent Launcher Routes: /share/track/[id] & /share/artist/[id] -->
-            <intent-filter android:autoVerify="true">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="seitharol.app" android:pathPrefix="/share/track/" />
-                <data android:scheme="https" android:host="seitharol.app" android:pathPrefix="/share/artist/" />
-                <data android:scheme="http" android:host="seitharol.app" android:pathPrefix="/share/track/" />
-                <data android:scheme="http" android:host="seitharol.app" android:pathPrefix="/share/artist/" />
-            </intent-filter>
+<!-- HTTPS Web Share Links (https://seitharol.vercel.app/share/...) -->
+<intent-filter android:autoVerify="true">
+    <action android:name="android.intent.action.VIEW" />
+    <category android:name="android.intent.category.DEFAULT" />
+    <category android:name="android.intent.category.BROWSABLE" />
+    <data android:scheme="https" android:host="seitharol.vercel.app" android:pathPrefix="/share" />
+    <data android:scheme="https" android:host="seitharol.vercel.app" />
+</intent-filter>
+
 
             <!-- Open With: Audio & Video Files from File Explorer & Managers -->
             <intent-filter>

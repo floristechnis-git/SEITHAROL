@@ -4,13 +4,11 @@ import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,6 +19,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import com.example.data.model.Track
 import com.example.ui.components.*
 import com.example.ui.screens.*
@@ -31,9 +31,6 @@ import com.example.ui.theme.*
 import com.seitharol.ui.components.HomeNavSvgIcon
 import com.seitharol.ui.settings.InfoDetailScreen
 import com.seitharol.ui.settings.InfoPageType
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.flow.collectLatest
 
 enum class AppDestination(val label: String, val icon: ImageVector) {
@@ -143,6 +140,7 @@ fun CascadeApp(
     isInPiPMode: Boolean = false
 ) {
     val playerState by viewModel.playerState.collectAsState()
+    val isFullscreenVideo by viewModel.isFullscreenVideo.collectAsState()
 
     // When Activity enters native Android Picture-in-Picture mode, display 100% video surface
     // without status bar, navigation bar, or extra UI overlays so it floats cleanly outside the app.
@@ -189,7 +187,6 @@ fun CascadeApp(
     // Modals state
     var showSleepTimer by remember { mutableStateOf(false) }
     var showNotifications by remember { mutableStateOf(false) }
-    var shareTargetArtist by remember { mutableStateOf<String?>(null) }
     var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
     var pendingTrackForNewPlaylist by remember { mutableStateOf<Track?>(null) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
@@ -236,7 +233,6 @@ fun CascadeApp(
     val rootFocusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val rootKeyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
 
-    // On visit to Discover and Download page (or any SubScreen), hide active keyboard and pause current music on Discover
     LaunchedEffect(currentSubScreen) {
         if (currentSubScreen !is SubScreen.None) {
             rootFocusManager.clearFocus(force = true)
@@ -260,7 +256,9 @@ fun CascadeApp(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        val isTablet = maxWidth >= 600.dp
+        // Use smallestScreenWidth (`minOf(maxWidth, maxHeight) >= 600.dp`) AND `!isFullscreenVideo`
+        // so rotating a phone to landscape for fullscreen video NEVER switches to the 3-column tablet layout!
+        val isTablet = minOf(maxWidth, maxHeight) >= 600.dp && !isFullscreenVideo
 
         if (isTablet) {
             Row(modifier = Modifier.fillMaxSize()) {
@@ -355,7 +353,9 @@ fun CascadeApp(
                             viewModel = viewModel,
                             playerState = playerState,
                             onBack = { currentSubScreen = SubScreen.None },
-                            onShareArtist = { shareTargetArtist = it },
+                            onShareArtist = { artistName ->
+                                SeitharolDeepLinkHelper.shareArtistSystemChooser(context, artistName)
+                            },
                             onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it, returnSubScreen = currentSubScreen) }
                         )
                         is SubScreen.Playlist -> PlaylistScreen(
@@ -411,18 +411,19 @@ fun CascadeApp(
                                 availablePlaylists = playlists.map { it.id to it.title },
                                 onPlayLocalTrack = { candidate ->
                                     val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
-                                        candidate.videoId.lowercase().endsWith(".mp4")
+                                        candidate.videoId.lowercase().endsWith(".mp4") ||
+                                        candidate.videoId.lowercase().contains("/video/")
                                     val cleanAlbum = candidate.albumName?.takeUnless {
                                         it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Storage", ignoreCase = true)
                                     }.orEmpty()
                                     val localTrack = Track(
-                                        id = "local_${candidate.videoId.hashCode()}",
+                                        id = if (isVideo) "vidfile_${candidate.videoId.hashCode()}" else "local_${candidate.videoId.hashCode()}",
                                         title = candidate.title,
                                         artist = candidate.artist,
-                                        album = cleanAlbum,
+                                        album = if (isVideo) "MP4 Video" else cleanAlbum,
                                         durationMs = candidate.durationSeconds * 1000L,
                                         artUrl = candidate.thumbnailUrl,
-                                        genre = if (isVideo) "YouTube Video" else "Local Audio",
+                                        genre = if (isVideo) "Local Video" else "Local Audio",
                                         isDownloaded = true,
                                         localPath = candidate.videoId,
                                         itag = if (isVideo) 18 else 251,
@@ -432,19 +433,24 @@ fun CascadeApp(
                                     isPlayerExpanded = true
                                 },
                                 onAddLocalTrackToPlaylist = { plId, candidate ->
+                                    val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
+                                        candidate.videoId.lowercase().endsWith(".mp4") ||
+                                        candidate.videoId.lowercase().contains("/video/")
                                     val cleanAlbum = candidate.albumName?.takeUnless {
                                         it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Storage", ignoreCase = true)
                                     }.orEmpty()
                                     val localTrack = Track(
-                                        id = "local_${candidate.videoId.hashCode()}",
+                                        id = if (isVideo) "vidfile_${candidate.videoId.hashCode()}" else "local_${candidate.videoId.hashCode()}",
                                         title = candidate.title,
                                         artist = candidate.artist,
-                                        album = cleanAlbum,
+                                        album = if (isVideo) "MP4 Video" else cleanAlbum,
                                         durationMs = candidate.durationSeconds * 1000L,
                                         artUrl = candidate.thumbnailUrl,
-                                        genre = "Local Audio",
+                                        genre = if (isVideo) "Local Video" else "Local Audio",
                                         isDownloaded = true,
-                                        localPath = candidate.videoId
+                                        localPath = candidate.videoId,
+                                        itag = if (isVideo) 18 else 251,
+                                        codec = if (isVideo) "MP4" else "Opus"
                                     )
                                     viewModel.addTrackToPlaylist(plId, localTrack)
                                 },
@@ -531,7 +537,18 @@ fun CascadeApp(
                         hostState = snackbarHostState,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
-                            .padding(bottom = 16.dp)
+                            .padding(horizontal = 16.dp, vertical = 20.dp)
+                            .zIndex(100f),
+                        snackbar = { data ->
+                            Snackbar(
+                                snackbarData = data,
+                                containerColor = Color(0xFF222426),
+                                contentColor = Color.White,
+                                actionColor = MaterialTheme.colorScheme.primary,
+                                dismissActionContentColor = Color.White,
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                        }
                     )
                 }
 
@@ -588,7 +605,9 @@ fun CascadeApp(
                             viewModel = viewModel,
                             playerState = playerState,
                             onBack = { currentSubScreen = SubScreen.None },
-                            onShareArtist = { shareTargetArtist = it },
+                            onShareArtist = { artistName ->
+                                SeitharolDeepLinkHelper.shareArtistSystemChooser(context, artistName)
+                            },
                             onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it, returnSubScreen = currentSubScreen) }
                         )
                     }
@@ -664,18 +683,19 @@ fun CascadeApp(
                             availablePlaylists = playlists.map { it.id to it.title },
                             onPlayLocalTrack = { candidate ->
                                 val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
-                                    candidate.videoId.lowercase().endsWith(".mp4")
+                                    candidate.videoId.lowercase().endsWith(".mp4") ||
+                                    candidate.videoId.lowercase().contains("/video/")
                                 val cleanAlbum = candidate.albumName?.takeUnless {
                                     it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Storage", ignoreCase = true)
                                 }.orEmpty()
                                 val localTrack = Track(
-                                    id = "local_${candidate.videoId.hashCode()}",
+                                    id = if (isVideo) "vidfile_${candidate.videoId.hashCode()}" else "local_${candidate.videoId.hashCode()}",
                                     title = candidate.title,
                                     artist = candidate.artist,
-                                    album = cleanAlbum,
+                                    album = if (isVideo) "MP4 Video" else cleanAlbum,
                                     durationMs = candidate.durationSeconds * 1000L,
                                     artUrl = candidate.thumbnailUrl,
-                                    genre = if (isVideo) "YouTube Video" else "Local Audio",
+                                    genre = if (isVideo) "Local Video" else "Local Audio",
                                     isDownloaded = true,
                                     localPath = candidate.videoId,
                                     itag = if (isVideo) 18 else 251,
@@ -685,19 +705,24 @@ fun CascadeApp(
                                 isPlayerExpanded = true
                             },
                             onAddLocalTrackToPlaylist = { plId, candidate ->
+                                val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
+                                    candidate.videoId.lowercase().endsWith(".mp4") ||
+                                    candidate.videoId.lowercase().contains("/video/")
                                 val cleanAlbum = candidate.albumName?.takeUnless {
                                     it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Storage", ignoreCase = true)
                                 }.orEmpty()
                                 val localTrack = Track(
-                                    id = "local_${candidate.videoId.hashCode()}",
+                                    id = if (isVideo) "vidfile_${candidate.videoId.hashCode()}" else "local_${candidate.videoId.hashCode()}",
                                     title = candidate.title,
                                     artist = candidate.artist,
-                                    album = cleanAlbum,
+                                    album = if (isVideo) "MP4 Video" else cleanAlbum,
                                     durationMs = candidate.durationSeconds * 1000L,
                                     artUrl = candidate.thumbnailUrl,
-                                    genre = "Local Audio",
+                                    genre = if (isVideo) "Local Video" else "Local Audio",
                                     isDownloaded = true,
-                                    localPath = candidate.videoId
+                                    localPath = candidate.videoId,
+                                    itag = if (isVideo) 18 else 251,
+                                    codec = if (isVideo) "MP4" else "Opus"
                                 )
                                 viewModel.addTrackToPlaylist(plId, localTrack)
                             },
@@ -806,7 +831,8 @@ fun CascadeApp(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .navigationBarsPadding(),
+                        .navigationBarsPadding()
+                        .zIndex(10f),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     if (playerState.currentTrack != null && !isPlayerExpanded && currentSubScreen !is SubScreen.Discover && !isInPiPMode) {
@@ -877,15 +903,9 @@ fun CascadeApp(
                     }
                 }
 
-                SnackbarHost(
-                    hostState = snackbarHostState,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 100.dp)
-                )
-
                 AnimatedVisibility(
                     visible = isPlayerExpanded,
+                    modifier = Modifier.zIndex(30f),
                     enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                     exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
                 ) {
@@ -914,6 +934,31 @@ fun CascadeApp(
                         }
                     )
                 }
+
+                // High-contrast Snackbar alert positioned above MiniPlayer with zIndex(100f)
+                // so it is never hidden behind MiniPlayer and never suffers from white-on-white text
+                SnackbarHost(
+                    hostState = snackbarHostState,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(
+                            start = 16.dp,
+                            end = 16.dp,
+                            bottom = if (playerState.currentTrack != null && !isPlayerExpanded) 152.dp else 92.dp
+                        )
+                        .zIndex(100f),
+                    snackbar = { data ->
+                        Snackbar(
+                            snackbarData = data,
+                            containerColor = Color(0xFF222426),
+                            contentColor = Color.White,
+                            actionColor = MaterialTheme.colorScheme.primary,
+                            dismissActionContentColor = Color.White,
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                    }
+                )
             }
         }
 
@@ -928,13 +973,6 @@ fun CascadeApp(
         if (showNotifications) {
             NotificationsModal(
                 onDismiss = { showNotifications = false }
-            )
-        }
-
-        shareTargetArtist?.let { artistName ->
-            ShareArtistModal(
-                artistName = artistName,
-                onDismiss = { shareTargetArtist = null }
             )
         }
 

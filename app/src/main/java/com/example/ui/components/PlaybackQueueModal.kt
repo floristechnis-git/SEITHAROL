@@ -42,16 +42,23 @@ import com.example.data.remote.InnerTubeResolver
 import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
 import com.example.ui.theme.*
+import com.seitharol.data.resolver.TrackMetadata
+import com.seitharol.player.QueueRecommendationEngine
 import kotlinx.coroutines.isActive
 import kotlin.math.roundToInt
 
 /**
  * YouTube Music style Playback Queue with:
- * 1. Clean two-column header ("Up Next", "X tracks" on left, "Clear queue" on right).
+ * 1. Clean two-column header ("Up Next", "X tracks/videos" on left, "Clear queue" on right).
  * 2. Drag-and-drop reordering with '=' handle, zIndex(10f), 24f elevation, landing indicator line.
- * 3. Suppresses queue suggestions whenever only a single song is played in the playback queue
- *    or when playing a local song (`isLocalOnlyTrack`).
- * 4. Uses the Seitharol app logo (`R.drawable.ic_splash_logo`) as placeholder/error/fallback for artwork.
+ * 3. Autoplay / Auto-suggest toggle card directly below the active queue:
+ *    - Suggestions remain visible in the "Suggested for <Current Track>" div even when the toggle is OFF,
+ *      allowing manual '+' addition to the queue, while only auto-appending into the queue when the last
+ *      item ends if the toggle is ON.
+ * 4. Strict Video vs. Song separation:
+ *    - When playing a YouTube Video, suggests ONLY YouTube Videos (no audio songs).
+ *    - When playing an Audio Song, suggests ONLY Audio Songs (no videos).
+ * 5. Suppresses suggestions ONLY when playing a local single file (`isLocalOnlyTrack` with no online queue context).
  */
 @Composable
 fun PlaybackQueueModal(
@@ -76,50 +83,123 @@ fun PlaybackQueueModal(
     var listHeightPx by remember { mutableFloatStateOf(0f) }
 
     val isAutoSuggest by viewModel.isAutoSuggestEnabled.collectAsState()
+    val isOffline by viewModel.isOfflineMode.collectAsState()
     val personalizedTracks by viewModel.personalizedTracks.collectAsState()
     val trendingHits by viewModel.trendingHits.collectAsState()
     val videoSuggestions by viewModel.queueVideoSuggestions.collectAsState()
 
-    // Never generate or show suggestions when a single song is played in the playback queue or when playing a local track
-    val shouldSuppressSuggestions = playerState.isSingleTrackPlayback ||
-        queue.size <= 1 ||
-        playerState.currentTrack?.isLocalOnlyTrack == true
+    val currentTrack = playerState.currentTrack ?: queue.getOrNull(currentIndex) ?: queue.firstOrNull()
+    val isCurrentVideo = playerState.isVideoMode ||
+        currentTrack?.isVideoTrack == true ||
+        (queue.isNotEmpty() && queue.all { it.isVideoTrack })
 
-    LaunchedEffect(playerState.currentTrack?.id, queue.size, shouldSuppressSuggestions) {
-        if (!shouldSuppressSuggestions) {
-            viewModel.refreshQueueSuggestions(playerState.currentTrack)
+    // Suppress suggestions ONLY when offline or when playing a local single file (no online tracks in queue)
+    val shouldSuppressSuggestions = isOffline ||
+        currentTrack == null ||
+        (currentTrack.isLocalOnlyTrack && queue.all { it.isLocalOnlyTrack })
+
+    var liveEngineSuggestions by remember { mutableStateOf<List<Track>>(emptyList()) }
+
+    LaunchedEffect(currentTrack?.id, isCurrentVideo, queue.size, shouldSuppressSuggestions) {
+        if (shouldSuppressSuggestions || currentTrack == null) {
+            liveEngineSuggestions = emptyList()
+            return@LaunchedEffect
+        }
+        viewModel.refreshQueueSuggestions(currentTrack)
+        val seedOnline = if (!currentTrack.isLocalOnlyTrack) {
+            currentTrack
+        } else {
+            queue.firstOrNull { !it.isLocalOnlyTrack } ?: return@LaunchedEffect
+        }
+        val queueMeta = queue.filterNot { it.isLocalOnlyTrack }.map {
+            TrackMetadata(
+                id = it.id,
+                title = it.title,
+                artist = it.artist,
+                album = if (it.isVideoTrack) "YouTube Video" else it.album,
+                durationSeconds = (it.durationMs / 1000L).toInt(),
+                thumbnailUrl = it.artUrl,
+                source = if (it.isVideoTrack) "YOUTUBE_VIDEO" else "YOUTUBE"
+            )
+        }
+        val seedMeta = TrackMetadata(
+            id = seedOnline.id,
+            title = seedOnline.title,
+            artist = seedOnline.artist,
+            album = if (isCurrentVideo) "YouTube Video" else seedOnline.album,
+            durationSeconds = (seedOnline.durationMs / 1000L).toInt(),
+            thumbnailUrl = seedOnline.artUrl,
+            source = if (isCurrentVideo) "YOUTUBE_VIDEO" else "YOUTUBE"
+        )
+        val recs = QueueRecommendationEngine.fetchRelevantRecommendations(
+            currentTrack = seedMeta,
+            queueTracks = queueMeta,
+            limit = 14
+        )
+        liveEngineSuggestions = recs.map { r ->
+            val recIsVideo = isCurrentVideo || r.source.equals("YOUTUBE_VIDEO", ignoreCase = true)
+            Track(
+                id = r.id,
+                title = r.title,
+                artist = r.artist,
+                album = if (recIsVideo) "YouTube Video" else r.album.takeUnless {
+                    it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
+                }.orEmpty(),
+                durationMs = r.durationSeconds * 1000L,
+                artUrl = r.thumbnailUrl,
+                genre = if (recIsVideo) "YouTube Video" else "Music",
+                itag = if (recIsVideo) 18 else 251,
+                codec = if (recIsVideo) "MP4" else "Opus"
+            )
         }
     }
 
-    val suggestedTracks = remember(queue, personalizedTracks, trendingHits, videoSuggestions, playerState.currentTrack, shouldSuppressSuggestions) {
+    // Notice: isAutoSuggest is NOT a gate for suggestedTracks!
+    // Suggestions remain visible in the UI div even when Autoplay/Autosuggest is OFF,
+    // and only control whether songs/videos auto-append when the last track finishes.
+    val suggestedTracks = remember(
+        queue,
+        liveEngineSuggestions,
+        videoSuggestions,
+        personalizedTracks,
+        trendingHits,
+        currentTrack,
+        isCurrentVideo,
+        shouldSuppressSuggestions
+    ) {
         if (shouldSuppressSuggestions) {
             return@remember emptyList<Track>()
         }
         val queueIds = queue.map { it.id }.toSet()
-        val isCurrentVideo = playerState.currentTrack?.isVideoTrack == true
-        val filteredSpecific = videoSuggestions
+        val queueTitles = queue.map { it.title.lowercase().trim() }.toSet()
+
+        val combinedSpecific = (liveEngineSuggestions + videoSuggestions)
             .filter { cand ->
-                cand.id !in queueIds && !cand.isLocalOnlyTrack && (isCurrentVideo || !cand.isVideoTrack)
+                cand.id !in queueIds &&
+                    cand.title.lowercase().trim() !in queueTitles &&
+                    !cand.isLocalOnlyTrack &&
+                    if (isCurrentVideo) cand.isVideoTrack else !cand.isVideoTrack
             }
             .distinctBy { it.id }
 
-        if (filteredSpecific.isNotEmpty()) {
-            filteredSpecific.take(14)
+        if (combinedSpecific.isNotEmpty()) {
+            combinedSpecific.take(14)
+        } else if (isCurrentVideo) {
+            // In video mode, NEVER fall back to audio songs
+            emptyList()
         } else {
-            val fallbackPool = if (isCurrentVideo) {
-                videoSuggestions.filterNot { it.isLocalOnlyTrack }.distinctBy { it.id }
-            } else {
-                personalizedTracks
-                    .filterNot {
-                        it.isLocalOnlyTrack ||
-                            it.isVideoTrack ||
-                            it.album.equals("YouTube Video", ignoreCase = true) ||
-                            it.genre.equals("YouTube Video", ignoreCase = true) ||
-                            it.codec.equals("MP4", ignoreCase = true)
-                    }
-                    .distinctBy { it.id }
-            }
-            fallbackPool.filter { it.id !in queueIds }.take(14)
+            // In song mode, fall back to personalized / trending audio songs (strictly excluding videos and local files)
+            (personalizedTracks + trendingHits)
+                .filterNot {
+                    it.isLocalOnlyTrack ||
+                        it.isVideoTrack ||
+                        it.album.equals("YouTube Video", ignoreCase = true) ||
+                        it.genre.equals("YouTube Video", ignoreCase = true) ||
+                        it.codec.equals("MP4", ignoreCase = true)
+                }
+                .filter { it.id !in queueIds && it.title.lowercase().trim() !in queueTitles }
+                .distinctBy { it.id }
+                .take(14)
         }
     }
 
@@ -226,7 +306,10 @@ fun PlaybackQueueModal(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = run { val isVid = queue.isNotEmpty() && queue.all { it.isVideoTrack }; val unit = if (isVid) "video" else "track"; if (queue.size == 1) "1 $unit" else "${queue.size} ${unit}s" },
+                        text = run {
+                            val unit = if (isCurrentVideo) "video" else "track"
+                            if (queue.size == 1) "1 $unit" else "${queue.size} ${unit}s"
+                        },
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontFamily = OutfitFontFamily,
                         fontSize = 12.sp,
@@ -480,7 +563,7 @@ fun PlaybackQueueModal(
                     }
 
                     if (!shouldSuppressSuggestions) {
-                        item {
+                        item(key = "queue_autoplay_card_item") {
                             Spacer(modifier = Modifier.height(14.dp))
                             Surface(
                                 shape = RoundedCornerShape(14.dp),
@@ -496,6 +579,7 @@ fun PlaybackQueueModal(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
+                                    val mediaPlural = if (isCurrentVideo) "videos" else "songs"
                                     Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                                         Text(
                                             text = "Autoplay",
@@ -505,7 +589,11 @@ fun PlaybackQueueModal(
                                             fontWeight = FontWeight.Bold
                                         )
                                         Text(
-                                            text = "Add similar songs to the end of the queue",
+                                            text = if (isAutoSuggest) {
+                                                "Add similar $mediaPlural to the end of the queue"
+                                            } else {
+                                                "Autoplay is off • Suggestions below won't auto-play when queue ends"
+                                            },
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             fontFamily = OutfitFontFamily,
                                             fontSize = 12.sp
@@ -528,14 +616,16 @@ fun PlaybackQueueModal(
                         }
 
                         if (suggestedTracks.isNotEmpty()) {
-                            item {
+                            item(key = "queue_suggestions_header") {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "Auto-suggested",
+                                    text = "Suggested for ${currentTrack?.title ?: if (isCurrentVideo) "this video" else "this queue"}",
                                     color = MaterialTheme.colorScheme.onBackground,
                                     fontFamily = SyneFontFamily,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
                                 )
                             }
@@ -566,7 +656,7 @@ fun PlaybackQueueModal(
                                     ) {
                                         Box(
                                             modifier = Modifier
-                                                .size(42.dp)
+                                                .size(if (isCurrentVideo) 56.dp else 42.dp, 42.dp)
                                                 .clip(RoundedCornerShape(6.dp))
                                         ) {
                                             val upgradedArt = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
@@ -613,7 +703,10 @@ fun PlaybackQueueModal(
                                         }
 
                                         IconButton(
-                                            onClick = { viewModel.addToQueue(track) },
+                                            onClick = {
+                                                viewModel.addToQueue(track)
+                                                liveEngineSuggestions = liveEngineSuggestions.filterNot { it.id == track.id }
+                                            },
                                             modifier = Modifier.size(32.dp)
                                         ) {
                                             Icon(

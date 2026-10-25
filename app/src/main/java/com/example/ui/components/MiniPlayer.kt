@@ -209,8 +209,16 @@ fun MiniPlayer(
                         )
                     } else {
                         Icon(
-                            imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (playerState.isPlaying) "Pause" else "Play",
+                            imageVector = when {
+                                playerState.isPlaying -> Icons.Default.Pause
+                                playerState.isEnded -> Icons.Default.Replay
+                                else -> Icons.Default.PlayArrow
+                            },
+                            contentDescription = when {
+                                playerState.isPlaying -> "Pause"
+                                playerState.isEnded -> "Replay"
+                                else -> "Play"
+                            },
                             tint = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.size(24.dp)
                         )

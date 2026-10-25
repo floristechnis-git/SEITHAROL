@@ -454,7 +454,7 @@ object NetworkClients {
                 val url = "https://lrclib.net/api/get?artist_name=$encArtist&track_name=$encTitle&duration=$durationSec"
                 val request = Request.Builder()
                     .url(url)
-                    .header("User-Agent", "Seitharol-Client/2.0 (Android)")
+                    .header("User-Agent", "Seitharol-Client/2.0.1 (Android)")
                     .build()
 
                 okHttpClient.newCall(request).execute().use { response ->
@@ -487,7 +487,7 @@ object NetworkClients {
             val url = "https://lrclib.net/api/search?q=$query"
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "Seitharol-Client/2.0 (Android)")
+                .header("User-Agent", "Seitharol-Client/2.0.1 (Android)")
                 .build()
 
             okHttpClient.newCall(request).execute().use { response ->

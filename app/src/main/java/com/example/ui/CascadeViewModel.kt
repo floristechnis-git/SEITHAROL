@@ -271,46 +271,61 @@ class CascadeViewModel(
     fun refreshQueueSuggestions(seedTrack: Track?) {
         val state = playerState.value
         val seed = seedTrack ?: state.currentTrack
-        // Never generate suggestions when offline, when playing a local song, or when a single song is in the playback queue
-        if (seed == null || isOfflineMode.value || seed.isLocalOnlyTrack || state.isSingleTrackPlayback || state.queue.size <= 1) {
+        val isLocalSingle = seed != null && seed.isLocalOnlyTrack && state.queue.all { it.isLocalOnlyTrack }
+        // Suppress suggestions ONLY when offline or when playing a local single file (no online tracks in queue)
+        if (seed == null || isOfflineMode.value || isLocalSingle) {
             _queueVideoSuggestions.value = emptyList()
             return
         }
         viewModelScope.launch(vmExceptionHandler) {
             runCatching {
-                val isVideo = seed.isVideoTrack
-                val queueMeta = state.queue.map {
+                val effectiveSeed = if (!seed.isLocalOnlyTrack) seed else state.queue.firstOrNull { !it.isLocalOnlyTrack } ?: return@launch
+                val isVideo = state.isVideoMode || effectiveSeed.isVideoTrack || (state.queue.isNotEmpty() && state.queue.all { it.isVideoTrack })
+                val historyArtistNames = activeHistory.value
+                    .filterNot { it.isLocalOnlyTrack }
+                    .map { it.artist.trim() }
+                    .filter { it.isNotBlank() && !it.equals("Unknown Artist", true) }
+                    .distinct()
+                    .take(5)
+                val queueMeta = state.queue.filterNot { it.isLocalOnlyTrack }.map {
                     com.seitharol.data.resolver.TrackMetadata(
                         id = it.id,
                         title = it.title,
                         artist = it.artist,
-                        album = it.album,
+                        album = if (it.isVideoTrack) "YouTube Video" else it.album,
                         durationSeconds = (it.durationMs / 1000L).toInt(),
                         thumbnailUrl = it.artUrl,
                         source = if (it.isVideoTrack) "YOUTUBE_VIDEO" else "YOUTUBE"
                     )
                 }
                 val seedMeta = com.seitharol.data.resolver.TrackMetadata(
-                    id = seed.id,
-                    title = seed.title,
-                    artist = seed.artist,
-                    album = seed.album.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true) }.orEmpty(),
-                    durationSeconds = (seed.durationMs / 1000L).toInt(),
-                    thumbnailUrl = seed.artUrl,
+                    id = effectiveSeed.id,
+                    title = effectiveSeed.title,
+                    artist = effectiveSeed.artist,
+                    album = if (isVideo) "YouTube Video" else effectiveSeed.album.takeUnless {
+                        it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
+                    }.orEmpty(),
+                    durationSeconds = (effectiveSeed.durationMs / 1000L).toInt(),
+                    thumbnailUrl = effectiveSeed.artUrl,
                     source = if (isVideo) "YOUTUBE_VIDEO" else "YOUTUBE"
                 )
                 val recs = com.seitharol.player.QueueRecommendationEngine.fetchRelevantRecommendations(
                     currentTrack = seedMeta,
                     queueTracks = queueMeta,
-                    limit = 14
+                    historyArtists = historyArtistNames,
+                    limit = 14,
+                    additionalExcludedIds = autoSuggestManager.getPlayedIds(),
+                    additionalExcludedSignatures = autoSuggestManager.getPlayedSignatures()
                 )
                 _queueVideoSuggestions.value = recs.map { r ->
-                    val recIsVideo = isVideo || r.source == "YOUTUBE_VIDEO"
+                    val recIsVideo = isVideo || r.source.equals("YOUTUBE_VIDEO", ignoreCase = true)
                     Track(
                         id = r.id,
                         title = r.title,
                         artist = r.artist,
-                        album = r.album.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true) }.orEmpty(),
+                        album = if (recIsVideo) "YouTube Video" else r.album.takeUnless {
+                            it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
+                        }.orEmpty(),
                         durationMs = r.durationSeconds * 1000L,
                         artUrl = r.thumbnailUrl,
                         genre = if (recIsVideo) "YouTube Video" else "Music",
@@ -540,11 +555,51 @@ class CascadeViewModel(
         override suspend fun getRelatedTracks(seedTrack: Track): List<Track> {
             if (seedTrack.isLocalOnlyTrack) return emptyList()
             return try {
-                val automix = InnerTubeStreamExtractor.fetchAutomixQueue(seedTrack.id, limit = 12)
-                    .map { it.toTrack() }
-                if (automix.isNotEmpty()) automix
-                else InnerTubeStreamExtractor.searchOfficialYtmSongs("${seedTrack.title} ${seedTrack.artist}", limit = 10)
-                    .map { it.toTrack() }
+                val state = playerState.value
+                val isVideo = state.isVideoMode || seedTrack.isVideoTrack || (state.queue.isNotEmpty() && state.queue.all { it.isVideoTrack })
+                val queueMeta = state.queue.filterNot { it.isLocalOnlyTrack }.map {
+                    com.seitharol.data.resolver.TrackMetadata(
+                        id = it.id,
+                        title = it.title,
+                        artist = it.artist,
+                        album = if (it.isVideoTrack) "YouTube Video" else it.album,
+                        durationSeconds = (it.durationMs / 1000L).toInt(),
+                        thumbnailUrl = it.artUrl,
+                        source = if (it.isVideoTrack) "YOUTUBE_VIDEO" else "YOUTUBE"
+                    )
+                }
+                val seedMeta = com.seitharol.data.resolver.TrackMetadata(
+                    id = seedTrack.id,
+                    title = seedTrack.title,
+                    artist = seedTrack.artist,
+                    album = if (isVideo) "YouTube Video" else seedTrack.album,
+                    durationSeconds = (seedTrack.durationMs / 1000L).toInt(),
+                    thumbnailUrl = seedTrack.artUrl,
+                    source = if (isVideo) "YOUTUBE_VIDEO" else "YOUTUBE"
+                )
+                val recs = com.seitharol.player.QueueRecommendationEngine.fetchRelevantRecommendations(
+                    currentTrack = seedMeta,
+                    queueTracks = queueMeta,
+                    limit = 12,
+                    additionalExcludedIds = autoSuggestManager.getPlayedIds(),
+                    additionalExcludedSignatures = autoSuggestManager.getPlayedSignatures()
+                )
+                recs.map { r ->
+                    val recIsVideo = isVideo || r.source.equals("YOUTUBE_VIDEO", ignoreCase = true)
+                    Track(
+                        id = r.id,
+                        title = r.title,
+                        artist = r.artist,
+                        album = if (recIsVideo) "YouTube Video" else r.album.takeUnless {
+                            it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
+                        }.orEmpty(),
+                        durationMs = r.durationSeconds * 1000L,
+                        artUrl = r.thumbnailUrl,
+                        genre = if (recIsVideo) "YouTube Video" else "Music",
+                        itag = if (recIsVideo) 18 else 251,
+                        codec = if (recIsVideo) "MP4" else "Opus"
+                    )
+                }
             } catch (e: Exception) {
                 emptyList()
             }
@@ -1038,14 +1093,17 @@ class CascadeViewModel(
             track.copy(isDownloaded = true, localPath = dlMatch.localPath)
         } else track
 
-        // Single track playback: suppress queue suggestions and autoplay!
-        _queueVideoSuggestions.value = emptyList()
-        if (effectiveTrack.isLocalOnlyTrack || effectiveTrack.isDownloaded || !effectiveTrack.localPath.isNullOrBlank() || isOfflineMode.value) {
-            autoSuggestManager.setAutoSuggestEnabled(false)
+        if (effectiveTrack.isLocalOnlyTrack || isOfflineMode.value) {
+            _queueVideoSuggestions.value = emptyList()
             playerManager.isAutoplayEnabled = false
+        } else {
+            playerManager.isAutoplayEnabled = autoSuggestManager.isAutoSuggestEnabled.value
         }
         automixFetchJob?.cancel()
         playerManager.playTrack(effectiveTrack)
+        if (!effectiveTrack.isLocalOnlyTrack && !isOfflineMode.value) {
+            refreshQueueSuggestions(effectiveTrack)
+        }
         automixFetchJob = viewModelScope.launch(vmExceptionHandler) {
             runCatching {
                 if (!effectiveTrack.isLocalOnlyTrack) {
@@ -1059,11 +1117,12 @@ class CascadeViewModel(
     fun playQueue(tracks: List<Track>, startIndex: Int = 0, isPlaylist: Boolean = true) {
         val dlMap = downloadedTracksById.value
         val enrichedTracks = tracks.map { enrichTrackStatus(it, likedTrackIds.value, dlMap) }
-        val hasOffline = enrichedTracks.any { it.isLocalOnlyTrack || it.isDownloaded || !it.localPath.isNullOrBlank() } || isOfflineMode.value
-        if (hasOffline || enrichedTracks.size <= 1) {
+        val isAllLocal = enrichedTracks.all { it.isLocalOnlyTrack } || isOfflineMode.value
+        if (isAllLocal) {
             _queueVideoSuggestions.value = emptyList()
-            autoSuggestManager.setAutoSuggestEnabled(false)
             playerManager.isAutoplayEnabled = false
+        } else {
+            playerManager.isAutoplayEnabled = autoSuggestManager.isAutoSuggestEnabled.value
         }
         viewModelScope.launch(vmExceptionHandler) {
             runCatching {
@@ -1071,6 +1130,11 @@ class CascadeViewModel(
             }
         }
         playerManager.playQueue(enrichedTracks, startIndex, isPlaylist = isPlaylist && enrichedTracks.size > 1)
+        val validIdx = startIndex.coerceIn(0, (enrichedTracks.size - 1).coerceAtLeast(0))
+        val seed = enrichedTracks.getOrNull(validIdx)
+        if (!isAllLocal && seed != null) {
+            refreshQueueSuggestions(seed)
+        }
     }
 
     fun playPlaylistOrMix(playlistId: String) {
@@ -1433,17 +1497,21 @@ class CascadeViewModel(
 
     fun toggleAutoSuggest() {
         autoSuggestManager.toggleAutoSuggest()
-        if (autoSuggestManager.isAutoSuggestEnabled.value && !isOfflineMode.value) fetchAndAppendSuggestions()
+        playerManager.isAutoplayEnabled = autoSuggestManager.isAutoSuggestEnabled.value && !isOfflineMode.value
+        if (!isOfflineMode.value) {
+            refreshQueueSuggestions(playerState.value.currentTrack)
+        }
     }
 
     fun fetchAndAppendSuggestions() {
         val state = playerState.value
         val seed = state.currentTrack ?: return
-        if (!isAutoSuggestEnabled.value || isOfflineMode.value || seed.isLocalOnlyTrack || state.isSingleTrackPlayback || state.queue.size <= 1) return
+        val isLocalSingle = seed.isLocalOnlyTrack && state.queue.all { it.isLocalOnlyTrack }
+        if (!isAutoSuggestEnabled.value || isOfflineMode.value || isLocalSingle) return
         viewModelScope.launch(vmExceptionHandler) {
             runCatching {
                 val currentQueue = state.queue
-                val freshTracks = autoSuggestManager.fetchNextSuggestions(seed, currentQueue, maxTracksToAppend = 3)
+                val freshTracks = autoSuggestManager.fetchNextSuggestions(seed, currentQueue, maxTracksToAppend = 3, requireAutoSuggestEnabled = true)
                     .filterNot { it.isLocalOnlyTrack }
                 freshTracks.forEach { track ->
                     musicRepository.insertTrack(track)

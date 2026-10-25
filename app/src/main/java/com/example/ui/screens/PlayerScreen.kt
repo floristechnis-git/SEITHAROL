@@ -1331,8 +1331,12 @@ fun PlayerScreen(
                         )
                     } else {
                         Icon(
-                            imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = "Play/Pause",
+                            imageVector = when {
+                                playerState.isPlaying -> Icons.Default.Pause
+                                playerState.isEnded -> Icons.Default.Replay
+                                else -> Icons.Default.PlayArrow
+                            },
+                            contentDescription = if (playerState.isEnded) "Replay" else "Play/Pause",
                             tint = MaterialTheme.colorScheme.onPrimary,
                             modifier = Modifier.size(34.dp)
                         )
@@ -1872,7 +1876,7 @@ fun SeitharolRawVideoSurface(
 
             // Video Overlay Controls (with single synchronized white loader inside Play/Pause button)
             AnimatedVisibility(
-                visible = showOverlayControls || playerState.isBuffering,
+                visible = showOverlayControls || playerState.isBuffering || playerState.isEnded,
                 enter = fadeIn(animationSpec = tween(150)),
                 exit = fadeOut(animationSpec = tween(200))
             ) {
@@ -1974,8 +1978,12 @@ fun SeitharolRawVideoSurface(
                                     )
                                 } else {
                                     Icon(
-                                        imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                        contentDescription = "Play/Pause",
+                                        imageVector = when {
+                                            playerState.isPlaying -> Icons.Default.Pause
+                                            playerState.isEnded -> Icons.Default.Replay
+                                            else -> Icons.Default.PlayArrow
+                                        },
+                                        contentDescription = if (playerState.isEnded) "Replay" else "Play/Pause",
                                         tint = Color.White,
                                         modifier = Modifier.size(32.dp)
                                     )
@@ -2202,7 +2210,7 @@ fun SeitharolFullscreenVideoModal(
 
                 // Fullscreen controls overlay
                 AnimatedVisibility(
-                    visible = showControls || playerState.isBuffering,
+                    visible = showControls || playerState.isBuffering || playerState.isEnded,
                     enter = fadeIn(animationSpec = tween(150)),
                     exit = fadeOut(animationSpec = tween(200))
                 ) {
@@ -2779,8 +2787,12 @@ fun ExpandedLyricsModal(
                                         )
                                     } else {
                                         Icon(
-                                            imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                            contentDescription = "Play/Pause",
+                                            imageVector = when {
+                                                playerState.isPlaying -> Icons.Default.Pause
+                                                playerState.isEnded -> Icons.Default.Replay
+                                                else -> Icons.Default.PlayArrow
+                                            },
+                                            contentDescription = if (playerState.isEnded) "Replay" else "Play/Pause",
                                             tint = MaterialTheme.colorScheme.onPrimary,
                                             modifier = Modifier.size(30.dp)
                                         )

@@ -143,8 +143,12 @@ fun PlayerControlsSection(
                     )
                 } else {
                     Icon(
-                        imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = "Play/Pause",
+                        imageVector = when {
+                            playerState.isPlaying -> Icons.Default.Pause
+                            playerState.isEnded -> Icons.Default.Replay
+                            else -> Icons.Default.PlayArrow
+                        },
+                        contentDescription = if (playerState.isEnded) "Replay" else "Play/Pause",
                         modifier = Modifier.size(36.dp)
                     )
                 }

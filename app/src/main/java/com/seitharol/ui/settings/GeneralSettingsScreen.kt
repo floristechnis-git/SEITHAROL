@@ -520,7 +520,7 @@ fun InfoDetailScreen(
                     )
 
                     Text(
-                        text = "Developed by Yumkhaibam Johnson Singh • Version 2.0.0 Public Release",
+                        text = "Developed by Yumkhaibam Johnson Singh • Version 2.0.1 Public Release",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         lineHeight = 18.sp

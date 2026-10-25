@@ -83,7 +83,8 @@ data class PlayerState(
     val playbackSpeed: Float = 1.0f,
     val bufferedPositionMs: Long = 0L,
     val bufferedFraction: Float = 0f,
-    val isStreamCachedOnDisk: Boolean = false
+    val isStreamCachedOnDisk: Boolean = false,
+    val isEnded: Boolean = false
 )
 
 /**
@@ -677,8 +678,23 @@ class AudioPlayerManager(
         }
 
         bufferingWatchdogJob = coroutineScope.launch {
+            // Fast end-of-track check: if ExoPlayer enters STATE_BUFFERING right at the end of a track
+            // when autoplay is off, transition cleanly to completed state instead of spinning forever!
+            delay(900L)
+            val pEarly = exoPlayer
+            val sEarly = _state.value
+            val durEarly = (pEarly?.duration?.takeIf { it > 0L && it != C.TIME_UNSET } ?: sEarly.durationMs)
+            val posEarly = (pEarly?.currentPosition?.takeIf { it > 0L } ?: sEarly.currentPositionMs)
+            if (pEarly != null && !pEarly.isPlaying && durEarly >= 5_000L && posEarly >= durEarly - 1_200L &&
+                (System.currentTimeMillis() - lastUserSeekTimestamp) > 1_200L
+            ) {
+                isRetryingOrLoading = false
+                onTrackCompleted()
+                return@launch
+            }
+
             val isVid = _state.value.isVideoMode || _state.value.currentTrack?.isVideoTrack == true
-            delay(if (isVid) 15_000L else 12_000L)
+            delay(if (isVid) 14_100L else 11_100L)
             if (!isActive || !userRequestedPlay) return@launch
             val current = _state.value.currentTrack ?: return@launch
             val p = exoPlayer ?: return@launch
@@ -802,6 +818,7 @@ class AudioPlayerManager(
                                 _state.value = _state.value.copy(
                                     isBuffering = false,
                                     isPlaying = activelyPlaying,
+                                    isEnded = false,
                                     durationMs = safeDur,
                                     bufferedPositionMs = realBufPos,
                                     bufferedFraction = realBufFrac,
@@ -818,6 +835,7 @@ class AudioPlayerManager(
                             }
                             Player.STATE_ENDED -> {
                                 bufferingWatchdogJob?.cancel()
+                                seekRecoveryJob?.cancel()
                                 isRetryingOrLoading = false
                                 onTrackCompleted()
                             }
@@ -1210,7 +1228,8 @@ class AudioPlayerManager(
             _state.value = _state.value.copy(
                 currentTrack = track,
                 currentPositionMs = if (startPositionMs > 0L) startPositionMs else _state.value.currentPositionMs,
-                isBuffering = true
+                isBuffering = true,
+                isEnded = false
             )
 
             requestAudioFocus()
@@ -1467,8 +1486,8 @@ class AudioPlayerManager(
         retryJob?.cancel()
         bufferingWatchdogJob?.cancel()
         val validIndex = startIndex.coerceIn(0, tracks.lastIndex)
-        val isOfflineQueue = tracks.isNotEmpty() && (tracks.any { it.isDownloaded || !it.localPath.isNullOrBlank() } || tracks[validIndex].isDownloaded || !tracks[validIndex].localPath.isNullOrBlank())
-        if (isOfflineQueue) {
+        val isLocalOnlyQueue = tracks.isNotEmpty() && tracks.all { it.isLocalOnlyTrack }
+        if (isLocalOnlyQueue || resolverEngine.isOfflineMode.value) {
             isAutoplayEnabled = false
         }
         _state.value = _state.value.copy(
@@ -1479,7 +1498,8 @@ class AudioPlayerManager(
             isSingleTrackPlayback = !isPlaylist,
             isPartOfPlaylist = isPlaylist,
             isVideoMode = tracks[validIndex].isVideoTrack,
-            isVideoFrameRendered = false
+            isVideoFrameRendered = false,
+            isEnded = false
         )
         loadAndPlayCurrent(resumePositionMs = 0L)
     }
@@ -1509,7 +1529,7 @@ class AudioPlayerManager(
         loadTrackJob?.cancel()
         retryJob?.cancel()
         bufferingWatchdogJob?.cancel()
-        if (track.isDownloaded || !track.localPath.isNullOrBlank()) {
+        if (track.isLocalOnlyTrack || resolverEngine.isOfflineMode.value) {
             isAutoplayEnabled = false
         }
         recordSessionPlayed(track)
@@ -1521,7 +1541,8 @@ class AudioPlayerManager(
             isSingleTrackPlayback = true,
             isPartOfPlaylist = false,
             isVideoMode = track.isVideoTrack,
-            isVideoFrameRendered = false
+            isVideoFrameRendered = false,
+            isEnded = false
         )
         loadAndPlayCurrent(resumePositionMs = 0L)
     }
@@ -1558,7 +1579,8 @@ class AudioPlayerManager(
                 currentTrack = target,
                 currentPositionMs = 0L,
                 isVideoMode = target.isVideoTrack,
-                isVideoFrameRendered = false
+                isVideoFrameRendered = false,
+                isEnded = false
             )
             loadAndPlayCurrent(resumePositionMs = 0L)
         }
@@ -2131,13 +2153,23 @@ class AudioPlayerManager(
         ensurePlayerInitialized()
         val player = exoPlayer ?: return
         // Only pause when audio is actively playing!
-        // When paused, buffering, or stalled in background, tapping toggle MUST start/resume playback.
+        // When paused, ended, buffering, or stalled in background, tapping toggle MUST start/resume/replay playback.
         if (_state.value.isPlaying && player.isPlaying) {
             pause()
         } else {
             userRequestedPlay = true
-            val savedResumePos = (player.currentPosition.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
             val current = _state.value.currentTrack
+            val totalDur = _state.value.durationMs.coerceAtLeast(current?.durationMs ?: 0L)
+            val rawPos = (player.currentPosition.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
+            val wasEnded = _state.value.isEnded ||
+                player.playbackState == Player.STATE_ENDED ||
+                (totalDur > 0L && rawPos >= totalDur - 1500L)
+            val savedResumePos = if (wasEnded) 0L else rawPos
+
+            _state.value = _state.value.copy(
+                isEnded = false,
+                currentPositionMs = savedResumePos
+            )
 
             if (current != null) {
                 val activelyResolving = loadTrackJob?.isActive == true &&
@@ -2145,8 +2177,42 @@ class AudioPlayerManager(
 
                 if (activelyResolving) {
                     requestAudioFocus()
-                    _state.value = _state.value.copy(isBuffering = true)
+                    _state.value = _state.value.copy(isBuffering = true, isEnded = false)
                     MediaPlaybackService.startService(context)
+                    return
+                }
+
+                // If track ended and media item is still loaded without error, seek directly to 0 and play immediately!
+                if (wasEnded && player.currentMediaItem != null && player.playerError == null && player.playbackState != Player.STATE_IDLE) {
+                    requestAudioFocus()
+                    player.seekTo(0L)
+                    player.playWhenReady = true
+                    player.play()
+                    if (_state.value.isVideoMode || current.isVideoTrack) {
+                        videoExoPlayer?.let { vp ->
+                            vp.seekTo(0L)
+                            vp.playWhenReady = true
+                            vp.play()
+                        }
+                    }
+                    _state.value = _state.value.copy(
+                        isPlaying = true,
+                        isBuffering = false,
+                        isEnded = false,
+                        currentPositionMs = 0L
+                    )
+                    startPositionTracker()
+                    persistCurrentPlaybackState()
+                    MediaPlaybackService.startService(context)
+
+                    seekRecoveryJob?.cancel()
+                    seekRecoveryJob = coroutineScope.launch {
+                        delay(2_200L)
+                        val p = exoPlayer ?: return@launch
+                        if (userRequestedPlay && _state.value.currentTrack?.id == current.id && !p.isPlaying) {
+                            loadAndPlayCurrent(resumePositionMs = 0L, forceRefresh = false)
+                        }
+                    }
                     return
                 }
 
@@ -2166,6 +2232,8 @@ class AudioPlayerManager(
                     requestAudioFocus()
                     if (savedResumePos > 0L && kotlin.math.abs(player.currentPosition - savedResumePos) > 1500L) {
                         player.seekTo(savedResumePos)
+                    } else if (savedResumePos == 0L && player.currentPosition > 1000L) {
+                        player.seekTo(0L)
                     }
                     player.playWhenReady = true
                     player.play()
@@ -2176,7 +2244,7 @@ class AudioPlayerManager(
                             vp.play()
                         }
                     }
-                    _state.value = _state.value.copy(isPlaying = true, isBuffering = false)
+                    _state.value = _state.value.copy(isPlaying = true, isBuffering = false, isEnded = false)
                     startPositionTracker()
                     persistCurrentPlaybackState()
                     MediaPlaybackService.startService(context)
@@ -2201,14 +2269,29 @@ class AudioPlayerManager(
     fun seekTo(positionMs: Long) {
         val clamped = positionMs.coerceAtLeast(0L)
         lastUserSeekTimestamp = System.currentTimeMillis()
-        val activeIdx = _state.value.lyricLines.indexOfLast { it.timestampMs <= clamped + _state.value.lyricOffsetMs }
-        _state.value = _state.value.copy(currentPositionMs = clamped, activeLyricIndex = activeIdx)
-        persistCurrentPlaybackState()
-
+        bufferingWatchdogJob?.cancel()
+        isRetryingOrLoading = false
         val player = exoPlayer
         val current = _state.value.currentTrack
+        val wasEnded = _state.value.isEnded || player?.playbackState == Player.STATE_ENDED
+
+        // If the user seeks while the track is in the ended/replay state or stalled, automatically resume playback at the seeked position!
+        if (wasEnded || _state.value.isBuffering) {
+            hasUserInitiatedPlaybackThisSession = true
+            userRequestedPlay = true
+        }
+
+        val activeIdx = _state.value.lyricLines.indexOfLast { it.timestampMs <= clamped + _state.value.lyricOffsetMs }
+        _state.value = _state.value.copy(
+            currentPositionMs = clamped,
+            activeLyricIndex = activeIdx,
+            isEnded = false
+        )
+        persistCurrentPlaybackState()
+
         if (player == null || player.playbackState == Player.STATE_IDLE || player.currentMediaItem == null || player.playerError != null) {
-            if (current != null && (userRequestedPlay || _state.value.isPlaying)) {
+            if (current != null) {
+                userRequestedPlay = true
                 loadAndPlayCurrent(resumePositionMs = clamped, forceRefresh = player?.playerError != null)
             }
             return
@@ -2220,18 +2303,27 @@ class AudioPlayerManager(
             requestAudioFocus()
             player.playWhenReady = true
             player.play()
+            if (_state.value.isVideoMode || current?.isVideoTrack == true) {
+                videoExoPlayer?.let { vp ->
+                    vp.seekTo(clamped)
+                    vp.playWhenReady = true
+                    vp.play()
+                }
+            }
+            _state.value = _state.value.copy(isEnded = false)
+            startPositionTracker()
         }
 
-        // Seek watchdog: if ExoPlayer stays in STATE_BUFFERING for > 3.8s after a seek,
+        // Seek watchdog: if ExoPlayer stays in STATE_BUFFERING or STATE_ENDED for > 2.8s after a seek,
         // seamlessly re-open the stream at the exact target seek position so it never hangs loading!
         seekRecoveryJob?.cancel()
         if (userRequestedPlay && current != null) {
             val expectedId = current.id
             seekRecoveryJob = coroutineScope.launch {
-                delay(3_800L)
+                delay(2_800L)
                 val p = exoPlayer ?: return@launch
                 if (isActive && userRequestedPlay && _state.value.currentTrack?.id == expectedId && !p.isPlaying &&
-                    (p.playbackState == Player.STATE_BUFFERING || _state.value.isBuffering || p.playerError != null)
+                    (p.playbackState == Player.STATE_BUFFERING || p.playbackState == Player.STATE_ENDED || _state.value.isBuffering || p.playerError != null)
                 ) {
                     val activeUrl = _state.value.activeStream?.streamUrl
                     if (!activeUrl.isNullOrBlank() && p.playerError == null) {
@@ -2252,10 +2344,11 @@ class AudioPlayerManager(
 
         val isLast = _state.value.currentIndex >= queue.lastIndex
         val current = _state.value.currentTrack
-        val isCurrentOffline = resolverEngine.isOfflineMode.value || current?.isDownloaded == true || !current?.localPath.isNullOrBlank() || queue.any { it.isDownloaded || !it.localPath.isNullOrBlank() }
+        val isLocalSingleOrOffline = resolverEngine.isOfflineMode.value ||
+            (current?.isLocalOnlyTrack == true && queue.all { it.isLocalOnlyTrack })
 
         if (isLast && _state.value.repeatMode != RepeatMode.ALL) {
-            if (isAutoplayEnabled && !isCurrentOffline) {
+            if (isAutoplayEnabled && !isLocalSingleOrOffline) {
                 triggerAutoplayNext()
                 return
             } else if (_state.value.repeatMode == RepeatMode.OFF && !_state.value.isPartOfPlaylist) {
@@ -2407,28 +2500,61 @@ class AudioPlayerManager(
         applyPersistedEqualizerAndEffects(persisted.eqEnabled, persisted.eqBandsDb, persisted.audioNormalization)
     }
 
+    private fun markTrackEndedForReplay() {
+        userRequestedPlay = false
+        isRetryingOrLoading = false
+        bufferingWatchdogJob?.cancel()
+        seekRecoveryJob?.cancel()
+        positionJob?.cancel()
+        runCatching {
+            exoPlayer?.playWhenReady = false
+            exoPlayer?.pause()
+            videoExoPlayer?.playWhenReady = false
+            videoExoPlayer?.pause()
+        }
+        val endDur = _state.value.durationMs.coerceAtLeast(_state.value.currentTrack?.durationMs ?: 0L)
+        _state.value = _state.value.copy(
+            isPlaying = false,
+            isBuffering = false,
+            isEnded = true,
+            currentPositionMs = endDur
+        )
+        persistCurrentPlaybackState()
+    }
+
     private fun onTrackCompleted() {
         runCatching {
             when (_state.value.repeatMode) {
                 RepeatMode.ONE -> {
-                    seekTo(0)
+                    userRequestedPlay = true
+                    _state.value = _state.value.copy(isEnded = false, isBuffering = false, currentPositionMs = 0L)
+                    seekTo(0L)
+                    exoPlayer?.playWhenReady = true
                     exoPlayer?.play()
-                    _state.value = _state.value.copy(isPlaying = true)
+                    _state.value = _state.value.copy(isPlaying = true, isEnded = false)
                 }
                 RepeatMode.ALL -> {
-                    next()
+                    if (_state.value.queue.size <= 1) {
+                        userRequestedPlay = true
+                        _state.value = _state.value.copy(isEnded = false, isBuffering = false, currentPositionMs = 0L)
+                        seekTo(0L)
+                        exoPlayer?.playWhenReady = true
+                        exoPlayer?.play()
+                        _state.value = _state.value.copy(isPlaying = true, isEnded = false)
+                    } else {
+                        next()
+                    }
                 }
                 RepeatMode.OFF -> {
                     val isLast = _state.value.currentIndex >= _state.value.queue.lastIndex
                     val current = _state.value.currentTrack
-                    val isCurrentOffline = resolverEngine.isOfflineMode.value || current?.isDownloaded == true || !current?.localPath.isNullOrBlank() || _state.value.queue.any { it.isDownloaded || !it.localPath.isNullOrBlank() }
+                    val isLocalSingleOrOffline = resolverEngine.isOfflineMode.value ||
+                        (current?.isLocalOnlyTrack == true && _state.value.queue.all { it.isLocalOnlyTrack })
                     if (isLast) {
-                        if (isAutoplayEnabled && !isCurrentOffline) {
+                        if (isAutoplayEnabled && !isLocalSingleOrOffline) {
                             triggerAutoplayNext()
                         } else {
-                            userRequestedPlay = false
-                            _state.value = _state.value.copy(isPlaying = false, isBuffering = false, currentPositionMs = 0L)
-                            persistCurrentPlaybackState()
+                            markTrackEndedForReplay()
                         }
                     } else {
                         next()
@@ -2441,31 +2567,36 @@ class AudioPlayerManager(
     }
 
     private fun prefetchAutoplayRecommendation() {
-        if (isFetchingAutoplay || resolverEngine.isOfflineMode.value) return
+        if (isFetchingAutoplay || resolverEngine.isOfflineMode.value || !isAutoplayEnabled) return
         val current = _state.value.currentTrack ?: return
-        if (_state.value.isSingleTrackPlayback || _state.value.queue.size <= 1 || current.isLocalOnlyTrack) return
-        val isOffline = current.isDownloaded || !current.localPath.isNullOrBlank() || _state.value.queue.any { it.isDownloaded || !it.localPath.isNullOrBlank() }
-        if (isOffline || !isAutoplayEnabled) return
+        val isLocalSingle = current.isLocalOnlyTrack && _state.value.queue.all { it.isLocalOnlyTrack }
+        if (isLocalSingle) return
+        val seedOnline = if (!current.isLocalOnlyTrack) current else _state.value.queue.firstOrNull { !it.isLocalOnlyTrack } ?: return
         isFetchingAutoplay = true
         coroutineScope.launch(Dispatchers.IO) {
             try {
-                val queueMeta = _state.value.queue.map {
+                val isCurrentVideo = _state.value.isVideoMode || seedOnline.isVideoTrack || (_state.value.queue.isNotEmpty() && _state.value.queue.all { it.isVideoTrack })
+                val queueMeta = _state.value.queue.filterNot { it.isLocalOnlyTrack }.map {
                     TrackMetadata(
                         id = it.id,
                         title = it.title,
                         artist = it.artist,
+                        album = if (it.isVideoTrack) "YouTube Video" else it.album,
                         durationSeconds = (it.durationMs / 1000).toInt(),
-                        thumbnailUrl = it.artUrl
+                        thumbnailUrl = it.artUrl,
+                        source = if (it.isVideoTrack) "YOUTUBE_VIDEO" else "YOUTUBE"
                     )
                 }
                 val seedMeta = TrackMetadata(
-                    id = current.id,
-                    title = current.title,
-                    artist = current.artist,
-                    album = current.album.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true) }.orEmpty(),
-                    durationSeconds = (current.durationMs / 1000).toInt(),
-                    thumbnailUrl = current.artUrl,
-                    source = if (current.isVideoTrack) "YOUTUBE_VIDEO" else "YOUTUBE"
+                    id = seedOnline.id,
+                    title = seedOnline.title,
+                    artist = seedOnline.artist,
+                    album = if (isCurrentVideo) "YouTube Video" else seedOnline.album.takeUnless {
+                        it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
+                    }.orEmpty(),
+                    durationSeconds = (seedOnline.durationMs / 1000).toInt(),
+                    thumbnailUrl = seedOnline.artUrl,
+                    source = if (isCurrentVideo) "YOUTUBE_VIDEO" else "YOUTUBE"
                 )
                 val recommendations = QueueRecommendationEngine.fetchRelevantRecommendations(
                     currentTrack = seedMeta,
@@ -2474,26 +2605,30 @@ class AudioPlayerManager(
                     additionalExcludedIds = sessionPlayedIds.toSet(),
                     additionalExcludedSignatures = sessionPlayedSignatures.toSet()
                 )
-                val isCurrentVideo = current.isVideoTrack
                 val nextRec = recommendations.firstOrNull { rec ->
+                    val recIsVideo = rec.source.equals("YOUTUBE_VIDEO", ignoreCase = true) || rec.album.equals("YouTube Video", ignoreCase = true)
                     _state.value.queue.none { it.id == rec.id } &&
-                        (isCurrentVideo || (!rec.title.contains("video", ignoreCase = true) && !rec.album.contains("video", ignoreCase = true)))
+                        (if (isCurrentVideo) recIsVideo else !recIsVideo)
                 }
-                if (nextRec != null) {
+                if (nextRec != null && isAutoplayEnabled) {
                     val newTrack = Track(
                         id = nextRec.id,
                         title = nextRec.title,
                         artist = nextRec.artist,
-                        album = nextRec.album.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true) }.orEmpty(),
+                        album = if (isCurrentVideo) "YouTube Video" else nextRec.album.takeUnless {
+                            it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
+                        }.orEmpty(),
                         durationMs = nextRec.durationSeconds * 1000L,
                         artUrl = nextRec.thumbnailUrl,
-                        genre = if (isCurrentVideo) "YouTube Video" else "Track",
+                        genre = if (isCurrentVideo) "YouTube Video" else "Music",
                         itag = if (isCurrentVideo) 18 else 251,
                         codec = if (isCurrentVideo) "MP4" else "Opus"
                     )
                     musicRepository.insertTrack(newTrack)
                     withContext(Dispatchers.Main) {
-                        addToQueue(newTrack)
+                        if (isAutoplayEnabled) {
+                            addToQueue(newTrack)
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -2508,37 +2643,44 @@ class AudioPlayerManager(
         if (isFetchingAutoplay || resolverEngine.isOfflineMode.value) return
         val current = _state.value.currentTrack ?: _state.value.queue.lastOrNull()
         if (current == null) {
-            userRequestedPlay = false
-            _state.value = _state.value.copy(isPlaying = false, isBuffering = false, currentPositionMs = 0L)
+            markTrackEndedForReplay()
             return
         }
-        val isOffline = current.isLocalOnlyTrack || _state.value.isSingleTrackPlayback || _state.value.queue.size <= 1 ||
-            current.isDownloaded || !current.localPath.isNullOrBlank() || _state.value.queue.any { it.isDownloaded || !it.localPath.isNullOrBlank() }
-        if (isOffline || !isAutoplayEnabled) {
-            userRequestedPlay = false
-            _state.value = _state.value.copy(isPlaying = false, isBuffering = false, currentPositionMs = 0L)
+        val isLocalSingle = current.isLocalOnlyTrack && _state.value.queue.all { it.isLocalOnlyTrack }
+        if (isLocalSingle || !isAutoplayEnabled) {
+            markTrackEndedForReplay()
+            return
+        }
+        val seedOnline = if (!current.isLocalOnlyTrack) current else _state.value.queue.firstOrNull { !it.isLocalOnlyTrack }
+        if (seedOnline == null) {
+            markTrackEndedForReplay()
             return
         }
         isFetchingAutoplay = true
         coroutineScope.launch(Dispatchers.IO) {
             try {
-                val queueMeta = _state.value.queue.map {
+                val isCurrentVideo = _state.value.isVideoMode || seedOnline.isVideoTrack || (_state.value.queue.isNotEmpty() && _state.value.queue.all { it.isVideoTrack })
+                val queueMeta = _state.value.queue.filterNot { it.isLocalOnlyTrack }.map {
                     TrackMetadata(
                         id = it.id,
                         title = it.title,
                         artist = it.artist,
+                        album = if (it.isVideoTrack) "YouTube Video" else it.album,
                         durationSeconds = (it.durationMs / 1000).toInt(),
-                        thumbnailUrl = it.artUrl
+                        thumbnailUrl = it.artUrl,
+                        source = if (it.isVideoTrack) "YOUTUBE_VIDEO" else "YOUTUBE"
                     )
                 }
                 val seedMeta = TrackMetadata(
-                    id = current.id,
-                    title = current.title,
-                    artist = current.artist,
-                    album = current.album.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true) }.orEmpty(),
-                    durationSeconds = (current.durationMs / 1000).toInt(),
-                    thumbnailUrl = current.artUrl,
-                    source = if (current.isVideoTrack) "YOUTUBE_VIDEO" else "YOUTUBE"
+                    id = seedOnline.id,
+                    title = seedOnline.title,
+                    artist = seedOnline.artist,
+                    album = if (isCurrentVideo) "YouTube Video" else seedOnline.album.takeUnless {
+                        it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
+                    }.orEmpty(),
+                    durationSeconds = (seedOnline.durationMs / 1000).toInt(),
+                    thumbnailUrl = seedOnline.artUrl,
+                    source = if (isCurrentVideo) "YOUTUBE_VIDEO" else "YOUTUBE"
                 )
                 val recommendations = QueueRecommendationEngine.fetchRelevantRecommendations(
                     currentTrack = seedMeta,
@@ -2547,39 +2689,41 @@ class AudioPlayerManager(
                     additionalExcludedIds = sessionPlayedIds.toSet(),
                     additionalExcludedSignatures = sessionPlayedSignatures.toSet()
                 )
-                val isCurrentVideo = current.isVideoTrack
                 val nextRec = recommendations.firstOrNull { rec ->
+                    val recIsVideo = rec.source.equals("YOUTUBE_VIDEO", ignoreCase = true) || rec.album.equals("YouTube Video", ignoreCase = true)
                     _state.value.queue.none { it.id == rec.id } &&
-                        (isCurrentVideo || (!rec.title.contains("video", ignoreCase = true) && !rec.album.contains("video", ignoreCase = true)))
+                        (if (isCurrentVideo) recIsVideo else !recIsVideo)
                 }
-                if (nextRec != null) {
+                if (nextRec != null && isAutoplayEnabled) {
                     val newTrack = Track(
                         id = nextRec.id,
                         title = nextRec.title,
                         artist = nextRec.artist,
-                        album = nextRec.album.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true) }.orEmpty(),
+                        album = if (isCurrentVideo) "YouTube Video" else nextRec.album.takeUnless {
+                            it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
+                        }.orEmpty(),
                         durationMs = nextRec.durationSeconds * 1000L,
                         artUrl = nextRec.thumbnailUrl,
-                        genre = if (isCurrentVideo) "YouTube Video" else "Track",
+                        genre = if (isCurrentVideo) "YouTube Video" else "Music",
                         itag = if (isCurrentVideo) 18 else 251,
                         codec = if (isCurrentVideo) "MP4" else "Opus"
                     )
                     musicRepository.insertTrack(newTrack)
                     withContext(Dispatchers.Main) {
-                        addToQueue(newTrack)
-                        next()
+                        if (isAutoplayEnabled) {
+                            addToQueue(newTrack)
+                            next()
+                        }
                     }
                 } else {
                     withContext(Dispatchers.Main) {
-                        userRequestedPlay = false
-                        _state.value = _state.value.copy(isPlaying = false, isBuffering = false, currentPositionMs = 0L)
+                        markTrackEndedForReplay()
                     }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Autoplay recommendation fetch failed: ${e.message}", e)
                 withContext(Dispatchers.Main) {
-                    userRequestedPlay = false
-                    _state.value = _state.value.copy(isPlaying = false, isBuffering = false, currentPositionMs = 0L)
+                    markTrackEndedForReplay()
                 }
             } finally {
                 isFetchingAutoplay = false

@@ -55,26 +55,48 @@ fun PlaybackQueueSheet(
     var sheetDragOffsetY by remember { mutableFloatStateOf(0f) }
     val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
 
-    val isSingleOrLocal = remember(currentTrack, queue.size) {
-        val id = currentTrack?.id?.lowercase().orEmpty()
-        queue.size <= 1 ||
-            id.startsWith("local_") ||
-            id.startsWith("file_") ||
-            id.startsWith("vidfile_") ||
-            id.startsWith("content://")
+    val isLocalSingleFile = remember(currentTrack, queue) {
+        fun TrackMetadata.isLocalItem(): Boolean {
+            val idLower = id.lowercase().trim()
+            return idLower.startsWith("local_") ||
+                idLower.startsWith("file_") ||
+                idLower.startsWith("vidfile_") ||
+                idLower.startsWith("content://") ||
+                idLower.startsWith("file://") ||
+                source.equals("LOCAL", ignoreCase = true)
+        }
+        val seed = currentTrack ?: queue.firstOrNull()
+        seed == null || (seed.isLocalItem() && queue.all { it.isLocalItem() })
     }
 
-    LaunchedEffect(currentTrack?.id, queue.size, isSingleOrLocal) {
-        if (isSingleOrLocal) {
+    val isCurrentVideo = remember(currentTrack, queue) {
+        val seed = currentTrack ?: queue.firstOrNull()
+        seed?.source.equals("YOUTUBE_VIDEO", ignoreCase = true) ||
+            seed?.album.equals("YouTube Video", ignoreCase = true) ||
+            (queue.isNotEmpty() && queue.all {
+                it.source.equals("YOUTUBE_VIDEO", ignoreCase = true) ||
+                    it.album.equals("YouTube Video", ignoreCase = true)
+            })
+    }
+
+    // Always fetch context-relevant recommendations whenever the current track or queue changes
+    // (unless playing a local single file). Note: suggestions stay visible even when autoplayEnabled is false.
+    LaunchedEffect(currentTrack?.id, queue.size, isLocalSingleFile, isCurrentVideo) {
+        if (isLocalSingleFile) {
             suggestedTracks = emptyList()
             return@LaunchedEffect
         }
         val seed = currentTrack ?: queue.firstOrNull() ?: return@LaunchedEffect
-        suggestedTracks = QueueRecommendationEngine.fetchRelevantRecommendations(
+        val recs = QueueRecommendationEngine.fetchRelevantRecommendations(
             currentTrack = seed,
             queueTracks = queue,
-            limit = 8
+            limit = 12
         )
+        suggestedTracks = recs.filter { cand ->
+            val candIsVideo = cand.source.equals("YOUTUBE_VIDEO", ignoreCase = true) ||
+                cand.album.equals("YouTube Video", ignoreCase = true)
+            if (isCurrentVideo) candIsVideo else !candIsVideo
+        }
     }
 
     Column(
@@ -130,8 +152,9 @@ fun PlaybackQueueSheet(
                 Text("Close")
             }
         }
+        val unitLabel = if (isCurrentVideo) "video" else "item"
         Text(
-            text = if (queue.size == 1) "Up Next • 1 item" else "Up Next • ${queue.size} items",
+            text = if (queue.size == 1) "Up Next • 1 $unitLabel" else "Up Next • ${queue.size} ${unitLabel}s",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -146,7 +169,7 @@ fun PlaybackQueueSheet(
             onSwipeDownAtTopToClose = onClose,
             modifier = Modifier.weight(1f)
         ) {
-            if (!isSingleOrLocal) {
+            if (!isLocalSingleFile) {
                 item(key = "autoplay_toggle_card") {
                     Spacer(modifier = Modifier.height(6.dp))
                     Surface(
@@ -161,6 +184,7 @@ fun PlaybackQueueSheet(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            val mediaPlural = if (isCurrentVideo) "videos" else "songs"
                             Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                                 Text(
                                     text = "Autoplay",
@@ -169,7 +193,7 @@ fun PlaybackQueueSheet(
                                 )
                                 Text(
                                     text = if (autoplayEnabled) {
-                                        "Automatically adding similar songs to Up Next"
+                                        "Automatically adding similar $mediaPlural to Up Next"
                                     } else {
                                         "Autoplay is off • Showing manual suggestions below"
                                     },
@@ -197,7 +221,7 @@ fun PlaybackQueueSheet(
                     item(key = "suggested_header") {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Suggested for ${currentTrack?.title ?: "this queue"}",
+                            text = "Suggested for ${currentTrack?.title ?: if (isCurrentVideo) "this video" else "this queue"}",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onBackground
                         )
@@ -222,7 +246,7 @@ fun PlaybackQueueSheet(
                                     contentDescription = suggestion.title,
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier
-                                        .size(46.dp)
+                                        .size(if (isCurrentVideo) 58.dp else 46.dp, 46.dp)
                                         .clip(RoundedCornerShape(8.dp)),
                                     error = appLogoPainter,
                                     placeholder = appLogoPainter,

@@ -38,6 +38,10 @@ class AutoSuggestQueueManager(
         playedSignatures.add(track.signature())
     }
 
+    fun getPlayedIds(): Set<String> = playedIds.toSet()
+
+    fun getPlayedSignatures(): Set<String> = playedSignatures.toSet()
+
     fun toggleAutoSuggest() {
         _isAutoSuggestEnabled.value = !_isAutoSuggestEnabled.value
     }
@@ -47,13 +51,23 @@ class AutoSuggestQueueManager(
     }
 
     /**
-     * Fetches non-repeating related tracks and playlists like YouTube Music's Up Next radio.
+     * Fetches non-repeating related tracks (or videos if seed is a video) and playlists
+     * like YouTube Music's Up Next radio.
+     * Note: When [requireAutoSuggestEnabled] is true (e.g. when the last track ends and
+     * auto-appending into the queue is requested), returns emptyList() if the AutoSuggest
+     * toggle is off. When false (for the UI suggestion display div), always returns
+     * recommendations so the user can view and manually add them.
      */
     suspend fun fetchNextSuggestions(
         currentTrack: Track,
         currentQueue: List<Track>,
-        maxTracksToAppend: Int = 10
+        maxTracksToAppend: Int = 10,
+        requireAutoSuggestEnabled: Boolean = true
     ): List<Track> {
+        // Never suggest for a local single file
+        val isLocalSingle = currentTrack.isLocalOnlyTrack && currentQueue.all { it.isLocalOnlyTrack }
+        if (isLocalSingle) return emptyList()
+
         markTrackPlayed(currentTrack)
 
         val queuedIds = currentQueue.mapTo(HashSet()) { it.id }
@@ -63,10 +77,13 @@ class AutoSuggestQueueManager(
         val playlists = repository.getRelatedPlaylists(currentTrack)
         _suggestedPlaylists.value = playlists
 
-        if (!_isAutoSuggestEnabled.value) return emptyList()
+        if (requireAutoSuggestEnabled && !_isAutoSuggestEnabled.value) return emptyList()
 
-        val candidates = repository.getRelatedTracks(currentTrack) +
-            playlists.flatMap { it.tracks }
+        val isCurrentVideo = currentTrack.isVideoTrack
+        val candidates = (repository.getRelatedTracks(currentTrack) + playlists.flatMap { it.tracks })
+            .filter { cand ->
+                !cand.isLocalOnlyTrack && if (isCurrentVideo) cand.isVideoTrack else !cand.isVideoTrack
+            }
 
         val freshTracks = mutableListOf<Track>()
         for (candidate in candidates) {

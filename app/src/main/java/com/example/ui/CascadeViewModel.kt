@@ -810,25 +810,12 @@ class CascadeViewModel(
                     }
                 }
 
-                val freshQueries = buildList {
-                    if (topArtists.isNotEmpty()) {
-                        add("${topArtists.first()} new official songs")
-                        if (topArtists.size > 1) add("${topArtists[1]} latest official audio")
-                    }
-                    add(
-                        listOf(
-                            "Manipuri latest official new songs",
-                            "New Manipuri & Indian official releases",
-                            "Fresh trending official audio releases",
-                            "Latest acoustic & indie pop official songs"
-                        ).random()
-                    )
-                }.distinct().take(2)
-
                 val freshDeferred = async {
-                    freshQueries.map { q ->
-                        async { InnerTubeStreamExtractor.searchOfficialYtmSongs(q, limit = 10) }
-                    }.map { it.await() }.flatten().shuffled()
+                    InnerTubeStreamExtractor.buildFreshNewMusicFeed(
+                        seedVideoIds = seedIds,
+                        favoriteArtists = topArtists,
+                        moodCategory = selectedMood.value
+                    )
                 }
 
                 val personalizedCandidates = personalizedDeferred.await()

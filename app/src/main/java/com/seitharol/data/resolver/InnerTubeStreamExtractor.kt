@@ -610,7 +610,10 @@ object InnerTubeStreamExtractor {
                     val fmt = arr.optJSONObject(i) ?: continue
                     val mime = fmt.optString("mimeType", "")
                     val itag = fmt.optInt("itag", 0)
-                    val isAudio = mime.startsWith("audio/") || itag in listOf(140, 141, 139, 251, 250, 249, 18)
+                    // Pure audio streams only (fMP4 M4A 140/141/139 or WebM Opus 251/250/249).
+                    // Never select muxed video/mp4 (itag=18) for audio-only playback because ExoPlayer
+                    // detaches its video surface in audio mode and stalls in STATE_BUFFERING at ~53s!
+                    val isAudio = mime.startsWith("audio/") || itag in listOf(140, 141, 139, 251, 250, 249)
                     if (!isAudio) continue
 
                     var rawUrl = fmt.optString("url", "")
@@ -670,20 +673,17 @@ object InnerTubeStreamExtractor {
                 }
             }
 
-            // Pass 1: Collect direct unciphered URLs first (zero JS overhead)
-            collectStreams(legacyFormats, isLegacy = true, allowCipher = false)
+            // Pass 1: Collect direct unciphered pure audio URLs first (zero JS overhead)
             collectStreams(adaptiveFormats, isLegacy = false, allowCipher = false)
 
             // Pass 2: Inspect ciphered streams on embedded clients if Pass 1 returned zero direct URLs
             if (audioStreams.isEmpty() && client.isEmbedded) {
-                collectStreams(legacyFormats, isLegacy = true, allowCipher = true)
                 collectStreams(adaptiveFormats, isLegacy = false, allowCipher = true)
             }
 
             val failedForVideo = failedAudioStreamsByVideoId[videoId].orEmpty()
-            // Prioritize progressive MP4 (itag=18 with ratebypass=yes and full moov seek table at byte 0)
-            // because it is 100% exempt from YouTube GVS's 1 MiB (1:04) adaptive gir=yes cap and seeks
-            // instantaneously via standard HTTP Range requests in DefaultHttpDataSource!
+            // Prioritize pure audio fMP4 AAC (itag=140 with sidx segment index box at byte 0 and clen= in URL)
+            // for instantaneous hardware decoding and exact byte-offset seeking, followed by Opus (itag=251/250/249).
             val sortedCandidates = audioStreams
                 .filter { cand ->
                     requiredItag == null || cand.itag == requiredItag
@@ -694,19 +694,12 @@ object InnerTubeStreamExtractor {
                 }
                 .sortedWith(
                     compareByDescending<AudioStreamCandidate> { requiredItag != null && it.itag == requiredItag }
-                        .thenByDescending { it.isProgressiveMp4 && it.itag == 18 }
-                        .thenByDescending { it.isProgressiveMp4 }
                         .thenByDescending { it.itag == 140 || it.isAacMp4 }
                         .thenBy { kotlin.math.abs(it.kbps - preferredQuality.maxBitrateKbps) }
                 )
 
             for (cand in sortedCandidates.take(4)) {
-                val isFastVrProgressive = cand.isProgressiveMp4 && client.clientName == "ANDROID_VR" && requiredItag == null
-                val verified = if (isFastVrProgressive) {
-                    cand.url
-                } else {
-                    verifyStreamPlayable(cand.url)
-                }
+                val verified = verifyStreamPlayable(cand.url)
                 if (!verified.isNullOrBlank()) {
                     return@runCatching verified
                 } else {
@@ -1048,20 +1041,22 @@ object InnerTubeStreamExtractor {
                 "Cozy rain lofi & mellow beats"
             ).shuffled().take(3)
             isGeneralFeed -> {
+                // Regional-first (Manipuri & Northeast/India) + Time-of-Day discovery queries.
+                // Artist personalization is handled via verified belongsToArtist filtering and Automix
+                // seed continuations so artist words (like "Limbo" in "Life in Limbo") never pollute
+                // the feed with unrelated songs whose title happens to contain that word!
                 val userPersonalizedQueries = mutableListOf<String>()
                 cleanSearches.take(2).forEach { q ->
                     userPersonalizedQueries.add("$q official audio")
                 }
-                cleanArtists.take(4).forEachIndexed { idx, artist ->
-                    val mod = artistModifiers[(idx + System.currentTimeMillis().toInt().and(0x7fffffff)) % artistModifiers.size]
-                    userPersonalizedQueries.add("$artist $mod")
-                }
-                val sampledDiscovery = (timeOfDayQueries.shuffled().take(1) + dynamicDiscoveryPool.shuffled().take(2)).distinct()
-                if (userPersonalizedQueries.isNotEmpty()) {
-                    (userPersonalizedQueries.distinct().take(4) + sampledDiscovery.take(2)).distinct()
-                } else {
-                    (timeOfDayQueries.shuffled().take(2) + dynamicDiscoveryPool.shuffled().take(3)).distinct()
-                }
+                val regionalCore = listOf(
+                    "Manipuri new official music releases",
+                    "Imphal trending Manipuri songs official",
+                    "Manipuri modern folk & indie pop songs",
+                    "Manipuri romantic melodies official audio"
+                ).shuffled().take(2)
+                val sampledDiscovery = (regionalCore + timeOfDayQueries.shuffled().take(1) + dynamicDiscoveryPool.shuffled().take(1)).distinct()
+                (sampledDiscovery + userPersonalizedQueries.take(2)).distinct()
             }
             else -> listOf(
                 "$moodCategory official hit songs",
@@ -1072,17 +1067,35 @@ object InnerTubeStreamExtractor {
 
         val searchJobs = searchQueries.map { q ->
             async {
-                searchOfficialYtmSongs(q, limit = 14).shuffled()
+                searchOfficialYtmSongs(q, limit = 12).shuffled()
             }
+        }
+        // Fetch verified songs actually BY the user's favorite artists (strict belongsToArtist check
+        // on candidate.artist so "Life in Limbo" never matches unrelated songs titled "Limbo"!)
+        val verifiedArtistJobs = if (isGeneralFeed) {
+            cleanArtists.take(3).map { favArtist ->
+                async {
+                    searchOfficialYtmSongs(favArtist, limit = 10)
+                        .filter { cand -> belongsToArtist(targetArtist = favArtist, itemTitle = "", itemSubtitle = "", itemArtist = cand.artist) }
+                        .shuffled()
+                        .take(3)
+                }
+            }
+        } else {
+            emptyList()
         }
         val liveOrPlaylistBatch: List<CandidateStream> = liveBrowseOrCategoryJob.await()
         val automixBatches = automixJobs.awaitAll().filter { it.isNotEmpty() }
+        val verifiedArtistBatch = verifiedArtistJobs.awaitAll().flatten()
         val searchBatches = searchJobs.awaitAll().filter { it.isNotEmpty() }
 
         val batches = mutableListOf<List<CandidateStream>>()
-        // Prioritize user's personal automix & search-driven batches first, then live YTM browse/discovery
-        batches.addAll(automixBatches)
+        // Interleave regional-first discovery, verified favorite-artist tracks, and automix continuations
         batches.addAll(searchBatches)
+        if (verifiedArtistBatch.isNotEmpty()) {
+            batches.add(verifiedArtistBatch)
+        }
+        batches.addAll(automixBatches)
         if (liveOrPlaylistBatch.isNotEmpty()) {
             batches.add(liveOrPlaylistBatch)
         }
@@ -1099,6 +1112,113 @@ object InnerTubeStreamExtractor {
                 }
             }
         }
+        CanonicalAudioResolver.deduplicateTracks(interleaved)
+    }
+
+
+    /**
+     * Regional-first + personalization-aware generator for the "Fresh New Music" shelf.
+     * - Always anchors on regional Manipuri & Indian fresh releases + live YouTube Music `FEmusic_new_releases` / `FEmusic_explore`.
+     * - Incorporates the user's personalization via Automix radio continuations from recent played/liked `seedVideoIds`
+     *   and strictly verified artist matches (`belongsToArtist` on `cand.artist` only, capped to 2 tracks per artist)
+     *   so an artist name containing a common word (e.g. "Life in Limbo") NEVER floods "Fresh New Music" with
+     *   unrelated songs that merely have "Limbo" in their song title!
+     */
+    suspend fun buildFreshNewMusicFeed(
+        seedVideoIds: List<String>,
+        favoriteArtists: List<String>,
+        moodCategory: String = "All"
+    ): List<CandidateStream> = coroutineScope {
+        val validSeeds = seedVideoIds.filter { it.length == 11 }.distinct().take(3)
+        val cleanArtists = favoriteArtists
+            .map { it.removeSuffix("- Topic").trim() }
+            .filter { it.isNotBlank() && !it.equals("Unknown Artist", true) }
+            .distinct()
+            .take(3)
+
+        // 1. Regional-first Fresh Releases (Manipuri & Northeast / India new official songs)
+        val regionalFreshQueries = when {
+            moodCategory.equals("Manipuri Song", true) -> listOf(
+                "Manipuri new official song releases",
+                "Latest Imphal Manipuri official audio",
+                "Manipuri modern folk & romantic new songs"
+            )
+            !moodCategory.equals("All", true) && !moodCategory.equals("For You", true) -> listOf(
+                "Manipuri new official song releases",
+                "$moodCategory latest official audio releases"
+            )
+            else -> listOf(
+                "Manipuri latest official new songs",
+                "Imphal new Manipuri music official audio",
+                "Northeast India & Indian new official releases",
+                "Fresh regional & indie official songs"
+            ).shuffled().take(2)
+        }
+
+        val regionalJobs = regionalFreshQueries.map { q ->
+            async { searchOfficialYtmSongs(q, limit = 10).shuffled() }
+        }
+
+        // 2. Live YouTube Music Explore / New Releases browse shelf
+        val liveNewReleasesJob = async {
+            fetchLiveYtmHomeAndExploreTracks(limit = 14)
+        }
+
+        // 3. Personalization via Automix seed continuations (true musical similarity, never keyword title matching!)
+        val automixPersonalizedJob = async {
+            validSeeds.take(2).flatMap { seed ->
+                runCatching { fetchAutomixQueue(seed, limit = 8) }.getOrDefault(emptyList())
+            }.shuffled().take(6)
+        }
+
+        // 4. Strictly verified releases actually BY the user's top artists (checking candidate.artist ONLY,
+        // never matching song title words, and capped at 2 songs per artist for healthy diversity)
+        val verifiedArtistReleasesJob = async {
+            cleanArtists.take(2).flatMap { artistName ->
+                runCatching {
+                    searchOfficialYtmSongs(artistName, limit = 8)
+                        .filter { cand ->
+                            belongsToArtist(
+                                targetArtist = artistName,
+                                itemTitle = "",
+                                itemSubtitle = "",
+                                itemArtist = cand.artist
+                            )
+                        }
+                        .take(2)
+                }.getOrDefault(emptyList())
+            }
+        }
+
+        val regionalBatches = regionalJobs.awaitAll().filter { it.isNotEmpty() }
+        val liveBatch = liveNewReleasesJob.await()
+        val automixBatch = automixPersonalizedJob.await()
+        val verifiedArtistBatch = verifiedArtistReleasesJob.await()
+
+        val allBatches = mutableListOf<List<CandidateStream>>()
+        // Lead with regional-first batches, then interleave personalized automix, live explore, and verified artist tracks
+        allBatches.addAll(regionalBatches)
+        if (automixBatch.isNotEmpty()) allBatches.add(automixBatch)
+        if (liveBatch.isNotEmpty()) allBatches.add(liveBatch)
+        if (verifiedArtistBatch.isNotEmpty()) allBatches.add(verifiedArtistBatch)
+
+        val interleaved = mutableListOf<CandidateStream>()
+        val artistCounts = mutableMapOf<String, Int>()
+        val maxLen = allBatches.maxOfOrNull { it.size } ?: 0
+        for (i in 0 until maxLen) {
+            for (batch in allBatches) {
+                if (i < batch.size) {
+                    val track = batch[i]
+                    val artistKey = track.artist.lowercase().trim()
+                    val count = artistCounts[artistKey] ?: 0
+                    if (count < 2 && !CanonicalAudioResolver.containsBannedModifier(moodCategory, track.title)) {
+                        artistCounts[artistKey] = count + 1
+                        interleaved.add(track)
+                    }
+                }
+            }
+        }
+
         CanonicalAudioResolver.deduplicateTracks(interleaved)
     }
 

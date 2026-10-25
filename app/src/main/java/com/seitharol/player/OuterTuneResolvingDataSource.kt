@@ -691,8 +691,11 @@ object OuterTuneResolvingDataSource {
                             .build()
                     }
 
-                    val primarySpec = buildRangeHeaderSpec()
-                    val fallbackSpec = buildQueryRangeSpec()
+                    // For YouTube googlevideo.com gir=yes adaptive streams (itag=140 M4A, itag=251 Opus),
+                    // ALWAYS use the &range=start-end URL query parameter (buildQueryRangeSpec) as primary
+                    // so GoogleVideo CDN serves chunks unthrottled past 1 MiB (53s / 1:04) without stalling!
+                    val primarySpec = buildQueryRangeSpec()
+                    val fallbackSpec = buildRangeHeaderSpec()
 
                     var delegate = createDelegate()
                     activeDelegate = delegate

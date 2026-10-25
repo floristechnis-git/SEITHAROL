@@ -1053,7 +1053,7 @@ fun PlayerScreen(
                 contentAlignment = Alignment.Center
             ) {
                 val scale by animateFloatAsState(
-                    targetValue = if (playerState.isPlaying) 1f else 0.94f,
+                    targetValue = if (playerState.isPlaying) 1f else 0.84f,
                     animationSpec = spring(
                         dampingRatio = Spring.DampingRatioMediumBouncy,
                         stiffness = Spring.StiffnessLow
@@ -1061,31 +1061,28 @@ fun PlayerScreen(
                     label = "artwork_scale"
                 )
 
-                var showThumbnailTapFeedback by remember { mutableStateOf(false) }
-                LaunchedEffect(showThumbnailTapFeedback) {
-                    if (showThumbnailTapFeedback) {
-                        delay(520L)
-                        showThumbnailTapFeedback = false
-                    }
-                }
+                val artworkElevation = if (playerState.isPlaying) 24.dp else 8.dp
+                val artworkCorner = if (playerState.isPlaying) 24.dp else 30.dp
 
                 Surface(
                     modifier = Modifier
                         .size(290.dp)
                         .scale(scale)
                         .shadow(
-                            elevation = 24.dp,
-                            shape = RoundedCornerShape(24.dp),
+                            elevation = artworkElevation,
+                            shape = RoundedCornerShape(artworkCorner),
                             ambientColor = Color(0x55000000),
                             spotColor = Color(0x88000000)
                         )
-                        .clip(RoundedCornerShape(24.dp))
-                        .clickable {
+                        .clip(RoundedCornerShape(artworkCorner))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) {
                             viewModel.togglePlayPause()
-                            showThumbnailTapFeedback = true
                         }
                         .testTag("player_artwork_thumbnail"),
-                    shape = RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(artworkCorner),
                     color = MaterialTheme.colorScheme.surfaceVariant
                 ) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1107,29 +1104,6 @@ fun PlayerScreen(
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
                             )
-                        }
-
-                        androidx.compose.animation.AnimatedVisibility(
-                            visible = showThumbnailTapFeedback || (!playerState.isPlaying && !playerState.isBuffering),
-                            enter = fadeIn(tween(150)),
-                            exit = fadeOut(tween(220))
-                        ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = Color.Black.copy(alpha = 0.54f),
-                                modifier = Modifier
-                                    .size(58.dp)
-                                    .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                        contentDescription = if (playerState.isPlaying) "Pause" else "Play",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(30.dp)
-                                    )
-                                }
-                            }
                         }
                     }
                 }

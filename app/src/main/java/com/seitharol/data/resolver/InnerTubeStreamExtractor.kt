@@ -125,20 +125,6 @@ object InnerTubeStreamExtractor {
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
-            clientName = "ANDROID_TESTSUITE",
-            clientVersion = "1.9",
-            userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 12L; US) gzip",
-            clientId = "30",
-            deviceMake = "Google",
-            deviceModel = "Pixel 7",
-            osName = "Android",
-            osVersion = "12L",
-            androidSdkVersion = 32,
-            params = "CgIIAQ==",
-            glOverride = "US",
-            sendOriginHeaders = false
-        ),
-        InnerTubeClientConfig(
             clientName = "ANDROID_VR",
             clientVersion = "1.43.32",
             userAgent = "com.google.android.apps.youtube.vr.oculus/1.43.32 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
@@ -149,18 +135,6 @@ object InnerTubeStreamExtractor {
             osVersion = "12L",
             androidSdkVersion = 32,
             glOverride = "US",
-            sendOriginHeaders = false
-        ),
-        InnerTubeClientConfig(
-            clientName = "IOS",
-            clientVersion = "20.10.4",
-            userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)",
-            clientId = "5",
-            deviceMake = "Apple",
-            deviceModel = "iPhone16,2",
-            osName = "iOS",
-            osVersion = "18.3.1.22D72",
-            glOverride = null,
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
@@ -185,7 +159,19 @@ object InnerTubeStreamExtractor {
             osName = "Android",
             osVersion = "14",
             androidSdkVersion = 34,
-            params = "CgIIAQ==",
+            params = null,
+            glOverride = null,
+            sendOriginHeaders = false
+        ),
+        InnerTubeClientConfig(
+            clientName = "IOS",
+            clientVersion = "20.10.4",
+            userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)",
+            clientId = "5",
+            deviceMake = "Apple",
+            deviceModel = "iPhone16,2",
+            osName = "iOS",
+            osVersion = "18.3.1.22D72",
             glOverride = null,
             sendOriginHeaders = false
         ),
@@ -197,6 +183,20 @@ object InnerTubeStreamExtractor {
             glOverride = null,
             isEmbedded = true,
             sendOriginHeaders = true
+        ),
+        InnerTubeClientConfig(
+            clientName = "ANDROID_TESTSUITE",
+            clientVersion = "1.9",
+            userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 12L; US) gzip",
+            clientId = "30",
+            deviceMake = "Google",
+            deviceModel = "Pixel 7",
+            osName = "Android",
+            osVersion = "12L",
+            androidSdkVersion = 32,
+            params = null,
+            glOverride = "US",
+            sendOriginHeaders = false
         )
     )
 
@@ -458,10 +458,25 @@ object InnerTubeStreamExtractor {
         }.getOrDefault(false)
     }
 
+    private val failedAudioStreamsByVideoId = java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>>()
+
+    fun markAudioStreamFailed(videoId: String, failedUrl: String?) {
+        if (videoId.isBlank() || failedUrl.isNullOrBlank()) return
+        val clean = extractVideoId(videoId) ?: videoId.trim()
+        val set = failedAudioStreamsByVideoId.getOrPut(clean) {
+            java.util.Collections.synchronizedSet(mutableSetOf())
+        }
+        set.add(failedUrl.substringBefore("&range=").substringBefore("?range="))
+        set.add(failedUrl)
+    }
+
     fun verifyStreamPlayable(streamUrl: String): String? {
         val trimmed = streamUrl.trim()
         if (trimmed.isBlank() || !trimmed.startsWith("http")) return null
-        return trimmed
+        val isHls = trimmed.contains(".m3u8", ignoreCase = true) ||
+            trimmed.contains("manifest.googlevideo.com", ignoreCase = true)
+        if (isHls && !isHlsSupported) return null
+        return if (verifySingleStreamUrl(trimmed, isHls = isHls)) trimmed else null
     }
 
     private fun extractStreamWithConfig(
@@ -500,7 +515,9 @@ object InnerTubeStreamExtractor {
                 put("cpn", cpn)
                 put("contentCheckOk", true)
                 put("racyCheckOk", true)
-                client.params?.let { put("params", it) }
+                if (client.params != null && client.params != "CgIIAQ==") {
+                    put("params", client.params)
+                }
                 if (client.isEmbedded) {
                     put("playbackContext", JSONObject().apply {
                         put("contentPlaybackContext", JSONObject().apply {
@@ -599,15 +616,18 @@ object InnerTubeStreamExtractor {
                     }
                     if (rawUrl.isBlank()) continue
 
-                    val finalUrl = if (!rawUrl.contains("cpn=")) {
+                    var finalUrl = if (!rawUrl.contains("cpn=")) {
                         val sep = if (rawUrl.contains("?")) "&" else "?"
                         "$rawUrl${sep}cpn=$cpn"
                     } else {
                         rawUrl
                     }
                     val jsonClen = fmt.optString("contentLength", "").toLongOrNull() ?: -1L
+                    if (jsonClen > 0L && !finalUrl.contains("clen=")) {
+                        val sep = if (finalUrl.contains("?")) "&" else "?"
+                        finalUrl = "${finalUrl}${sep}clen=$jsonClen"
+                    }
                     if (jsonClen > 0L) {
-                        // Record known stream length without mutating the signed URL query parameters!
                         com.seitharol.player.OuterTuneResolvingDataSource.recordKnownStreamLength(finalUrl, jsonClen)
                     }
 
@@ -638,16 +658,24 @@ object InnerTubeStreamExtractor {
                 collectStreams(legacyFormats, isLegacy = true, allowCipher = true)
             }
 
-            val sortedCandidates = audioStreams.sortedWith(
-                compareByDescending<AudioStreamCandidate> { it.itag == 140 || (it.isAacMp4 && !it.isProgressiveMp4) }
-                    .thenByDescending { it.isProgressiveMp4 }
-                    .thenBy { kotlin.math.abs(it.kbps - preferredQuality.maxBitrateKbps) }
-            )
+            val failedForVideo = failedAudioStreamsByVideoId[videoId].orEmpty()
+            val sortedCandidates = audioStreams
+                .filterNot { cand ->
+                    val base = cand.url.substringBefore("&range=").substringBefore("?range=")
+                    failedForVideo.contains(cand.url) || failedForVideo.contains(base)
+                }
+                .sortedWith(
+                    compareByDescending<AudioStreamCandidate> { it.itag == 140 || (it.isAacMp4 && !it.isProgressiveMp4) }
+                        .thenByDescending { it.isProgressiveMp4 }
+                        .thenBy { kotlin.math.abs(it.kbps - preferredQuality.maxBitrateKbps) }
+                )
 
-            for (cand in sortedCandidates.take(3)) {
+            for (cand in sortedCandidates.take(4)) {
                 val verified = verifyStreamPlayable(cand.url)
                 if (!verified.isNullOrBlank()) {
                     return@runCatching verified
+                } else {
+                    markAudioStreamFailed(videoId, cand.url)
                 }
             }
 
@@ -697,15 +725,15 @@ object InnerTubeStreamExtractor {
             client = primaryClient,
             preferredQuality = preferredQuality,
             cpn = cpn,
-            allowHls = false,
-            includeVisitorData = true
+            allowHls = isHlsSupported,
+            includeVisitorData = primaryClient.isEmbedded
         )
         if (!fastUrl.isNullOrBlank()) {
             com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, fastUrl)
             return@withContext Result.success(fastUrl)
         }
 
-        // Sequential Client Failover: avoids burst rate-limiting on YouTube InnerTube
+        // Sequential Client Failover across all verified clients (ANDROID_VR 1.43.32, VISIONOS, ANDROID, IOS, TVHTML5)
         val remainingClients = VERIFIED_CLIENTS.indices
             .filter { it != (startOffset % VERIFIED_CLIENTS.size) }
             .map { VERIFIED_CLIENTS[it] }
@@ -715,8 +743,8 @@ object InnerTubeStreamExtractor {
                 client = client,
                 preferredQuality = preferredQuality,
                 cpn = generateCpn(),
-                allowHls = false,
-                includeVisitorData = false
+                allowHls = isHlsSupported,
+                includeVisitorData = client.isEmbedded
             )
             if (!nextUrl.isNullOrBlank()) {
                 com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, nextUrl)
@@ -2731,6 +2759,10 @@ object InnerTubeStreamExtractor {
                     rawUrl = "$rawUrl${sep}cpn=$customCpn"
                 }
                 val jsonClen = fmt.optString("contentLength", "").toLongOrNull() ?: -1L
+                if (rawUrl.isNotBlank() && jsonClen > 0L && !rawUrl.contains("clen=")) {
+                    val sep = if (rawUrl.contains("?")) "&" else "?"
+                    rawUrl = "${rawUrl}${sep}clen=$jsonClen"
+                }
                 if (rawUrl.isNotBlank() && jsonClen > 0L) {
                     com.seitharol.player.OuterTuneResolvingDataSource.recordKnownStreamLength(rawUrl, jsonClen)
                 }

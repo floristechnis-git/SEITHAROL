@@ -197,8 +197,12 @@ class ResolverEngine {
             }
         }
 
-        // 3. Direct verified stream if provided and non-placeholder
-        if (!forceRefresh && track.audioUrl.isNotBlank() && !track.audioUrl.contains("SoundHelix")) {
+        // 3. Direct verified stream if provided, non-placeholder, and not an unverified/stale googlevideo URL
+        val isSafeDirectAudioUrl = track.audioUrl.startsWith("content://") ||
+            track.audioUrl.startsWith("file://") ||
+            track.audioUrl.startsWith("/") ||
+            (track.audioUrl.startsWith("http") && !track.audioUrl.contains("googlevideo.com", ignoreCase = true))
+        if (!forceRefresh && !preferNonYoutubeFallback && track.audioUrl.isNotBlank() && !track.audioUrl.contains("SoundHelix") && isSafeDirectAudioUrl) {
             val resolved = ResolvedStream(
                 videoId = rawId.ifBlank { "direct_stream" },
                 streamUrl = track.audioUrl,

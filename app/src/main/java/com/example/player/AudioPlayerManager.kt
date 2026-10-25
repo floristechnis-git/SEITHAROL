@@ -759,13 +759,14 @@ class AudioPlayerManager(
             // while retaining 300s back-buffer for instant 0ms backward/forward seeking:
             val loadControl = DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
-                    /* minBufferMs = */ 180_000,
-                    /* maxBufferMs = */ 600_000,
-                    /* bufferForPlaybackMs = */ 450,
-                    /* bufferForPlaybackAfterRebufferMs = */ 800
+                    /* minBufferMs = */ 30_000,
+                    /* maxBufferMs = */ 180_000,
+                    /* bufferForPlaybackMs = */ 500,
+                    /* bufferForPlaybackAfterRebufferMs = */ 1_000
                 )
+                .setTargetBufferBytes(12 * 1024 * 1024)
                 .setPrioritizeTimeOverSizeThresholds(true)
-                .setBackBuffer(/* backBufferDurationMs = */ 300_000, /* retainBackBufferFromKeyframe = */ true)
+                .setBackBuffer(/* backBufferDurationMs = */ 120_000, /* retainBackBufferFromKeyframe = */ true)
                 .build()
 
             val builder = ExoPlayer.Builder(context)
@@ -2403,23 +2404,17 @@ class AudioPlayerManager(
             startPositionTracker()
         }
 
-        // Recover automatically if ExoPlayer gets stuck in STATE_BUFFERING, STATE_IDLE, STATE_ENDED, or error after seeking
+        // Only recover if ExoPlayer encountered an actual error or remained stuck in STATE_ENDED/STATE_IDLE after seeking
         seekRecoveryJob?.cancel()
         if (userRequestedPlay && current != null) {
             val expectedId = current.id
             seekRecoveryJob = coroutineScope.launch {
-                delay(4_500L)
+                delay(5_500L)
                 val p = exoPlayer ?: return@launch
                 if (isActive && userRequestedPlay && _state.value.currentTrack?.id == expectedId && !p.isPlaying &&
-                    (p.playerError != null || p.playbackState == Player.STATE_BUFFERING || p.playbackState == Player.STATE_IDLE || p.playbackState == Player.STATE_ENDED)
+                    (p.playerError != null || p.playbackState == Player.STATE_IDLE || p.playbackState == Player.STATE_ENDED)
                 ) {
-                    val useFallback = stallRecoveryCount >= 1 && !(current.isVideoTrack || _state.value.isVideoMode)
-                    stallRecoveryCount++
-                    loadAndPlayCurrent(
-                        resumePositionMs = clamped,
-                        forceRefresh = true,
-                        preferNonYoutubeFallback = useFallback
-                    )
+                    loadAndPlayCurrent(resumePositionMs = clamped, forceRefresh = p.playerError != null)
                 }
             }
         }

@@ -310,10 +310,10 @@ class DeviceInnerTubeResolver : Resolver {
                 throw IllegalStateException("No usable audio streams found")
             }
 
-            // Prefer progressive MP4 (itag 18 with ratebypass=yes) first, then M4A AAC (itag 140), then Opus (itag 251)
+            // Prefer pure audio M4A AAC (itag 140) and Opus (itag 251) first for audio playback
             candidateFormats.sortWith(
-                compareByDescending<FormatItem> { it.id == "18" }
-                    .thenByDescending { it.id == "140" || it.codec == "aac" }
+                compareByDescending<FormatItem> { it.id == "140" || (it.codec == "aac" && it.id != "18") }
+                    .thenByDescending { it.id != "18" }
                     .thenByDescending { it.bitrate }
             )
 

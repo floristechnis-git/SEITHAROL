@@ -23,7 +23,7 @@ class ResolverEngine(
      * Resolves a NormalizedTrack for playback:
      * 1. Public Device Music (Discover Downloads & Local Storage via content:// or /storage/emulated/0/Music/...)
      * 2. App-Internal Cache (PlayerScreen Downloads in context.filesDir/downloads)
-     * 3. Online Resolution (TrackMatcher -> YouTube ATV / JioSaavn)
+     * 3. Online Resolution (TrackMatcher -> YouTube ATV / JioSaavn, with automatic failover for restricted Art Tracks)
      */
     suspend fun resolveForFullPlayback(
         track: NormalizedTrack,
@@ -65,15 +65,101 @@ class ResolverEngine(
             track
         }
 
-        // 3. Extract online stream
+        val primaryArtist = playableTrack.artists.firstOrNull().orEmpty()
+        val targetDurationSec = (playableTrack.durationMs / 1000L).toInt()
+
+        // 3. Extract online stream with automatic fallback for restricted YouTube Music "Art Tracks" (Topic songs)
         when (playableTrack.source) {
             TrackSource.YOUTUBE -> {
-                innerTubeProvider.resolveStreamUrl(playableTrack.sourceId).map { url ->
+                val directYt = innerTubeProvider.resolveStreamUrl(playableTrack.sourceId)
+                if (directYt.isSuccess) {
+                    return@withContext Result.success(
+                        ResolvedPlaybackTarget.RemoteStreamUrl(directYt.getOrThrow(), playableTrack)
+                    )
+                }
+
+                // Fallback A: Try JioSaavn exact match if direct YouTube Art Track is restricted
+                if (playableTrack.title.isNotBlank()) {
+                    val saavnUrl = runCatching {
+                        StreamResolver.resolveExactStreamUrl(
+                            TrackMetadata(
+                                id = "",
+                                title = playableTrack.title,
+                                artist = primaryArtist,
+                                album = playableTrack.album.orEmpty(),
+                                durationSeconds = targetDurationSec,
+                                thumbnailUrl = playableTrack.artUrl
+                            ),
+                            AudioQuality.NORMAL
+                        )
+                    }.getOrNull()
+                    if (!saavnUrl.isNullOrBlank()) {
+                        return@withContext Result.success(
+                            ResolvedPlaybackTarget.RemoteStreamUrl(
+                                url = saavnUrl,
+                                resolvedTrack = playableTrack.copy(
+                                    source = TrackSource.JIOSAAVN,
+                                    isPlayableNatively = true
+                                )
+                            )
+                        )
+                    }
+                }
+
+                // Fallback B: Search alternative playable YouTube Music streams by title + artist
+                if (playableTrack.title.isNotBlank()) {
+                    val query = "${playableTrack.title} $primaryArtist".trim()
+                    val altCandidates = runCatching {
+                        InnerTubeStreamExtractor.searchOfficialYtmSongs(query, limit = 4)
+                    }.getOrDefault(emptyList())
+                    for (cand in altCandidates) {
+                        if (cand.videoId.isBlank() || cand.videoId == playableTrack.sourceId) continue
+                        val altUrl = innerTubeProvider.resolveStreamUrl(cand.videoId).getOrNull()
+                        if (!altUrl.isNullOrBlank()) {
+                            return@withContext Result.success(
+                                ResolvedPlaybackTarget.RemoteStreamUrl(
+                                    url = altUrl,
+                                    resolvedTrack = playableTrack.copy(
+                                        source = TrackSource.YOUTUBE,
+                                        sourceId = cand.videoId,
+                                        isPlayableNatively = true
+                                    )
+                                )
+                            )
+                        }
+                    }
+                }
+
+                directYt.map { url ->
                     ResolvedPlaybackTarget.RemoteStreamUrl(url, playableTrack)
                 }
             }
             TrackSource.JIOSAAVN -> {
-                jioSaavnProvider.resolveStreamUrl(playableTrack.sourceId).map { url ->
+                val directSaavn = jioSaavnProvider.resolveStreamUrl(playableTrack.sourceId)
+                if (directSaavn.isSuccess) {
+                    return@withContext Result.success(
+                        ResolvedPlaybackTarget.RemoteStreamUrl(directSaavn.getOrThrow(), playableTrack)
+                    )
+                }
+                val fallbackSaavn = runCatching {
+                    StreamResolver.resolveExactStreamUrl(
+                        TrackMetadata(
+                            id = playableTrack.sourceId,
+                            title = playableTrack.title,
+                            artist = primaryArtist,
+                            album = playableTrack.album.orEmpty(),
+                            durationSeconds = targetDurationSec,
+                            thumbnailUrl = playableTrack.artUrl
+                        ),
+                        AudioQuality.NORMAL
+                    )
+                }.getOrNull()
+                if (!fallbackSaavn.isNullOrBlank()) {
+                    return@withContext Result.success(
+                        ResolvedPlaybackTarget.RemoteStreamUrl(fallbackSaavn, playableTrack)
+                    )
+                }
+                directSaavn.map { url ->
                     ResolvedPlaybackTarget.RemoteStreamUrl(url, playableTrack)
                 }
             }

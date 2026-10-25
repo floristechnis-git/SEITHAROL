@@ -1,4 +1,4 @@
-﻿package com.seitharol.data.resolver
+package com.seitharol.data.resolver
 
 import com.seitharol.domain.model.NormalizedTrack
 import com.seitharol.domain.model.TrackSource
@@ -122,10 +122,32 @@ class DefaultJioSaavnProvider(
         artist: String,
         targetDurationSeconds: Int?
     ): CandidateStream? {
-        return null
+        val url = StreamResolver.resolveExactStreamUrl(
+            TrackMetadata(
+                id = "",
+                title = title,
+                artist = artist,
+                durationSeconds = targetDurationSeconds ?: 0
+            ),
+            AudioQuality.NORMAL
+        ) ?: return null
+        return CandidateStream(
+            videoId = url,
+            title = title,
+            artist = artist,
+            channelName = "$artist - Topic",
+            albumName = null,
+            durationSeconds = targetDurationSeconds ?: 210,
+            videoType = "MUSIC_VIDEO_TYPE_ATV",
+            thumbnailUrl = "",
+            isVerifiedArtist = true
+        )
     }
 
     override suspend fun resolveStreamUrl(trackId: String, preferredQuality: AudioQuality): Result<String> {
+        if (trackId.startsWith("http")) {
+            return Result.success(trackId)
+        }
         val url = StreamResolver.resolveExactStreamUrl(
             TrackMetadata(id = trackId, title = "", artist = ""),
             preferredQuality

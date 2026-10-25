@@ -816,6 +816,11 @@ class AudioPlayerManager(
                                 }
                             }
                             Player.STATE_READY -> {
+                                val expectedId = _state.value.currentTrack?.id
+                                val loadedId = currentMediaItem?.mediaId
+                                if (loadTrackJob?.isActive == true || (!expectedId.isNullOrBlank() && loadedId != expectedId)) {
+                                    return
+                                }
                                 bufferingStartedAtMs = 0L
                                 seekBufferingDebounceJob?.cancel()
                                 bufferingWatchdogJob?.cancel()
@@ -924,6 +929,11 @@ class AudioPlayerManager(
 
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
                         if (isPlaying) {
+                            val expectedId = _state.value.currentTrack?.id
+                            val loadedId = currentMediaItem?.mediaId
+                            if (loadTrackJob?.isActive == true || (!expectedId.isNullOrBlank() && loadedId != expectedId)) {
+                                return
+                            }
                             seekBufferingDebounceJob?.cancel()
                             bufferingWatchdogJob?.cancel()
                             seekRecoveryJob?.cancel()
@@ -1281,6 +1291,7 @@ class AudioPlayerManager(
                 RepeatMode.ONE -> Player.REPEAT_MODE_ONE
                 RepeatMode.ALL -> Player.REPEAT_MODE_ALL
             }
+            com.seitharol.player.AudioPlayerManager.stopActivePreviewIfAny()
             _activePreviewTrackId.value = null
             _isPreviewPlaying.value = false
 
@@ -1423,7 +1434,11 @@ class AudioPlayerManager(
                     break
                 }
                 val isPastGracePeriod = (System.currentTimeMillis() - lastUserSeekTimestamp) > 700L
-                if (player.isPlaying && isPastGracePeriod) {
+                val loadedMediaId = player.currentMediaItem?.mediaId
+                val matchesActiveTrack = loadTrackJob?.isActive != true &&
+                    !loadedMediaId.isNullOrBlank() &&
+                    loadedMediaId == _state.value.currentTrack?.id
+                if (player.isPlaying && isPastGracePeriod && matchesActiveTrack) {
                     val pos = player.currentPosition.coerceAtLeast(0L)
                     val dur = player.duration
                     val safeDur = if (dur > 0L && dur != C.TIME_UNSET) dur else _state.value.durationMs
@@ -1555,18 +1570,35 @@ class AudioPlayerManager(
         retryJob?.cancel()
         bufferingWatchdogJob?.cancel()
         val validIndex = startIndex.coerceIn(0, tracks.lastIndex)
+        val targetTrack = tracks[validIndex]
         val isLocalOnlyQueue = tracks.isNotEmpty() && tracks.all { it.isLocalOnlyTrack }
         if (isLocalOnlyQueue || resolverEngine.isOfflineMode.value) {
             isAutoplayEnabled = false
         }
+        com.seitharol.player.AudioPlayerManager.stopActivePreviewIfAny()
+        if (exoPlayer?.currentMediaItem?.mediaId != targetTrack.id) {
+            positionJob?.cancel()
+            runCatching {
+                exoPlayer?.playWhenReady = false
+                exoPlayer?.pause()
+                exoPlayer?.stop()
+                exoPlayer?.clearMediaItems()
+                stopVideoPlayer()
+            }
+        }
         _state.value = _state.value.copy(
             queue = tracks,
             currentIndex = validIndex,
-            currentTrack = tracks[validIndex],
+            currentTrack = targetTrack,
             currentPositionMs = 0L,
+            bufferedPositionMs = 0L,
+            bufferedFraction = 0f,
+            activeStream = null,
+            isPlaying = false,
+            isBuffering = true,
             isSingleTrackPlayback = !isPlaylist,
             isPartOfPlaylist = isPlaylist,
-            isVideoMode = tracks[validIndex].isVideoTrack,
+            isVideoMode = targetTrack.isVideoTrack,
             isVideoFrameRendered = false,
             isEnded = false
         )
@@ -1578,7 +1610,7 @@ class AudioPlayerManager(
         val p = exoPlayer
         // If tapping the exact song that is already healthy and ready, resume instead of restarting from 0:00.
         // If it was stalled/buffering in background or had an error, force a fresh reload at the current position!
-        if (current != null && current.id == track.id && p != null && p.currentMediaItem != null) {
+        if (current != null && current.id == track.id && p != null && p.currentMediaItem?.mediaId == track.id) {
             if (p.playbackState == Player.STATE_READY && p.playerError == null && !_state.value.isBuffering && !isRetryingOrLoading) {
                 if (!_state.value.isPlaying || !p.isPlaying) {
                     togglePlayPause()
@@ -1600,6 +1632,17 @@ class AudioPlayerManager(
         loadTrackJob?.cancel()
         retryJob?.cancel()
         bufferingWatchdogJob?.cancel()
+        com.seitharol.player.AudioPlayerManager.stopActivePreviewIfAny()
+        if (p?.currentMediaItem?.mediaId != track.id) {
+            positionJob?.cancel()
+            runCatching {
+                p?.playWhenReady = false
+                p?.pause()
+                p?.stop()
+                p?.clearMediaItems()
+                stopVideoPlayer()
+            }
+        }
         if (track.isLocalOnlyTrack || resolverEngine.isOfflineMode.value) {
             isAutoplayEnabled = false
         }
@@ -1609,6 +1652,11 @@ class AudioPlayerManager(
             currentIndex = 0,
             currentTrack = track,
             currentPositionMs = 0L,
+            bufferedPositionMs = 0L,
+            bufferedFraction = 0f,
+            activeStream = null,
+            isPlaying = false,
+            isBuffering = true,
             isSingleTrackPlayback = true,
             isPartOfPlaylist = false,
             isVideoMode = track.isVideoTrack,
@@ -1624,7 +1672,7 @@ class AudioPlayerManager(
             val target = q[index]
             val p = exoPlayer
             // If tapping the currently active queue item, resume if ready, or force reload if stalled in background
-            if (index == _state.value.currentIndex && _state.value.currentTrack?.id == target.id && p != null && p.currentMediaItem != null) {
+            if (index == _state.value.currentIndex && _state.value.currentTrack?.id == target.id && p != null && p.currentMediaItem?.mediaId == target.id) {
                 if (p.playbackState == Player.STATE_READY && p.playerError == null && !_state.value.isBuffering && !isRetryingOrLoading) {
                     if (!_state.value.isPlaying || !p.isPlaying) {
                         togglePlayPause()
@@ -1646,11 +1694,27 @@ class AudioPlayerManager(
             loadTrackJob?.cancel()
             retryJob?.cancel()
             bufferingWatchdogJob?.cancel()
+            com.seitharol.player.AudioPlayerManager.stopActivePreviewIfAny()
+            if (p?.currentMediaItem?.mediaId != target.id) {
+                positionJob?.cancel()
+                runCatching {
+                    p?.playWhenReady = false
+                    p?.pause()
+                    p?.stop()
+                    p?.clearMediaItems()
+                    stopVideoPlayer()
+                }
+            }
             recordSessionPlayed(target)
             _state.value = _state.value.copy(
                 currentIndex = index,
                 currentTrack = target,
                 currentPositionMs = 0L,
+                bufferedPositionMs = 0L,
+                bufferedFraction = 0f,
+                activeStream = null,
+                isPlaying = false,
+                isBuffering = true,
                 isVideoMode = target.isVideoTrack,
                 isVideoFrameRendered = false,
                 isEnded = false
@@ -1830,21 +1894,35 @@ class AudioPlayerManager(
         seekRecoveryJob?.cancel()
         isRetryingOrLoading = true
 
-        val stopImmediately = settingsManager.state.value.stopImmediatelyOnNewTrack
-        val isSameTrack = _state.value.currentTrack?.id == current.id
+        com.seitharol.player.AudioPlayerManager.stopActivePreviewIfAny()
+        val loadedMediaId = exoPlayer?.currentMediaItem?.mediaId
+        val isSameTrack = !loadedMediaId.isNullOrBlank() && loadedMediaId == current.id
         if (!isSameTrack) {
             stallRecoveryCount = 0
-        }
-        if (stopImmediately && !isSameTrack) {
+            positionJob?.cancel()
             try {
-                // Stop previous stream cleanly without setting playWhenReady = false
+                // Always stop and clear the previous track's MediaItem immediately when switching tracks
+                // so a previous JioSaavn song never continues playing in the background while resolving!
+                exoPlayer?.playWhenReady = false
+                exoPlayer?.pause()
                 exoPlayer?.stop()
+                exoPlayer?.clearMediaItems()
+                stopVideoPlayer()
             } catch (_: Throwable) {}
             _state.value = _state.value.copy(
                 isPlaying = false,
-                isBuffering = true
+                isBuffering = true,
+                currentPositionMs = resumePositionMs.coerceAtLeast(0L),
+                bufferedPositionMs = 0L,
+                bufferedFraction = 0f,
+                activeStream = null
             )
         } else {
+            if (forceRefresh) {
+                try {
+                    exoPlayer?.stop()
+                } catch (_: Throwable) {}
+            }
             _state.value = _state.value.copy(isBuffering = true)
         }
 
@@ -2474,10 +2552,26 @@ class AudioPlayerManager(
         } else {
             (_state.value.currentIndex + 1) % queue.size
         }
+        val nextTrack = queue[nextIndex]
+        if (exoPlayer?.currentMediaItem?.mediaId != nextTrack.id) {
+            positionJob?.cancel()
+            runCatching {
+                exoPlayer?.playWhenReady = false
+                exoPlayer?.pause()
+                exoPlayer?.stop()
+                exoPlayer?.clearMediaItems()
+                stopVideoPlayer()
+            }
+        }
         _state.value = _state.value.copy(
             currentIndex = nextIndex,
-            currentTrack = queue[nextIndex],
-            currentPositionMs = 0L
+            currentTrack = nextTrack,
+            currentPositionMs = 0L,
+            bufferedPositionMs = 0L,
+            bufferedFraction = 0L.toFloat(),
+            activeStream = null,
+            isPlaying = false,
+            isBuffering = true
         )
         loadAndPlayCurrent(resumePositionMs = 0L)
     }
@@ -2500,10 +2594,26 @@ class AudioPlayerManager(
         } else {
             if (_state.value.repeatMode == RepeatMode.ALL) queue.lastIndex else 0
         }
+        val prevTrack = queue[prevIndex]
+        if (exoPlayer?.currentMediaItem?.mediaId != prevTrack.id) {
+            positionJob?.cancel()
+            runCatching {
+                exoPlayer?.playWhenReady = false
+                exoPlayer?.pause()
+                exoPlayer?.stop()
+                exoPlayer?.clearMediaItems()
+                stopVideoPlayer()
+            }
+        }
         _state.value = _state.value.copy(
             currentIndex = prevIndex,
-            currentTrack = queue[prevIndex],
-            currentPositionMs = 0L
+            currentTrack = prevTrack,
+            currentPositionMs = 0L,
+            bufferedPositionMs = 0L,
+            bufferedFraction = 0L.toFloat(),
+            activeStream = null,
+            isPlaying = false,
+            isBuffering = true
         )
         loadAndPlayCurrent(resumePositionMs = 0L)
     }
@@ -2993,9 +3103,13 @@ class AudioPlayerManager(
             val current = s.currentTrack ?: return
 
             if (userRequestedPlay && !isPhoneCallActive()) {
+                if (loadTrackJob?.isActive == true || retryJob?.isActive == true) {
+                    return
+                }
+                val loadedMediaId = player.currentMediaItem?.mediaId
                 val now = System.currentTimeMillis()
                 val livePos = (player.currentPosition.takeIf { it > 0L } ?: s.currentPositionMs).coerceAtLeast(0L)
-                if (player.playbackState == Player.STATE_READY && !player.isPlaying) {
+                if (player.playbackState == Player.STATE_READY && !player.isPlaying && loadedMediaId == current.id) {
                     requestAudioFocus()
                     player.playWhenReady = true
                     player.play()

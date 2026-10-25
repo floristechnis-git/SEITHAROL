@@ -452,8 +452,8 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             inspectFormats(adaptiveFormats)
 
             val sorted = candidates.sortedWith(
-                compareByDescending<CandidateFmt> { it.itag == 18 }
-                    .thenByDescending { it.itag == 140 || it.isAac }
+                compareByDescending<CandidateFmt> { it.itag == 140 || (it.isAac && it.itag != 18) }
+                    .thenByDescending { it.itag != 18 }
                     .thenByDescending { it.bitrate }
             )
 

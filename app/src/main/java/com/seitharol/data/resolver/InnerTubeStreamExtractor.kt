@@ -446,7 +446,7 @@ object InnerTubeStreamExtractor {
                 reqBuilder.header("Range", "bytes=${probeStart}-${probeEnd}")
             }
 
-            probeHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
+            val primaryOk = probeHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
                 if (resp.code in 200..206) {
                     val crHeader = resp.header("Content-Range").orEmpty()
                     val slashIdx = crHeader.lastIndexOf('/')
@@ -456,13 +456,13 @@ object InnerTubeStreamExtractor {
                             com.seitharol.player.OuterTuneResolvingDataSource.recordKnownStreamLength(url, discoveredTotal)
                         }
                     }
-                    val bytes = if (isHls) {
-                        val b = resp.body?.byteStream()?.read() ?: -1
-                        if (b != -1) ByteArray(1) else ByteArray(0)
+                    val cLenHeader = resp.header("Content-Length")?.trim()?.toLongOrNull() ?: -1L
+                    if (cLenHeader == 0L) {
+                        false
                     } else {
-                        resp.body?.bytes() ?: ByteArray(0)
+                        val firstByte = resp.body?.byteStream()?.read() ?: -1
+                        firstByte != -1
                     }
-                    bytes.isNotEmpty()
                 } else if (resp.code == 416 && clen <= 0L && probeStart > 0L) {
                     // Short clip (<1.15 MB): verify byte 0..255 with bounded range
                     val shortUrl = if (!isHls && isAdaptiveGir && !url.contains("&range=")) {
@@ -474,11 +474,27 @@ object InnerTubeStreamExtractor {
                         if (!isHls && !isAdaptiveGir) header("Range", "bytes=0-255")
                     }.build()
                     probeHttpClient.newCall(shortReq).execute().use { r2 ->
-                        r2.code in 200..206 && (r2.body?.bytes()?.isNotEmpty() == true)
+                        val cLen2 = r2.header("Content-Length")?.trim()?.toLongOrNull() ?: -1L
+                        r2.code in 200..206 && cLen2 != 0L && ((r2.body?.byteStream()?.read() ?: -1) != -1)
                     }
                 } else {
                     false
                 }
+            }
+            if (primaryOk) {
+                true
+            } else if (!isHls && isAdaptiveGir) {
+                // Fallback: if &range= returned 0 bytes, verify with standard HTTP Range header
+                val rangeReq = okhttp3.Request.Builder().url(url).get().apply {
+                    headers.forEach { (k, v) -> header(k, v) }
+                    header("Range", "bytes=${probeStart}-${probeEnd}")
+                }.build()
+                probeHttpClient.newCall(rangeReq).execute().use { rFallback ->
+                    val cLenFb = rFallback.header("Content-Length")?.trim()?.toLongOrNull() ?: -1L
+                    rFallback.code in 200..206 && cLenFb != 0L && ((rFallback.body?.byteStream()?.read() ?: -1) != -1)
+                }
+            } else {
+                false
             }
         }.getOrDefault(false)
     }

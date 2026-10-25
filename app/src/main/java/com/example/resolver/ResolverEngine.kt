@@ -197,11 +197,14 @@ class ResolverEngine {
             }
         }
 
-        // 3. Direct verified stream if provided, non-placeholder, and not an unverified/stale googlevideo URL
+        // 3. Direct verified stream if provided, non-placeholder, and not an unverified/stale googlevideo or watch URL
+        val isWatchUrl = track.audioUrl.contains("youtube.com/watch", ignoreCase = true) ||
+            track.audioUrl.contains("music.youtube.com/watch", ignoreCase = true) ||
+            track.audioUrl.contains("youtu.be/", ignoreCase = true)
         val isSafeDirectAudioUrl = track.audioUrl.startsWith("content://") ||
             track.audioUrl.startsWith("file://") ||
             track.audioUrl.startsWith("/") ||
-            (track.audioUrl.startsWith("http") && !track.audioUrl.contains("googlevideo.com", ignoreCase = true))
+            (track.audioUrl.startsWith("http") && !track.audioUrl.contains("googlevideo.com", ignoreCase = true) && !isWatchUrl)
         if (!forceRefresh && !preferNonYoutubeFallback && track.audioUrl.isNotBlank() && !track.audioUrl.contains("SoundHelix") && isSafeDirectAudioUrl) {
             val resolved = ResolvedStream(
                 videoId = rawId.ifBlank { "direct_stream" },
@@ -232,6 +235,7 @@ class ResolverEngine {
                     .resolveExactYoutubeStreamById(targetVideoId, preferredQuality, forceRefresh = forceRefresh)
                 if (directResult.isSuccess) {
                     val url = directResult.getOrThrow()
+                    com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(targetVideoId, preferredQuality, url)
                     val resolved = ResolvedStream(
                         videoId = targetVideoId,
                         streamUrl = url,
@@ -294,6 +298,7 @@ class ResolverEngine {
                     .resolveExactYoutubeStreamById(targetVideoId, preferredQuality, forceRefresh = true)
                 if (retryDirect.isSuccess) {
                     val url = retryDirect.getOrThrow()
+                    com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(targetVideoId, preferredQuality, url)
                     val resolved = ResolvedStream(
                         videoId = targetVideoId,
                         streamUrl = url,
@@ -322,6 +327,7 @@ class ResolverEngine {
                         candidateFormats.firstOrNull()
                     }
                     if (fmt != null) {
+                        com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(targetVideoId, preferredQuality, fmt.url)
                         val resolved = ResolvedStream(
                             videoId = targetVideoId,
                             streamUrl = fmt.url,
@@ -338,6 +344,41 @@ class ResolverEngine {
                     }
                 } catch (e: Exception) {
                     failures.add("${directNode.id}: ${e.message}")
+                }
+            }
+
+            // Alternative YTM Song Search Fallback for restricted "Art Tracks" (Topic songs)
+            if (!track.isVideoTrack && track.title.isNotBlank()) {
+                try {
+                    val query = "${track.title} ${track.artist}".trim()
+                    val altCandidates = withTimeoutOrNull(3000L) {
+                        com.seitharol.data.resolver.InnerTubeStreamExtractor.searchOfficialYtmSongs(query, limit = 4)
+                    }.orEmpty()
+                    for (cand in altCandidates) {
+                        if (cand.videoId.isBlank() || cand.videoId == targetVideoId) continue
+                        val altRes = com.seitharol.data.resolver.InnerTubeStreamExtractor
+                            .resolveExactYoutubeStreamById(cand.videoId, preferredQuality, forceRefresh = false)
+                        if (altRes.isSuccess) {
+                            val url = altRes.getOrThrow()
+                            com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(targetVideoId, preferredQuality, url)
+                            com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cand.videoId, preferredQuality, url)
+                            val resolved = ResolvedStream(
+                                videoId = targetVideoId,
+                                streamUrl = url,
+                                itag = if (url.contains("opus") || url.contains("webm")) 251 else 140,
+                                codec = if (url.contains("opus") || url.contains("webm")) "Opus" else "AAC",
+                                bitrate = "${targetKbps} kbps",
+                                expiresAtMs = now + (6 * 3600 * 1000L),
+                                isLocal = false,
+                                resolvedBy = "YouTube Music InnerTube (Alt Match)",
+                                latencyMs = 18
+                            )
+                            streamCache[cacheKey] = resolved
+                            return@withContext resolved
+                        }
+                    }
+                } catch (e: Exception) {
+                    failures.add("AltYtmSearch: ${e.message}")
                 }
             }
 

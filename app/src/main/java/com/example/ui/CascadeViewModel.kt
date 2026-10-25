@@ -1003,7 +1003,14 @@ class CascadeViewModel(
         val cleanId = InnerTubeStreamExtractor.extractVideoId(track.sourceId)
             ?: InnerTubeStreamExtractor.extractVideoId(track.previewUrl?.removePrefix("ytm_clip:"))
             ?: track.sourceId.removePrefix("ytm_clip:").removePrefix("saavn_clip:").trim()
-        val resolvedHttpUrl = track.previewUrl?.takeIf { it.startsWith("http") && !it.contains("p.scdn.co") && !it.contains("audio-ssl.itunes.apple.com") }.orEmpty()
+        val resolvedHttpUrl = track.previewUrl?.takeIf {
+            it.startsWith("http") &&
+                !it.contains("p.scdn.co") &&
+                !it.contains("audio-ssl.itunes.apple.com") &&
+                !it.contains("youtube.com/watch", ignoreCase = true) &&
+                !it.contains("music.youtube.com/watch", ignoreCase = true) &&
+                !it.contains("youtu.be/", ignoreCase = true)
+        }.orEmpty()
         val cleanAlbum = track.album?.takeUnless {
             it.equals("YouTube Video", ignoreCase = true) ||
                 it.equals("YouTube Videos", ignoreCase = true) ||

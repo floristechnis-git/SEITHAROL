@@ -15,6 +15,7 @@ import com.seitharol.data.resolver.StreamResolver
 import com.seitharol.data.resolver.TrackMetadata
 import com.seitharol.domain.model.NormalizedTrack
 import com.seitharol.domain.model.TrackSource
+import java.lang.ref.WeakReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,6 +31,17 @@ class AudioPlayerManager(
     private val resolverEngine: ResolverEngine,
     private val appContext: Context? = null
 ) {
+    companion object {
+        @Volatile
+        private var activePreviewInstanceRef: WeakReference<AudioPlayerManager>? = null
+
+        fun stopActivePreviewIfAny() {
+            runCatching {
+                activePreviewInstanceRef?.get()?.stopPreviewAndClear()
+            }
+        }
+    }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var previewResolveJob: Job? = null
 
@@ -52,6 +64,7 @@ class AudioPlayerManager(
     private var hasRetriedCurrentPreview: Boolean = false
 
     init {
+        activePreviewInstanceRef = WeakReference(this)
         exoPlayer.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 if (_activePreviewTrackId.value != null) {
@@ -97,6 +110,7 @@ class AudioPlayerManager(
     }
 
     fun playPreview(track: NormalizedTrack) {
+        activePreviewInstanceRef = WeakReference(this)
         if (_activePreviewTrackId.value == track.sourceId &&
             (_isPreviewBuffering.value || exoPlayer.isPlaying || exoPlayer.playbackState == Player.STATE_BUFFERING || previewResolveJob?.isActive == true)
         ) {
@@ -123,8 +137,14 @@ class AudioPlayerManager(
         exoPlayer.clearMediaItems()
 
         val rawPreview = track.previewUrl
-        // Fast-path: Direct HTTP preview URL (e.g., pre-decrypted JioSaavn or Spotify 30s MP3)
-        if (!forceFresh && rawPreview != null && rawPreview.startsWith("http")) {
+        val isYoutubeWatchUrl = rawPreview != null && (
+            rawPreview.contains("youtube.com/watch", ignoreCase = true) ||
+                rawPreview.contains("music.youtube.com/watch", ignoreCase = true) ||
+                rawPreview.contains("youtu.be/", ignoreCase = true)
+            )
+        // Fast-path: Direct HTTP preview URL (e.g., pre-decrypted JioSaavn or Spotify 30s MP3),
+        // excluding YouTube / YouTube Music HTML watch URLs which must be resolved first!
+        if (!forceFresh && rawPreview != null && rawPreview.startsWith("http") && !isYoutubeWatchUrl) {
             startExoPreviewPlayback(
                 trackId = track.sourceId,
                 streamUrl = rawPreview,
@@ -137,6 +157,9 @@ class AudioPlayerManager(
             val ytId = when {
                 rawPreview != null && rawPreview.startsWith("ytm_clip:") ->
                     InnerTubeStreamExtractor.extractVideoId(rawPreview.removePrefix("ytm_clip:"))
+                !rawPreview.isNullOrBlank() ->
+                    InnerTubeStreamExtractor.extractVideoId(rawPreview)
+                        ?: InnerTubeStreamExtractor.extractVideoId(track.sourceId)
                 else -> InnerTubeStreamExtractor.extractVideoId(track.sourceId)
             }
 
@@ -237,6 +260,8 @@ class AudioPlayerManager(
         _activePreviewTrackId.value = null
         _isPreviewBuffering.value = false
         _isPreviewPlaying.value = false
+        exoPlayer.playWhenReady = false
+        exoPlayer.pause()
         exoPlayer.stop()
         exoPlayer.clearMediaItems()
     }
@@ -268,22 +293,24 @@ class AudioPlayerManager(
         stopPreviewAndClear()
         val validYtId = InnerTubeStreamExtractor.extractVideoId(track.sourceId)
             ?: InnerTubeStreamExtractor.extractVideoId(track.previewUrl?.removePrefix("ytm_clip:"))
-        if (!validYtId.isNullOrBlank()) {
-            val directTrack = track.copy(
+        val candidateTrack = if (!validYtId.isNullOrBlank()) {
+            track.copy(
                 source = TrackSource.YOUTUBE,
                 sourceId = validYtId,
                 isPlayableNatively = true
             )
-            onMaximizePlayer(directTrack)
-            return Result.success(Unit)
+        } else {
+            track
         }
 
-        val resolvedResult = resolverEngine.resolveForFullPlayback(track, offlineMode)
+        // Always run through resolverEngine.resolveForFullPlayback so restricted YouTube Music "Art Tracks"
+        // (Topic songs) are pre-resolved and automatically fall back to alternative YTM or JioSaavn streams.
+        val resolvedResult = resolverEngine.resolveForFullPlayback(candidateTrack, offlineMode)
         if (resolvedResult.isSuccess) {
             when (val target = resolvedResult.getOrThrow()) {
                 is ResolvedPlaybackTarget.LocalDeviceUri -> {
                     onMaximizePlayer(
-                        track.copy(
+                        candidateTrack.copy(
                             source = TrackSource.LOCAL_FILE,
                             localPath = target.uri.toString(),
                             isPlayableNatively = true
@@ -304,7 +331,7 @@ class AudioPlayerManager(
         }
 
         // Fallback: hand the track directly to the main player so its multi-client/JioSaavn resolver can play it
-        onMaximizePlayer(track)
+        onMaximizePlayer(candidateTrack)
         return Result.success(Unit)
     }
 
@@ -312,6 +339,7 @@ class AudioPlayerManager(
         runCatching {
             previewResolveJob?.cancel()
             exoPlayer.playWhenReady = false
+            exoPlayer.pause()
             exoPlayer.stop()
             exoPlayer.clearMediaItems()
             activePreviewTrack = null

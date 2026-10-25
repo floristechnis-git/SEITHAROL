@@ -125,28 +125,15 @@ object InnerTubeStreamExtractor {
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
-            clientName = "ANDROID_VR",
-            clientVersion = "1.43.32",
-            userAgent = "com.google.android.apps.youtube.vr.oculus/1.43.32 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
-            clientId = "28",
-            deviceMake = "Oculus",
-            deviceModel = "Quest 3",
+            clientName = "ANDROID_TESTSUITE",
+            clientVersion = "1.9",
+            userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 12L; US) gzip",
+            clientId = "30",
+            deviceMake = "Google",
+            deviceModel = "Pixel 7",
             osName = "Android",
             osVersion = "12L",
             androidSdkVersion = 32,
-            glOverride = "US",
-            sendOriginHeaders = false
-        ),
-        InnerTubeClientConfig(
-            clientName = "ANDROID",
-            clientVersion = "20.10.38",
-            userAgent = "com.google.android.youtube/20.10.38 (Linux; U; Android 14; en_US) gzip",
-            clientId = "3",
-            deviceMake = "Google",
-            deviceModel = "Pixel 8",
-            osName = "Android",
-            osVersion = "14",
-            androidSdkVersion = 34,
             params = "CgIIAQ==",
             glOverride = null,
             sendOriginHeaders = false
@@ -161,6 +148,19 @@ object InnerTubeStreamExtractor {
             osName = "iOS",
             osVersion = "18.3.1.22D72",
             glOverride = null,
+            sendOriginHeaders = false
+        ),
+        InnerTubeClientConfig(
+            clientName = "ANDROID_VR",
+            clientVersion = "1.43.32",
+            userAgent = "com.google.android.apps.youtube.vr.oculus/1.43.32 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+            clientId = "28",
+            deviceMake = "Oculus",
+            deviceModel = "Quest 3",
+            osName = "Android",
+            osVersion = "12L",
+            androidSdkVersion = 32,
+            glOverride = "US",
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
@@ -527,7 +527,8 @@ object InnerTubeStreamExtractor {
         cpn: String,
         allowHls: Boolean = true,
         includeVisitorData: Boolean = false,
-        requiredItag: Int? = null
+        requiredItag: Int? = null,
+        preferProgressiveMp4: Boolean = false
     ): String? {
         return runCatching {
             val visData = if (client.isEmbedded) cachedVisitorData?.takeIf { it.isNotBlank() } else null
@@ -535,8 +536,8 @@ object InnerTubeStreamExtractor {
             val endpoint = URL(client.playerEndpoint)
             val conn = (endpoint.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 3500
-                readTimeout = 3500
+                connectTimeout = 2800
+                readTimeout = 2800
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("User-Agent", client.userAgent)
@@ -711,7 +712,7 @@ object InnerTubeStreamExtractor {
                 }
                 .sortedWith(
                     compareByDescending<AudioStreamCandidate> { requiredItag != null && it.itag == requiredItag }
-                        .thenByDescending { it.isProgressiveMp4 }
+                        .thenByDescending { if (preferProgressiveMp4) it.isProgressiveMp4 else !it.isProgressiveMp4 }
                         .thenByDescending { it.itag == 140 || it.isAacMp4 }
                         .thenBy { kotlin.math.abs(it.kbps - preferredQuality.maxBitrateKbps) }
                 )
@@ -753,7 +754,11 @@ object InnerTubeStreamExtractor {
             com.seitharol.player.OuterTuneResolvingDataSource.invalidate(cleanVideoId)
         } else if (requiredItag == null) {
             com.seitharol.player.OuterTuneResolvingDataSource.getCachedUrl(cleanVideoId, preferredQuality)?.let { cached ->
-                if (!cached.contains(".m3u8", ignoreCase = true) && !cached.contains("manifest.googlevideo.com", ignoreCase = true)) {
+                val isMuxedVideo = cached.contains("itag=18&", ignoreCase = true) ||
+                    cached.endsWith("itag=18", ignoreCase = true) ||
+                    cached.contains("itag=22&", ignoreCase = true) ||
+                    cached.endsWith("itag=22", ignoreCase = true)
+                if (!isMuxedVideo && !cached.contains(".m3u8", ignoreCase = true) && !cached.contains("manifest.googlevideo.com", ignoreCase = true)) {
                     return@withContext Result.success(cached)
                 }
             }
@@ -766,9 +771,7 @@ object InnerTubeStreamExtractor {
             0
         }
 
-        // Fast Path: Try primary rotated client first (ANDROID_VR 1.61.48 ~250ms).
-        // Never use muxed HLS manifests for audio-only playback (allowHls = false) because
-        // disabling C.TRACK_TYPE_VIDEO on ExoPlayer causes muxed HLS variants to stall in STATE_BUFFERING.
+        // Fast Path: Try primary client first (ANDROID_VR 1.61.48 ~200ms) for pure audio (itag=140 M4A / itag=251 Opus).
         val primaryClient = VERIFIED_CLIENTS[startOffset % VERIFIED_CLIENTS.size]
         val fastUrl = extractStreamWithConfig(
             videoId = cleanVideoId,
@@ -777,14 +780,15 @@ object InnerTubeStreamExtractor {
             cpn = cpn,
             allowHls = false,
             includeVisitorData = primaryClient.isEmbedded,
-            requiredItag = requiredItag
+            requiredItag = requiredItag,
+            preferProgressiveMp4 = false
         )
         if (!fastUrl.isNullOrBlank()) {
             com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, fastUrl)
             return@withContext Result.success(fastUrl)
         }
 
-        // Sequential Client Failover across all verified clients
+        // Sequential Client Failover across verified native audio clients
         val remainingClients = VERIFIED_CLIENTS.indices
             .filter { it != (startOffset % VERIFIED_CLIENTS.size) }
             .map { VERIFIED_CLIENTS[it] }
@@ -796,32 +800,12 @@ object InnerTubeStreamExtractor {
                 cpn = generateCpn(),
                 allowHls = false,
                 includeVisitorData = client.isEmbedded,
-                requiredItag = requiredItag
+                requiredItag = requiredItag,
+                preferProgressiveMp4 = false
             )
             if (!nextUrl.isNullOrBlank()) {
                 com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, nextUrl)
                 return@withContext Result.success(nextUrl)
-            }
-        }
-
-        // Fallback to progressive video stream extractor (itag=18 ratebypass=yes / federated nodes)
-        if (requiredItag == null) {
-            val rawVideoFallback = resolveRawVideoStreamById(
-                videoId = cleanVideoId,
-                forceRefresh = forceRefresh,
-                allowHlsFallback = false
-            ).getOrNull()
-            val singleFallback = when {
-                rawVideoFallback.isNullOrBlank() -> null
-                rawVideoFallback.startsWith("merged_av::") -> {
-                    val parts = rawVideoFallback.removePrefix("merged_av::").split("|||")
-                    parts.getOrNull(1) ?: parts.firstOrNull()
-                }
-                else -> rawVideoFallback
-            }
-            if (!singleFallback.isNullOrBlank()) {
-                com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, singleFallback)
-                return@withContext Result.success(singleFallback)
             }
         }
 
@@ -3239,6 +3223,7 @@ object InnerTubeStreamExtractor {
         fun addVideoCandidate(url: String?) {
             if (!url.isNullOrBlank() &&
                 url.startsWith("http") &&
+                !url.startsWith("merged_av::") &&
                 !url.contains(".m3u8", ignoreCase = true) &&
                 !url.contains("manifest.googlevideo.com", ignoreCase = true) &&
                 !candidates.contains(url)
@@ -3258,11 +3243,26 @@ object InnerTubeStreamExtractor {
         if (!targetYtId.isNullOrBlank()) {
             videoStreamCache[targetYtId]?.first?.let { addVideoCandidate(it) }
 
-            val mp4Clients = VIDEO_CLIENTS
-            for (client in mp4Clients) {
+            for (client in VIDEO_CLIENTS) {
                 val url = extractProgressiveVideoWithClient(targetYtId, client, generateCpn(), allowAdaptiveMerge = false)
                 addVideoCandidate(url)
                 if (candidates.size >= 3) break
+            }
+
+            if (candidates.size < 3) {
+                for (client in VERIFIED_CLIENTS) {
+                    val url = extractStreamWithConfig(
+                        videoId = targetYtId,
+                        client = client,
+                        preferredQuality = AudioQuality.HIGH,
+                        cpn = generateCpn(),
+                        allowHls = false,
+                        requiredItag = 18,
+                        preferProgressiveMp4 = true
+                    )
+                    addVideoCandidate(url)
+                    if (candidates.size >= 4) break
+                }
             }
 
             if (candidates.isEmpty()) {
@@ -3281,58 +3281,96 @@ object InnerTubeStreamExtractor {
         preferredQuality: AudioQuality = AudioQuality.HIGH
     ): List<String> = withContext(Dispatchers.IO) {
         val candidates = mutableListOf<String>()
+        val fallbackProgressiveCandidates = mutableListOf<String>()
+
+        fun isMuxedVideoItag(url: String): Boolean {
+            return url.contains("itag=18&", ignoreCase = true) ||
+                url.endsWith("itag=18", ignoreCase = true) ||
+                url.contains("itag=22&", ignoreCase = true) ||
+                url.endsWith("itag=22", ignoreCase = true)
+        }
+
         fun addCandidate(url: String?) {
             if (!url.isNullOrBlank() &&
                 url.startsWith("http") &&
+                !url.startsWith("merged_av::") &&
                 !url.contains(".m3u8", ignoreCase = true) &&
-                !url.contains("manifest.googlevideo.com", ignoreCase = true) &&
-                !candidates.contains(url)
+                !url.contains("manifest.googlevideo.com", ignoreCase = true)
             ) {
-                candidates.add(url)
+                val cleanUrl = com.seitharol.player.OuterTuneResolvingDataSource.stripRangeQueryParam(url)
+                if (isMuxedVideoItag(cleanUrl)) {
+                    if (!fallbackProgressiveCandidates.contains(cleanUrl)) {
+                        fallbackProgressiveCandidates.add(cleanUrl)
+                    }
+                } else if (!candidates.contains(cleanUrl)) {
+                    candidates.add(cleanUrl)
+                }
             }
         }
 
-        var targetYtId = extractVideoId(videoId)
-        if (targetYtId.isNullOrBlank() && title.isNotBlank()) {
-            val cleanArtist = artist.takeIf { !it.equals("Unknown Artist", true) }.orEmpty()
-            val q = "$title $cleanArtist".trim()
-            val searched = runCatching { searchOfficialYtmSongs(q, limit = 3) }.getOrDefault(emptyList())
-            targetYtId = searched.firstOrNull()?.videoId
-        }
+        val isExplicitSaavn = videoId?.startsWith("saavn_") == true || videoId?.startsWith("saavn_clip:") == true
+        var targetYtId = if (isExplicitSaavn) null else extractVideoId(videoId)
 
+        // 1. If it's a YouTube track, resolve pure audio (itag=140 M4A / itag=251 Opus) directly & fast!
         if (!targetYtId.isNullOrBlank()) {
             addCandidate(com.seitharol.player.OuterTuneResolvingDataSource.getCachedUrl(targetYtId, preferredQuality))
 
-            val binaryOrderedClients = VERIFIED_CLIENTS.filter { it.clientName != "ANDROID_VR" } +
-                VERIFIED_CLIENTS.filter { it.clientName == "ANDROID_VR" }
-            for (client in binaryOrderedClients) {
-                val url = extractStreamWithConfig(
+            for (client in VERIFIED_CLIENTS) {
+                val pureAudioUrl = extractStreamWithConfig(
                     videoId = targetYtId,
                     client = client,
                     preferredQuality = preferredQuality,
                     cpn = generateCpn(),
-                    allowHls = false
+                    allowHls = false,
+                    includeVisitorData = client.isEmbedded,
+                    preferProgressiveMp4 = false
                 )
-                addCandidate(url)
-                if (candidates.size >= 3) break
-            }
-
-            if (candidates.isEmpty()) {
-                runCatching {
-                    com.example.network.NetworkClients.resolveStream(targetYtId).streamUrl
-                }.getOrNull()?.let { addCandidate(it) }
+                if (!pureAudioUrl.isNullOrBlank()) {
+                    com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(targetYtId, preferredQuality, pureAudioUrl)
+                    addCandidate(pureAudioUrl)
+                }
+                if (candidates.size >= 2) break
             }
         }
 
-        if (title.isNotBlank()) {
-            val meta = TrackMetadata(
-                id = videoId.orEmpty(),
+        // 2. For JioSaavn tracks or as a fallback when YouTube direct extraction is restricted
+        if (candidates.isEmpty() && title.isNotBlank()) {
+            val saavnMeta = TrackMetadata(
+                id = if (targetYtId != null) "" else videoId.orEmpty(),
                 title = title,
                 artist = artist,
                 durationSeconds = 0
             )
-            val saavnExact = runCatching { StreamResolver.resolveExactStreamUrl(meta, preferredQuality) }.getOrNull()
-            addCandidate(saavnExact)
+            val saavnUrl = runCatching { StreamResolver.resolveExactStreamUrl(saavnMeta, preferredQuality) }.getOrNull()
+            addCandidate(saavnUrl)
+        }
+
+        // 3. If non-YouTube track wasn't on JioSaavn, search YouTube Music by title + artist
+        if (candidates.isEmpty() && targetYtId.isNullOrBlank() && title.isNotBlank()) {
+            val cleanArtist = artist.takeIf { !it.equals("Unknown Artist", true) }.orEmpty()
+            val q = "$title $cleanArtist".trim()
+            val searched = runCatching { searchOfficialYtmSongs(q, limit = 3) }.getOrDefault(emptyList())
+                .ifEmpty { runCatching { searchAllYoutubeVideos(q, limit = 3) }.getOrDefault(emptyList()) }
+            targetYtId = searched.firstOrNull()?.videoId
+            if (!targetYtId.isNullOrBlank()) {
+                for (client in VERIFIED_CLIENTS.take(3)) {
+                    val pureAudioUrl = extractStreamWithConfig(
+                        videoId = targetYtId,
+                        client = client,
+                        preferredQuality = preferredQuality,
+                        cpn = generateCpn(),
+                        allowHls = false,
+                        includeVisitorData = client.isEmbedded,
+                        preferProgressiveMp4 = false
+                    )
+                    addCandidate(pureAudioUrl)
+                    if (candidates.isNotEmpty()) break
+                }
+            }
+        }
+
+        fallbackProgressiveCandidates.forEach { prog ->
+            if (!candidates.contains(prog)) candidates.add(prog)
         }
 
         candidates
@@ -3343,50 +3381,113 @@ object InnerTubeStreamExtractor {
         tempFile: java.io.File,
         onProgress: suspend (downloadedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> }
     ): Boolean = withContext(Dispatchers.IO) {
-        val headers = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(streamUrl)
-        val isGoogleVideo = streamUrl.contains("googlevideo.com", ignoreCase = true)
-        val clenFromUrl = Regex("[?&]clen=(\\d+)").find(streamUrl)?.groupValues?.get(1)?.toLongOrNull() ?: -1L
+        val cleanBaseUrl = com.seitharol.player.OuterTuneResolvingDataSource.stripRangeQueryParam(streamUrl)
+        val headers = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(cleanBaseUrl)
+        val isGoogleVideo = cleanBaseUrl.contains("googlevideo.com", ignoreCase = true)
+        var knownClen = com.seitharol.player.OuterTuneResolvingDataSource.getKnownStreamLength(cleanBaseUrl)
 
-        val isProgressiveItag = streamUrl.contains("itag=18&", ignoreCase = true) ||
-            streamUrl.endsWith("itag=18", ignoreCase = true) ||
-            streamUrl.contains("itag=22&", ignoreCase = true) ||
-            streamUrl.endsWith("itag=22", ignoreCase = true) ||
-            !streamUrl.contains("gir=yes", ignoreCase = true)
+        val isProgressiveItag = cleanBaseUrl.contains("itag=18&", ignoreCase = true) ||
+            cleanBaseUrl.endsWith("itag=18", ignoreCase = true) ||
+            cleanBaseUrl.contains("itag=22&", ignoreCase = true) ||
+            cleanBaseUrl.endsWith("itag=22", ignoreCase = true) ||
+            !cleanBaseUrl.contains("gir=yes", ignoreCase = true)
 
-        if (isGoogleVideo && !isProgressiveItag && clenFromUrl > 10_240L && !streamUrl.contains("&range=")) {
+        // Adaptive googlevideo.com streams (gir=yes, itag=140 M4A / itag=251 Opus)
+        // Download in fast 1 MB unthrottled chunks with throttled progress updates.
+        if (isGoogleVideo && !isProgressiveItag) {
             val chunkedSuccess = runCatching {
                 if (tempFile.exists()) tempFile.delete()
                 java.io.FileOutputStream(tempFile).use { output ->
                     var downloaded = 0L
-                    val chunkSize = 1024L * 1024L // 1 MB per chunk
-                    val buffer = ByteArray(16 * 1024)
-                    while (downloaded < clenFromUrl) {
+                    val chunkSize = 1024L * 1024L // 1 MB per fast unthrottled chunk
+                    val buffer = ByteArray(32 * 1024)
+                    var preferRangeHeader = knownClen <= 0L
+                    var lastProgressEmitMs = 0L
+
+                    while (knownClen <= 0L || downloaded < knownClen) {
                         kotlinx.coroutines.currentCoroutineContext().let { ctx ->
-                            if (!ctx[kotlinx.coroutines.Job]!!.isActive) throw kotlinx.coroutines.CancellationException()
+                            if (ctx[kotlinx.coroutines.Job]?.isActive == false) throw kotlinx.coroutines.CancellationException()
                         }
-                        val endByte = (downloaded + chunkSize - 1L).coerceAtMost(clenFromUrl - 1L)
-                        val sep = if (streamUrl.contains("?")) "&" else "?"
-                        val chunkUrl = "${streamUrl}${sep}range=$downloaded-$endByte"
-                        val reqBuilder = okhttp3.Request.Builder().url(chunkUrl)
-                        headers.forEach { (k, v) -> reqBuilder.header(k, v) }
-                        com.example.network.NetworkClients.okHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
-                            if (!resp.isSuccessful) {
-                                throw IllegalStateException("HTTP ${resp.code} on chunk $downloaded-$endByte")
+                        val endByte = if (knownClen > 10_240L) {
+                            (downloaded + chunkSize - 1L).coerceAtMost(knownClen - 1L)
+                        } else {
+                            downloaded + chunkSize - 1L
+                        }
+                        val requestedChunkLen = (endByte - downloaded + 1L).coerceAtLeast(1L)
+                        if (knownClen > 10_240L && downloaded >= knownClen) break
+
+                        suspend fun fetchChunk(useRangeHeader: Boolean): Long {
+                            val reqBuilder = if (useRangeHeader) {
+                                okhttp3.Request.Builder()
+                                    .url(cleanBaseUrl)
+                                    .header("Range", "bytes=$downloaded-$endByte")
+                            } else {
+                                val sep = if (cleanBaseUrl.contains("?")) "&" else "?"
+                                okhttp3.Request.Builder()
+                                    .url("${cleanBaseUrl}${sep}range=$downloaded-$endByte")
                             }
-                            val body = resp.body ?: throw IllegalStateException("Empty chunk body")
-                            body.byteStream().use { input ->
-                                var read: Int
+                            headers.forEach { (k, v) -> reqBuilder.header(k, v) }
+                            val call = com.example.network.NetworkClients.okHttpClient.newCall(reqBuilder.build())
+                            call.execute().use { resp ->
+                                if (resp.code == 416 && downloaded > 64_000L) {
+                                    return 0L
+                                }
+                                if (!resp.isSuccessful && resp.code != 206) {
+                                    return -1L
+                                }
+                                resp.header("Content-Range")?.let { cr ->
+                                    val totalFromHeader = cr.substringAfterLast("/", "").trim().toLongOrNull() ?: -1L
+                                    if (totalFromHeader > 10_240L) {
+                                        knownClen = totalFromHeader
+                                        com.seitharol.player.OuterTuneResolvingDataSource.recordKnownStreamLength(cleanBaseUrl, totalFromHeader)
+                                    }
+                                }
+                                val body = resp.body ?: return -1L
+                                val contentLen = body.contentLength()
+                                if (downloaded == 0L && knownClen <= 0L && !useRangeHeader && contentLen > chunkSize * 2) {
+                                    knownClen = contentLen
+                                } else if (downloaded > 0L && !useRangeHeader && contentLen > chunkSize * 2) {
+                                    return -1L
+                                }
                                 var chunkRead = 0L
-                                while (input.read(buffer).also { read = it } != -1) {
-                                    output.write(buffer, 0, read)
-                                    downloaded += read
-                                    chunkRead += read
-                                    onProgress(downloaded, clenFromUrl)
+                                body.byteStream().use { input ->
+                                    var read: Int
+                                    while (input.read(buffer).also { read = it } != -1) {
+                                        kotlinx.coroutines.currentCoroutineContext().let { ctx ->
+                                            if (ctx[kotlinx.coroutines.Job]?.isActive == false) throw kotlinx.coroutines.CancellationException()
+                                        }
+                                        output.write(buffer, 0, read)
+                                        downloaded += read
+                                        chunkRead += read
+                                        val now = System.currentTimeMillis()
+                                        if (now - lastProgressEmitMs >= 220L) {
+                                            lastProgressEmitMs = now
+                                            val estTotal = if (knownClen > 10_240L) knownClen else (downloaded + chunkSize)
+                                            onProgress(downloaded, estTotal)
+                                        }
+                                    }
                                 }
-                                if (chunkRead == 0L) {
-                                    throw IllegalStateException("Zero bytes read in chunk")
-                                }
+                                return chunkRead
                             }
+                        }
+
+                        var bytesInChunk = if (!preferRangeHeader) fetchChunk(useRangeHeader = false) else -1L
+                        if (bytesInChunk < 0L) {
+                            preferRangeHeader = !preferRangeHeader
+                            bytesInChunk = fetchChunk(useRangeHeader = preferRangeHeader)
+                        }
+                        if (bytesInChunk <= 0L) {
+                            if (downloaded > 64_000L && (knownClen <= 0L || downloaded >= (knownClen * 95L / 100L))) {
+                                break
+                            }
+                            throw IllegalStateException("Zero bytes read on chunk at offset $downloaded")
+                        }
+                        val estTotal = if (knownClen > 10_240L) knownClen else (downloaded + chunkSize)
+                        onProgress(downloaded, estTotal)
+
+                        if (bytesInChunk < requestedChunkLen) {
+                            knownClen = downloaded
+                            break
                         }
                     }
                     output.flush()
@@ -3399,41 +3500,54 @@ object InnerTubeStreamExtractor {
             if (chunkedSuccess) return@withContext true
         }
 
-        runCatching {
-            if (tempFile.exists()) tempFile.delete()
-            val reqBuilder = okhttp3.Request.Builder().url(streamUrl)
-            headers.forEach { (k, v) -> reqBuilder.header(k, v) }
-            reqBuilder.header("Range", "bytes=0-")
+        // Single-GET download path for JioSaavn CDN and progressive MP4 (itag=18 ratebypass=yes)
+        for (sendRangeZero in listOf(false, true)) {
+            val singleSuccess = runCatching {
+                if (tempFile.exists()) tempFile.delete()
+                val reqBuilder = okhttp3.Request.Builder().url(cleanBaseUrl)
+                headers.forEach { (k, v) -> reqBuilder.header(k, v) }
+                if (sendRangeZero) {
+                    reqBuilder.header("Range", "bytes=0-")
+                }
 
-            com.example.network.NetworkClients.okHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
-                if (!resp.isSuccessful) return@runCatching false
-                val body = resp.body ?: return@runCatching false
-                val totalBytes = body.contentLength().takeIf { it > 10_240L }
-                    ?: clenFromUrl.takeIf { it > 10_240L }
-                    ?: 4_000_000L
+                com.example.network.NetworkClients.okHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
+                    if (!resp.isSuccessful && resp.code != 206) return@runCatching false
+                    val body = resp.body ?: return@runCatching false
+                    val totalBytes = body.contentLength().takeIf { it > 10_240L }
+                        ?: knownClen.takeIf { it > 10_240L }
+                        ?: 4_000_000L
 
-                body.byteStream().use { input ->
-                    java.io.FileOutputStream(tempFile).use { output ->
-                        val buffer = ByteArray(16 * 1024)
-                        var read: Int
-                        var totalRead = 0L
-                        while (input.read(buffer).also { read = it } != -1) {
-                            kotlinx.coroutines.currentCoroutineContext().let { ctx ->
-                                if (ctx[kotlinx.coroutines.Job]?.isActive == false) throw kotlinx.coroutines.CancellationException()
+                    var lastProgressEmitMs = 0L
+                    body.byteStream().use { input ->
+                        java.io.FileOutputStream(tempFile).use { output ->
+                            val buffer = ByteArray(32 * 1024)
+                            var read: Int
+                            var totalRead = 0L
+                            while (input.read(buffer).also { read = it } != -1) {
+                                kotlinx.coroutines.currentCoroutineContext().let { ctx ->
+                                    if (ctx[kotlinx.coroutines.Job]?.isActive == false) throw kotlinx.coroutines.CancellationException()
+                                }
+                                output.write(buffer, 0, read)
+                                totalRead += read
+                                val now = System.currentTimeMillis()
+                                if (now - lastProgressEmitMs >= 220L) {
+                                    lastProgressEmitMs = now
+                                    onProgress(totalRead, totalBytes)
+                                }
                             }
-                            output.write(buffer, 0, read)
-                            totalRead += read
-                            onProgress(totalRead, totalBytes)
+                            output.flush()
+                            onProgress(totalRead, totalRead.coerceAtLeast(totalBytes))
                         }
-                        output.flush()
                     }
                 }
+                tempFile.exists() && tempFile.length() > 10_240L
+            }.getOrElse { e ->
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                false
             }
-            tempFile.exists() && tempFile.length() > 10_240L
-        }.getOrElse { e ->
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            false
+            if (singleSuccess) return@withContext true
         }
+        false
     }
 
     /**

@@ -405,7 +405,12 @@ fun TrackCard(
                         )
                     } else if (!track.isLocalOnlyTrack) {
                         DropdownMenuItem(
-                            text = { Text("Download (Choose Format & Quality)", color = SeitharolTextPrimary) },
+                            text = {
+                                Text(
+                                    text = if (track.isVideoTrack) "Download (Choose Format & Quality)" else "Download Audio",
+                                    color = SeitharolTextPrimary
+                                )
+                            },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Default.CloudDownload,
@@ -419,22 +424,24 @@ fun TrackCard(
                                 showDownloadFormatSheet = true
                             }
                         )
-                        DropdownMenuItem(
-                            text = { Text("Download Video (MP4)", color = SeitharolTextPrimary) },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Default.Videocam,
-                                    contentDescription = "Download Video (MP4)",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            },
-                            onClick = {
-                                showMenu = false
-                                hasRequestedDownload = true
-                                onDownloadClick(DownloadTier.VIDEO_MP4)
-                            }
-                        )
+                        if (track.isVideoTrack) {
+                            DropdownMenuItem(
+                                text = { Text("Download Video (MP4)", color = SeitharolTextPrimary) },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Videocam,
+                                        contentDescription = "Download Video (MP4)",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    hasRequestedDownload = true
+                                    onDownloadClick(DownloadTier.VIDEO_MP4)
+                                }
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("Download Audio Only • High (320k)", color = SeitharolTextPrimary) },
                             leadingIcon = {

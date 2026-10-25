@@ -370,8 +370,16 @@ fun TrackDownloadFormatQualitySheet(
     val settingsManager = remember { AppSettingsManager.getInstance(context) }
     val persistedState by settingsManager.state.collectAsState()
 
-    var isVideoSelected by remember(track.id) {
-        mutableStateOf(track.isVideoTrack || persistedState.downloadVideoFormat)
+    val isVideoTrack = track.isVideoTrack ||
+        track.genre.equals("YouTube Video", ignoreCase = true) ||
+        track.genre.equals("Local Video", ignoreCase = true) ||
+        track.album.equals("YouTube Video", ignoreCase = true) ||
+        track.album.equals("MP4 Video", ignoreCase = true)
+
+    // Audio songs only download as Audio (no Audio vs Video format selection needed).
+    // The 2-option Format selection ("Audio Only" vs "Video") is only shown for video tracks.
+    var isVideoSelected by remember(track.id, isVideoTrack) {
+        mutableStateOf(if (isVideoTrack) persistedState.downloadVideoFormat else false)
     }
     var selectedQuality by remember(track.id) {
         mutableStateOf(persistedState.downloadQuality)
@@ -389,7 +397,7 @@ fun TrackDownloadFormatQualitySheet(
                 .navigationBarsPadding()
         ) {
             Text(
-                text = "Download Options",
+                text = if (isVideoTrack) "Download Options" else "Download Audio",
                 fontFamily = SyneFontFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 20.sp,
@@ -406,90 +414,92 @@ fun TrackDownloadFormatQualitySheet(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            Text(
-                text = "Format",
-                fontFamily = SyneFontFamily,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 15.sp,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(8.dp))
+            if (isVideoTrack) {
+                Text(
+                    text = "Format",
+                    fontFamily = SyneFontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(8.dp))
 
-            val formats = listOf(
-                Triple(false, "Audio Only", "M4A / Opus Audio"),
-                Triple(true, "Video", "MP4 Video + Audio")
-            )
+                val formats = listOf(
+                    Triple(false, "Audio Only", "M4A / Opus Audio"),
+                    Triple(true, "Video", "MP4 Video + Audio")
+                )
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                formats.forEach { (videoOpt, title, subtitle) ->
-                    val isSelected = isVideoSelected == videoOpt
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(14.dp))
-                            .border(
-                                width = if (isSelected) 1.5.dp else 1.dp,
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                                shape = RoundedCornerShape(14.dp)
-                            )
-                            .clickable {
-                                isVideoSelected = videoOpt
-                                settingsManager.setDownloadVideoFormat(videoOpt)
-                            },
-                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    formats.forEach { (videoOpt, title, subtitle) ->
+                        val isSelected = isVideoSelected == videoOpt
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(14.dp))
+                                .border(
+                                    width = if (isSelected) 1.5.dp else 1.dp,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                    shape = RoundedCornerShape(14.dp)
+                                )
+                                .clickable {
+                                    isVideoSelected = videoOpt
+                                    settingsManager.setDownloadVideoFormat(videoOpt)
+                                },
+                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(3.dp)
                             ) {
                                 Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(
-                                        imageVector = if (videoOpt) Icons.Default.Videocam else Icons.Default.Audiotrack,
-                                        contentDescription = null,
-                                        tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Text(
-                                        text = title,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        fontFamily = SyneFontFamily,
-                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (videoOpt) Icons.Default.Videocam else Icons.Default.Audiotrack,
+                                            contentDescription = null,
+                                            tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Text(
+                                            text = title,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = SyneFontFamily,
+                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                    if (isSelected) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                 }
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
+                                Text(
+                                    text = subtitle,
+                                    fontSize = 11.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
-                            Text(
-                                text = subtitle,
-                                fontSize = 11.sp,
-                                fontFamily = OutfitFontFamily,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
                         }
                     }
                 }
-            }
 
-            Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+            }
 
             Text(
                 text = "Quality",

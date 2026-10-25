@@ -683,7 +683,7 @@ class AudioPlayerManager(
 
         bufferingWatchdogJob = coroutineScope.launch {
             val isVid = _state.value.isVideoMode || _state.value.currentTrack?.isVideoTrack == true
-            delay(if (isVid) 12_000L else 5_000L)
+            delay(if (isVid) 12_000L else 8_000L)
             if (!isActive || !userRequestedPlay) return@launch
             val current = _state.value.currentTrack ?: return@launch
             val p = exoPlayer ?: return@launch
@@ -710,7 +710,7 @@ class AudioPlayerManager(
                 }
 
                 stallRecoveryCount++
-                val useFallback = stallRecoveryCount >= 1 && !isVideo
+                val useFallback = stallRecoveryCount >= 2 && !isVideo
                 Log.w(TAG, "Buffering watchdog attempt $stallRecoveryCount (fallback=$useFallback) for '${current.title}' at ${resumePos}ms")
                 resolverEngine.invalidateTrack(current.id)
                 InnerTubeStreamExtractor.invalidateVideoStreamCache(current.id)
@@ -758,13 +758,13 @@ class AudioPlayerManager(
             // streaming and instant seeking without forcing an upfront full-song download.
             val loadControl = DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
-                    /* minBufferMs = */ 20_000,
-                    /* maxBufferMs = */ 60_000,
-                    /* bufferForPlaybackMs = */ 350,
-                    /* bufferForPlaybackAfterRebufferMs = */ 700
+                    /* minBufferMs = */ 15_000,
+                    /* maxBufferMs = */ 50_000,
+                    /* bufferForPlaybackMs = */ 250,
+                    /* bufferForPlaybackAfterRebufferMs = */ 500
                 )
                 .setPrioritizeTimeOverSizeThresholds(true)
-                .setBackBuffer(/* backBufferDurationMs = */ 60_000, /* retainBackBufferFromKeyframe = */ true)
+                .setBackBuffer(/* backBufferDurationMs = */ 30_000, /* retainBackBufferFromKeyframe = */ true)
                 .build()
 
             val builder = ExoPlayer.Builder(context)
@@ -1082,8 +1082,8 @@ class AudioPlayerManager(
                             delay(40L)
                             if (!isActive || !userRequestedPlay || _state.value.currentTrack?.id != current.id) return@launch
                             try {
-                                val useNonYtFallback = trackRetryCount >= 1 && !isVideo
-                                val freshStream = withTimeoutOrNull(14_000L) {
+                                val useNonYtFallback = trackRetryCount >= 2 && !isVideo
+                                val freshStream = withTimeoutOrNull(10_000L) {
                                     resolveStreamForTrack(
                                         track = current.copy(audioUrl = ""),
                                         isVideo = isVideo,
@@ -1333,9 +1333,10 @@ class AudioPlayerManager(
             }
 
             val isMuxedMp4Audio = !isVideo && (
-                sourceUrl.contains("itag=18", ignoreCase = true) ||
-                    sourceUrl.contains("itag=22", ignoreCase = true) ||
-                    (!sourceUrl.contains("gir=yes", ignoreCase = true) && sourceUrl.contains("googlevideo.com", ignoreCase = true))
+                sourceUrl.contains("itag=18&", ignoreCase = true) ||
+                    sourceUrl.endsWith("itag=18", ignoreCase = true) ||
+                    sourceUrl.contains("itag=22&", ignoreCase = true) ||
+                    sourceUrl.endsWith("itag=22", ignoreCase = true)
                 )
 
             if (!isVideo) {
@@ -1346,8 +1347,6 @@ class AudioPlayerManager(
                 attachedTextureView = null
                 attachedTexturePlayer = null
                 if (isMuxedMp4Audio) {
-                    // Attach 1x1 offscreen dummy surface so itag=18 progressive MP4 streams drain video frames
-                    // identically to YouTube Videos without ever stalling at 0:00 or 0:53!
                     ensureDummyAudioSurface()?.let { ds ->
                         runCatching { player.setVideoSurface(ds) }
                     }
@@ -1987,7 +1986,8 @@ class AudioPlayerManager(
                         extractLocalVideoAspectRatio(resolvedLocalTrack.localPath ?: current.localPath)
                     } else null
 
-                    launch {
+                    // Launch DB checkpoint & history recording on independent scope so withContext returns immediately!
+                    coroutineScope.launch(Dispatchers.IO) {
                         runCatching {
                             musicRepository.saveCheckpoint(
                                 trackId = resolvedLocalTrack.id,
@@ -2003,7 +2003,7 @@ class AudioPlayerManager(
                     }
 
                     val firstTry = runCatching {
-                        withTimeoutOrNull(12_000L) {
+                        withTimeoutOrNull(8_000L) {
                             resolveStreamForTrack(
                                 track = resolvedLocalTrack,
                                 isVideo = isVideoTrack,
@@ -2015,14 +2015,14 @@ class AudioPlayerManager(
                     }.getOrNull()
 
                     val resolvedStream = firstTry ?: run {
-                        // Fast failover with rotated client & JioSaavn fallback
-                        withTimeoutOrNull(12_000L) {
+                        // Fast failover with rotated InnerTube client first
+                        withTimeoutOrNull(10_000L) {
                             if (!isVideoTrack) {
                                 resolverEngine.resolveTrack(
                                     track = resolvedLocalTrack.copy(audioUrl = ""),
-                                    preferredQuality = com.seitharol.data.resolver.AudioQuality.LOW,
+                                    preferredQuality = preferredQuality,
                                     forceRefresh = true,
-                                    preferNonYoutubeFallback = true
+                                    preferNonYoutubeFallback = false
                                 )
                             } else {
                                 resolveStreamForTrack(
@@ -2155,21 +2155,29 @@ class AudioPlayerManager(
                 localCandidates.add(File(rawPath))
             }
 
-        for (idCandidate in listOfNotNull(current.id, canonicalId, cleanYtId, safeId).distinct()) {
-            localCandidates.add(File(downloadDir, "${idCandidate}_video_mp4.mp4"))
-            localCandidates.add(File(downloadDir, "$idCandidate.mp4"))
-            localCandidates.add(File(downloadDir, "$idCandidate.audio"))
-            localCandidates.add(File(downloadDir, "${idCandidate}_high.opus"))
-            localCandidates.add(File(downloadDir, "${idCandidate}_high.m4a"))
-            localCandidates.add(File(downloadDir, "${idCandidate}_original.opus"))
-            localCandidates.add(File(downloadDir, "${idCandidate}_original.m4a"))
-            localCandidates.add(File(downloadDir, "${idCandidate}_standard.opus"))
-            localCandidates.add(File(downloadDir, "${idCandidate}_standard.m4a"))
-            localCandidates.add(File(downloadDir, "${idCandidate}_data_saver.opus"))
-            localCandidates.add(File(downloadDir, "${idCandidate}_data_saver.m4a"))
-            localCandidates.add(File(downloadDir, "${idCandidate}_discover.m4a"))
-            localCandidates.add(File(downloadDir, "${idCandidate}_discover.flac"))
-            localCandidates.add(File(downloadDir, "${idCandidate}_discover.opus"))
+        val hasAnyDownloadRecord = current.isDownloaded ||
+            dbTrack?.isDownloaded == true ||
+            !downloadEntityPath.isNullOrBlank() ||
+            !discoverDownloadPath.isNullOrBlank()
+
+        if (hasAnyDownloadRecord && downloadDir.exists()) {
+            for (idCandidate in listOfNotNull(current.id, canonicalId, cleanYtId, safeId).distinct()) {
+                localCandidates.add(File(downloadDir, "${idCandidate}_standard.m4a"))
+                localCandidates.add(File(downloadDir, "${idCandidate}_high.m4a"))
+                localCandidates.add(File(downloadDir, "${idCandidate}_discover.m4a"))
+                localCandidates.add(File(downloadDir, "${idCandidate}_data_saver.m4a"))
+                localCandidates.add(File(downloadDir, "${idCandidate}_original.m4a"))
+                localCandidates.add(File(downloadDir, "${idCandidate}_video_mp4.mp4"))
+                localCandidates.add(File(downloadDir, "${idCandidate}_discover.mp4"))
+                localCandidates.add(File(downloadDir, "$idCandidate.mp4"))
+                localCandidates.add(File(downloadDir, "$idCandidate.audio"))
+                localCandidates.add(File(downloadDir, "${idCandidate}_high.opus"))
+                localCandidates.add(File(downloadDir, "${idCandidate}_original.opus"))
+                localCandidates.add(File(downloadDir, "${idCandidate}_standard.opus"))
+                localCandidates.add(File(downloadDir, "${idCandidate}_data_saver.opus"))
+                localCandidates.add(File(downloadDir, "${idCandidate}_discover.flac"))
+                localCandidates.add(File(downloadDir, "${idCandidate}_discover.opus"))
+            }
         }
 
         val requireVideoFile = (current.isVideoTrack || _state.value.isVideoMode) &&
@@ -3059,17 +3067,21 @@ class AudioPlayerManager(
                     runCatching { exoPlayer?.clearVideoTextureView(oldTv) }
                     runCatching { videoExoPlayer?.clearVideoTextureView(oldTv) }
                 }
-                runCatching { exoPlayer?.clearVideoSurface() }
                 attachedTextureView = null
                 attachedTexturePlayer = null
+                ensureDummyAudioSurface()?.let { ds ->
+                    runCatching { exoPlayer?.setVideoSurface(ds) }
+                }
                 return
             }
 
-            // Never attach a video surface if the current track is an audio track!
+            // Never attach a visible video surface if the current track is an audio track; keep dummyAudioSurface attached!
             val isCurrentVideo = _state.value.isVideoMode || _state.value.currentTrack?.isVideoTrack == true
             if (!isCurrentVideo) {
                 runCatching { exoPlayer?.clearVideoTextureView(textureView) }
-                runCatching { exoPlayer?.clearVideoSurface() }
+                ensureDummyAudioSurface()?.let { ds ->
+                    runCatching { exoPlayer?.setVideoSurface(ds) }
+                }
                 return
             }
 

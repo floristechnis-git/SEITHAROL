@@ -765,9 +765,13 @@ fun DownloadProviderFormatBottomSheet(
     val settingsManager = remember { com.seitharol.data.preferences.AppSettingsManager.getInstance(context) }
     val persistedState by settingsManager.state.collectAsState()
 
+    val isVideoTrack = track.album.equals("YouTube Video", ignoreCase = true) ||
+        track.album.equals("MP4 Video", ignoreCase = true)
     val sortedProviders = remember { downloadService.getSortedProviders() }
     var selectedProvider by remember { mutableStateOf(sortedProviders.first()) }
-    var selectedFormat by remember { mutableStateOf(downloadService.getPreferredFormat()) }
+    var selectedFormat by remember(track.sourceId, isVideoTrack) {
+        mutableStateOf(if (isVideoTrack) downloadService.getPreferredFormat() else DownloadFormat.AUDIO)
+    }
     var selectedQuality by remember { mutableStateOf(persistedState.downloadQuality) }
 
     ModalBottomSheet(
@@ -787,7 +791,7 @@ fun DownloadProviderFormatBottomSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Download Track",
+                    text = if (isVideoTrack) "Download Track" else "Download Audio",
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -813,71 +817,73 @@ fun DownloadProviderFormatBottomSheet(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            Text(
-                text = "Download Format",
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(8.dp))
+            if (isVideoTrack) {
+                Text(
+                    text = "Download Format",
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(8.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                DownloadFormat.entries.forEach { format ->
-                    val isSelected = selectedFormat == format
-                    val isVideoFormat = format == DownloadFormat.VIDEO
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(14.dp))
-                            .border(
-                                width = if (isSelected) 1.8.dp else 1.dp,
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                                shape = RoundedCornerShape(14.dp)
-                            )
-                            .clickable {
-                                selectedFormat = format
-                                settingsManager.setDownloadVideoFormat(isVideoFormat)
-                            },
-                        color = if (isSelected) {
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.40f)
-                        } else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = format.label,
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    DownloadFormat.entries.forEach { format ->
+                        val isSelected = selectedFormat == format
+                        val isVideoFormat = format == DownloadFormat.VIDEO
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(14.dp))
+                                .border(
+                                    width = if (isSelected) 1.8.dp else 1.dp,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                    shape = RoundedCornerShape(14.dp)
                                 )
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
+                                .clickable {
+                                    selectedFormat = format
+                                    settingsManager.setDownloadVideoFormat(isVideoFormat)
+                                },
+                            color = if (isSelected) {
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.40f)
+                            } else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = format.label,
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                     )
+                                    if (isSelected) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                 }
+                                Text(
+                                    text = format.badge,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
-                            Text(
-                                text = format.badge,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
                         }
                     }
                 }
-            }
 
-            Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(18.dp))
+            }
 
             Text(
                 text = "Download Quality",

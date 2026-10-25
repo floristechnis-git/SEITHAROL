@@ -553,11 +553,7 @@ class DownloadRepository(
         val isVideoDownload = effectiveTier == DownloadTier.VIDEO_MP4
         val job = repoScope.launch {
             val downloadDir = File(appContext.filesDir, "downloads").apply { if (!exists()) mkdirs() }
-            val ext = when {
-                isVideoDownload -> "mp4"
-                effectiveTier.codec.contains("Opus", ignoreCase = true) -> "opus"
-                else -> "m4a"
-            }
+            val ext = if (isVideoDownload) "mp4" else "m4a"
             val safeFileId = track.id.replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { "track_${track.title.hashCode()}" }
             val destFile = File(downloadDir, "${safeFileId}_${effectiveTier.name.lowercase()}.$ext")
             runCatching {
@@ -601,11 +597,7 @@ class DownloadRepository(
     private suspend fun executeDownload(track: Track, tier: DownloadTier) = withContext(Dispatchers.IO) {
         val isVideo = tier == DownloadTier.VIDEO_MP4
         val downloadDir = File(appContext.filesDir, "downloads").apply { if (!exists()) mkdirs() }
-        val ext = when {
-            isVideo -> "mp4"
-            tier.codec.contains("Opus", ignoreCase = true) -> "opus"
-            else -> "m4a"
-        }
+        val ext = if (isVideo) "mp4" else "m4a"
         val safeFileId = track.id.replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { "track_${track.title.hashCode()}" }
         val destFile = File(downloadDir, "${safeFileId}_${tier.name.lowercase()}.$ext")
         val tempFile = File(downloadDir, "${safeFileId}_${tier.name.lowercase()}.tmp")
@@ -646,17 +638,21 @@ class DownloadRepository(
                     DownloadTier.HIGH, DownloadTier.ORIGINAL -> com.seitharol.data.resolver.AudioQuality.HIGH
                     else -> com.seitharol.data.resolver.AudioQuality.NORMAL
                 }
-                buildList {
-                    com.seitharol.data.resolver.InnerTubeStreamExtractor.resolveDownloadableStreamCandidates(
-                        videoId = track.id,
-                        title = track.title,
-                        artist = track.artist,
-                        preferredQuality = quality
-                    ).forEach { add(it) }
-                    runCatching {
-                        val resolved = resolverEngine.resolveTrack(track, quality, forceRefresh = isEmpty()).streamUrl
-                        if (resolved.isNotBlank() && !resolved.contains(".m3u8", true) && !contains(resolved)) {
-                            add(resolved)
+                val fastCandidates = com.seitharol.data.resolver.InnerTubeStreamExtractor.resolveDownloadableStreamCandidates(
+                    videoId = track.id,
+                    title = track.title,
+                    artist = track.artist,
+                    preferredQuality = quality
+                )
+                if (fastCandidates.isNotEmpty()) {
+                    fastCandidates
+                } else {
+                    buildList {
+                        runCatching {
+                            val resolved = resolverEngine.resolveTrack(track, quality, forceRefresh = true).streamUrl
+                            if (resolved.isNotBlank() && !resolved.contains(".m3u8", true)) {
+                                add(resolved)
+                            }
                         }
                     }
                 }

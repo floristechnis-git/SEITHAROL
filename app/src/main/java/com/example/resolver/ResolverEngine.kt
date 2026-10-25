@@ -228,7 +228,7 @@ class ResolverEngine {
         val targetKbps = preferredQuality.maxBitrateKbps
         val failures = mutableListOf<String>()
 
-        // 4. FAST ORIGINAL YOUTUBE VIDEO_ID RESOLUTION + INSTANT JIOSAAVN FAILOVER
+        // 4. FAST YOUTUBE MUSIC INNERTUBE AUDIO RESOLUTION (Direct Pure Audio Stream First)
         if (isYouTubeId) {
             if (!preferNonYoutubeFallback) {
                 val directResult = com.seitharol.data.resolver.InnerTubeStreamExtractor
@@ -254,11 +254,42 @@ class ResolverEngine {
                 }
             }
 
-            // Fast JioSaavn CDN Fallback for Audio Songs (resolves in ~250ms in India!)
+            // On-Device InnerTube secondary transport
+            if (!preferNonYoutubeFallback) {
+                try {
+                    val req = ResolveRequest(videoId = targetVideoId, title = track.title, artist = track.artist)
+                    val res = withTimeoutOrNull(2500L) { deviceInnerTubeResolver.resolve(req) }
+                    val candidateFormats = res?.formats?.filter { it.url.isNotBlank() }.orEmpty()
+                    val fmt = if (preferredQuality == com.seitharol.data.resolver.AudioQuality.LOW) {
+                        candidateFormats.minByOrNull { it.bitrate } ?: candidateFormats.firstOrNull()
+                    } else {
+                        candidateFormats.firstOrNull()
+                    }
+                    if (res != null && fmt != null) {
+                        com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(targetVideoId, preferredQuality, fmt.url)
+                        val resolved = ResolvedStream(
+                            videoId = targetVideoId,
+                            streamUrl = fmt.url,
+                            itag = fmt.id.toIntOrNull() ?: 140,
+                            codec = fmt.codec.uppercase(),
+                            bitrate = "${fmt.bitrate / 1000} kbps",
+                            expiresAtMs = res.expiresAt,
+                            isLocal = false,
+                            resolvedBy = res.resolverId,
+                            latencyMs = 15
+                        )
+                        streamCache[cacheKey] = resolved
+                        return@withContext resolved
+                    }
+                } catch (e: Exception) {
+                    failures.add("${deviceInnerTubeResolver.id}: ${e.message}")
+                }
+            }
+
+            // Fast JioSaavn CDN Fallback for Restricted Art Tracks
             if (!track.isVideoTrack && track.title.isNotBlank()) {
                 try {
-                    // Pass id = "" so StreamResolver goes directly to JioSaavn without re-running InnerTube!
-                    val saavnUrl = withTimeoutOrNull(2800L) {
+                    val saavnUrl = withTimeoutOrNull(2500L) {
                         com.seitharol.data.resolver.StreamResolver.resolveExactStreamUrl(
                             track = com.seitharol.data.resolver.TrackMetadata(
                                 id = "",
@@ -292,7 +323,7 @@ class ResolverEngine {
             }
 
             // If preferNonYoutubeFallback was true and JioSaavn didn't have the song (e.g. Manipuri/YouTube track),
-            // always try InnerTubeStreamExtractor directly before secondary resolvers!
+            // always try InnerTubeStreamExtractor directly!
             if (preferNonYoutubeFallback) {
                 val retryDirect = com.seitharol.data.resolver.InnerTubeStreamExtractor
                     .resolveExactYoutubeStreamById(targetVideoId, preferredQuality, forceRefresh = true)
@@ -312,38 +343,6 @@ class ResolverEngine {
                     )
                     streamCache[cacheKey] = resolved
                     return@withContext resolved
-                }
-            }
-
-            // Secondary Device/Federated Resolvers with tight timeout
-            val req = ResolveRequest(videoId = targetVideoId, title = track.title, artist = track.artist)
-            for (directNode in listOf(deviceInnerTubeResolver, pipedResolver, invidiousResolver)) {
-                try {
-                    val res = withTimeoutOrNull(2500L) { directNode.resolve(req) } ?: continue
-                    val candidateFormats = res.formats.filter { it.url.isNotBlank() }
-                    val fmt = if (preferredQuality == com.seitharol.data.resolver.AudioQuality.LOW) {
-                        candidateFormats.minByOrNull { it.bitrate } ?: candidateFormats.firstOrNull()
-                    } else {
-                        candidateFormats.firstOrNull()
-                    }
-                    if (fmt != null) {
-                        com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(targetVideoId, preferredQuality, fmt.url)
-                        val resolved = ResolvedStream(
-                            videoId = targetVideoId,
-                            streamUrl = fmt.url,
-                            itag = fmt.id.toIntOrNull() ?: 140,
-                            codec = fmt.codec.uppercase(),
-                            bitrate = "${fmt.bitrate / 1000} kbps",
-                            expiresAtMs = res.expiresAt,
-                            isLocal = false,
-                            resolvedBy = res.resolverId,
-                            latencyMs = 20
-                        )
-                        streamCache[cacheKey] = resolved
-                        return@withContext resolved
-                    }
-                } catch (e: Exception) {
-                    failures.add("${directNode.id}: ${e.message}")
                 }
             }
 

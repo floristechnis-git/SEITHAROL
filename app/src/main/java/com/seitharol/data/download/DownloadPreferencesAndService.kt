@@ -300,14 +300,16 @@ class DownloadPreferencesAndService(private val context: Context) {
                     artist = primaryArtist
                 )
             } else {
-                buildList {
-                    resolveDirectDownloadUrl(track, primaryArtist, provider, preferredQuality)?.let { add(it) }
+                val directPrimary = resolveDirectDownloadUrl(track, primaryArtist, provider, preferredQuality)
+                if (!directPrimary.isNullOrBlank()) {
+                    listOf(directPrimary)
+                } else {
                     InnerTubeStreamExtractor.resolveDownloadableStreamCandidates(
                         videoId = track.sourceId,
                         title = track.title,
                         artist = primaryArtist,
                         preferredQuality = preferredQuality
-                    ).forEach { if (!contains(it)) add(it) }
+                    )
                 }
             }
             if (candidateUrls.isEmpty()) {
@@ -318,7 +320,11 @@ class DownloadPreferencesAndService(private val context: Context) {
             var downloadedOk = false
             var lastNotifMs = 0L
 
-            for (candidateUrl in candidateUrls) {
+            val allMirrors = candidateUrls.toMutableList()
+            var idx = 0
+            while (idx < allMirrors.size) {
+                val candidateUrl = allMirrors[idx]
+                idx++
                 coroutineContext.ensureActive()
                 val ok = InnerTubeStreamExtractor.downloadUrlToFileReliable(
                     streamUrl = candidateUrl,
@@ -358,6 +364,13 @@ class DownloadPreferencesAndService(private val context: Context) {
                 if (ok && tempFile.exists() && tempFile.length() > 8_192L) {
                     downloadedOk = true
                     break
+                } else if (!isVideoFormat && idx == 1 && allMirrors.size == 1) {
+                    InnerTubeStreamExtractor.resolveDownloadableStreamCandidates(
+                        videoId = track.sourceId,
+                        title = track.title,
+                        artist = primaryArtist,
+                        preferredQuality = preferredQuality
+                    ).forEach { mirror -> if (!allMirrors.contains(mirror)) allMirrors.add(mirror) }
                 }
             }
 
@@ -584,18 +597,11 @@ class DownloadPreferencesAndService(private val context: Context) {
         provider: DownloadProvider,
         preferredQuality: AudioQuality = AppSettingsManager.getInstance(appContext).state.value.downloadQuality
     ): String? {
-        // 1. Check if track.sourceId or track.previewUrl contains a valid 11-char YouTube videoId
+        val canonicalId = canonicalTrackId(track.sourceId)
         val cleanYtId = InnerTubeStreamExtractor.extractVideoId(track.sourceId)
             ?: InnerTubeStreamExtractor.extractVideoId(track.previewUrl?.removePrefix("ytm_clip:"))
-        if (!cleanYtId.isNullOrBlank()) {
-            val directYt = InnerTubeStreamExtractor.resolveWorkingStreamUrl(cleanYtId, preferredQuality).getOrNull()
-                ?: InnerTubeStreamExtractor.resolveExactYoutubeStreamById(cleanYtId, preferredQuality, forceRefresh = true).getOrNull()
-            if (!directYt.isNullOrBlank()) return directYt
-        }
-
-        val canonicalId = canonicalTrackId(track.sourceId)
         val metadata = TrackMetadata(
-            id = canonicalId,
+            id = if (cleanYtId != null) "" else canonicalId,
             title = track.title,
             artist = primaryArtist,
             album = track.album.orEmpty(),
@@ -603,10 +609,23 @@ class DownloadPreferencesAndService(private val context: Context) {
             thumbnailUrl = track.artUrl
         )
 
-        // 2. If JioSaavn is selected, try JioSaavn first, then fall back to YouTube Music search
-        if (provider == DownloadProvider.JIOSAAVN) {
+        // 1. If track has a valid YouTube ID and JioSaavn wasn't explicitly forced, resolve pure YouTube audio first (1 fast call!)
+        if (!cleanYtId.isNullOrBlank() && provider != DownloadProvider.JIOSAAVN) {
+            val directYt = InnerTubeStreamExtractor.resolveExactYoutubeStreamById(cleanYtId, preferredQuality, forceRefresh = false).getOrNull()
+                ?: InnerTubeStreamExtractor.resolveExactYoutubeStreamById(cleanYtId, preferredQuality, forceRefresh = true).getOrNull()
+            if (!directYt.isNullOrBlank()) return directYt
+        }
+
+        // 2. Try JioSaavn direct M4A AAC stream when JioSaavn is selected or as fallback
+        if (provider == DownloadProvider.JIOSAAVN || track.title.isNotBlank()) {
             val saavnUrl = runCatching { StreamResolver.resolveExactStreamUrl(metadata, preferredQuality) }.getOrNull()
             if (!saavnUrl.isNullOrBlank()) return saavnUrl
+        }
+
+        // 3. If JioSaavn was selected on a YouTube track and JioSaavn didn't have it, fall back to YouTube direct audio
+        if (!cleanYtId.isNullOrBlank()) {
+            val directYt = InnerTubeStreamExtractor.resolveExactYoutubeStreamById(cleanYtId, preferredQuality, forceRefresh = false).getOrNull()
+            if (!directYt.isNullOrBlank()) return directYt
         }
 
         // 3. Search YouTube Music by title + artist for non-YouTube seeded Discover tracks (e.g. Spotify/iTunes/Deezer)

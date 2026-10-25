@@ -699,7 +699,8 @@ object InnerTubeStreamExtractor {
             }
 
             val failedForVideo = failedAudioStreamsByVideoId[videoId].orEmpty()
-            // Prioritize pure audio M4A AAC (itag=140), then Opus (itag=251/250/249), then progressive MP4 (itag=18 ratebypass=yes)
+            // Prioritize progressive MP4 (itag=18 with ratebypass=yes — the exact format that plays YouTube Videos!)
+            // first so DefaultHttpDataSource streams unthrottled without gir=yes range issues, followed by M4A AAC (140) and Opus (251).
             val sortedCandidates = audioStreams
                 .filter { cand ->
                     requiredItag == null || cand.itag == requiredItag
@@ -710,8 +711,8 @@ object InnerTubeStreamExtractor {
                 }
                 .sortedWith(
                     compareByDescending<AudioStreamCandidate> { requiredItag != null && it.itag == requiredItag }
-                        .thenByDescending { it.itag == 140 || (it.isAacMp4 && !it.isProgressiveMp4) }
-                        .thenByDescending { !it.isProgressiveMp4 }
+                        .thenByDescending { it.isProgressiveMp4 }
+                        .thenByDescending { it.itag == 140 || it.isAacMp4 }
                         .thenBy { kotlin.math.abs(it.kbps - preferredQuality.maxBitrateKbps) }
                 )
 
@@ -2954,8 +2955,8 @@ object InnerTubeStreamExtractor {
 
             if (!candidate.isNullOrBlank() && !failedSet.contains(candidate)) {
                 if (!candidate.startsWith("merged_av::")) {
-                    val isStatelessVrInitial = !forceRefresh && client.clientName == "ANDROID_VR"
-                    if (isStatelessVrInitial || verifyVideoStreamPlayable(candidate)) {
+                    val isDirectNativeClient = !client.isEmbedded
+                    if (isDirectNativeClient || verifyVideoStreamPlayable(candidate)) {
                         com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, AudioQuality.HIGH, candidate)
                         videoStreamCache[cleanVideoId] = candidate to now
                         return@withContext Result.success(candidate)

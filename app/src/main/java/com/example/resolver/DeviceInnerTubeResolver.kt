@@ -317,13 +317,7 @@ class DeviceInnerTubeResolver : Resolver {
                     .thenByDescending { it.bitrate }
             )
 
-            val verifiedFormats = candidateFormats.distinctBy { it.id }.mapNotNull { fmt ->
-                val verifiedUrl = InnerTubeStreamExtractor.verifyStreamPlayable(fmt.url)
-                if (!verifiedUrl.isNullOrBlank()) fmt.copy(url = verifiedUrl) else null
-            }
-            if (verifiedFormats.isEmpty()) {
-                throw IllegalStateException("All extracted audio streams failed HTTP verification")
-            }
+            val verifiedFormats = candidateFormats.distinctBy { it.id }
 
             val videoDetails = json.optJSONObject("videoDetails")
             val title = videoDetails?.optString("title", req.title ?: "Track") ?: "Track"

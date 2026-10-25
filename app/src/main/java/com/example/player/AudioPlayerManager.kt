@@ -683,7 +683,7 @@ class AudioPlayerManager(
 
         bufferingWatchdogJob = coroutineScope.launch {
             val isVid = _state.value.isVideoMode || _state.value.currentTrack?.isVideoTrack == true
-            delay(if (isVid) 14_000L else 10_000L)
+            delay(if (isVid) 12_000L else 5_000L)
             if (!isActive || !userRequestedPlay) return@launch
             val current = _state.value.currentTrack ?: return@launch
             val p = exoPlayer ?: return@launch
@@ -710,7 +710,7 @@ class AudioPlayerManager(
                 }
 
                 stallRecoveryCount++
-                val useFallback = stallRecoveryCount >= 2 && !isVideo
+                val useFallback = stallRecoveryCount >= 1 && !isVideo
                 Log.w(TAG, "Buffering watchdog attempt $stallRecoveryCount (fallback=$useFallback) for '${current.title}' at ${resumePos}ms")
                 resolverEngine.invalidateTrack(current.id)
                 InnerTubeStreamExtractor.invalidateVideoStreamCache(current.id)
@@ -906,6 +906,8 @@ class AudioPlayerManager(
                     }
 
                     override fun onRenderedFirstFrame() {
+                        val isVid = _state.value.isVideoMode || _state.value.currentTrack?.isVideoTrack == true
+                        if (!isVid) return
                         val detectedRatio = computeVideoAspectRatio(videoSize)
                         _state.value = _state.value.copy(
                             isVideoFrameRendered = true,
@@ -914,6 +916,8 @@ class AudioPlayerManager(
                     }
 
                     override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                        val isVid = _state.value.isVideoMode || _state.value.currentTrack?.isVideoTrack == true
+                        if (!isVid) return
                         val detectedRatio = computeVideoAspectRatio(videoSize)
                         if (detectedRatio != null) {
                             _state.value = _state.value.copy(
@@ -1078,7 +1082,7 @@ class AudioPlayerManager(
                             delay(40L)
                             if (!isActive || !userRequestedPlay || _state.value.currentTrack?.id != current.id) return@launch
                             try {
-                                val useNonYtFallback = trackRetryCount >= 2 && !isVideo
+                                val useNonYtFallback = trackRetryCount >= 1 && !isVideo
                                 val freshStream = withTimeoutOrNull(14_000L) {
                                     resolveStreamForTrack(
                                         track = current.copy(audioUrl = ""),
@@ -1328,22 +1332,34 @@ class AudioPlayerManager(
                 else -> Uri.parse(raw)
             }
 
+            val isMuxedMp4Audio = !isVideo && (
+                sourceUrl.contains("itag=18", ignoreCase = true) ||
+                    sourceUrl.contains("itag=22", ignoreCase = true) ||
+                    (!sourceUrl.contains("gir=yes", ignoreCase = true) && sourceUrl.contains("googlevideo.com", ignoreCase = true))
+                )
+
             if (!isVideo) {
-                // Playing an audio song: detach any stale video surface so a prior video or
-                // destroyed TextureView never blocks audio playback!
+                // Detach any visible TextureView when playing an audio song
                 attachedTextureView?.let { tv ->
                     runCatching { player.clearVideoTextureView(tv) }
                 }
-                runCatching { player.clearVideoSurface() }
                 attachedTextureView = null
                 attachedTexturePlayer = null
+                if (isMuxedMp4Audio) {
+                    // Attach 1x1 offscreen dummy surface so itag=18 progressive MP4 streams drain video frames
+                    // identically to YouTube Videos without ever stalling at 0:00 or 0:53!
+                    ensureDummyAudioSurface()?.let { ds ->
+                        runCatching { player.setVideoSurface(ds) }
+                    }
+                } else {
+                    runCatching { player.clearVideoSurface() }
+                }
             }
 
-            // Enable hardware video decoding directly on main exoPlayer for ALL video tracks
-            // Only mutate trackSelectionParameters when state actually differs so we never trigger a renderer reset!
+            // Enable video track draining for both video mode AND muxed itag=18 audio streams
             runCatching {
                 val isCurrentlyDisabled = player.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_VIDEO)
-                val shouldDisable = !isVideo
+                val shouldDisable = !isVideo && !isMuxedMp4Audio
                 if (isCurrentlyDisabled != shouldDisable) {
                     player.trackSelectionParameters = player.trackSelectionParameters
                         .buildUpon()
@@ -3018,6 +3034,22 @@ class AudioPlayerManager(
     private var activeVideoUsesSplitPlayer: Boolean = false
     private var attachedTextureView: android.view.TextureView? = null
     private var attachedTexturePlayer: ExoPlayer? = null
+    private var dummyAudioSurfaceTexture: android.graphics.SurfaceTexture? = null
+    private var dummyAudioSurface: android.view.Surface? = null
+
+    private fun ensureDummyAudioSurface(): android.view.Surface? {
+        if (dummyAudioSurface != null && dummyAudioSurface?.isValid == true) {
+            return dummyAudioSurface
+        }
+        return runCatching {
+            dummyAudioSurface?.release()
+            dummyAudioSurfaceTexture?.release()
+            val st = android.graphics.SurfaceTexture(0)
+            st.setDefaultBufferSize(16, 16)
+            dummyAudioSurfaceTexture = st
+            android.view.Surface(st).also { dummyAudioSurface = it }
+        }.getOrNull()
+    }
 
     fun attachVideoTextureView(textureView: android.view.TextureView?) {
         try {

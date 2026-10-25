@@ -63,8 +63,19 @@ class AudioPlayerManager(
     @Volatile
     private var hasRetriedCurrentPreview: Boolean = false
 
+    private var dummyPreviewSurfaceTexture: android.graphics.SurfaceTexture? = null
+    private var dummyPreviewSurface: android.view.Surface? = null
+
     init {
         activePreviewInstanceRef = WeakReference(this)
+        runCatching {
+            val st = android.graphics.SurfaceTexture(0)
+            st.setDefaultBufferSize(16, 16)
+            dummyPreviewSurfaceTexture = st
+            val surf = android.view.Surface(st)
+            dummyPreviewSurface = surf
+            exoPlayer.setVideoSurface(surf)
+        }
         exoPlayer.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 if (_activePreviewTrackId.value != null) {

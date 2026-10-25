@@ -457,16 +457,7 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                     .thenByDescending { it.bitrate }
             )
 
-            var verifiedCandidate: CandidateFmt? = null
-            for (cand in sorted.distinctBy { it.itag }.take(3)) {
-                val verifiedUrl = com.seitharol.data.resolver.InnerTubeStreamExtractor.verifyStreamPlayable(cand.url)
-                if (!verifiedUrl.isNullOrBlank()) {
-                    verifiedCandidate = cand.copy(url = verifiedUrl)
-                    break
-                }
-            }
-
-            val finalCand = verifiedCandidate ?: throw IllegalStateException("No verified playable audio URL in formats")
+            val finalCand = sorted.firstOrNull() ?: throw IllegalStateException("No playable audio URL in formats")
             com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(
                 videoId,
                 com.seitharol.data.resolver.AudioQuality.NORMAL,

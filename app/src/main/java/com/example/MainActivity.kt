@@ -6,18 +6,21 @@ import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import com.example.data.AppPreferences
@@ -144,11 +147,13 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val context = LocalContext.current
+            val view = LocalView.current
             val appPreferences = remember { AppPreferences(context) }
             val settingsManager = remember { AppSettingsManager.getInstance(context) }
 
             val userSettings by appPreferences.settings.collectAsState()
             val persistedSettings by settingsManager.state.collectAsState()
+            val playerState by viewModel.playerState.collectAsState()
             val systemDark = isSystemInDarkTheme()
 
             val effectiveDark = when (persistedSettings.themeMode) {
@@ -158,6 +163,25 @@ class MainActivity : ComponentActivity() {
                     "LIGHT" -> false
                     "DARK" -> true
                     else -> systemDark
+                }
+            }
+
+            // Always On Screen control for Video (default ON) and Music (default OFF)
+            val isVideoActive = playerState.isVideoMode || playerState.currentTrack?.isVideoTrack == true
+            val isPlaybackActive = playerState.currentTrack != null && (playerState.isPlaying || playerState.isBuffering)
+            val shouldKeepScreenOn = isPlaybackActive && (
+                if (isVideoActive) persistedSettings.alwaysOnScreenVideo
+                else persistedSettings.alwaysOnScreenMusic
+            )
+
+            SideEffect {
+                view.keepScreenOn = shouldKeepScreenOn
+                runCatching {
+                    if (shouldKeepScreenOn) {
+                        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    } else {
+                        window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
                 }
             }
 

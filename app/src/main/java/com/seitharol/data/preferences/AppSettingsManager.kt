@@ -31,7 +31,9 @@ data class PersistedSettingsState(
     val sleepTimerMinutes: Int = 0,
     val gaplessPlayback: Boolean = true,
     val audioNormalization: Boolean = false,
-    val stopImmediatelyOnNewTrack: Boolean = true
+    val stopImmediatelyOnNewTrack: Boolean = true,
+    val alwaysOnScreenVideo: Boolean = true,
+    val alwaysOnScreenMusic: Boolean = false
 )
 
 class AppSettingsManager(context: Context) {
@@ -70,13 +72,25 @@ class AppSettingsManager(context: Context) {
             sleepTimerMinutes = prefs.getInt(KEY_SLEEP_TIMER, 0),
             gaplessPlayback = prefs.getBoolean(KEY_GAPLESS, true),
             audioNormalization = prefs.getBoolean(KEY_NORMALIZATION, false),
-            stopImmediatelyOnNewTrack = prefs.getBoolean(KEY_STOP_IMMEDIATELY, true)
+            stopImmediatelyOnNewTrack = prefs.getBoolean(KEY_STOP_IMMEDIATELY, true),
+            alwaysOnScreenVideo = prefs.getBoolean(KEY_ALWAYS_ON_VIDEO, true),
+            alwaysOnScreenMusic = prefs.getBoolean(KEY_ALWAYS_ON_MUSIC, false)
         )
     }
 
     fun setStopImmediatelyOnNewTrack(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_STOP_IMMEDIATELY, enabled).apply()
         _state.value = _state.value.copy(stopImmediatelyOnNewTrack = enabled)
+    }
+
+    fun setAlwaysOnScreenVideo(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_ALWAYS_ON_VIDEO, enabled).apply()
+        _state.value = _state.value.copy(alwaysOnScreenVideo = enabled)
+    }
+
+    fun setAlwaysOnScreenMusic(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_ALWAYS_ON_MUSIC, enabled).apply()
+        _state.value = _state.value.copy(alwaysOnScreenMusic = enabled)
     }
 
     fun setThemeMode(mode: ThemeMode) {
@@ -162,6 +176,8 @@ class AppSettingsManager(context: Context) {
         private const val KEY_GAPLESS = "gapless_playback"
         private const val KEY_NORMALIZATION = "audio_normalization"
         private const val KEY_STOP_IMMEDIATELY = "stop_immediately_on_new_track"
+        private const val KEY_ALWAYS_ON_VIDEO = "always_on_screen_video"
+        private const val KEY_ALWAYS_ON_MUSIC = "always_on_screen_music"
 
         @Volatile
         private var INSTANCE: AppSettingsManager? = null

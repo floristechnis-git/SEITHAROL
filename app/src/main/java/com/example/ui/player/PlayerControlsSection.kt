@@ -7,6 +7,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.example.data.model.Track
 import com.example.player.PlayerState
@@ -58,7 +59,8 @@ fun PlayerControlsSection(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = playerState.currentTrack?.title ?: "Not Playing",
-                    style = MaterialTheme.typography.headlineSmall
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
                     text = playerState.currentTrack?.artist ?: "",
@@ -97,7 +99,8 @@ fun PlayerControlsSection(
         ) {
             Text(
                 text = formatDuration(displayedPosition.toLong()),
-                style = MaterialTheme.typography.labelSmall
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             if (playerState.sleepTimerMinutesLeft > 0) {
                 Text(
@@ -108,7 +111,8 @@ fun PlayerControlsSection(
             }
             Text(
                 text = formatDuration(playerState.durationMs),
-                style = MaterialTheme.typography.labelSmall
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
@@ -129,16 +133,25 @@ fun PlayerControlsSection(
                 )
             }
             IconButton(onClick = onPrevious) {
-                Icon(Icons.Default.SkipPrevious, contentDescription = "Previous", modifier = Modifier.size(36.dp))
+                Icon(
+                    imageVector = Icons.Default.SkipPrevious,
+                    contentDescription = "Previous",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(36.dp)
+                )
             }
             FilledIconButton(
                 onClick = onPlayPause,
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = Color.White
+                ),
                 modifier = Modifier.size(64.dp)
             ) {
                 if (playerState.isBuffering) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(28.dp),
-                        color = MaterialTheme.colorScheme.onPrimary,
+                        color = Color.White,
                         strokeWidth = 2.dp
                     )
                 } else {
@@ -149,12 +162,18 @@ fun PlayerControlsSection(
                             else -> Icons.Default.PlayArrow
                         },
                         contentDescription = if (playerState.isEnded) "Replay" else "Play/Pause",
+                        tint = Color.White,
                         modifier = Modifier.size(36.dp)
                     )
                 }
             }
             IconButton(onClick = onNext) {
-                Icon(Icons.Default.SkipNext, contentDescription = "Next", modifier = Modifier.size(36.dp))
+                Icon(
+                    imageVector = Icons.Default.SkipNext,
+                    contentDescription = "Next",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(36.dp)
+                )
             }
             IconButton(onClick = { showSleepTimerSheet = true }) {
                 Icon(
@@ -170,7 +189,10 @@ fun PlayerControlsSection(
     if (showSleepTimerSheet) {
         AlertDialog(
             onDismissRequest = { showSleepTimerSheet = false },
-            title = { Text("Sleep Timer") },
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurface,
+            title = { Text("Sleep Timer", color = MaterialTheme.colorScheme.onSurface) },
             text = {
                 Column {
                     listOf(15, 30, 45, 60, 0).forEach { mins ->
@@ -181,7 +203,10 @@ fun PlayerControlsSection(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(if (mins == 0) "Turn Off Timer" else "$mins Minutes")
+                            Text(
+                                text = if (mins == 0) "Turn Off Timer" else "$mins Minutes",
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
                         }
                     }
                 }

@@ -81,21 +81,18 @@ fun LocalMusicScreen(
         hasStoragePermission = grantMap.values.any { it }
     }
 
-    // Automatically request permission on first visit if not granted
     LaunchedEffect(Unit) {
         if (!hasStoragePermission) {
             permissionLauncher.launch(requiredPermissions)
         }
     }
 
-    // Scan device audio and video folders (including Download folder) once permission is granted
     LaunchedEffect(hasStoragePermission) {
         if (hasStoragePermission) {
             scannedDeviceTracks = scanDeviceMediaFiles(context)
         }
     }
 
-    // Tier 1: Songs and MP4 videos downloaded inside the app are ALWAYS classified accurately
     val defaultAppDownloads = remember(appDownloadedTracks) {
         appDownloadedTracks.map { t ->
             val pathOrId = (t.localPath ?: t.sourceId).lowercase()
@@ -119,8 +116,6 @@ fun LocalMusicScreen(
         }
     }
 
-    // Deduplicate: If a song/video loaded from device storage matches the name of a song stored by our app,
-    // ALWAYS keep the app's set up entry (`defaultAppDownloads`) and remove the device-loaded duplicate!
     val mergedLocalTracks = remember(defaultAppDownloads, scannedDeviceTracks) {
         fun normalizeSongName(raw: String): String {
             return raw.lowercase()
@@ -191,13 +186,6 @@ fun LocalMusicScreen(
         combined
     }
 
-    val audioCount = remember(mergedLocalTracks) {
-        mergedLocalTracks.count { it.videoType != "MUSIC_VIDEO_TYPE_OMV" }
-    }
-    val videoCount = remember(mergedLocalTracks) {
-        mergedLocalTracks.count { it.videoType == "MUSIC_VIDEO_TYPE_OMV" }
-    }
-
     val displayedTracks = remember(mergedLocalTracks, selectedFilter) {
         when (selectedFilter) {
             "Audio" -> mergedLocalTracks.filter { it.videoType != "MUSIC_VIDEO_TYPE_OMV" }
@@ -262,10 +250,22 @@ fun LocalMusicScreen(
                 .padding(bottom = 10.dp)
         ) {
             items(listOf("All", "Audio", "MP4 Videos", "Download Folder")) { tab ->
+                val isSelected = selectedFilter == tab
                 FilterChip(
-                    selected = selectedFilter == tab,
+                    selected = isSelected,
                     onClick = { selectedFilter = tab },
-                    label = { Text(tab) },
+                    label = {
+                        Text(
+                            text = tab,
+                            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        labelColor = MaterialTheme.colorScheme.onSurface,
+                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    ),
                     shape = RoundedCornerShape(16.dp)
                 )
             }
@@ -300,8 +300,14 @@ fun LocalMusicScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Button(onClick = { permissionLauncher.launch(requiredPermissions) }) {
-                        Text("Allow")
+                    Button(
+                        onClick = { permissionLauncher.launch(requiredPermissions) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Text("Allow", color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -424,7 +430,10 @@ fun LocalMusicScreen(
     trackPendingPlaylistAdd?.let { selectedTrack ->
         AlertDialog(
             onDismissRequest = { trackPendingPlaylistAdd = null },
-            title = { Text("Add to Playlist", fontWeight = FontWeight.Bold) },
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurface,
+            title = { Text("Add to Playlist", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) },
             text = {
                 Column {
                     availablePlaylists.forEach { (playlistId, title) ->
@@ -435,13 +444,15 @@ fun LocalMusicScreen(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(title, modifier = Modifier.fillMaxWidth())
+                            Text(title, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.fillMaxWidth())
                         }
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { trackPendingPlaylistAdd = null }) { Text("Close") }
+                TextButton(onClick = { trackPendingPlaylistAdd = null }) {
+                    Text("Close", color = MaterialTheme.colorScheme.primary)
+                }
             }
         )
     }
@@ -452,7 +463,6 @@ private suspend fun scanDeviceMediaFiles(context: Context): List<CandidateStream
         val list = mutableListOf<CandidateStream>()
         val seenVideoKeys = HashSet<String>()
 
-        // 1. Scan all device MP4 / Video files first (including Download folder, Movies, Seitharol, etc.)
         runCatching {
             val videoProjection = buildList {
                 add(MediaStore.Video.Media._ID)
@@ -516,8 +526,6 @@ private suspend fun scanDeviceMediaFiles(context: Context): List<CandidateStream
             }
         }
 
-        // 2. Scan device Audio files, explicitly detecting and re-classifying any .mp4 / video/* files
-        //    (such as MP4 videos in the Download folder indexed by MediaStore.Audio) as MP4 Video!
         runCatching {
             val projection = arrayOf(
                 MediaStore.Audio.Media._ID,
@@ -552,7 +560,6 @@ private suspend fun scanDeviceMediaFiles(context: Context): List<CandidateStream
                         .ifBlank { displayName.substringBeforeLast('.') }
                         .ifBlank { "Unknown Track" }
 
-                    // Skip if this exact file was already indexed as a video from MediaStore.Video
                     if (seenVideoKeys.contains(title.lowercase().trim())) continue
 
                     val lowerName = displayName.lowercase()
@@ -596,8 +603,6 @@ private suspend fun scanDeviceMediaFiles(context: Context): List<CandidateStream
             }
         }
 
-        // 3. Direct filesystem scan of public Download & Movies folders to catch any MP4/video or audio files
-        //    not yet indexed by MediaStore (ensuring MP4 in Download folder is always treated as MP4 Video, never audio!)
         runCatching {
             val dirs = listOfNotNull(
                 android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS),

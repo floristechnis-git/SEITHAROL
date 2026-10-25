@@ -88,13 +88,27 @@ fun GeneralSettingsScreen(
             }
         }
 
-        // 1. APPEARANCE
+        // 1. APPEARANCE & ALWAYS ON SCREEN
         item {
-            SettingsGroupCard(title = "Appearance") {
+            SettingsGroupCard(title = "Appearance & Display") {
                 SettingsValueRow(
                     title = "Theme",
                     subtitle = state.themeMode.label,
                     onClick = { activeDialog = SettingsDialogType.THEME }
+                )
+                SettingsDivider()
+                SettingsToggleRow(
+                    title = "Always On Screen: Video",
+                    subtitle = "Keep screen awake while watching video tracks (Default: On)",
+                    checked = state.alwaysOnScreenVideo,
+                    onCheckedChange = { settingsManager.setAlwaysOnScreenVideo(it) }
+                )
+                SettingsDivider()
+                SettingsToggleRow(
+                    title = "Always On Screen: Music",
+                    subtitle = "Keep screen awake while listening to music tracks (Default: Off)",
+                    checked = state.alwaysOnScreenMusic,
+                    onCheckedChange = { settingsManager.setAlwaysOnScreenMusic(it) }
                 )
             }
         }
@@ -191,8 +205,11 @@ fun GeneralSettingsScreen(
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
-                            OutlinedButton(onClick = { settingsManager.resetEqualizer() }) {
-                                Text("Reset Flat")
+                            OutlinedButton(
+                                onClick = { settingsManager.resetEqualizer() },
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary)
+                            ) {
+                                Text("Reset Flat", color = MaterialTheme.colorScheme.primary)
                             }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
@@ -692,7 +709,6 @@ fun InfoDetailScreen(
             }
         }
 
-        // Generous bottom spacer so bottom texts are never covered by the floating MiniPlayer
         Spacer(modifier = Modifier.height(160.dp))
     }
 }

@@ -98,7 +98,6 @@ fun InDiscoverSearchSurface(
                         isLoading = false
                         hasCompletedSearchForQuery = false
                     } else {
-                        // Immediately enter loading state BEFORE debounce so "No songs found" NEVER flashes while typing!
                         val token = ++latestSearchToken
                         isLoading = true
                         hasCompletedSearchForQuery = false
@@ -273,7 +272,6 @@ fun InDiscoverSearchSurface(
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                // Artwork with Instant 30s Play/Pause Overlay
                                 Box(
                                     modifier = Modifier
                                         .size(64.dp)
@@ -311,7 +309,6 @@ fun InDiscoverSearchSurface(
 
                                 Spacer(modifier = Modifier.width(12.dp))
 
-                                // Song Title + Bottom-Left Artist Profile Avatar & Name
                                 Column(modifier = Modifier.weight(1f)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Surface(
@@ -369,7 +366,7 @@ fun InDiscoverSearchSurface(
 
                             Spacer(modifier = Modifier.height(12.dp))
 
-                            // Action Row: Download + Play
+                            // Action Row: Download + Play Full
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -385,14 +382,14 @@ fun InDiscoverSearchSurface(
                                     contentPadding = PaddingValues(horizontal = 14.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = MaterialTheme.colorScheme.primary,
-                                        contentColor = MaterialTheme.colorScheme.onPrimary
+                                        contentColor = Color.White
                                     )
                                 ) {
-                                    DownloadSvgIcon(tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(15.dp))
+                                    DownloadSvgIcon(tint = Color.White, modifier = Modifier.size(15.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = "Download",
-                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        color = Color.White,
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -407,7 +404,10 @@ fun InDiscoverSearchSurface(
                                     modifier = Modifier.weight(1f).height(38.dp),
                                     shape = RoundedCornerShape(50),
                                     contentPadding = PaddingValues(horizontal = 14.dp),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                        contentColor = MaterialTheme.colorScheme.onSurface
+                                    ),
                                     border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                                 ) {
                                     Icon(
@@ -418,9 +418,9 @@ fun InDiscoverSearchSurface(
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "Play",
+                                        text = "Play Full",
                                         fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold,
+                                        fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
                                 }

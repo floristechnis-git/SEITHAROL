@@ -28,6 +28,7 @@ import com.example.player.EqualizerPreset
 import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
 import com.example.ui.theme.*
+import com.seitharol.data.preferences.AppSettingsManager
 
 @Composable
 fun SoundSettingsScreen(
@@ -40,7 +41,9 @@ fun SoundSettingsScreen(
 
     val context = LocalContext.current
     val appPreferences = remember { AppPreferences(context) }
+    val settingsManager = remember { AppSettingsManager.getInstance(context) }
     val userSettings by appPreferences.settings.collectAsState()
+    val persistedSettings by settingsManager.state.collectAsState()
 
     var selectedPreset by remember { mutableStateOf(playerState.currentPresetName) }
 
@@ -57,6 +60,15 @@ fun SoundSettingsScreen(
         Pair("Dance", listOf(6f, 4f, 1f, 4f, 6f)),
         Pair("Electronic", listOf(7f, 5f, 0f, 5f, 7f)),
         Pair("Flat", listOf(0f, 0f, 0f, 0f, 0f))
+    )
+
+    val switchColors = SwitchDefaults.colors(
+        checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+        checkedTrackColor = MaterialTheme.colorScheme.primary,
+        checkedBorderColor = MaterialTheme.colorScheme.primary,
+        uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+        uncheckedBorderColor = MaterialTheme.colorScheme.outline
     )
 
     LazyColumn(
@@ -98,7 +110,7 @@ fun SoundSettingsScreen(
             }
         }
 
-        // 1. Appearance (System Default / Dark / Light theme)
+        // 1. Appearance & Always On Screen
         item {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -107,7 +119,7 @@ fun SoundSettingsScreen(
             ) {
                 Column(modifier = Modifier.padding(18.dp)) {
                     Text(
-                        text = "Appearance",
+                        text = "Appearance & Display",
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 16.sp,
@@ -157,6 +169,74 @@ fun SoundSettingsScreen(
                                 )
                             }
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(color = SeitharolDivider, thickness = 0.8.dp)
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                            Text(
+                                text = "Always On Screen: Video",
+                                fontSize = 14.sp,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.Medium,
+                                color = SeitharolDark
+                            )
+                            Text(
+                                text = "Keep screen awake while watching video tracks (Default: On)",
+                                fontSize = 11.sp,
+                                fontFamily = OutfitFontFamily,
+                                color = SeitharolTextSecondary
+                            )
+                        }
+                        Switch(
+                            checked = persistedSettings.alwaysOnScreenVideo,
+                            onCheckedChange = {
+                                appPreferences.setAlwaysOnScreenVideo(it)
+                                settingsManager.setAlwaysOnScreenVideo(it)
+                            },
+                            colors = switchColors
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                            Text(
+                                text = "Always On Screen: Music",
+                                fontSize = 14.sp,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.Medium,
+                                color = SeitharolDark
+                            )
+                            Text(
+                                text = "Keep screen awake while listening to music tracks (Default: Off)",
+                                fontSize = 11.sp,
+                                fontFamily = OutfitFontFamily,
+                                color = SeitharolTextSecondary
+                            )
+                        }
+                        Switch(
+                            checked = persistedSettings.alwaysOnScreenMusic,
+                            onCheckedChange = {
+                                appPreferences.setAlwaysOnScreenMusic(it)
+                                settingsManager.setAlwaysOnScreenMusic(it)
+                            },
+                            colors = switchColors
+                        )
                     }
                 }
             }
@@ -297,7 +377,6 @@ fun SoundSettingsScreen(
                             fontSize = 16.sp,
                             color = SeitharolDark
                         )
-                        // Reset EQ button: Resets all bands to 0 dB flat response and persists immediately
                         Surface(
                             modifier = Modifier
                                 .height(30.dp)
@@ -330,7 +409,6 @@ fun SoundSettingsScreen(
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // Presets horizontal row
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -473,7 +551,18 @@ fun SoundSettingsScreen(
                                     appPreferences.saveSleepTimer(mins)
                                     viewModel.setSleepTimer(mins)
                                 },
-                                label = { Text(if (mins == 0) "Off" else "${mins}m") }
+                                label = {
+                                    Text(
+                                        text = if (mins == 0) "Off" else "${mins}m",
+                                        color = if (userSettings.sleepTimerMinutes == mins) MaterialTheme.colorScheme.onPrimaryContainer else SeitharolDark
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = SeitharolCardElevated,
+                                    labelColor = SeitharolDark,
+                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
                             )
                         }
                     }
@@ -489,7 +578,7 @@ fun SoundSettingsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                             Text(
                                 text = "Gapless Playback",
                                 fontSize = 14.sp,
@@ -506,7 +595,8 @@ fun SoundSettingsScreen(
                         }
                         Switch(
                             checked = userSettings.gaplessPlayback,
-                            onCheckedChange = { appPreferences.setGaplessPlayback(it) }
+                            onCheckedChange = { appPreferences.setGaplessPlayback(it) },
+                            colors = switchColors
                         )
                     }
 
@@ -517,7 +607,7 @@ fun SoundSettingsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                             Text(
                                 text = "Normalize Volume",
                                 fontSize = 14.sp,
@@ -534,7 +624,8 @@ fun SoundSettingsScreen(
                         }
                         Switch(
                             checked = userSettings.audioNormalization,
-                            onCheckedChange = { appPreferences.setAudioNormalization(it) }
+                            onCheckedChange = { appPreferences.setAudioNormalization(it) },
+                            colors = switchColors
                         )
                     }
                 }
@@ -542,4 +633,3 @@ fun SoundSettingsScreen(
         }
     }
 }
-

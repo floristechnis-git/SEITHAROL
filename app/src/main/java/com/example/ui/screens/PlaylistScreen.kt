@@ -147,7 +147,6 @@ fun PlaylistScreen(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 140.dp)
         ) {
-            // Hero Header (340dp height with dark gradient)
             item {
                 Box(
                     modifier = Modifier
@@ -162,7 +161,6 @@ fun PlaylistScreen(
                             )
                         )
                 ) {
-                    // Top Action Bar
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -171,7 +169,6 @@ fun PlaylistScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Back button
                         Surface(
                             modifier = Modifier.size(44.dp),
                             shape = CircleShape,
@@ -188,7 +185,6 @@ fun PlaylistScreen(
                             }
                         }
 
-                        // More button -> triggers ModalBottomSheet
                         Surface(
                             modifier = Modifier.size(44.dp),
                             shape = CircleShape,
@@ -206,7 +202,6 @@ fun PlaylistScreen(
                         }
                     }
 
-                    // Playlist Info & Controls
                     Column(
                         modifier = Modifier
                             .align(Alignment.Center)
@@ -263,12 +258,10 @@ fun PlaylistScreen(
 
                         Spacer(modifier = Modifier.height(20.dp))
 
-                        // Action buttons row: Download (48dp pill), Play (64dp circle), Like (48dp pill)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(28.dp)
                         ) {
-                            // Download All
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier.clickable {
@@ -298,7 +291,6 @@ fun PlaylistScreen(
                                 )
                             }
 
-                            // Big Play Button
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier.clickable {
@@ -320,7 +312,7 @@ fun PlaylistScreen(
                                         Icon(
                                             imageVector = Icons.Default.PlayArrow,
                                             contentDescription = "Play Playlist",
-                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                            tint = Color.White,
                                             modifier = Modifier.size(32.dp)
                                         )
                                     }
@@ -334,7 +326,6 @@ fun PlaylistScreen(
                                 )
                             }
 
-                            // Like Playlist (Persisted in Room)
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier.clickable {
@@ -368,18 +359,24 @@ fun PlaylistScreen(
                 }
             }
 
-            // Dedicated Search Bar for this Playlist
             item {
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search in ${currentPlaylist.title}...") },
+                    placeholder = { Text("Search in ${currentPlaylist.title}...", color = MaterialTheme.colorScheme.onSurfaceVariant) },
                     singleLine = true,
                     shape = RoundedCornerShape(24.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        cursorColor = MaterialTheme.colorScheme.primary,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                    ),
                     trailingIcon = {
                         if (searchQuery.isNotEmpty()) {
                             IconButton(onClick = { searchQuery = "" }) {
-                                Icon(Icons.Default.Close, contentDescription = "Clear search")
+                                Icon(Icons.Default.Close, contentDescription = "Clear search", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     },
@@ -389,7 +386,6 @@ fun PlaylistScreen(
                 )
             }
 
-            // Section Title
             item {
                 Text(
                     text = "Tracks (${filteredTracks.size})",
@@ -401,7 +397,6 @@ fun PlaylistScreen(
                 )
             }
 
-            // Playlist tracks — include index in key so duplicate tracks never throw IllegalArgumentException
             if (filteredTracks.isEmpty()) {
                 item {
                     Box(
@@ -412,7 +407,7 @@ fun PlaylistScreen(
                     ) {
                         if (isLoadingPlaylist) {
                             CircularProgressIndicator(
-                                color = SeitharolDark,
+                                color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(36.dp)
                             )
                         } else {
@@ -453,11 +448,11 @@ fun PlaylistScreen(
             }
         }
 
-        // More Options Bottom Sheet
         if (showMoreSheet) {
             ModalBottomSheet(
                 onDismissRequest = { showMoreSheet = false },
                 containerColor = SeitharolWhite,
+                contentColor = SeitharolDark,
                 shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
             ) {
                 Column(
@@ -482,7 +477,6 @@ fun PlaylistScreen(
                     HorizontalDivider(color = SeitharolBorder)
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Play Next
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -499,7 +493,6 @@ fun PlaylistScreen(
                         Text("Play Next", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
                     }
 
-                    // Add all to Queue
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -516,7 +509,6 @@ fun PlaylistScreen(
                         Text("Add all to Queue", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
                     }
 
-                    // Download Playlist
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -533,7 +525,6 @@ fun PlaylistScreen(
                         Text("Download Playlist", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
                     }
 
-                    // Share Playlist with clickable HTTPS link
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -564,7 +555,6 @@ fun PlaylistScreen(
             }
         }
 
-        // Modal to add track to playlist
         trackToAddToPlaylist?.let { track ->
             AddToPlaylistModal(
                 track = track,

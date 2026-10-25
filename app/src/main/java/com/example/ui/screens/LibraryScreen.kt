@@ -237,15 +237,16 @@ fun LibraryScreen(
                         shape = RoundedCornerShape(16.dp),
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = MaterialTheme.colorScheme.primary,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                            selectedLabelColor = Color.White,
                             containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            labelColor = MaterialTheme.colorScheme.onSurface
                         ),
                         border = null,
                         label = {
                             Text(
                                 text = if (tab == "Downloads" && inProgressCount > 0) "Downloads ($inProgressCount)" else tab,
                                 style = MaterialTheme.typography.labelMedium,
+                                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1,
                                 softWrap = false,
                                 overflow = TextOverflow.Ellipsis
@@ -293,11 +294,12 @@ fun LibraryScreen(
                     }
                     DropdownMenu(
                         expanded = showFilterMenu,
-                        onDismissRequest = { showFilterMenu = false }
+                        onDismissRequest = { showFilterMenu = false },
+                        containerColor = MaterialTheme.colorScheme.surface
                     ) {
                         LibraryFilterOption.entries.forEach { option ->
                             DropdownMenuItem(
-                                text = { Text(option.label) },
+                                text = { Text(option.label, color = MaterialTheme.colorScheme.onSurface) },
                                 onClick = {
                                     activeFilter = option
                                     showFilterMenu = false
@@ -463,10 +465,11 @@ fun LibraryScreen(
                         }
                         DropdownMenu(
                             expanded = showItemMenu,
-                            onDismissRequest = { showItemMenu = false }
+                            onDismissRequest = { showItemMenu = false },
+                            containerColor = MaterialTheme.colorScheme.surface
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Open") },
+                                text = { Text("Open", color = MaterialTheme.colorScheme.onSurface) },
                                 onClick = {
                                     showItemMenu = false
                                     onNavigateToPlaylist(pl.id)
@@ -608,25 +611,54 @@ fun HistoryScreen(
             FilterChip(
                 selected = viewMode == "active",
                 onClick = { viewMode = "active" },
-                label = { Text("Recent (${activeHistory.size})") }
+                label = {
+                    Text(
+                        text = "Recent (${activeHistory.size})",
+                        color = if (viewMode == "active") MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                    )
+                },
+                colors = FilterChipDefaults.filterChipColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    labelColor = MaterialTheme.colorScheme.onSurface,
+                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                )
             )
             FilterChip(
                 selected = viewMode == "archived",
                 onClick = { viewMode = "archived" },
-                label = { Text("Archived (${archivedHistory.size})") }
+                label = {
+                    Text(
+                        text = "Archived (${archivedHistory.size})",
+                        color = if (viewMode == "archived") MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                    )
+                },
+                colors = FilterChipDefaults.filterChipColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    labelColor = MaterialTheme.colorScheme.onSurface,
+                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                )
             )
         }
 
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("Search history...") },
+            placeholder = { Text("Search history...", color = MaterialTheme.colorScheme.onSurfaceVariant) },
             singleLine = true,
             shape = RoundedCornerShape(24.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                cursorColor = MaterialTheme.colorScheme.primary,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline
+            ),
             trailingIcon = {
                 if (searchQuery.isNotEmpty()) {
                     IconButton(onClick = { searchQuery = "" }) {
-                        Icon(Icons.Default.Close, contentDescription = "Clear")
+                        Icon(Icons.Default.Close, contentDescription = "Clear", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             },
@@ -674,10 +706,6 @@ fun HistoryScreen(
     }
 }
 
-/**
- * Dedicated Downloads Screen with Top-Left Back Arrow, Search Bar,
- * and live "Currently Downloading" processing section with Cancel button.
- */
 @Composable
 fun DownloadsScreen(
     viewModel: CascadeViewModel,
@@ -690,7 +718,6 @@ fun DownloadsScreen(
     val downloadedTracks by viewModel.downloadedTracks.collectAsState()
     val activeDownloads by viewModel.activeDownloads.collectAsState()
     val isRefreshingDownloads by viewModel.isRefreshingLibrary.collectAsState()
-    val isRefreshingLibrary by viewModel.isRefreshingLibrary.collectAsState()
     val downloadService = remember { DownloadPreferencesAndService.getInstance(context) }
     val discoverTaskState by downloadService.downloadState.collectAsState()
 
@@ -754,13 +781,20 @@ fun DownloadsScreen(
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("Search downloads...") },
+            placeholder = { Text("Search downloads...", color = MaterialTheme.colorScheme.onSurfaceVariant) },
             singleLine = true,
             shape = RoundedCornerShape(24.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                cursorColor = MaterialTheme.colorScheme.primary,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline
+            ),
             trailingIcon = {
                 if (searchQuery.isNotEmpty()) {
                     IconButton(onClick = { searchQuery = "" }) {
-                        Icon(Icons.Default.Close, contentDescription = "Clear")
+                        Icon(Icons.Default.Close, contentDescription = "Clear", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             },
@@ -778,9 +812,6 @@ fun DownloadsScreen(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 120.dp)
         ) {
-            // ────────────────────────────────────────────────────────────
-            // Currently Processing / Downloading Section with Cancel Button
-            // ────────────────────────────────────────────────────────────
             if (inProgressQueueItems.isNotEmpty() || showDiscoverCardSeparately) {
                 item {
                     Text(
@@ -934,6 +965,7 @@ fun ActiveProcessingDownloadCard(
                     onClick = onCancel,
                     shape = RoundedCornerShape(20.dp),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                     modifier = Modifier.height(34.dp)
                 ) {
@@ -1012,9 +1044,9 @@ fun LikedSongsScreen(
             )
             if (likedTracks.isNotEmpty()) {
                 TextButton(onClick = { viewModel.downloadAllTracks(likedTracks) }) {
-                    Icon(Icons.Default.Download, contentDescription = "Download All", modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Download, contentDescription = "Download All", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Download All")
+                    Text("Download All", color = MaterialTheme.colorScheme.primary)
                 }
             }
         }
@@ -1022,13 +1054,20 @@ fun LikedSongsScreen(
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("Search liked songs...") },
+            placeholder = { Text("Search liked songs...", color = MaterialTheme.colorScheme.onSurfaceVariant) },
             singleLine = true,
             shape = RoundedCornerShape(24.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                cursorColor = MaterialTheme.colorScheme.primary,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline
+            ),
             trailingIcon = {
                 if (searchQuery.isNotEmpty()) {
                     IconButton(onClick = { searchQuery = "" }) {
-                        Icon(Icons.Default.Close, contentDescription = "Clear")
+                        Icon(Icons.Default.Close, contentDescription = "Clear", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             },

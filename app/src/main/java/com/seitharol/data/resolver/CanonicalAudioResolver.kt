@@ -13,7 +13,10 @@ data class CandidateStream(
     val videoType: String?, // "MUSIC_VIDEO_TYPE_ATV", "MUSIC_VIDEO_TYPE_OMV", "MUSIC_VIDEO_TYPE_UGC"
     val viewCount: Long = 0L,
     val thumbnailUrl: String,
-    val isVerifiedArtist: Boolean = false
+    val isVerifiedArtist: Boolean = false,
+    val viewCountText: String = "",
+    val publishedTimeText: String = "",
+    val publishedAgeSeconds: Long = Long.MAX_VALUE
 )
 
 object CanonicalAudioResolver {

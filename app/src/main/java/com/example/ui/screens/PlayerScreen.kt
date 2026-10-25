@@ -629,9 +629,6 @@ fun PlayerScreen(
     val likedTrackIds by viewModel.likedTrackIds.collectAsState()
     val isLiked = track.id in likedTrackIds || track.isLiked
 
-    // Fullscreen landscape video is rendered at root level in CascadeApp (zIndex 500f)
-    // so horizontal rotation covers 100% of the screen frame on both mobile and tablet.
-
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -1004,9 +1001,6 @@ fun PlayerScreen(
 
         // ────────────────────────────────────────────────────────────
         // Track Title & Artist Details
-        // - For videos: clicking the video title slides up the full video name + description sheet
-        // - For local videos: hides the "• Channel" button
-        // - For local tracks / "Unknown Artist": disables navigating to an Artist page
         // ────────────────────────────────────────────────────────────
         Column(
             modifier = Modifier
@@ -1081,7 +1075,6 @@ fun PlayerScreen(
                             .padding(vertical = 2.dp, horizontal = 2.dp)
                             .testTag("player_artist_name")
                     )
-                    // Show "• Channel" ONLY for online YouTube videos — NEVER on local videos!
                     val showChannelButton = isVideoTrack &&
                         !track.isLocalOnlyTrack &&
                         !track.isDownloaded &&
@@ -1288,7 +1281,6 @@ fun PlayerScreen(
                 )
             }
 
-            // Dedicated -10s Rewind Button
             Surface(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.surfaceVariant,
@@ -1311,7 +1303,6 @@ fun PlayerScreen(
                 }
             }
 
-            // Main Play / Pause Button with Synchronized White Loader
             Surface(
                 modifier = Modifier
                     .size(64.dp)
@@ -1337,14 +1328,13 @@ fun PlayerScreen(
                                 else -> Icons.Default.PlayArrow
                             },
                             contentDescription = if (playerState.isEnded) "Replay" else "Play/Pause",
-                            tint = MaterialTheme.colorScheme.onPrimary,
+                            tint = Color.White,
                             modifier = Modifier.size(34.dp)
                         )
                     }
                 }
             }
 
-            // Dedicated +10s Forward Button
             Surface(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.surfaceVariant,
@@ -1703,7 +1693,7 @@ fun SeitharolNextTrackCountdownBanner(
                 ) {
                     Text(
                         text = "Play Now",
-                        color = MaterialTheme.colorScheme.onPrimary,
+                        color = Color.White,
                         fontFamily = OutfitFontFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.sp,
@@ -1727,12 +1717,6 @@ fun SeitharolNextTrackCountdownBanner(
     }
 }
 
-/**
- * 100% Full-Width Video Frame:
- * - Removes the duplicate red loader completely!
- * - Synchronizes the white loader (`Color.White`) inside the Play/Pause button with `playerState.isBuffering`.
- * - Replaces emojis on ±10s skip with `SeitharolSkip10sBadgeOverlay`.
- */
 @Composable
 fun SeitharolRawVideoSurface(
     viewModel: CascadeViewModel,
@@ -1846,7 +1830,6 @@ fun SeitharolRawVideoSurface(
                 modifier = exactAspectModifier
             )
 
-            // Artwork backdrop shown ONLY while loading/buffering before first video frame renders
             if (track != null && !playerState.isVideoFrameRendered && (playerState.isBuffering || !playerState.isPlaying)) {
                 val upgradedArt = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
                 if (upgradedArt.isNotBlank()) {
@@ -1863,7 +1846,6 @@ fun SeitharolRawVideoSurface(
                 }
             }
 
-            // Professional vector ±10s skip feedback badge (no emojis)
             AnimatedVisibility(
                 visible = skipFeedbackIsForward != null,
                 enter = fadeIn(tween(120)),
@@ -1874,7 +1856,6 @@ fun SeitharolRawVideoSurface(
                 }
             }
 
-            // Video Overlay Controls (with single synchronized white loader inside Play/Pause button)
             AnimatedVisibility(
                 visible = showOverlayControls || playerState.isBuffering || playerState.isEnded,
                 enter = fadeIn(animationSpec = tween(150)),
@@ -1931,7 +1912,6 @@ fun SeitharolRawVideoSurface(
                         }
                     }
 
-                    // Center: Synchronized Play/Pause + -10s / +10s controls
                     Row(
                         modifier = Modifier.align(Alignment.Center),
                         verticalAlignment = Alignment.CenterVertically,
@@ -2044,10 +2024,6 @@ fun SeitharolRawVideoSurface(
     }
 }
 
-/**
- * Fullscreen Landscape Video Modal — rendered inside a full-bleed Dialog so rotating the device
- * horizontally (`SCREEN_ORIENTATION_SENSOR_LANDSCAPE`) never destroys `PlayerScreen` or loses state.
- */
 @Composable
 fun SeitharolFullscreenVideoModal(
     viewModel: CascadeViewModel,
@@ -2197,7 +2173,6 @@ fun SeitharolFullscreenVideoModal(
                     }
                 }
 
-                // Professional vector ±10s skip feedback pill (no emojis)
                 AnimatedVisibility(
                     visible = skipFeedbackIsForward != null,
                     enter = fadeIn(tween(120)),
@@ -2208,7 +2183,6 @@ fun SeitharolFullscreenVideoModal(
                     }
                 }
 
-                // Fullscreen controls overlay
                 AnimatedVisibility(
                     visible = showControls || playerState.isBuffering || playerState.isEnded,
                     enter = fadeIn(animationSpec = tween(150)),
@@ -2221,7 +2195,6 @@ fun SeitharolFullscreenVideoModal(
                             .statusBarsPadding()
                             .navigationBarsPadding()
                     ) {
-                        // Top bar: Clickable Video Title + Fit/Zoom + Mute + PiP + Exit Fullscreen
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -2298,7 +2271,6 @@ fun SeitharolFullscreenVideoModal(
                             }
                         }
 
-                        // Center controls: Previous, -10s, Play/Pause (White Synced Loader), +10s, Next
                         Row(
                             modifier = Modifier.align(Alignment.Center),
                             verticalAlignment = Alignment.CenterVertically,
@@ -2354,7 +2326,7 @@ fun SeitharolFullscreenVideoModal(
                                         Icon(
                                             imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                             contentDescription = "Play/Pause",
-                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                            tint = Color.White,
                                             modifier = Modifier.size(34.dp)
                                         )
                                     }
@@ -2394,7 +2366,6 @@ fun SeitharolFullscreenVideoModal(
                             }
                         }
 
-                        // Bottom pro scrubber progress bar
                         SeitharolProProgressBar(
                             progress = progress,
                             bufferedFraction = playerState.bufferedFraction,
@@ -2419,7 +2390,6 @@ fun SeitharolFullscreenVideoModal(
                     }
                 }
 
-                // 10-Second Countdown Overlay in Fullscreen UI
                 AnimatedVisibility(
                     visible = showNextCountdown && nextTrack != null,
                     enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
@@ -2793,7 +2763,7 @@ fun ExpandedLyricsModal(
                                                 else -> Icons.Default.PlayArrow
                                             },
                                             contentDescription = if (playerState.isEnded) "Replay" else "Play/Pause",
-                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                            tint = Color.White,
                                             modifier = Modifier.size(30.dp)
                                         )
                                     }
@@ -2847,6 +2817,7 @@ fun PlayerAudioAdjustmentSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 12.dp)
                 .navigationBarsPadding()
         ) {
@@ -2937,6 +2908,49 @@ fun PlayerAudioAdjustmentSheet(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
+            // Always On Screen toggles in Adjust sheet (Video default ON, Music default OFF)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text("Always On Screen: Video", fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+                    Text(
+                        text = "Keep screen awake during video playback (Default: On)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = state.alwaysOnScreenVideo,
+                    onCheckedChange = { settingsManager.setAlwaysOnScreenVideo(it) },
+                    colors = switchColors
+                )
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text("Always On Screen: Music", fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+                    Text(
+                        text = "Keep screen awake during music playback (Default: Off)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = state.alwaysOnScreenMusic,
+                    onCheckedChange = { settingsManager.setAlwaysOnScreenMusic(it) },
+                    colors = switchColors
+                )
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
             Text(
                 text = "Track Quality (Current Song)",
                 fontWeight = FontWeight.SemiBold,
@@ -2967,10 +2981,13 @@ fun PlayerAudioAdjustmentSheet(
                                     com.seitharol.data.resolver.AudioQuality.NORMAL -> "Normal"
                                     com.seitharol.data.resolver.AudioQuality.HIGH -> "High (HQ)"
                                 },
-                                style = MaterialTheme.typography.labelSmall
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
                             )
                         },
                         colors = FilterChipDefaults.filterChipColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            labelColor = MaterialTheme.colorScheme.onSurface,
                             selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                             selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
                         ),

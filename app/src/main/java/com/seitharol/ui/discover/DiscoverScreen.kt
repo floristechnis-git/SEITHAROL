@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.view.inputmethod.InputMethodManager
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -504,26 +505,29 @@ private fun DiscoverShortPage(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Deep obsidian pill with crisp border and high-contrast white text/icon so it is NEVER
+                    // white-on-white in Light Theme or under OEM dark-mode inversion!
                     Button(
                         onClick = onOpenFullSongClick,
                         shape = RoundedCornerShape(50),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.White,
-                            contentColor = Color.Black
+                            containerColor = Color(0xFF181B20),
+                            contentColor = Color.White
                         ),
+                        border = BorderStroke(1.2.dp, Color.White.copy(alpha = 0.65f)),
                         modifier = Modifier.height(38.dp)
                     ) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_play),
                             contentDescription = null,
                             modifier = Modifier.size(15.dp),
-                            tint = Color.Black
+                            tint = Color.White
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = "Play Full",
-                            color = Color.Black,
+                            color = Color.White,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
                         )
@@ -572,8 +576,11 @@ private fun DiscoverShortPage(
                         onClick = onVisitArtistClick,
                         shape = RoundedCornerShape(50),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.35f)),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = Color.Black.copy(alpha = 0.45f),
+                            contentColor = Color.White
+                        ),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.45f)),
                         modifier = Modifier.height(38.dp)
                     ) {
                         Icon(
@@ -974,7 +981,11 @@ fun DownloadProviderFormatBottomSheet(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(provider.displayName, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = provider.displayName,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
                             if (index == 0 && usageCount > 0) {
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Surface(

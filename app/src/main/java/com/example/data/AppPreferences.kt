@@ -24,6 +24,8 @@ data class UserSettings(
     val gaplessPlayback: Boolean = true,
     val audioNormalization: Boolean = false,
     val stopImmediatelyOnNewTrack: Boolean = true,
+    val alwaysOnScreenVideo: Boolean = true,
+    val alwaysOnScreenMusic: Boolean = false,
     val hasSeenDeveloperWelcomePopup: Boolean = false
 )
 
@@ -82,6 +84,8 @@ class AppPreferences private constructor(context: Context) {
             gaplessPlayback = prefs.getBoolean("gapless_playback", true),
             audioNormalization = prefs.getBoolean("audio_normalization", false),
             stopImmediatelyOnNewTrack = prefs.getBoolean("stop_immediately_on_new_track", true),
+            alwaysOnScreenVideo = prefs.getBoolean("always_on_screen_video", true),
+            alwaysOnScreenMusic = prefs.getBoolean("always_on_screen_music", false),
             hasSeenDeveloperWelcomePopup = prefs.getBoolean("seen_dev_welcome_popup_v1", false)
         )
     }
@@ -89,6 +93,22 @@ class AppPreferences private constructor(context: Context) {
     fun setStopImmediatelyOnNewTrack(enabled: Boolean) {
         prefs.edit().putBoolean("stop_immediately_on_new_track", enabled).apply()
         _settings.value = loadSettings()
+    }
+
+    fun setAlwaysOnScreenVideo(enabled: Boolean) {
+        prefs.edit().putBoolean("always_on_screen_video", enabled).apply()
+        _settings.value = loadSettings()
+        runCatching {
+            com.seitharol.data.preferences.AppSettingsManager.getInstance(appContext).setAlwaysOnScreenVideo(enabled)
+        }
+    }
+
+    fun setAlwaysOnScreenMusic(enabled: Boolean) {
+        prefs.edit().putBoolean("always_on_screen_music", enabled).apply()
+        _settings.value = loadSettings()
+        runCatching {
+            com.seitharol.data.preferences.AppSettingsManager.getInstance(appContext).setAlwaysOnScreenMusic(enabled)
+        }
     }
 
     fun markDeveloperWelcomePopupSeen() {

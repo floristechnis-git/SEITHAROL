@@ -505,11 +505,17 @@ fun ProfileScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    val (cachedFileCount, cachedBytesTotal) = remember {
+                        com.seitharol.player.OuterTuneResolvingDataSource.getCacheStatsSummary(context)
+                    }
+                    val cachedMbFormatted = remember(cachedBytesTotal) {
+                        "%.1f MB".format(cachedBytesTotal.toDouble() / (1024.0 * 1024.0))
+                    }
                     val features = listOf(
                         Pair("YouTube InnerTube On-Device", "Direct on-device search & unciphered stream extraction (ANDROID_VR). Zero python server required."),
                         Pair("JioSaavn Native DES Decryptor", "On-device DES/ECB/PKCS5Padding hardware decryption with 320kbps upgrade."),
                         Pair("Spotify Metadata Importer", "Cross-source TrackMatcher matching catalog tracks and canonical audio releases."),
-                        Pair("Active Media Disk Cache", "On-device disk stream cache for instant zero-rebuffer replay like YouTube."),
+                        Pair("Active Media Stream Cache ($cachedMbFormatted)", "Live inline chunk + disk stream cache ($cachedFileCount complete streams cached) for zero-rebuffer seeking & replay."),
                         Pair("High-Fi Offline Storage", "Real direct MediaStore byte streaming with verified binary audio & MP4 containers.")
                     )
 

@@ -1163,15 +1163,9 @@ class AudioPlayerManager(
                 audioRawUrl = sourceUrl
             }
 
-            // Warm active on-disk stream cache in background (like YouTube) for instant replay & scrubbing
-            if (!track.isLocalOnlyTrack && audioRawUrl.startsWith("http") && !isSplitMergedAv) {
-                com.seitharol.player.OuterTuneResolvingDataSource.warmStreamCacheAsync(
-                    context = context,
-                    trackId = track.id,
-                    streamUrl = audioRawUrl,
-                    isVideo = isVideo
-                )
-            }
+            // Notify DataSource of the active track so it caches chunks inline as ExoPlayer reads them
+            // and never opens a competing parallel connection on the same signed googlevideo URL!
+            com.seitharol.player.OuterTuneResolvingDataSource.notifyActivePlaybackTrack(track.id)
 
             fun parseSourceUri(raw: String): Uri = when {
                 raw.startsWith("content://") -> Uri.parse(raw)

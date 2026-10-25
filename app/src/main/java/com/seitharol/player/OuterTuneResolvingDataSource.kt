@@ -81,6 +81,8 @@ object OuterTuneResolvingDataSource {
     private val urlCache = ConcurrentHashMap<String, CachedStream>()
     private val urlToVideoIdMap = ConcurrentHashMap<String, String>()
     private val knownStreamTotalLengths = ConcurrentHashMap<String, Long>()
+    private val inlineMaxPositionByTrackId = ConcurrentHashMap<String, Long>()
+    private val inlineTotalLengthByTrackId = ConcurrentHashMap<String, Long>()
     private val httpFactoryByUserAgent = ConcurrentHashMap<String, DefaultHttpDataSource.Factory>()
     private val activeCacheJobs = ConcurrentHashMap<String, Job>()
     private val cacheScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -201,6 +203,15 @@ object OuterTuneResolvingDataSource {
 
     fun isStreamFullyCached(context: Context, trackId: String, isVideo: Boolean): Boolean {
         return getCompletedCacheFile(context, trackId, isVideo) != null
+    }
+
+    fun getInlineBufferedFraction(trackId: String, isVideo: Boolean = false): Float {
+        if (trackId.isBlank()) return 0f
+        val clean = InnerTubeStreamExtractor.extractVideoId(trackId) ?: trackId
+        val total = inlineTotalLengthByTrackId[clean] ?: inlineTotalLengthByTrackId[trackId] ?: return 0f
+        if (total <= 0L) return 0f
+        val maxRead = inlineMaxPositionByTrackId[clean] ?: inlineMaxPositionByTrackId[trackId] ?: 0L
+        return (maxRead.toFloat() / total.toFloat()).coerceIn(0f, 1f)
     }
 
     fun getCacheStatsSummary(context: Context): Pair<Int, Long> {
@@ -870,6 +881,14 @@ object OuterTuneResolvingDataSource {
                     currentChunkBytesRead += bytesRead
                     if (totalBytesRemaining != C.LENGTH_UNSET.toLong()) {
                         totalBytesRemaining = (totalBytesRemaining - bytesRead).coerceAtLeast(0L)
+                    }
+                    val trackKey = mappedVideoId ?: currentlyPlayingTrackId
+                    if (!trackKey.isNullOrBlank() && totalStreamLength > 0L) {
+                        inlineTotalLengthByTrackId[trackKey] = totalStreamLength
+                        val prevMax = inlineMaxPositionByTrackId[trackKey] ?: 0L
+                        if (nextReadPosition > prevMax) {
+                            inlineMaxPositionByTrackId[trackKey] = nextReadPosition.coerceAtMost(totalStreamLength)
+                        }
                     }
                     return bytesRead
                 }

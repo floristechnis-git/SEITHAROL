@@ -277,6 +277,7 @@ class MusicRepository(
     }
 
     suspend fun insertTrack(track: Track) = withContext(Dispatchers.IO) {
+        if (track.isLocalOnlyTrack) return@withContext
         val existing = trackDao.getTrackById(track.id)
         val merged = if (existing != null) {
             track.copy(

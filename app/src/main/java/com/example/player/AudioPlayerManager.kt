@@ -1987,7 +1987,7 @@ class AudioPlayerManager(
                     }
 
                     val firstTry = runCatching {
-                        withTimeoutOrNull(if (isVideoTrack) 11_000L else 7_500L) {
+                        withTimeoutOrNull(12_000L) {
                             resolveStreamForTrack(
                                 track = resolvedLocalTrack,
                                 isVideo = isVideoTrack,
@@ -2000,7 +2000,7 @@ class AudioPlayerManager(
 
                     val resolvedStream = firstTry ?: run {
                         // Fast failover with rotated client & JioSaavn fallback
-                        withTimeoutOrNull(if (isVideoTrack) 12_000L else 8_500L) {
+                        withTimeoutOrNull(12_000L) {
                             if (!isVideoTrack) {
                                 resolverEngine.resolveTrack(
                                     track = resolvedLocalTrack.copy(audioUrl = ""),

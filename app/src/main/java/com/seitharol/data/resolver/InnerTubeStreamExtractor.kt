@@ -535,8 +535,8 @@ object InnerTubeStreamExtractor {
             val endpoint = URL(client.playerEndpoint)
             val conn = (endpoint.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 1800
-                readTimeout = 2000
+                connectTimeout = 3500
+                readTimeout = 3500
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("User-Agent", client.userAgent)
@@ -626,10 +626,9 @@ object InnerTubeStreamExtractor {
                     val fmt = arr.optJSONObject(i) ?: continue
                     val mime = fmt.optString("mimeType", "")
                     val itag = fmt.optInt("itag", 0)
-                    // Pure audio streams only (fMP4 M4A 140/141/139 or WebM Opus 251/250/249).
-                    // Never select muxed video/mp4 (itag=18) for audio-only playback because ExoPlayer
-                    // detaches its video surface in audio mode and stalls in STATE_BUFFERING at ~53s!
-                    val isAudio = mime.startsWith("audio/") || itag in listOf(140, 141, 139, 251, 250, 249)
+                    // Collect pure audio streams (itag 140/141/139 M4A AAC, 251/250/249 WebM Opus)
+                    // AND progressive muxed MP4 (itag 18/22 with ratebypass=yes) as universal fallback
+                    val isAudio = mime.startsWith("audio/") || itag in listOf(140, 141, 139, 251, 250, 249, 18, 22)
                     if (!isAudio) continue
 
                     var rawUrl = fmt.optString("url", "")
@@ -689,17 +688,18 @@ object InnerTubeStreamExtractor {
                 }
             }
 
-            // Pass 1: Collect direct unciphered pure audio URLs first (zero JS overhead)
+            // Pass 1: Collect direct unciphered URLs from both adaptiveFormats and legacyFormats (itag=18 ratebypass=yes)
             collectStreams(adaptiveFormats, isLegacy = false, allowCipher = false)
+            collectStreams(legacyFormats, isLegacy = true, allowCipher = false)
 
             // Pass 2: Inspect ciphered streams on embedded clients if Pass 1 returned zero direct URLs
             if (audioStreams.isEmpty() && client.isEmbedded) {
                 collectStreams(adaptiveFormats, isLegacy = false, allowCipher = true)
+                collectStreams(legacyFormats, isLegacy = true, allowCipher = true)
             }
 
             val failedForVideo = failedAudioStreamsByVideoId[videoId].orEmpty()
-            // Prioritize pure audio fMP4 AAC (itag=140 with sidx segment index box at byte 0 and clen= in URL)
-            // for instantaneous hardware decoding and exact byte-offset seeking, followed by Opus (itag=251/250/249).
+            // Prioritize pure audio M4A AAC (itag=140), then Opus (itag=251/250/249), then progressive MP4 (itag=18 ratebypass=yes)
             val sortedCandidates = audioStreams
                 .filter { cand ->
                     requiredItag == null || cand.itag == requiredItag
@@ -710,17 +710,17 @@ object InnerTubeStreamExtractor {
                 }
                 .sortedWith(
                     compareByDescending<AudioStreamCandidate> { requiredItag != null && it.itag == requiredItag }
-                        .thenByDescending { it.itag == 140 || it.isAacMp4 }
+                        .thenByDescending { it.itag == 140 || (it.isAacMp4 && !it.isProgressiveMp4) }
+                        .thenByDescending { !it.isProgressiveMp4 }
                         .thenBy { kotlin.math.abs(it.kbps - preferredQuality.maxBitrateKbps) }
                 )
 
-            for (cand in sortedCandidates.take(4)) {
-                val verified = verifyStreamPlayable(cand.url)
-                if (!verified.isNullOrBlank()) {
-                    return@runCatching verified
-                } else {
-                    markAudioStreamFailed(videoId, cand.url)
-                }
+            // Just like resolveRawVideoStreamById for YouTube Videos, return the top candidate immediately
+            // without blocking on 1400ms OkHttp pre-probes (ExoPlayer's DefaultHttpDataSource opens it directly
+            // and marks any failed stream in failedAudioStreamsByVideoId on error).
+            val bestCandidate = sortedCandidates.firstOrNull()
+            if (bestCandidate != null) {
+                return@runCatching bestCandidate.url
             }
 
             if (allowHls) {
@@ -800,6 +800,27 @@ object InnerTubeStreamExtractor {
             if (!nextUrl.isNullOrBlank()) {
                 com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, nextUrl)
                 return@withContext Result.success(nextUrl)
+            }
+        }
+
+        // Fallback to progressive video stream extractor (itag=18 ratebypass=yes / federated nodes)
+        if (requiredItag == null) {
+            val rawVideoFallback = resolveRawVideoStreamById(
+                videoId = cleanVideoId,
+                forceRefresh = forceRefresh,
+                allowHlsFallback = false
+            ).getOrNull()
+            val singleFallback = when {
+                rawVideoFallback.isNullOrBlank() -> null
+                rawVideoFallback.startsWith("merged_av::") -> {
+                    val parts = rawVideoFallback.removePrefix("merged_av::").split("|||")
+                    parts.getOrNull(1) ?: parts.firstOrNull()
+                }
+                else -> rawVideoFallback
+            }
+            if (!singleFallback.isNullOrBlank()) {
+                com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, singleFallback)
+                return@withContext Result.success(singleFallback)
             }
         }
 

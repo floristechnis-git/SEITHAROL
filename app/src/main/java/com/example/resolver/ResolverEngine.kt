@@ -347,13 +347,17 @@ class ResolverEngine {
                 }
             }
 
-            // Alternative YTM Song Search Fallback for restricted "Art Tracks" (Topic songs)
+            // Alternative YTM & YouTube Video Search Fallback for restricted "Art Tracks" (Topic songs)
             if (!track.isVideoTrack && track.title.isNotBlank()) {
                 try {
                     val query = "${track.title} ${track.artist}".trim()
-                    val altCandidates = withTimeoutOrNull(3000L) {
+                    val ytVidCandidates = withTimeoutOrNull(3500L) {
+                        com.seitharol.data.resolver.InnerTubeStreamExtractor.searchAllYoutubeVideos(query, limit = 4)
+                    }.orEmpty()
+                    val ytmCandidates = withTimeoutOrNull(3000L) {
                         com.seitharol.data.resolver.InnerTubeStreamExtractor.searchOfficialYtmSongs(query, limit = 4)
                     }.orEmpty()
+                    val altCandidates = (ytVidCandidates + ytmCandidates).distinctBy { it.videoId }
                     for (cand in altCandidates) {
                         if (cand.videoId.isBlank() || cand.videoId == targetVideoId) continue
                         val altRes = com.seitharol.data.resolver.InnerTubeStreamExtractor

@@ -692,7 +692,7 @@ class AudioPlayerManager(
                 val resumePos = (p.currentPosition.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
                 val isVideo = current.isVideoTrack || _state.value.isVideoMode
 
-                if (stallRecoveryCount >= 2) {
+                if (stallRecoveryCount >= 3) {
                     // Capped recovery: never loop infinitely for hours!
                     Log.w(TAG, "Watchdog recovery cap reached for '${current.title}', stopping infinite buffering.")
                     isRetryingOrLoading = false
@@ -710,7 +710,7 @@ class AudioPlayerManager(
                 }
 
                 stallRecoveryCount++
-                val useFallback = stallRecoveryCount >= 2 && !isVideo
+                val useFallback = (stallRecoveryCount >= 2 || resumePos > 45_000L) && !isVideo
                 Log.w(TAG, "Buffering watchdog attempt $stallRecoveryCount (fallback=$useFallback) for '${current.title}' at ${resumePos}ms")
                 resolverEngine.invalidateTrack(current.id)
                 InnerTubeStreamExtractor.invalidateVideoStreamCache(current.id)
@@ -759,14 +759,14 @@ class AudioPlayerManager(
             // while retaining 300s back-buffer for instant 0ms backward/forward seeking:
             val loadControl = DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
-                    /* minBufferMs = */ 30_000,
-                    /* maxBufferMs = */ 180_000,
-                    /* bufferForPlaybackMs = */ 500,
-                    /* bufferForPlaybackAfterRebufferMs = */ 1_000
+                    /* minBufferMs = */ 60_000,
+                    /* maxBufferMs = */ 600_000,
+                    /* bufferForPlaybackMs = */ 400,
+                    /* bufferForPlaybackAfterRebufferMs = */ 800
                 )
-                .setTargetBufferBytes(12 * 1024 * 1024)
+                .setTargetBufferBytes(32 * 1024 * 1024)
                 .setPrioritizeTimeOverSizeThresholds(true)
-                .setBackBuffer(/* backBufferDurationMs = */ 120_000, /* retainBackBufferFromKeyframe = */ true)
+                .setBackBuffer(/* backBufferDurationMs = */ 300_000, /* retainBackBufferFromKeyframe = */ true)
                 .build()
 
             val builder = ExoPlayer.Builder(context)
@@ -866,8 +866,32 @@ class AudioPlayerManager(
                                 seekBufferingDebounceJob?.cancel()
                                 bufferingWatchdogJob?.cancel()
                                 seekRecoveryJob?.cancel()
-                                isRetryingOrLoading = false
-                                onTrackCompleted()
+                                val curTrack = _state.value.currentTrack
+                                val actualPos = currentPosition.coerceAtLeast(_state.value.currentPositionMs)
+                                val expectedDur = _state.value.durationMs.coerceAtLeast(curTrack?.durationMs ?: 0L)
+                                val isVideo = curTrack?.isVideoTrack == true || _state.value.isVideoMode
+                                // Guard against premature EOF mid-song (e.g. if an audio stream truncated at ~1:04 while song is >1:40):
+                                // seamlessly reload with a fresh stream / fallback at the exact position instead of stopping!
+                                if (userRequestedPlay &&
+                                    curTrack != null &&
+                                    !curTrack.isLocalOnlyTrack &&
+                                    expectedDur > 95_000L &&
+                                    actualPos in 15_000L..(expectedDur - 25_000L) &&
+                                    stallRecoveryCount < 3
+                                ) {
+                                    stallRecoveryCount++
+                                    val useFallback = stallRecoveryCount >= 2 && !isVideo
+                                    Log.w(TAG, "Premature STATE_ENDED at ${actualPos}ms / ${expectedDur}ms for '${curTrack.title}'; seamlessly resuming (attempt $stallRecoveryCount)")
+                                    resolverEngine.invalidateTrack(curTrack.id)
+                                    loadAndPlayCurrent(
+                                        resumePositionMs = actualPos,
+                                        forceRefresh = true,
+                                        preferNonYoutubeFallback = useFallback
+                                    )
+                                } else {
+                                    isRetryingOrLoading = false
+                                    onTrackCompleted()
+                                }
                             }
                             Player.STATE_IDLE -> {
                                 val loadingActive = userRequestedPlay && (isRetryingOrLoading || loadTrackJob?.isActive == true || retryJob?.isActive == true)
@@ -2997,7 +3021,8 @@ class AudioPlayerManager(
                 } else if ((player.playbackState == Player.STATE_BUFFERING || s.isBuffering) &&
                     !player.isPlaying &&
                     loadTrackJob?.isActive != true &&
-                    retryJob?.isActive != true
+                    retryJob?.isActive != true &&
+                    bufferingWatchdogJob?.isActive != true
                 ) {
                     val isVid = s.isVideoMode || current.isVideoTrack
                     val stallLimitMs = if (isVid) 15_000L else 10_000L

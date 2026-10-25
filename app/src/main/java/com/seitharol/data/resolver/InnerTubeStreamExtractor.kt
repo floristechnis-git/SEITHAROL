@@ -426,7 +426,11 @@ object InnerTubeStreamExtractor {
                 !url.contains("itag=22&", ignoreCase = true) &&
                 !url.endsWith("itag=22", ignoreCase = true)
 
-            val probeStart = if (clen <= 0L || clen > 100_000L) 65_536L else 0L
+            val probeStart = when {
+                clen > 1_200_000L -> 1_048_576L // Probe past the 1 MB (1:04) boundary to reject throttled/1-minute-capped URLs!
+                clen <= 0L || clen > 100_000L -> 65_536L
+                else -> 0L
+            }
             val probeEnd = probeStart + 255L
 
             val targetUrl = if (!isHls && isAdaptiveGir && !url.contains("&range=")) {
@@ -485,7 +489,8 @@ object InnerTubeStreamExtractor {
         preferredQuality: AudioQuality,
         cpn: String,
         allowHls: Boolean = true,
-        includeVisitorData: Boolean = false
+        includeVisitorData: Boolean = false,
+        requiredItag: Int? = null
     ): String? {
         return runCatching {
             val visData = if (client.isEmbedded) cachedVisitorData?.takeIf { it.isNotBlank() } else null
@@ -660,12 +665,16 @@ object InnerTubeStreamExtractor {
 
             val failedForVideo = failedAudioStreamsByVideoId[videoId].orEmpty()
             val sortedCandidates = audioStreams
+                .filter { cand ->
+                    requiredItag == null || cand.itag == requiredItag
+                }
                 .filterNot { cand ->
                     val base = cand.url.substringBefore("&range=").substringBefore("?range=")
                     failedForVideo.contains(cand.url) || failedForVideo.contains(base)
                 }
                 .sortedWith(
-                    compareByDescending<AudioStreamCandidate> { it.itag == 140 || (it.isAacMp4 && !it.isProgressiveMp4) }
+                    compareByDescending<AudioStreamCandidate> { requiredItag != null && it.itag == requiredItag }
+                        .thenByDescending { it.itag == 140 || (it.isAacMp4 && !it.isProgressiveMp4) }
                         .thenByDescending { it.isProgressiveMp4 }
                         .thenBy { kotlin.math.abs(it.kbps - preferredQuality.maxBitrateKbps) }
                 )
@@ -696,7 +705,8 @@ object InnerTubeStreamExtractor {
     suspend fun resolveExactYoutubeStreamById(
         videoId: String,
         preferredQuality: AudioQuality = AudioQuality.NORMAL,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        requiredItag: Int? = null
     ): Result<String> = withContext(Dispatchers.IO) {
         val cleanVideoId = extractVideoId(videoId) ?: videoId.trim()
         if (!VALID_VIDEO_ID_REGEX.matches(cleanVideoId)) {
@@ -705,7 +715,7 @@ object InnerTubeStreamExtractor {
 
         if (forceRefresh) {
             com.seitharol.player.OuterTuneResolvingDataSource.invalidate(cleanVideoId)
-        } else {
+        } else if (requiredItag == null) {
             com.seitharol.player.OuterTuneResolvingDataSource.getCachedUrl(cleanVideoId, preferredQuality)?.let { cached ->
                 return@withContext Result.success(cached)
             }
@@ -725,8 +735,9 @@ object InnerTubeStreamExtractor {
             client = primaryClient,
             preferredQuality = preferredQuality,
             cpn = cpn,
-            allowHls = isHlsSupported,
-            includeVisitorData = primaryClient.isEmbedded
+            allowHls = isHlsSupported && requiredItag == null,
+            includeVisitorData = primaryClient.isEmbedded,
+            requiredItag = requiredItag
         )
         if (!fastUrl.isNullOrBlank()) {
             com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, fastUrl)
@@ -743,8 +754,9 @@ object InnerTubeStreamExtractor {
                 client = client,
                 preferredQuality = preferredQuality,
                 cpn = generateCpn(),
-                allowHls = isHlsSupported,
-                includeVisitorData = client.isEmbedded
+                allowHls = isHlsSupported && requiredItag == null,
+                includeVisitorData = client.isEmbedded,
+                requiredItag = requiredItag
             )
             if (!nextUrl.isNullOrBlank()) {
                 com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, nextUrl)

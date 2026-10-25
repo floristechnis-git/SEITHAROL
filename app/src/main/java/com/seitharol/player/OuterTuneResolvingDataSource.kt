@@ -449,6 +449,13 @@ object OuterTuneResolvingDataSource {
         return values.firstOrNull()?.trim()?.toLongOrNull() ?: -1L
     }
 
+    private fun parseStartByteFromContentRange(headers: Map<String, List<String>>): Long {
+        val values = headers["Content-Range"] ?: headers["content-range"] ?: return -1L
+        val first = values.firstOrNull()?.trim() ?: return -1L
+        val match = Regex("bytes\\s+(\\d+)-\\d+/").find(first) ?: return -1L
+        return match.groupValues[1].toLongOrNull() ?: -1L
+    }
+
     private fun resolveDataSpec(
         dataSpec: DataSpec,
         qualityProvider: () -> AudioQuality
@@ -621,7 +628,10 @@ object OuterTuneResolvingDataSource {
                     activeDelegate = null
 
                     if (totalBytesRemaining == 0L) return false
-                    if (totalStreamLength > 0L && nextReadPosition >= totalStreamLength) return false
+                    if (totalStreamLength > 0L && nextReadPosition >= totalStreamLength) {
+                        totalBytesRemaining = 0L
+                        return false
+                    }
                     val baseSpec = baseResolvedSpec ?: return false
 
                     val alignedChunkIndex = nextReadPosition / chunkStepBytes
@@ -667,48 +677,68 @@ object OuterTuneResolvingDataSource {
                     cleanHeaders.remove("range")
                     cleanHeaders.remove("If-Range")
 
-                    // When totalStreamLength is not yet known, send HTTP Range header on the first chunk
-                    // so googlevideo.com responds with 206 Partial Content + Content-Range: bytes start-end/total!
-                    val useRangeHeader = totalStreamLength <= 0L
-                    val chunkUri: Uri
-                    if (useRangeHeader) {
-                        chunkUri = Uri.parse(baseUriWithoutRange)
-                        cleanHeaders["Range"] = "bytes=${nextReadPosition}-${endByte}"
-                    } else {
-                        val sep = if (baseUriWithoutRange.contains("?")) "&" else "?"
-                        chunkUri = Uri.parse("${baseUriWithoutRange}${sep}range=${nextReadPosition}-${endByte}")
+                    val isActualGoogleVideoCdn = baseUriWithoutRange.contains("googlevideo.com", ignoreCase = true)
+                    val hasSignedRangeConstraint = baseUriWithoutRange.contains("sperc=", ignoreCase = true) ||
+                        (baseUriWithoutRange.contains("sparams=", ignoreCase = true) &&
+                            Regex("[?&]sparams=([^&]+)").find(baseUriWithoutRange)?.groupValues?.get(1)
+                                ?.let { java.net.URLDecoder.decode(it, "UTF-8").contains("range") } == true)
+
+                    // Use HTTP Range header when totalStreamLength is unknown, when URL is not googlevideo.com,
+                    // or when range is locked in sparams; otherwise use &range=start-end with automatic Range header fallback.
+                    val preferRangeHeaderFirst = !isActualGoogleVideoCdn || totalStreamLength <= 0L || hasSignedRangeConstraint
+
+                    fun buildRangeHeaderSpec(): DataSpec {
+                        val hdrs = HashMap<String, String>(cleanHeaders)
+                        hdrs["Range"] = "bytes=${nextReadPosition}-${endByte}"
+                        return baseSpec.buildUpon()
+                            .setUri(Uri.parse(baseUriWithoutRange))
+                            .setHttpRequestHeaders(hdrs)
+                            .setPosition(0L)
+                            .setLength(C.LENGTH_UNSET.toLong())
+                            .build()
                     }
 
-                    val chunkSpec = baseSpec.buildUpon()
-                        .setUri(chunkUri)
-                        .setHttpRequestHeaders(cleanHeaders)
-                        .setPosition(0L)
-                        .setLength(C.LENGTH_UNSET.toLong())
-                        .build()
+                    fun buildQueryRangeSpec(): DataSpec {
+                        val sep = if (baseUriWithoutRange.contains("?")) "&" else "?"
+                        val chunkUri = Uri.parse("${baseUriWithoutRange}${sep}range=${nextReadPosition}-${endByte}")
+                        return baseSpec.buildUpon()
+                            .setUri(chunkUri)
+                            .setHttpRequestHeaders(cleanHeaders)
+                            .setPosition(0L)
+                            .setLength(C.LENGTH_UNSET.toLong())
+                            .build()
+                    }
+
+                    val primarySpec = if (preferRangeHeaderFirst) buildRangeHeaderSpec() else buildQueryRangeSpec()
+                    val fallbackSpec = if (preferRangeHeaderFirst) buildQueryRangeSpec() else buildRangeHeaderSpec()
 
                     var delegate = createDelegate()
                     activeDelegate = delegate
-                    val openedLen = try {
-                        delegate.open(chunkSpec)
-                    } catch (rangeParamErr: Exception) {
+                    var openedLen = try {
+                        delegate.open(primarySpec)
+                    } catch (primaryErr: Exception) {
                         try {
                             delegate.close()
                         } catch (_: Throwable) {}
-                        if (!useRangeHeader) {
-                            // Fallback to standard HTTP Range header if &range= query param was rejected
-                            val fallbackHeaders = HashMap<String, String>(cleanHeaders)
-                            fallbackHeaders["Range"] = "bytes=${nextReadPosition}-${endByte}"
-                            val fallbackSpec = baseSpec.buildUpon()
-                                .setUri(Uri.parse(baseUriWithoutRange))
-                                .setHttpRequestHeaders(fallbackHeaders)
-                                .setPosition(0L)
-                                .setLength(C.LENGTH_UNSET.toLong())
-                                .build()
+                        delegate = createDelegate()
+                        activeDelegate = delegate
+                        delegate.open(fallbackSpec)
+                    }
+
+                    // Guard against servers/proxies that ignore ?range= and return the whole file from byte 0
+                    // when nextReadPosition > 0 (which would feed an ftyp/moov header into the middle of an mdat/Cluster!)
+                    if (nextReadPosition > 0L) {
+                        val respStartByte = parseStartByteFromContentRange(delegate.responseHeaders)
+                        val respContentLen = parseContentLengthHeader(delegate.responseHeaders)
+                        val returnedWholeFileFromZero = (respStartByte == 0L) ||
+                            (respStartByte < 0L && totalStreamLength > 0L && respContentLen >= totalStreamLength && maxDesired < totalStreamLength)
+                        if (returnedWholeFileFromZero) {
+                            try {
+                                delegate.close()
+                            } catch (_: Throwable) {}
                             delegate = createDelegate()
                             activeDelegate = delegate
-                            delegate.open(fallbackSpec)
-                        } else {
-                            throw rangeParamErr
+                            openedLen = delegate.open(buildRangeHeaderSpec())
                         }
                     }
 
@@ -718,12 +748,18 @@ object OuterTuneResolvingDataSource {
                         if (crTotal > 0L) {
                             totalStreamLength = crTotal
                             knownStreamTotalLengths[streamIdentityKey] = crTotal
+                            knownStreamTotalLengths[baseUriWithoutRange] = crTotal
+                            val trackKey = mappedVideoId ?: currentlyPlayingTrackId
+                            if (!trackKey.isNullOrBlank()) {
+                                inlineTotalLengthByTrackId[trackKey] = crTotal
+                            }
                             if (totalBytesRemaining == C.LENGTH_UNSET.toLong()) {
                                 totalBytesRemaining = (crTotal - nextReadPosition).coerceAtLeast(0L)
                             }
                         } else if (openedLen > 0L && openedLen < maxDesired && nextReadPosition == 0L) {
                             totalStreamLength = openedLen
                             knownStreamTotalLengths[streamIdentityKey] = openedLen
+                            knownStreamTotalLengths[baseUriWithoutRange] = openedLen
                             if (totalBytesRemaining == C.LENGTH_UNSET.toLong()) {
                                 totalBytesRemaining = openedLen
                             }
@@ -734,6 +770,14 @@ object OuterTuneResolvingDataSource {
                         openedLen != C.LENGTH_UNSET.toLong() && openedLen > 0L -> min(maxDesired, openedLen)
                         totalBytesRemaining != C.LENGTH_UNSET.toLong() -> min(maxDesired, totalBytesRemaining)
                         else -> maxDesired
+                    }
+
+                    if (effectiveChunkLen <= 0L) {
+                        try {
+                            delegate.close()
+                        } catch (_: Throwable) {}
+                        activeDelegate = null
+                        return false
                     }
 
                     currentChunkStartOffset = nextReadPosition
@@ -780,6 +824,7 @@ object OuterTuneResolvingDataSource {
                     // Fallback: Refresh signed stream URL for the current track and resume at exact nextReadPosition
                     val vid = mappedVideoId ?: currentlyPlayingTrackId
                     val baseSpec = baseResolvedSpec
+                    val currentItag = Regex("[?&]itag=(\\d+)").find(baseUriWithoutRange)?.groupValues?.get(1)?.toIntOrNull()
                     if (!vid.isNullOrBlank() && baseSpec != null && InnerTubeStreamExtractor.isValidYoutubeVideoId(vid)) {
                         val refreshedUrl = runCatching {
                             invalidate(vid)
@@ -788,7 +833,12 @@ object OuterTuneResolvingDataSource {
                                 if (isVideoStream) {
                                     InnerTubeStreamExtractor.resolveRawVideoStreamById(vid, forceRefresh = true).getOrNull()
                                 } else {
-                                    InnerTubeStreamExtractor.resolveExactYoutubeStreamById(vid, qualityProvider(), forceRefresh = true).getOrNull()
+                                    InnerTubeStreamExtractor.resolveExactYoutubeStreamById(
+                                        videoId = vid,
+                                        preferredQuality = qualityProvider(),
+                                        forceRefresh = true,
+                                        requiredItag = currentItag
+                                    ).getOrNull()
                                 }
                             }
                             when {
@@ -801,7 +851,9 @@ object OuterTuneResolvingDataSource {
                             }
                         }.getOrNull()
 
-                        if (!refreshedUrl.isNullOrBlank()) {
+                        val refreshedItag = refreshedUrl?.let { Regex("[?&]itag=(\\d+)").find(it)?.groupValues?.get(1)?.toIntOrNull() }
+                        val isCompatibleContainer = currentItag == null || refreshedItag == null || currentItag == refreshedItag
+                        if (!refreshedUrl.isNullOrBlank() && isCompatibleContainer) {
                             return try {
                                 baseUriWithoutRange = stripRangeQueryParam(refreshedUrl)
                                 streamIdentityKey = extractStreamIdentityKey(baseUriWithoutRange)
@@ -815,6 +867,7 @@ object OuterTuneResolvingDataSource {
                                 if (newClen > 0L && totalStreamLength <= 0L) {
                                     totalStreamLength = newClen
                                     knownStreamTotalLengths[streamIdentityKey] = newClen
+                                    knownStreamTotalLengths[baseUriWithoutRange] = newClen
                                     if (totalBytesRemaining == C.LENGTH_UNSET.toLong()) {
                                         totalBytesRemaining = (newClen - nextReadPosition).coerceAtLeast(0L)
                                     }
@@ -932,7 +985,7 @@ object OuterTuneResolvingDataSource {
                         }
 
                         // Adaptive gir=yes streams (itag=134/135/136 H.264 fMP4, itag=140 M4A, itag=251 Opus):
-                        // Stream in fast 512 KB &range=start-end chunks with inline memory block caching.
+                        // Stream in fast 512 KB chunks with inline memory block caching.
                         chunkStepBytes = GOOGLE_VIDEO_CHUNK_BYTES
                         totalBytesRemaining = when {
                             resolvedSpec.length != C.LENGTH_UNSET.toLong() -> resolvedSpec.length
@@ -944,6 +997,13 @@ object OuterTuneResolvingDataSource {
                             try {
                                 isChunkedGoogleVideo = true
                                 if (openNextGoogleVideoChunk()) {
+                                    if (resolvedSpec.length == C.LENGTH_UNSET.toLong() && totalStreamLength > 0L) {
+                                        totalBytesRemaining = (totalStreamLength - nextReadPosition).coerceAtLeast(0L)
+                                    }
+                                    val trackKey = mappedVideoId ?: currentlyPlayingTrackId
+                                    if (!trackKey.isNullOrBlank() && totalStreamLength > 0L) {
+                                        inlineTotalLengthByTrackId[trackKey] = totalStreamLength
+                                    }
                                     return totalBytesRemaining
                                 }
                             } catch (firstChunkErr: Exception) {
@@ -1052,7 +1112,14 @@ object OuterTuneResolvingDataSource {
                     }
 
                     if (currentChunkBytesRemaining <= 0L || (activeDelegate == null && activeCachedBlock == null)) {
+                        val reachedTrueEnd = totalBytesRemaining == 0L || (totalStreamLength > 0L && nextReadPosition >= totalStreamLength)
+                        if (reachedTrueEnd) {
+                            return C.RESULT_END_OF_INPUT
+                        }
                         if (!openNextGoogleVideoChunkWithRetry()) {
+                            if (totalStreamLength > 0L && nextReadPosition < totalStreamLength) {
+                                throw IOException("Unable to open next audio chunk at byte $nextReadPosition / $totalStreamLength")
+                            }
                             return C.RESULT_END_OF_INPUT
                         }
                     }
@@ -1119,6 +1186,9 @@ object OuterTuneResolvingDataSource {
                         if (currentChunkBytesRead == 0L) {
                             consecutiveEmptyChunkRetries++
                             if (consecutiveEmptyChunkRetries > 3) {
+                                if (totalStreamLength > 0L && nextReadPosition < totalStreamLength) {
+                                    throw IOException("Empty chunk response at byte $nextReadPosition / $totalStreamLength")
+                                }
                                 return C.RESULT_END_OF_INPUT
                             }
                         } else {
@@ -1126,7 +1196,13 @@ object OuterTuneResolvingDataSource {
                         }
                         val hasMoreStreamBytes = (totalBytesRemaining == C.LENGTH_UNSET.toLong() || totalBytesRemaining > 0L) &&
                             (totalStreamLength <= 0L || nextReadPosition < totalStreamLength)
-                        if (!hasMoreStreamBytes || !openNextGoogleVideoChunkWithRetry()) {
+                        if (!hasMoreStreamBytes) {
+                            return C.RESULT_END_OF_INPUT
+                        }
+                        if (!openNextGoogleVideoChunkWithRetry()) {
+                            if (totalStreamLength > 0L && nextReadPosition < totalStreamLength) {
+                                throw IOException("Stream chunk transition failed at byte $nextReadPosition / $totalStreamLength")
+                            }
                             return C.RESULT_END_OF_INPUT
                         }
                         // Recursive read on the newly opened chunk (which may be a memory hit or network delegate)

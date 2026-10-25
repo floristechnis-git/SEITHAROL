@@ -520,8 +520,7 @@ fun InfoDetailScreen(
                     )
 
                     Text(
-                        text = "Developed by Yumkhaibam Johnson Singh • Dedicated 71-Day Build
-Version 1.0.0 Public Release • https://seitharol.vercel.app",
+                        text = "Developed by Yumkhaibam Johnson Singh • Version 2.0.0 Public Release",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         lineHeight = 18.sp

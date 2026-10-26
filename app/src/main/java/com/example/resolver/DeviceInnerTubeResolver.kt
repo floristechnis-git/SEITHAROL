@@ -38,9 +38,9 @@ class DeviceInnerTubeResolver : Resolver {
             ClientAttempt(
                 endpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
                 clientName = "VISIONOS",
-                clientVersion = "0.1",
+                clientVersion = "1.02",
                 clientId = "101",
-                userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+                userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15",
                 gl = userGl,
                 sendOrigin = true,
                 includePoToken = false
@@ -126,7 +126,7 @@ class DeviceInnerTubeResolver : Resolver {
         cpn: String
     ): ResolveResult? {
         val sts = if (attempt.includePoToken) KotlinJsInterp.getSignatureTimestamp() else 20073
-        val visitorData = if (attempt.includePoToken) InnerTubeStreamExtractor.ensureVisitorData(forceFresh = false) else null
+        val visitorData = if (attempt.includePoToken || attempt.clientName == "VISIONOS") InnerTubeStreamExtractor.ensureVisitorData(forceFresh = false) else null
         val poToken = if (attempt.includePoToken) KotlinJsInterp.generatePoToken(visitorData) else null
 
         val payload = JSONObject().apply {
@@ -161,9 +161,9 @@ class DeviceInnerTubeResolver : Resolver {
                     when (attempt.clientName) {
                         "VISIONOS" -> {
                             put("deviceMake", "Apple")
-                            put("deviceModel", "RealityDevice14,1")
+                            put("deviceModel", "RealityDevice17,1")
                             put("osName", "visionOS")
-                            put("osVersion", "1.3.21O771")
+                            put("osVersion", "26.5.23O471")
                         }
                         "ANDROID_VR" -> {
                             put("deviceMake", "Oculus")
@@ -310,10 +310,11 @@ class DeviceInnerTubeResolver : Resolver {
                 throw IllegalStateException("No usable audio streams found")
             }
 
-            // Prefer pure audio M4A AAC (itag 140) and Opus (itag 251) first for audio playback
+            // For VISIONOS, prefer pure audio M4A AAC (140) and Opus (251); for non-VISIONOS fallback clients, prefer progressive MP4 (18) first
+            val isVisionOs = attempt.clientName.equals("VISIONOS", ignoreCase = true)
             candidateFormats.sortWith(
-                compareByDescending<FormatItem> { it.id == "140" || (it.codec == "aac" && it.id != "18") }
-                    .thenByDescending { it.id != "18" }
+                compareByDescending<FormatItem> { if (isVisionOs) it.id != "18" else it.id == "18" }
+                    .thenByDescending { it.id == "140" || (it.codec == "aac" && it.id != "18") }
                     .thenByDescending { it.bitrate }
             )
 

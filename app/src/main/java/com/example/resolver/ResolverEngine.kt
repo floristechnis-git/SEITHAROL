@@ -254,35 +254,37 @@ class ResolverEngine {
                 }
             }
 
-            // On-Device InnerTube secondary transport
+            // Secondary Device/Federated Resolvers with tight timeout
             if (!preferNonYoutubeFallback) {
-                try {
-                    val req = ResolveRequest(videoId = targetVideoId, title = track.title, artist = track.artist)
-                    val res = withTimeoutOrNull(2500L) { deviceInnerTubeResolver.resolve(req) }
-                    val candidateFormats = res?.formats?.filter { it.url.isNotBlank() }.orEmpty()
-                    val fmt = if (preferredQuality == com.seitharol.data.resolver.AudioQuality.LOW) {
-                        candidateFormats.minByOrNull { it.bitrate } ?: candidateFormats.firstOrNull()
-                    } else {
-                        candidateFormats.firstOrNull()
+                val req = ResolveRequest(videoId = targetVideoId, title = track.title, artist = track.artist)
+                for (directNode in listOf(deviceInnerTubeResolver, pipedResolver, invidiousResolver)) {
+                    try {
+                        val res = withTimeoutOrNull(2500L) { directNode.resolve(req) } ?: continue
+                        val candidateFormats = res.formats.filter { it.url.isNotBlank() }
+                        val fmt = if (preferredQuality == com.seitharol.data.resolver.AudioQuality.LOW) {
+                            candidateFormats.minByOrNull { it.bitrate } ?: candidateFormats.firstOrNull()
+                        } else {
+                            candidateFormats.firstOrNull()
+                        }
+                        if (fmt != null) {
+                            com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(targetVideoId, preferredQuality, fmt.url)
+                            val resolved = ResolvedStream(
+                                videoId = targetVideoId,
+                                streamUrl = fmt.url,
+                                itag = fmt.id.toIntOrNull() ?: 140,
+                                codec = fmt.codec.uppercase(),
+                                bitrate = "${fmt.bitrate / 1000} kbps",
+                                expiresAtMs = res.expiresAt,
+                                isLocal = false,
+                                resolvedBy = res.resolverId,
+                                latencyMs = 20
+                            )
+                            streamCache[cacheKey] = resolved
+                            return@withContext resolved
+                        }
+                    } catch (e: Exception) {
+                        failures.add("${directNode.id}: ${e.message}")
                     }
-                    if (res != null && fmt != null) {
-                        com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(targetVideoId, preferredQuality, fmt.url)
-                        val resolved = ResolvedStream(
-                            videoId = targetVideoId,
-                            streamUrl = fmt.url,
-                            itag = fmt.id.toIntOrNull() ?: 140,
-                            codec = fmt.codec.uppercase(),
-                            bitrate = "${fmt.bitrate / 1000} kbps",
-                            expiresAtMs = res.expiresAt,
-                            isLocal = false,
-                            resolvedBy = res.resolverId,
-                            latencyMs = 15
-                        )
-                        streamCache[cacheKey] = resolved
-                        return@withContext resolved
-                    }
-                } catch (e: Exception) {
-                    failures.add("${deviceInnerTubeResolver.id}: ${e.message}")
                 }
             }
 

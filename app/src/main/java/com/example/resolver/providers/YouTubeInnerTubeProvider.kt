@@ -44,19 +44,19 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
             return listOf(
                 ClientProfile(
                     name = "VISIONOS",
-                    version = "0.1",
+                    version = "1.02",
                     clientId = "101",
-                    userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+                    userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15",
                     playerEndpoint = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
                     sendOriginHeaders = true,
                     clientJson = JSONObject().apply {
                         put("clientName", "VISIONOS")
-                        put("clientVersion", "0.1")
-                        put("userAgent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15")
+                        put("clientVersion", "1.02")
+                        put("userAgent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15")
                         put("deviceMake", "Apple")
-                        put("deviceModel", "RealityDevice14,1")
+                        put("deviceModel", "RealityDevice17,1")
                         put("osName", "visionOS")
-                        put("osVersion", "1.3.21O771")
+                        put("osVersion", "26.5.23O471")
                         put("hl", "en")
                         put("gl", deviceGl)
                         put("timeZone", "UTC")
@@ -326,7 +326,7 @@ class YouTubeInnerTubeProvider : AudioStreamProvider {
                     put("thirdParty", JSONObject().apply { put("embedUrl", "https://www.youtube.com/") })
                 }
             })
-            if (profile.isEmbedded || profile.sendOriginHeaders) {
+            if (profile.isEmbedded) {
                 KotlinJsInterp.ensurePlayerJsLoaded(forceRefresh = false)
                 val sts = KotlinJsInterp.getSignatureTimestamp()
                 put("playbackContext", JSONObject().apply {

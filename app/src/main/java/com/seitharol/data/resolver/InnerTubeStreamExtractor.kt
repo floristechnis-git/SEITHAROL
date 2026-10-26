@@ -113,13 +113,13 @@ object InnerTubeStreamExtractor {
     val VERIFIED_CLIENTS = listOf(
         InnerTubeClientConfig(
             clientName = "VISIONOS",
-            clientVersion = "0.1",
-            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+            clientVersion = "1.02",
+            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15",
             clientId = "101",
             deviceMake = "Apple",
-            deviceModel = "RealityDevice14,1",
+            deviceModel = "RealityDevice17,1",
             osName = "visionOS",
-            osVersion = "1.3.21O771",
+            osVersion = "26.5.23O471",
             glOverride = null,
             sendOriginHeaders = true
         ),
@@ -137,18 +137,6 @@ object InnerTubeStreamExtractor {
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
-            clientName = "IOS",
-            clientVersion = "20.10.4",
-            userAgent = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_1 like Mac OS X; en_US)",
-            clientId = "5",
-            deviceMake = "Apple",
-            deviceModel = "iPhone16,2",
-            osName = "iOS",
-            osVersion = "18.3.1.22D72",
-            glOverride = null,
-            sendOriginHeaders = false
-        ),
-        InnerTubeClientConfig(
             clientName = "ANDROID_VR",
             clientVersion = "1.43.32",
             userAgent = "com.google.android.apps.youtube.vr.oculus/1.43.32 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
@@ -162,18 +150,42 @@ object InnerTubeStreamExtractor {
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
-            clientName = "ANDROID_TESTSUITE",
-            clientVersion = "1.9",
-            userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 12L; US) gzip",
-            clientId = "30",
+            clientName = "ANDROID",
+            clientVersion = "20.10.38",
+            userAgent = "com.google.android.youtube/20.10.38 (Linux; U; Android 14; en_US) gzip",
+            clientId = "3",
             deviceMake = "Google",
-            deviceModel = "Pixel 7",
+            deviceModel = "Pixel 8",
             osName = "Android",
-            osVersion = "12L",
-            androidSdkVersion = 32,
+            osVersion = "14",
+            androidSdkVersion = 34,
             params = "CgIIAQ==",
             glOverride = null,
             sendOriginHeaders = false
+        ),
+        InnerTubeClientConfig(
+            clientName = "IOS",
+            clientVersion = "21.26.4",
+            userAgent = "com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
+            clientId = "5",
+            deviceMake = "Apple",
+            deviceModel = "iPhone16,2",
+            osName = "iPhone",
+            osVersion = "18.3.2.22D82",
+            glOverride = null,
+            sendOriginHeaders = false
+        ),
+        InnerTubeClientConfig(
+            clientName = "VISIONOS",
+            clientVersion = "0.1",
+            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+            clientId = "101",
+            deviceMake = "Apple",
+            deviceModel = "RealityDevice14,1",
+            osName = "visionOS",
+            osVersion = "1.3.21O771",
+            glOverride = null,
+            sendOriginHeaders = true
         ),
         InnerTubeClientConfig(
             clientName = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
@@ -186,7 +198,7 @@ object InnerTubeStreamExtractor {
         ),
         InnerTubeClientConfig(
             clientName = "WEB_EMBEDDED_PLAYER",
-            clientVersion = "1.20250310.01.00",
+            clientVersion = "2.20260708.00.00",
             userAgent = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
             clientId = "56",
             glOverride = null,
@@ -528,10 +540,14 @@ object InnerTubeStreamExtractor {
         allowHls: Boolean = true,
         includeVisitorData: Boolean = false,
         requiredItag: Int? = null,
-        preferProgressiveMp4: Boolean = false
+        preferProgressiveMp4: Boolean = true
     ): String? {
         return runCatching {
-            val visData = if (client.isEmbedded) cachedVisitorData?.takeIf { it.isNotBlank() } else null
+            val visData = if (includeVisitorData || client.isEmbedded || client.clientName.equals("VISIONOS", ignoreCase = true)) {
+                cachedVisitorData?.takeIf { it.isNotBlank() } ?: ensureVisitorData(forceFresh = false)
+            } else {
+                cachedVisitorData?.takeIf { it.isNotBlank() }
+            }
             val effectiveGl = client.glOverride ?: resolveDeviceGl()
             val endpoint = URL(client.playerEndpoint)
             val conn = (endpoint.openConnection() as HttpURLConnection).apply {
@@ -605,6 +621,11 @@ object InnerTubeStreamExtractor {
 
             val playability = json.optJSONObject("playabilityStatus")
             val status = playability?.optString("status")
+            if (status == "LOGIN_REQUIRED" || status == "UNPLAYABLE") {
+                if (client.clientName.equals("VISIONOS", ignoreCase = true)) {
+                    cachedVisitorData = null
+                }
+            }
             if (status != "OK") return@runCatching null
 
             val streamingData = json.optJSONObject("streamingData") ?: return@runCatching null
@@ -720,14 +741,11 @@ object InnerTubeStreamExtractor {
                         .thenBy { kotlin.math.abs(it.kbps - preferredQuality.maxBitrateKbps) }
                 )
 
-            for (cand in sortedCandidates) {
-                if (isVisionOs || cand.isProgressiveMp4) {
-                    return@runCatching cand.url
-                }
-                // For non-VISIONOS adaptive gir=yes streams, verify past the 1 MB (1:04) GVS cap before accepting
-                if (verifySingleStreamUrl(cand.url, isHls = false)) {
-                    return@runCatching cand.url
-                }
+            // Return the top candidate immediately without blocking on 1.4s OkHttp pre-probes!
+            // ExoPlayer OuterTuneResolvingDataSource opens it directly and marks any failed stream in failedAudioStreamsByVideoId.
+            val bestCandidate = sortedCandidates.firstOrNull()
+            if (bestCandidate != null) {
+                return@runCatching bestCandidate.url
             }
 
             if (allowHls) {
@@ -772,7 +790,7 @@ object InnerTubeStreamExtractor {
             0
         }
 
-        // Fast Path: Try primary client first (ANDROID_VR 1.61.48 ~200ms) for pure audio (itag=140 M4A / itag=251 Opus).
+        // Fast Path: Try primary client first (VISIONOS 1.02 for uncapped M4A/Opus, or ANDROID_VR 1.61.48 for progressive MP4 itag=18).
         val primaryClient = VERIFIED_CLIENTS[startOffset % VERIFIED_CLIENTS.size]
         val fastUrl = extractStreamWithConfig(
             videoId = cleanVideoId,
@@ -780,16 +798,16 @@ object InnerTubeStreamExtractor {
             preferredQuality = preferredQuality,
             cpn = cpn,
             allowHls = false,
-            includeVisitorData = primaryClient.isEmbedded,
+            includeVisitorData = primaryClient.isEmbedded || primaryClient.clientName.equals("VISIONOS", ignoreCase = true),
             requiredItag = requiredItag,
-            preferProgressiveMp4 = false
+            preferProgressiveMp4 = !primaryClient.clientName.equals("VISIONOS", ignoreCase = true)
         )
         if (!fastUrl.isNullOrBlank()) {
             com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, fastUrl)
             return@withContext Result.success(fastUrl)
         }
 
-        // Sequential Client Failover across verified native audio clients
+        // Sequential Client Failover across all verified clients
         val remainingClients = VERIFIED_CLIENTS.indices
             .filter { it != (startOffset % VERIFIED_CLIENTS.size) }
             .map { VERIFIED_CLIENTS[it] }
@@ -800,13 +818,34 @@ object InnerTubeStreamExtractor {
                 preferredQuality = preferredQuality,
                 cpn = generateCpn(),
                 allowHls = false,
-                includeVisitorData = client.isEmbedded,
+                includeVisitorData = client.isEmbedded || client.clientName.equals("VISIONOS", ignoreCase = true),
                 requiredItag = requiredItag,
-                preferProgressiveMp4 = false
+                preferProgressiveMp4 = !client.clientName.equals("VISIONOS", ignoreCase = true)
             )
             if (!nextUrl.isNullOrBlank()) {
                 com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, nextUrl)
                 return@withContext Result.success(nextUrl)
+            }
+        }
+
+        // Fallback to progressive video stream extractor (itag=18 ratebypass=yes / federated nodes)
+        if (requiredItag == null) {
+            val rawVideoFallback = resolveRawVideoStreamById(
+                videoId = cleanVideoId,
+                forceRefresh = forceRefresh,
+                allowHlsFallback = false
+            ).getOrNull()
+            val singleFallback = when {
+                rawVideoFallback.isNullOrBlank() -> null
+                rawVideoFallback.startsWith("merged_av::") -> {
+                    val parts = rawVideoFallback.removePrefix("merged_av::").split("|||")
+                    parts.getOrNull(1) ?: parts.firstOrNull()
+                }
+                else -> rawVideoFallback
+            }
+            if (!singleFallback.isNullOrBlank()) {
+                com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(cleanVideoId, preferredQuality, singleFallback)
+                return@withContext Result.success(singleFallback)
             }
         }
 
@@ -3317,20 +3356,32 @@ object InnerTubeStreamExtractor {
             addCandidate(com.seitharol.player.OuterTuneResolvingDataSource.getCachedUrl(targetYtId, preferredQuality))
 
             for (client in VERIFIED_CLIENTS) {
-                val pureAudioUrl = extractStreamWithConfig(
+                val isVision = client.clientName.equals("VISIONOS", ignoreCase = true)
+                val streamUrl = extractStreamWithConfig(
                     videoId = targetYtId,
                     client = client,
                     preferredQuality = preferredQuality,
                     cpn = generateCpn(),
                     allowHls = false,
-                    includeVisitorData = client.isEmbedded,
-                    preferProgressiveMp4 = false
+                    includeVisitorData = client.isEmbedded || isVision,
+                    preferProgressiveMp4 = !isVision
                 )
-                if (!pureAudioUrl.isNullOrBlank()) {
-                    com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(targetYtId, preferredQuality, pureAudioUrl)
-                    addCandidate(pureAudioUrl)
+                if (!streamUrl.isNullOrBlank()) {
+                    com.seitharol.player.OuterTuneResolvingDataSource.putCachedUrl(targetYtId, preferredQuality, streamUrl)
+                    addCandidate(streamUrl)
                 }
-                if (candidates.size >= 2) break
+                val progUrl = extractStreamWithConfig(
+                    videoId = targetYtId,
+                    client = client,
+                    preferredQuality = preferredQuality,
+                    cpn = generateCpn(),
+                    allowHls = false,
+                    includeVisitorData = client.isEmbedded || isVision,
+                    requiredItag = 18,
+                    preferProgressiveMp4 = true
+                )
+                addCandidate(progUrl)
+                if (candidates.size >= 2 && fallbackProgressiveCandidates.isNotEmpty()) break
             }
         }
 
@@ -3402,7 +3453,7 @@ object InnerTubeStreamExtractor {
                     var downloaded = 0L
                     val chunkSize = 512L * 1024L // 512 KB OuterTune standard range chunk
                     val buffer = ByteArray(32 * 1024)
-                    var useRangeHeader = true
+                    var useRangeHeader = false
                     var lastProgressEmitMs = 0L
 
                     while (knownClen <= 0L || downloaded < knownClen) {

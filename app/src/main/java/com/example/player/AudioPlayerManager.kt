@@ -1338,10 +1338,9 @@ class AudioPlayerManager(
             }
 
             val isMuxedMp4Audio = !isVideo && (
-                sourceUrl.contains("itag=18&", ignoreCase = true) ||
-                    sourceUrl.endsWith("itag=18", ignoreCase = true) ||
-                    sourceUrl.contains("itag=22&", ignoreCase = true) ||
-                    sourceUrl.endsWith("itag=22", ignoreCase = true)
+                sourceUrl.contains("itag=18", ignoreCase = true) ||
+                    sourceUrl.contains("itag=22", ignoreCase = true) ||
+                    (!sourceUrl.contains("gir=yes", ignoreCase = true) && sourceUrl.contains("googlevideo.com", ignoreCase = true))
                 )
 
             if (!isVideo) {

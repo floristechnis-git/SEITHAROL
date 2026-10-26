@@ -63,10 +63,10 @@ object OuterTuneResolvingDataSource {
     const val WEB_REMIX_USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
-    const val MEDIA_HTTP_USER_AGENT = VR_161_USER_AGENT
+    const val MEDIA_HTTP_USER_AGENT = VISIONOS_USER_AGENT
 
     private const val STREAM_TTL_MS = 4 * 60 * 60 * 1000L // 4 hours
-    private const val GOOGLE_VIDEO_CHUNK_BYTES = 1024L * 1024L // 1 MB fast unthrottled chunks
+    private const val GOOGLE_VIDEO_CHUNK_BYTES = 512L * 1024L // 512 KB OuterTune standard range chunk
     private const val MAX_DISK_CACHE_BYTES = 256L * 1024L * 1024L
 
     private data class CachedStream(
@@ -160,11 +160,10 @@ object OuterTuneResolvingDataSource {
         )
         val cleanBase = stripRangeQueryParam(url)
         urlToVideoIdMap[cleanBase] = videoId
-        Regex("[?&]clen=(\\d+)").find(url)?.groupValues?.get(1)?.toLongOrNull()?.let { clen ->
-            if (clen > 0L) {
-                recordKnownStreamLength(cleanBase, clen)
-                inlineTotalLengthByTrackId[videoId] = clen
-            }
+        val clen = getKnownStreamLength(cleanBase)
+        if (clen > 0L) {
+            recordKnownStreamLength(cleanBase, clen)
+            inlineTotalLengthByTrackId[videoId] = clen
         }
     }
 
@@ -299,6 +298,10 @@ object OuterTuneResolvingDataSource {
         }
     }
 
+    /**
+     * Matches the exact client User-Agent, Origin, and Referer required by googlevideo.com
+     * for the client that issued the signed URL (OuterTune #1279 VISIONOS fix).
+     */
     fun resolveClientHeadersForUrl(streamUrl: String): Map<String, String> {
         val lower = streamUrl.lowercase()
         if (!lower.contains("googlevideo.com") && !lower.contains("youtube.com")) {
@@ -318,6 +321,11 @@ object OuterTuneResolvingDataSource {
             ).orEmpty()
 
         return when {
+            clientParam.contains("VISIONOS") -> mapOf(
+                "User-Agent" to VISIONOS_USER_AGENT,
+                "Origin" to "https://www.youtube.com",
+                "Referer" to "https://www.youtube.com/"
+            )
             clientParam.contains("ANDROID_VR") -> {
                 val vrUa = when {
                     clientVer.startsWith("1.61") -> VR_161_USER_AGENT
@@ -340,11 +348,6 @@ object OuterTuneResolvingDataSource {
             clientParam.contains("IOS") -> mapOf(
                 "User-Agent" to IOS_USER_AGENT
             )
-            clientParam.contains("VISIONOS") -> mapOf(
-                "User-Agent" to VISIONOS_USER_AGENT,
-                "Origin" to "https://www.youtube.com",
-                "Referer" to "https://www.youtube.com/"
-            )
             clientParam.contains("TVHTML5") -> mapOf(
                 "User-Agent" to TV_EMBED_USER_AGENT,
                 "Origin" to "https://www.youtube.com",
@@ -361,7 +364,9 @@ object OuterTuneResolvingDataSource {
                 "Referer" to "https://www.youtube.com/"
             )
             else -> mapOf(
-                "User-Agent" to VR_161_USER_AGENT
+                "User-Agent" to VISIONOS_USER_AGENT,
+                "Origin" to "https://www.youtube.com",
+                "Referer" to "https://www.youtube.com/"
             )
         }
     }
@@ -480,11 +485,10 @@ object OuterTuneResolvingDataSource {
     }
 
     /**
-     * Fast, lightweight DataSource.Factory modeled on OuterTune / Metrolist:
-     * - Resolves videoIds or passes through direct URLs with client-matched User-Agents.
-     * - Streams progressive MP4 / JioSaavn AAC directly via DefaultHttpDataSource.
-     * - Streams YouTube adaptive audio (`gir=yes`, itag=140 M4A / itag=251 Opus) in clean 1 MB range chunks
-     *   from `nextReadPosition` so `googlevideo.com` delivers audio at full unthrottled speed with instant startup.
+     * OuterTune ResolvingDataSource with VISIONOS header attachment and standard HTTP Range chunking.
+     * - Attaches client-matched User-Agent, Origin, and Referer on both fresh-resolve and cached paths.
+     * - Uses standard HTTP Range (`bytes=start-end`) first so VISIONOS returns HTTP 206 Partial Content
+     *   across the entire track (0% to 100%) and seeks to any uncached offset immediately.
      */
     fun createFactory(
         qualityProvider: () -> AudioQuality = { AudioQuality.NORMAL }
@@ -499,8 +503,8 @@ object OuterTuneResolvingDataSource {
                 private var baseUriWithoutRange: String = ""
                 private var streamIdentityKey: String = ""
                 private var mappedVideoId: String? = null
-                private var targetUserAgent: String = VR_161_USER_AGENT
-                private var useRangeHeaderMode: Boolean = false
+                private var targetUserAgent: String = VISIONOS_USER_AGENT
+                private var preferQueryRangeMode: Boolean = false
 
                 private var nextReadPosition: Long = 0L
                 private var totalStreamLength: Long = -1L
@@ -541,6 +545,15 @@ object OuterTuneResolvingDataSource {
                     cleanHeaders.remove("range")
                     cleanHeaders.remove("If-Range")
 
+                    fun buildHeaderRangeSpec(): DataSpec {
+                        return baseSpec.buildUpon()
+                            .setUri(Uri.parse(baseUriWithoutRange))
+                            .setHttpRequestHeaders(cleanHeaders)
+                            .setPosition(nextReadPosition)
+                            .setLength(chunkLen)
+                            .build()
+                    }
+
                     fun buildQueryRangeSpec(): DataSpec {
                         val sep = if (baseUriWithoutRange.contains("?")) "&" else "?"
                         val chunkUri = Uri.parse("${baseUriWithoutRange}${sep}range=${nextReadPosition}-${endByte}")
@@ -552,19 +565,10 @@ object OuterTuneResolvingDataSource {
                             .build()
                     }
 
-                    fun buildHeaderRangeSpec(): DataSpec {
-                        return baseSpec.buildUpon()
-                            .setUri(Uri.parse(baseUriWithoutRange))
-                            .setHttpRequestHeaders(cleanHeaders)
-                            .setPosition(nextReadPosition)
-                            .setLength(chunkLen)
-                            .build()
-                    }
-
-                    // If totalStreamLength is not yet known on the initial read, use Range header first so Content-Range reveals total length
-                    val tryHeaderFirst = useRangeHeaderMode || (totalStreamLength <= 0L && nextReadPosition == 0L)
-                    val firstSpec = if (tryHeaderFirst) buildHeaderRangeSpec() else buildQueryRangeSpec()
-                    val secondSpec = if (tryHeaderFirst) buildQueryRangeSpec() else buildHeaderRangeSpec()
+                    // Always try standard HTTP Range header first (OuterTune / VISIONOS native 206 Partial Content behavior)
+                    val firstIsHeader = !preferQueryRangeMode
+                    val firstSpec = if (firstIsHeader) buildHeaderRangeSpec() else buildQueryRangeSpec()
+                    val secondSpec = if (firstIsHeader) buildQueryRangeSpec() else buildHeaderRangeSpec()
 
                     var delegate = createDelegate()
                     activeDelegate = delegate
@@ -590,7 +594,7 @@ object OuterTuneResolvingDataSource {
                             activeDelegate = null
                             return false
                         }
-                        useRangeHeaderMode = !tryHeaderFirst
+                        preferQueryRangeMode = firstIsHeader
                     }
 
                     if (totalStreamLength <= 0L) {
@@ -639,7 +643,7 @@ object OuterTuneResolvingDataSource {
                     val uriStr = resolvedSpec.uri.toString()
                     targetUserAgent = resolvedSpec.httpRequestHeaders["User-Agent"]
                         ?: resolveClientHeadersForUrl(uriStr)["User-Agent"]
-                        ?: VR_161_USER_AGENT
+                        ?: VISIONOS_USER_AGENT
 
                     val isGoogleVideo = uriStr.contains("googlevideo.com", ignoreCase = true) &&
                         !uriStr.contains(".m3u8", ignoreCase = true) &&
@@ -672,7 +676,7 @@ object OuterTuneResolvingDataSource {
 
                     if (!isProgressiveStream) {
                         isChunkedGoogleVideo = true
-                        useRangeHeaderMode = false
+                        preferQueryRangeMode = false
                         totalBytesRemaining = when {
                             resolvedSpec.length != C.LENGTH_UNSET.toLong() -> resolvedSpec.length
                             totalStreamLength > 0L -> (totalStreamLength - nextReadPosition).coerceAtLeast(0L)
@@ -686,7 +690,6 @@ object OuterTuneResolvingDataSource {
                             }
                             return totalBytesRemaining
                         }
-                        // If cached googlevideo URL expired (HTTP 403), invalidate so retry fetches fresh stream
                         (mappedVideoId ?: currentlyPlayingTrackId)?.let { invalidate(it) }
                         throw IOException("Failed to open adaptive GoogleVideo stream at byte $nextReadPosition")
                     }
@@ -702,6 +705,7 @@ object OuterTuneResolvingDataSource {
                         ?: totalStreamLength
                     if (discoveredTotal > 0L) {
                         totalStreamLength = discoveredTotal
+                        knownStreamTotalLengths[streamIdentityKey] = discoveredTotal
                         val trackKey = mappedVideoId ?: currentlyPlayingTrackId
                         if (!trackKey.isNullOrBlank()) {
                             inlineTotalLengthByTrackId[trackKey] = discoveredTotal
@@ -714,7 +718,27 @@ object OuterTuneResolvingDataSource {
                     if (length == 0) return 0
 
                     if (!isChunkedGoogleVideo) {
-                        val r = activeDelegate?.read(buffer, offset, length) ?: C.RESULT_END_OF_INPUT
+                        val r = try {
+                            activeDelegate?.read(buffer, offset, length) ?: C.RESULT_END_OF_INPUT
+                        } catch (ioe: IOException) {
+                            val baseSpec = baseResolvedSpec
+                            if (baseSpec != null && nextReadPosition > 0L) {
+                                try {
+                                    activeDelegate?.close()
+                                } catch (_: Throwable) {}
+                                val retryDelegate = createDelegate()
+                                activeDelegate = retryDelegate
+                                val remLen = if (baseSpec.length != C.LENGTH_UNSET.toLong()) {
+                                    (baseSpec.length - (nextReadPosition - baseSpec.position)).coerceAtLeast(1L)
+                                } else {
+                                    C.LENGTH_UNSET.toLong()
+                                }
+                                retryDelegate.open(baseSpec.buildUpon().setPosition(nextReadPosition).setLength(remLen).build())
+                                retryDelegate.read(buffer, offset, length)
+                            } else {
+                                throw ioe
+                            }
+                        }
                         if (r > 0) {
                             nextReadPosition += r
                             val trackKey = mappedVideoId ?: currentlyPlayingTrackId
@@ -736,6 +760,10 @@ object OuterTuneResolvingDataSource {
                             return C.RESULT_END_OF_INPUT
                         }
                         if (!openNextChunk()) {
+                            if (nextReadPosition == 0L || (totalStreamLength > 0L && nextReadPosition < totalStreamLength - 4096L)) {
+                                (mappedVideoId ?: currentlyPlayingTrackId)?.let { invalidate(it) }
+                                throw IOException("Stream chunk open failed at byte $nextReadPosition / $totalStreamLength")
+                            }
                             return C.RESULT_END_OF_INPUT
                         }
                     }
@@ -744,7 +772,6 @@ object OuterTuneResolvingDataSource {
                     val bytesRead = try {
                         activeDelegate?.read(buffer, offset, maxToRead) ?: C.RESULT_END_OF_INPUT
                     } catch (ioe: IOException) {
-                        // Single fast chunk reconnect on transient socket drop
                         if (openNextChunk()) {
                             val retryMax = min(length.toLong(), currentChunkBytesRemaining).toInt()
                             activeDelegate?.read(buffer, offset, retryMax) ?: C.RESULT_END_OF_INPUT
@@ -757,7 +784,14 @@ object OuterTuneResolvingDataSource {
                         currentChunkBytesRemaining = 0L
                         val hasMore = (totalBytesRemaining == C.LENGTH_UNSET.toLong() || totalBytesRemaining > 0L) &&
                             (totalStreamLength <= 0L || nextReadPosition < totalStreamLength)
-                        if (!hasMore || !openNextChunk()) {
+                        if (!hasMore) {
+                            return C.RESULT_END_OF_INPUT
+                        }
+                        if (!openNextChunk()) {
+                            if (totalStreamLength > 0L && nextReadPosition < totalStreamLength - 4096L) {
+                                (mappedVideoId ?: currentlyPlayingTrackId)?.let { invalidate(it) }
+                                throw IOException("Premature EOF on chunk at byte $nextReadPosition / $totalStreamLength")
+                            }
                             return C.RESULT_END_OF_INPUT
                         }
                         return read(buffer, offset, length)

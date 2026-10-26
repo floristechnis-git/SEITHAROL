@@ -664,6 +664,8 @@ class DownloadRepository(
 
             var downloadedOk = false
             var lastProgressUpdate = System.currentTimeMillis()
+            var maxProgressSoFar = 0.05f
+            var maxBytesSoFar = 0L
             for (candidateUrl in candidateUrls) {
                 coroutineContext.ensureActive()
                 val ok = com.seitharol.data.resolver.InnerTubeStreamExtractor.downloadUrlToFileReliable(
@@ -671,21 +673,25 @@ class DownloadRepository(
                     tempFile = tempFile
                 ) { totalRead, contentLength ->
                     val now = System.currentTimeMillis()
-                    if (now - lastProgressUpdate > 300L) {
+                    if (now - lastProgressUpdate > 250L) {
                         lastProgressUpdate = now
-                        val progress = (totalRead.toFloat() / contentLength.coerceAtLeast(1L).toFloat()).coerceIn(0.05f, 0.95f)
-                        downloadDao.updateDownload(
-                            DownloadEntity(
-                                trackId = track.id,
-                                tier = tier.label,
-                                state = "DOWNLOADING",
-                                localPath = destFile.absolutePath,
-                                progress = progress,
-                                bytesDownloaded = totalRead,
-                                totalBytes = contentLength
+                        val rawProgress = (totalRead.toFloat() / contentLength.coerceAtLeast(1L).toFloat()).coerceIn(0.05f, 0.98f)
+                        if (rawProgress >= maxProgressSoFar) {
+                            maxProgressSoFar = rawProgress
+                            maxBytesSoFar = maxOf(maxBytesSoFar, totalRead)
+                            downloadDao.updateDownload(
+                                DownloadEntity(
+                                    trackId = track.id,
+                                    tier = tier.label,
+                                    state = "DOWNLOADING",
+                                    localPath = destFile.absolutePath,
+                                    progress = maxProgressSoFar,
+                                    bytesDownloaded = maxBytesSoFar,
+                                    totalBytes = contentLength.coerceAtLeast(maxBytesSoFar)
+                                )
                             )
-                        )
-                        updateDownloadNotification(track.id, track.title, (progress * 100).toInt())
+                            updateDownloadNotification(track.id, track.title, (maxProgressSoFar * 100).toInt())
+                        }
                     }
                 }
                 if (ok && tempFile.exists() && tempFile.length() > 10_240L) {

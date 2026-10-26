@@ -112,6 +112,18 @@ object InnerTubeStreamExtractor {
      */
     val VERIFIED_CLIENTS = listOf(
         InnerTubeClientConfig(
+            clientName = "VISIONOS",
+            clientVersion = "0.1",
+            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+            clientId = "101",
+            deviceMake = "Apple",
+            deviceModel = "RealityDevice14,1",
+            osName = "visionOS",
+            osVersion = "1.3.21O771",
+            glOverride = null,
+            sendOriginHeaders = true
+        ),
+        InnerTubeClientConfig(
             clientName = "ANDROID_VR",
             clientVersion = "1.61.48",
             userAgent = "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
@@ -121,20 +133,6 @@ object InnerTubeStreamExtractor {
             osName = "Android",
             osVersion = "12L",
             androidSdkVersion = 32,
-            glOverride = null,
-            sendOriginHeaders = false
-        ),
-        InnerTubeClientConfig(
-            clientName = "ANDROID_TESTSUITE",
-            clientVersion = "1.9",
-            userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 12L; US) gzip",
-            clientId = "30",
-            deviceMake = "Google",
-            deviceModel = "Pixel 7",
-            osName = "Android",
-            osVersion = "12L",
-            androidSdkVersion = 32,
-            params = "CgIIAQ==",
             glOverride = null,
             sendOriginHeaders = false
         ),
@@ -164,16 +162,18 @@ object InnerTubeStreamExtractor {
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
-            clientName = "VISIONOS",
-            clientVersion = "0.1",
-            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
-            clientId = "101",
-            deviceMake = "Apple",
-            deviceModel = "RealityDevice14,1",
-            osName = "visionOS",
-            osVersion = "1.3.21O771",
+            clientName = "ANDROID_TESTSUITE",
+            clientVersion = "1.9",
+            userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 12L; US) gzip",
+            clientId = "30",
+            deviceMake = "Google",
+            deviceModel = "Pixel 7",
+            osName = "Android",
+            osVersion = "12L",
+            androidSdkVersion = 32,
+            params = "CgIIAQ==",
             glOverride = null,
-            sendOriginHeaders = true
+            sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
             clientName = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
@@ -700,8 +700,11 @@ object InnerTubeStreamExtractor {
             }
 
             val failedForVideo = failedAudioStreamsByVideoId[videoId].orEmpty()
-            // Prioritize progressive MP4 (itag=18 with ratebypass=yes — the exact format that plays YouTube Videos!)
-            // first so DefaultHttpDataSource streams unthrottled without gir=yes range issues, followed by M4A AAC (140) and Opus (251).
+            // VISIONOS is exempt from YouTube's 1 MB (1:04) GVS proof-of-origin cap, so pure audio (itag=140 M4A / itag=251 Opus)
+            // plays and seeks 100% of the track uninterrupted! For non-VISIONOS fallback clients, prefer progressive MP4 (itag=18)
+            // or verify gir=yes streams past byte 1,150,000 so a 1:04-capped stream is never returned.
+            val isVisionOs = client.clientName.equals("VISIONOS", ignoreCase = true)
+            val effectivePreferProgressive = if (isVisionOs) preferProgressiveMp4 else true
             val sortedCandidates = audioStreams
                 .filter { cand ->
                     requiredItag == null || cand.itag == requiredItag
@@ -712,17 +715,19 @@ object InnerTubeStreamExtractor {
                 }
                 .sortedWith(
                     compareByDescending<AudioStreamCandidate> { requiredItag != null && it.itag == requiredItag }
-                        .thenByDescending { if (preferProgressiveMp4) it.isProgressiveMp4 else !it.isProgressiveMp4 }
+                        .thenByDescending { if (effectivePreferProgressive) it.isProgressiveMp4 else !it.isProgressiveMp4 }
                         .thenByDescending { it.itag == 140 || it.isAacMp4 }
                         .thenBy { kotlin.math.abs(it.kbps - preferredQuality.maxBitrateKbps) }
                 )
 
-            // Just like resolveRawVideoStreamById for YouTube Videos, return the top candidate immediately
-            // without blocking on 1400ms OkHttp pre-probes (ExoPlayer's DefaultHttpDataSource opens it directly
-            // and marks any failed stream in failedAudioStreamsByVideoId on error).
-            val bestCandidate = sortedCandidates.firstOrNull()
-            if (bestCandidate != null) {
-                return@runCatching bestCandidate.url
+            for (cand in sortedCandidates) {
+                if (isVisionOs || cand.isProgressiveMp4) {
+                    return@runCatching cand.url
+                }
+                // For non-VISIONOS adaptive gir=yes streams, verify past the 1 MB (1:04) GVS cap before accepting
+                if (verifySingleStreamUrl(cand.url, isHls = false)) {
+                    return@runCatching cand.url
+                }
             }
 
             if (allowHls) {
@@ -754,11 +759,7 @@ object InnerTubeStreamExtractor {
             com.seitharol.player.OuterTuneResolvingDataSource.invalidate(cleanVideoId)
         } else if (requiredItag == null) {
             com.seitharol.player.OuterTuneResolvingDataSource.getCachedUrl(cleanVideoId, preferredQuality)?.let { cached ->
-                val isMuxedVideo = cached.contains("itag=18&", ignoreCase = true) ||
-                    cached.endsWith("itag=18", ignoreCase = true) ||
-                    cached.contains("itag=22&", ignoreCase = true) ||
-                    cached.endsWith("itag=22", ignoreCase = true)
-                if (!isMuxedVideo && !cached.contains(".m3u8", ignoreCase = true) && !cached.contains("manifest.googlevideo.com", ignoreCase = true)) {
+                if (!cached.contains(".m3u8", ignoreCase = true) && !cached.contains("manifest.googlevideo.com", ignoreCase = true)) {
                     return@withContext Result.success(cached)
                 }
             }
@@ -960,40 +961,40 @@ object InnerTubeStreamExtractor {
             }
         }
 
-        // 2. Live YouTube Music Home / Explore dynamic feed OR Mood Category Playlist
+        // 2. Manipuri Playlist / Collection shelf for default general feed OR Mood Category Playlist
         val liveBrowseOrCategoryJob = async {
             if (!isGeneralFeed) {
                 fetchMoodCategoryPlaylistTracks(moodCategory).shuffled()
             } else {
-                fetchLiveYtmHomeAndExploreTracks(limit = 22)
+                fetchMoodCategoryPlaylistTracks("Manipuri Song").shuffled()
             }
         }
 
-        // 3. Dynamic Time-of-Day + Randomized Discovery Pool (so first load on every phone is unique and fresh)
+        // 3. Dynamic Time-of-Day + Manipuri Song Focused Discovery Pool
         val timeOfDayQueries = when (hourOfDay) {
             in 5..10 -> listOf(
-                "Morning feel good acoustic official songs",
-                "Fresh morning Manipuri & Indian melodies",
-                "Upbeat morning pop & indie hits",
-                "Peaceful acoustic morning official audio"
+                "Manipuri morning melody official songs",
+                "Fresh morning Manipuri melodies official",
+                "Imphal Manipuri acoustic & folk songs",
+                "Manipuri classic & modern feel good songs"
             )
             in 11..16 -> listOf(
-                "Midday upbeat pop & indie official songs",
                 "Manipuri modern hit songs official",
-                "Trending daytime chart hits India & global",
-                "Feel good rhythm & pop tracks"
+                "Imphal Manipuri trending hit songs",
+                "Manipuri upbeat pop & indie official songs",
+                "Manipuri latest official music releases"
             )
             in 17..21 -> listOf(
-                "Evening chill pop & romantic official songs",
+                "Manipuri evening romantic & soulful songs",
                 "Sunset acoustic & Manipuri soulful songs",
-                "Trending evening hits official audio",
-                "Smooth R&B & indie evening vibes"
+                "Manipuri love songs & duets official",
+                "Imphal Manipuri indie & melodic hits"
             )
             else -> listOf(
-                "Late night chill & emotional official songs",
+                "Manipuri late night love & emotional songs",
                 "Midnight acoustic & Manipuri love songs",
-                "After hours smooth pop & soul tracks",
-                "Night drive melodic hit songs"
+                "Manipuri romantic ballad hit songs",
+                "Imphal Manipuri slow melodic songs"
             )
         }
 
@@ -1002,12 +1003,12 @@ object InnerTubeStreamExtractor {
             "Imphal trending Manipuri songs official",
             "Manipuri modern folk & indie pop songs",
             "Manipuri romantic melodies official audio",
-            "Northeast India indie & pop hit songs",
-            "Top viral Indian & global songs official",
-            "Fresh indie pop & acoustic hits",
-            "Billboard & global hot hits official audio",
-            "Trending acoustic ballads & duets",
-            "Viral streaming hits official audio"
+            "Manipuri latest official hit songs",
+            "Manipuri love songs & acoustic duets",
+            "Manipuri top viral songs Imphal",
+            "Manipuri film & ost hit songs",
+            "Manipuri classic & evergreen hit songs",
+            "Manipuri indie & band official songs"
         )
 
         val artistModifiers = listOf("official audio", "latest songs", "top hit songs", "best tracks")
@@ -1021,10 +1022,10 @@ object InnerTubeStreamExtractor {
                 "Manipuri indie & acoustic hit songs"
             ).shuffled().take(4)
             moodCategory.equals("Trending", true) -> listOf(
-                "Trending viral hit songs official audio",
-                "Top chart songs India & global official",
-                "Manipuri & Indian trending hits",
-                "Viral streaming chart toppers official"
+                "Manipuri trending hit songs official",
+                "Imphal Manipuri top viral songs",
+                "Manipuri latest chart hit songs",
+                "Manipuri popular music official"
             ).shuffled().take(3)
             moodCategory.equals("Energize", true) -> listOf(
                 "Energize upbeat pop dance hit songs",
@@ -1172,18 +1173,18 @@ object InnerTubeStreamExtractor {
             else -> listOf(
                 "Manipuri latest official new songs",
                 "Imphal new Manipuri music official audio",
-                "Northeast India & Indian new official releases",
-                "Fresh regional & indie official songs"
-            ).shuffled().take(2)
+                "Manipuri new official song releases",
+                "Manipuri modern folk & romantic new songs"
+            ).shuffled().take(3)
         }
 
         val regionalJobs = regionalFreshQueries.map { q ->
             async { searchOfficialYtmSongs(q, limit = 10).shuffled() }
         }
 
-        // 2. Live YouTube Music Explore / New Releases browse shelf
+        // 2. Fresh Manipuri New Releases shelf
         val liveNewReleasesJob = async {
-            fetchLiveYtmHomeAndExploreTracks(limit = 14)
+            searchOfficialYtmSongs("Manipuri new song release official", limit = 14).shuffled()
         }
 
         // 3. Personalization via Automix seed continuations (true musical similarity, never keyword title matching!)
@@ -1248,7 +1249,7 @@ object InnerTubeStreamExtractor {
         return try {
             val moodQuery = when {
                 moodCategory.equals("Manipuri Song", true) -> "Manipuri Hit Songs"
-                moodCategory.equals("Trending", true) -> "Top 100 Songs India & Global"
+                moodCategory.equals("Trending", true) -> "Manipuri Trending Hit Songs"
                 moodCategory.equals("Energize", true) -> "Energize Pop & Dance Hits"
                 moodCategory.equals("Sad", true) -> "Sad Heartbreak Songs Official"
                 moodCategory.equals("Chill", true) -> "Chill Vibes Official Songs"
@@ -3392,16 +3393,16 @@ object InnerTubeStreamExtractor {
             cleanBaseUrl.endsWith("itag=22", ignoreCase = true) ||
             !cleanBaseUrl.contains("gir=yes", ignoreCase = true)
 
-        // Adaptive googlevideo.com streams (gir=yes, itag=140 M4A / itag=251 Opus)
-        // Download in fast 1 MB unthrottled chunks with throttled progress updates.
+        // Adaptive googlevideo.com streams (gir=yes, VISIONOS itag=140 M4A / itag=251 Opus)
+        // Download in 512 KB chunks using standard HTTP Range header first (VISIONOS 206 Partial Content).
         if (isGoogleVideo && !isProgressiveItag) {
-            val chunkedSuccess = runCatching {
+            return@withContext runCatching {
                 if (tempFile.exists()) tempFile.delete()
                 java.io.FileOutputStream(tempFile).use { output ->
                     var downloaded = 0L
-                    val chunkSize = 1024L * 1024L // 1 MB per fast unthrottled chunk
+                    val chunkSize = 512L * 1024L // 512 KB OuterTune standard range chunk
                     val buffer = ByteArray(32 * 1024)
-                    var preferRangeHeader = knownClen <= 0L
+                    var useRangeHeader = true
                     var lastProgressEmitMs = 0L
 
                     while (knownClen <= 0L || downloaded < knownClen) {
@@ -3416,8 +3417,8 @@ object InnerTubeStreamExtractor {
                         val requestedChunkLen = (endByte - downloaded + 1L).coerceAtLeast(1L)
                         if (knownClen > 10_240L && downloaded >= knownClen) break
 
-                        suspend fun fetchChunk(useRangeHeader: Boolean): Long {
-                            val reqBuilder = if (useRangeHeader) {
+                        suspend fun fetchChunk(headerMode: Boolean): Long {
+                            val reqBuilder = if (headerMode) {
                                 okhttp3.Request.Builder()
                                     .url(cleanBaseUrl)
                                     .header("Range", "bytes=$downloaded-$endByte")
@@ -3444,9 +3445,9 @@ object InnerTubeStreamExtractor {
                                 }
                                 val body = resp.body ?: return -1L
                                 val contentLen = body.contentLength()
-                                if (downloaded == 0L && knownClen <= 0L && !useRangeHeader && contentLen > chunkSize * 2) {
+                                if (downloaded == 0L && knownClen <= 0L && !headerMode && contentLen > chunkSize * 2) {
                                     knownClen = contentLen
-                                } else if (downloaded > 0L && !useRangeHeader && contentLen > chunkSize * 2) {
+                                } else if (downloaded > 0L && !headerMode && contentLen > chunkSize * 2) {
                                     return -1L
                                 }
                                 var chunkRead = 0L
@@ -3460,7 +3461,7 @@ object InnerTubeStreamExtractor {
                                         downloaded += read
                                         chunkRead += read
                                         val now = System.currentTimeMillis()
-                                        if (now - lastProgressEmitMs >= 220L) {
+                                        if (now - lastProgressEmitMs >= 200L) {
                                             lastProgressEmitMs = now
                                             val estTotal = if (knownClen > 10_240L) knownClen else (downloaded + chunkSize)
                                             onProgress(downloaded, estTotal)
@@ -3471,10 +3472,10 @@ object InnerTubeStreamExtractor {
                             }
                         }
 
-                        var bytesInChunk = if (!preferRangeHeader) fetchChunk(useRangeHeader = false) else -1L
+                        var bytesInChunk = fetchChunk(headerMode = useRangeHeader)
                         if (bytesInChunk < 0L) {
-                            preferRangeHeader = !preferRangeHeader
-                            bytesInChunk = fetchChunk(useRangeHeader = preferRangeHeader)
+                            useRangeHeader = !useRangeHeader
+                            bytesInChunk = fetchChunk(headerMode = useRangeHeader)
                         }
                         if (bytesInChunk <= 0L) {
                             if (downloaded > 64_000L && (knownClen <= 0L || downloaded >= (knownClen * 95L / 100L))) {
@@ -3495,9 +3496,9 @@ object InnerTubeStreamExtractor {
                 tempFile.exists() && tempFile.length() > 10_240L
             }.getOrElse { e ->
                 if (e is kotlinx.coroutines.CancellationException) throw e
+                if (tempFile.exists()) tempFile.delete()
                 false
             }
-            if (chunkedSuccess) return@withContext true
         }
 
         // Single-GET download path for JioSaavn CDN and progressive MP4 (itag=18 ratebypass=yes)

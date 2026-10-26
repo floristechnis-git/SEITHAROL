@@ -984,11 +984,16 @@ class AudioPlayerManager(
                         }
 
                         val sinceSeekMs = System.currentTimeMillis() - lastUserSeekTimestamp
-                        val stillLoading = loadTrackJob?.isActive == true || retryJob?.isActive == true || (playbackState == Player.STATE_BUFFERING && sinceSeekMs >= 650L)
-                        _state.value = _state.value.copy(
-                            isPlaying = false,
-                            isBuffering = stillLoading
-                        )
+                        if (playbackState == Player.STATE_BUFFERING && sinceSeekMs < 650L) {
+                            // Keep isPlaying = true during short post-seek rebuffer grace window so UI never flashes paused
+                            _state.value = _state.value.copy(isPlaying = true)
+                        } else {
+                            val stillLoading = loadTrackJob?.isActive == true || retryJob?.isActive == true || playbackState == Player.STATE_BUFFERING
+                            _state.value = _state.value.copy(
+                                isPlaying = false,
+                                isBuffering = stillLoading
+                            )
+                        }
                         persistCurrentPlaybackState()
                     }
 
@@ -1346,12 +1351,8 @@ class AudioPlayerManager(
                 }
                 attachedTextureView = null
                 attachedTexturePlayer = null
-                if (isMuxedMp4Audio) {
-                    ensureDummyAudioSurface()?.let { ds ->
-                        runCatching { player.setVideoSurface(ds) }
-                    }
-                } else {
-                    runCatching { player.clearVideoSurface() }
+                ensureDummyAudioSurface()?.let { ds ->
+                    runCatching { player.setVideoSurface(ds) }
                 }
             }
 
@@ -2527,15 +2528,15 @@ class AudioPlayerManager(
             startPositionTracker()
         }
 
-        // Recover if ExoPlayer encountered an error or remained stuck in STATE_BUFFERING/STATE_IDLE/STATE_ENDED after seeking
+        // Recover only if ExoPlayer encountered a genuine error or fell back to STATE_IDLE after seeking
         seekRecoveryJob?.cancel()
         if (userRequestedPlay && current != null) {
             val expectedId = current.id
             seekRecoveryJob = coroutineScope.launch {
-                delay(5_000L)
+                delay(8_000L)
                 val p = exoPlayer ?: return@launch
                 if (isActive && userRequestedPlay && _state.value.currentTrack?.id == expectedId && !p.isPlaying &&
-                    (p.playerError != null || p.playbackState == Player.STATE_IDLE || p.playbackState == Player.STATE_ENDED || p.playbackState == Player.STATE_BUFFERING)
+                    (p.playerError != null || p.playbackState == Player.STATE_IDLE)
                 ) {
                     loadAndPlayCurrent(
                         resumePositionMs = clamped,

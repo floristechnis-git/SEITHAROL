@@ -322,6 +322,8 @@ class DownloadPreferencesAndService(private val context: Context) {
 
             val allMirrors = candidateUrls.toMutableList()
             var idx = 0
+            var maxProgressPercent = 2
+            var maxDownloadedBytes = 0L
             while (idx < allMirrors.size) {
                 val candidateUrl = allMirrors[idx]
                 idx++
@@ -331,33 +333,37 @@ class DownloadPreferencesAndService(private val context: Context) {
                     tempFile = tempFile
                 ) { downloadedBytes, totalBytes ->
                     finalTotalBytes = totalBytes
-                    val progress = ((downloadedBytes * 100L) / totalBytes.coerceAtLeast(1L)).toInt().coerceIn(1, 99)
-                    _downloadState.value = DownloadTaskState.Downloading(
-                        trackId = track.sourceId,
-                        trackTitle = track.title,
-                        artistName = primaryArtist,
-                        thumbnailUrl = track.artUrl,
-                        progressPercent = progress,
-                        downloadedBytes = downloadedBytes,
-                        totalBytes = totalBytes,
-                        provider = provider
-                    )
-                    val now = System.currentTimeMillis()
-                    if (now - lastNotifMs > 300L) {
-                        lastNotifMs = now
-                        updateDownloadNotification(track.title, progress)
-                        runCatching {
-                            downloadDao.updateDownload(
-                                com.example.data.local.DownloadEntity(
-                                    trackId = canonicalId,
-                                    tier = if (format == DownloadFormat.VIDEO) com.example.data.model.DownloadTier.VIDEO_MP4.label else format.label,
-                                    state = "DOWNLOADING",
-                                    localPath = internalDestFile.absolutePath,
-                                    progress = (progress / 100f).coerceIn(0.02f, 0.99f),
-                                    bytesDownloaded = downloadedBytes,
-                                    totalBytes = totalBytes
+                    val rawProgress = ((downloadedBytes * 100L) / totalBytes.coerceAtLeast(1L)).toInt().coerceIn(2, 99)
+                    if (rawProgress >= maxProgressPercent) {
+                        maxProgressPercent = rawProgress
+                        maxDownloadedBytes = maxOf(maxDownloadedBytes, downloadedBytes)
+                        _downloadState.value = DownloadTaskState.Downloading(
+                            trackId = track.sourceId,
+                            trackTitle = track.title,
+                            artistName = primaryArtist,
+                            thumbnailUrl = track.artUrl,
+                            progressPercent = maxProgressPercent,
+                            downloadedBytes = maxDownloadedBytes,
+                            totalBytes = totalBytes.coerceAtLeast(maxDownloadedBytes),
+                            provider = provider
+                        )
+                        val now = System.currentTimeMillis()
+                        if (now - lastNotifMs > 250L) {
+                            lastNotifMs = now
+                            updateDownloadNotification(track.title, maxProgressPercent)
+                            runCatching {
+                                downloadDao.updateDownload(
+                                    com.example.data.local.DownloadEntity(
+                                        trackId = canonicalId,
+                                        tier = if (format == DownloadFormat.VIDEO) com.example.data.model.DownloadTier.VIDEO_MP4.label else format.label,
+                                        state = "DOWNLOADING",
+                                        localPath = internalDestFile.absolutePath,
+                                        progress = (maxProgressPercent / 100f).coerceIn(0.02f, 0.99f),
+                                        bytesDownloaded = maxDownloadedBytes,
+                                        totalBytes = totalBytes.coerceAtLeast(maxDownloadedBytes)
+                                    )
                                 )
-                            )
+                            }
                         }
                     }
                 }

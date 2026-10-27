@@ -141,7 +141,7 @@ fun OnboardingScreen(
                         ) {
                             Image(
                                 painter = painterResource(id = R.drawable.ic_splash_logo),
-                                contentDescription = "Seitharol",
+                                contentDescription = "SEITHAROL",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
                             )
@@ -150,7 +150,7 @@ fun OnboardingScreen(
                         Spacer(modifier = Modifier.height(16.dp))
 
                         Text(
-                            text = "Welcome to Seitharol",
+                            text = "Welcome to SEITHAROL",
                             color = primaryText,
                             fontSize = 24.sp,
                             lineHeight = 30.sp,

@@ -71,8 +71,8 @@ object OuterTuneResolvingDataSource {
     const val MEDIA_HTTP_USER_AGENT = VISIONOS_USER_AGENT
 
     private const val STREAM_TTL_MS = 3 * 60 * 60 * 1000L // 3 hours
-    private const val GOOGLE_VIDEO_CHUNK_BYTES = 512L * 1024L // 512 KB per fast unthrottled chunk
-    private const val MAX_DISK_CACHE_BYTES = 256L * 1024L * 1024L // 256 MB LRU active disk cache
+    private const val GOOGLE_VIDEO_CHUNK_BYTES = 256L * 1024L // 256 KB per fast chunk (low-RAM safe for 2GB phones)
+    private const val MAX_DISK_CACHE_BYTES = 180L * 1024L * 1024L // 180 MB LRU active disk cache
 
     private data class CachedStream(
         val streamUrl: String,
@@ -92,8 +92,27 @@ object OuterTuneResolvingDataSource {
     @Volatile
     private var currentlyPlayingTrackId: String? = null
 
-    private val memoryChunkCache = object : LruCache<String, ByteArray>(32 * 1024 * 1024) {
+    private val maxMemoryChunkCacheBytes: Int = run {
+        val maxHeap = Runtime.getRuntime().maxMemory()
+        if (maxHeap <= 200L * 1024L * 1024L) {
+            3 * 1024 * 1024 // 3 MB cap on light 2GB RAM phones to prevent OOM/LMK
+        } else {
+            6 * 1024 * 1024 // 6 MB cap on higher RAM devices
+        }
+    }
+
+    private val memoryChunkCache = object : LruCache<String, ByteArray>(maxMemoryChunkCacheBytes) {
         override fun sizeOf(key: String, value: ByteArray): Int = value.size
+    }
+
+    fun trimMemory() {
+        synchronized(memoryChunkCache) {
+            memoryChunkCache.evictAll()
+        }
+        if (urlCache.size > 60) {
+            urlCache.clear()
+            urlToVideoIdMap.clear()
+        }
     }
 
     private fun extractStreamIdentityKey(uriStr: String): String {
@@ -302,9 +321,9 @@ object OuterTuneResolvingDataSource {
         chunkSize: Long,
         isVideo: Boolean
     ) {
-        if (videoId.isNullOrBlank() || totalLength <= 24_576L || totalLength > 40L * 1024L * 1024L) return
+        if (videoId.isNullOrBlank() || totalLength <= 24_576L || totalLength > maxMemoryChunkCacheBytes.toLong()) return
         val numChunks = ((totalLength + chunkSize - 1L) / chunkSize).toInt()
-        if (numChunks <= 0 || numChunks > 80) return
+        if (numChunks <= 0 || numChunks > 32) return
 
         val chunks = ArrayList<ByteArray>(numChunks)
         synchronized(memoryChunkCache) {
@@ -796,7 +815,7 @@ object OuterTuneResolvingDataSource {
                     currentChunkBytesRead = 0L
 
                     if (nextReadPosition == alignedStart && effectiveChunkLen in 1L..chunkStepBytes) {
-                        activeWriteBuffer = ByteArray(effectiveChunkLen.toInt())
+                        activeWriteBuffer = runCatching { ByteArray(effectiveChunkLen.toInt()) }.getOrNull()
                         activeWriteOffset = 0
                     } else {
                         activeWriteBuffer = null

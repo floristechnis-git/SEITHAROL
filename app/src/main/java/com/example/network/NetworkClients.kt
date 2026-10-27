@@ -13,6 +13,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 
 object NetworkClients {
     private const val TAG = "NetworkClients"
@@ -227,7 +228,7 @@ object NetworkClients {
     }
 
     /**
-     * Fetches real personalized songs for Home screen based on Mood or Category (§D.1 / §E).
+     * Fetches real songs for Home screen based on Mood or Category (§D.1 / §E).
      */
     suspend fun fetchCategoryTracks(moodCategory: String): List<Track> = withContext(Dispatchers.IO) {
         val query = when (moodCategory.lowercase()) {
@@ -235,11 +236,11 @@ object NetworkClients {
             "relax", "chill" -> "Acoustic Chill Vibes Relaxing"
             "focus" -> "Lofi Focus Deep Study Beats"
             "party" -> "Party Dance Pop Club Hits"
-            "romance" -> "Romantic Love Acoustic Songs"
+            "romance", "romantic" -> "Romantic Love Acoustic Songs"
             "rock" -> "Top Rock Modern Classics"
-            "folk" -> "Indian Folk Acoustic Melodies"
-            "trending" -> "Top Hits Trending Global Songs"
-            else -> "Top Global Songs 2024"
+            "folk", "manipuri song" -> "Manipuri Official Hit Songs"
+            "trending" -> "Top Hits Trending Global & Regional Songs"
+            else -> "Top Trending Hit Songs"
         }
         searchInnerTube(query)
     }
@@ -441,39 +442,46 @@ object NetworkClients {
     }
 
     /**
-     * Fetches real synchronized lyrics from LRCLIB (§E.3).
+     * Fetches real synchronized lyrics from LRCLIB (§E.3), supporting both audio tracks and music videos.
      */
     suspend fun fetchLrclibLyrics(artist: String, title: String, durationSec: Long): List<LyricsLine> =
         withContext(Dispatchers.IO) {
             try {
                 val cleanTitle = cleanTrackTitle(title)
-                val cleanArtist = artist.trim()
+                val cleanArtist = artist.removeSuffix(" - Topic").removeSuffix("- Topic").trim()
                 val encArtist = URLEncoder.encode(cleanArtist, "UTF-8")
                 val encTitle = URLEncoder.encode(cleanTitle, "UTF-8")
 
                 val url = "https://lrclib.net/api/get?artist_name=$encArtist&track_name=$encTitle&duration=$durationSec"
                 val request = Request.Builder()
                     .url(url)
-                    .header("User-Agent", "Seitharol-Client/2.0.1 (Android)")
+                    .header("User-Agent", "Seitharol-Client/2.1.0 (Android)")
                     .build()
 
                 okHttpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        return@withContext searchLrclibFallback(cleanArtist, cleanTitle)
+                        return@withContext searchLrclibFallback(cleanArtist, cleanTitle, durationSec)
                     }
-                    val bodyStr = response.body?.string() ?: return@withContext emptyList()
+                    val bodyStr = response.body?.string() ?: return@withContext searchLrclibFallback(cleanArtist, cleanTitle, durationSec)
                     val json = JSONObject(bodyStr)
                     val syncedLyrics = json.optString("syncedLyrics", "")
                     if (syncedLyrics.isNotBlank()) {
-                        parseLrc(syncedLyrics)
-                    } else {
-                        val plainLyrics = json.optString("plainLyrics", "")
-                        if (plainLyrics.isNotBlank()) {
-                            plainLyrics.lines().mapIndexed { idx, line ->
-                                LyricsLine(timestampMs = idx * 4000L, text = line)
-                            }
-                        } else emptyList()
+                        val parsed = parseLrc(syncedLyrics)
+                        if (parsed.isNotEmpty()) return@withContext parsed
                     }
+                    val fallback = searchLrclibFallback(cleanArtist, cleanTitle, durationSec)
+                    if (fallback.isNotEmpty()) return@withContext fallback
+
+                    val plainLyrics = json.optString("plainLyrics", "")
+                    if (plainLyrics.isNotBlank()) {
+                        val validLines = plainLyrics.lines().map { it.trim() }.filter { it.isNotBlank() }
+                        val stepMs = if (durationSec > 0 && validLines.isNotEmpty()) {
+                            ((durationSec * 1000L) / (validLines.size + 1)).coerceIn(2200L, 4800L)
+                        } else 3600L
+                        validLines.mapIndexed { idx, line ->
+                            LyricsLine(timestampMs = idx * stepMs, text = line)
+                        }
+                    } else emptyList()
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Error fetching LRCLIB lyrics: ${e.message}")
@@ -481,65 +489,129 @@ object NetworkClients {
             }
         }
 
-    private fun searchLrclibFallback(artist: String, title: String): List<LyricsLine> {
+    private fun searchLrclibFallback(artist: String, title: String, durationSec: Long = 0L): List<LyricsLine> {
         return try {
-            val query = URLEncoder.encode("$artist $title", "UTF-8")
-            val url = "https://lrclib.net/api/search?q=$query"
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", "Seitharol-Client/2.0.1 (Android)")
-                .build()
+            val queries = listOfNotNull(
+                "$artist $title".trim().takeIf { it.isNotBlank() },
+                title.trim().takeIf { it.isNotBlank() }
+            ).distinct()
 
-            okHttpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return emptyList()
-                val bodyStr = response.body?.string() ?: return emptyList()
-                val array = JSONArray(bodyStr)
-                if (array.length() > 0) {
-                    val first = array.getJSONObject(0)
-                    val synced = first.optString("syncedLyrics", "")
-                    if (synced.isNotBlank()) parseLrc(synced) else emptyList()
-                } else emptyList()
+            for (rawQ in queries) {
+                val query = URLEncoder.encode(rawQ, "UTF-8")
+                val url = "https://lrclib.net/api/search?q=$query"
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", "Seitharol-Client/2.1.0 (Android)")
+                    .build()
+
+                val found = okHttpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use emptyList<LyricsLine>()
+                    val bodyStr = response.body?.string() ?: return@use emptyList<LyricsLine>()
+                    val array = JSONArray(bodyStr)
+                    if (array.length() == 0) return@use emptyList<LyricsLine>()
+
+                    var bestSynced: String? = null
+                    var bestDiff = Long.MAX_VALUE
+                    var bestPlain: String? = null
+
+                    for (i in 0 until array.length()) {
+                        val item = array.optJSONObject(i) ?: continue
+                        val synced = item.optString("syncedLyrics", "")
+                        val plain = item.optString("plainLyrics", "")
+                        val itemDur = item.optDouble("duration", 0.0).toLong()
+                        val diff = if (durationSec > 0L && itemDur > 0L) abs(itemDur - durationSec) else i.toLong() * 5L
+
+                        if (synced.isNotBlank() && diff < bestDiff) {
+                            bestDiff = diff
+                            bestSynced = synced
+                        }
+                        if (bestPlain == null && plain.isNotBlank()) {
+                            bestPlain = plain
+                        }
+                    }
+
+                    if (!bestSynced.isNullOrBlank()) {
+                        parseLrc(bestSynced!!)
+                    } else if (!bestPlain.isNullOrBlank()) {
+                        val validLines = bestPlain!!.lines().map { it.trim() }.filter { it.isNotBlank() }
+                        val stepMs = if (durationSec > 0 && validLines.isNotEmpty()) {
+                            ((durationSec * 1000L) / (validLines.size + 1)).coerceIn(2200L, 4800L)
+                        } else 3600L
+                        validLines.mapIndexed { idx, line ->
+                            LyricsLine(timestampMs = idx * stepMs, text = line)
+                        }
+                    } else {
+                        emptyList()
+                    }
+                }
+                if (found.isNotEmpty()) return found
             }
+            emptyList()
         } catch (e: Exception) {
             emptyList()
         }
     }
 
     /**
-     * Parses synchronized LRC text format [mm:ss.xx] line
+     * Parses synchronized LRC text format [mm:ss.xx] or [mm:ss.xxx] line with instrumental gap support
      */
     fun parseLrc(lrcText: String): List<LyricsLine> {
-        val lines = mutableListOf<LyricsLine>()
-        val regex = Regex("""\[(\d{1,2}):(\d{2})(?:\.(\d{2,3}))?](.*)""")
+        val rawEntries = mutableListOf<Triple<Long, String, String?>>()
+        val regex = Regex("""\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?](.*)""")
 
         for (rawLine in lrcText.lines()) {
             val match = regex.find(rawLine.trim())
             if (match != null) {
                 val min = match.groupValues[1].toLongOrNull() ?: 0L
                 val sec = match.groupValues[2].toLongOrNull() ?: 0L
-                val msStr = match.groupValues[3]
-                val ms = when (msStr.length) {
-                    2 -> (msStr.toLongOrNull() ?: 0L) * 10
-                    3 -> msStr.toLongOrNull() ?: 0L
-                    else -> 0L
-                }
+                val msStr = match.groupValues[3].padEnd(3, '0').take(3)
+                val ms = msStr.toLongOrNull() ?: 0L
                 val totalMs = (min * 60 * 1000L) + (sec * 1000L) + ms
                 val sanitized = match.groupValues[4].replace("{", "").replace("}", "").trim()
-                if (sanitized.isNotBlank()) {
-                    val parts = sanitized.split("^")
-                    val primary = parts[0].trim()
-                    val translation = parts.getOrNull(1)?.trim()?.takeIf { it.isNotEmpty() && !it.equals(primary, ignoreCase = true) }
-                    if (primary.isNotBlank()) {
-                        lines.add(LyricsLine(timestampMs = totalMs, text = primary, translation = translation))
-                    }
+                val parts = sanitized.split("^")
+                val primary = parts[0].trim()
+                val translation = parts.getOrNull(1)?.trim()?.takeIf { it.isNotEmpty() && !it.equals(primary, ignoreCase = true) }
+                rawEntries.add(Triple(totalMs, primary, translation))
+            }
+        }
+
+        if (rawEntries.isEmpty()) return emptyList()
+        rawEntries.sortBy { it.first }
+
+        val output = mutableListOf<LyricsLine>()
+        val firstVocalTime = rawEntries.first().first
+        if (firstVocalTime >= 4500L) {
+            output.add(LyricsLine(timestampMs = 0L, text = "", isInstrumental = true))
+        }
+
+        for (i in rawEntries.indices) {
+            val (startMs, primary, translation) = rawEntries[i]
+            val nextStartMs = if (i + 1 < rawEntries.size) rawEntries[i + 1].first else startMs + 5000L
+            if (primary.isBlank()) {
+                output.add(LyricsLine(timestampMs = startMs, text = "", isInstrumental = true))
+            } else {
+                val vocalDuration = nextStartMs - startMs
+                if (vocalDuration > 8500L) {
+                    val vocalEnd = startMs + 4800L
+                    output.add(LyricsLine(timestampMs = startMs, text = primary, translation = translation, isInstrumental = false))
+                    output.add(LyricsLine(timestampMs = vocalEnd, text = "", isInstrumental = true))
+                } else {
+                    output.add(LyricsLine(timestampMs = startMs, text = primary, translation = translation, isInstrumental = false))
                 }
             }
         }
-        return lines.sortedBy { it.timestampMs }
+        return output
     }
 
     private fun cleanTrackTitle(raw: String): String {
-        return raw.replace(Regex("""(?i)\(official.*?\)|\[official.*?]|feat\..*|ft\..*"""), "").trim()
+        return raw
+            .replace(Regex("""(?i)\((?:official|music|lyric|audio|video|full|hd|4k|visualizer|live).*?\)"""), "")
+            .replace(Regex("""(?i)\[(?:official|music|lyric|audio|video|full|hd|4k|visualizer|live).*?]"""), "")
+            .replace(Regex("""(?i)\b(?:official\s+music\s+video|official\s+video|official\s+audio|lyric\s+video|full\s+video|music\s+video)\b"""), "")
+            .replace(Regex("""(?i)\b(?:feat\.|ft\.).*"""), "")
+            .substringBefore("|")
+            .trim()
+            .ifBlank { raw.trim() }
     }
 }
 

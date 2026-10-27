@@ -60,7 +60,8 @@ data class NotificationItem(
  * 1. Calculates Manipur cultural festivals using verified Meitei Lunar calendar tables (2024–2028)
  *    plus Jean Meeus astronomical lunar elongation math at IST sunrise/noon (UTC+5:30) with strict
  *    single-day peak matching so moon-counted festivals NEVER fire on a wrong or duplicate date.
- * 2. Stores ONLY today's and already-passed notifications in SharedPreferences (`v3` schema).
+ * 2. Dynamically recalculates `isToday` and `dateLabel` against the current calendar day on every open
+ *    so past notifications NEVER stay stuck showing "Today".
  */
 object ManipurCalendarNotificationEngine {
 
@@ -135,15 +136,11 @@ object ManipurCalendarNotificationEngine {
      */
     private fun computeTrueElongationDeg(jd: Double): Double {
         val t = (jd - 2451545.0) / 36525.0
-        // Moon mean elongation D
         val d = Math.toRadians((297.8501921 + 445267.1114034 * t) % 360.0)
-        // Sun mean anomaly M
         val mSun = Math.toRadians((357.5291092 + 35999.0502909 * t) % 360.0)
-        // Moon mean anomaly M'
         val mMoon = Math.toRadians((134.9633964 + 477198.8675055 * t) % 360.0)
 
         val rawD = (297.8501921 + 445267.1114034 * t)
-        // Principal equation-of-center corrections for Moon-Sun phase angle
         val correction = 6.289 * sin(mMoon) -
             2.100 * sin(mSun) +
             1.274 * sin(2 * d - mMoon) +
@@ -178,6 +175,14 @@ object ManipurCalendarNotificationEngine {
         return distToday <= 7.5 && distToday < distPrev && distToday <= distNext
     }
 
+    private fun buildRelativeDateLabel(formattedDate: String, isToday: Boolean, isYesterday: Boolean = false): String {
+        return when {
+            isToday -> "Today • $formattedDate"
+            isYesterday -> "Yesterday • $formattedDate"
+            else -> formattedDate
+        }
+    }
+
     /**
      * Evaluates whether a given date `(year, month, day)` matches a Fixed Solar Date,
      * User/Johnson Birthday, or an exact single-day Meitei Lunar Festival.
@@ -188,11 +193,13 @@ object ManipurCalendarNotificationEngine {
         day: Int,
         isToday: Boolean,
         eventTimestampMs: Long = System.currentTimeMillis(),
-        context: Context? = null
+        context: Context? = null,
+        isYesterday: Boolean = false
     ): CalendarEventNotification? {
         val mmDd = String.format(Locale.US, "%02d-%02d", month, day)
         val yyyyMmDd = String.format(Locale.US, "%04d-%02d-%02d", year, month, day)
         val formattedDate = formatMonthDay(year, month, day)
+        val relativeLabel = buildRelativeDateLabel(formattedDate, isToday, isYesterday)
 
         // 1. Personalized User Birthday from AppPreferences
         val userPrefs = context?.let { com.example.data.AppPreferences.getInstance(it).settings.value }
@@ -217,7 +224,7 @@ object ManipurCalendarNotificationEngine {
                 id = "bday_${safeId}_$year",
                 title = "Happy Birthday $userName! 🎂🎉",
                 body = "Wishing you a wonderful year ahead filled with soulful melodies, joy, good health, and memorable moments with Seitharol!",
-                dateLabel = if (isToday) "Today • $formattedDate" else "Passed • $formattedDate",
+                dateLabel = relativeLabel,
                 iconName = "CAKE",
                 icon = Icons.Outlined.Cake,
                 isToday = isToday,
@@ -231,7 +238,7 @@ object ManipurCalendarNotificationEngine {
                 id = "bday_johnson_$year",
                 title = "Happy Birthday Johnson! 🎂",
                 body = "Wishing you a wonderful year ahead filled with soulful melodies, good health, boundless creativity, and unforgettable moments with Seitharol!",
-                dateLabel = if (isToday) "Today • Nov 27, $year" else "Passed • Nov 27, $year",
+                dateLabel = relativeLabel,
                 iconName = "CAKE",
                 icon = Icons.Outlined.Cake,
                 isToday = isToday,
@@ -245,7 +252,7 @@ object ManipurCalendarNotificationEngine {
                 id = "solar_luingaini_$year",
                 title = "Happy Lui-Ngai-Ni!",
                 body = "Celebrating the Manipuri Naga seed-sowing festival with traditional folk rhythms and unity.",
-                dateLabel = if (isToday) "Today • Feb 15, $year" else "Passed • Feb 15, $year",
+                dateLabel = relativeLabel,
                 iconName = "SUNNY",
                 icon = Icons.Outlined.WbSunny,
                 isToday = isToday,
@@ -255,7 +262,7 @@ object ManipurCalendarNotificationEngine {
                 id = "solar_patriots_day_$year",
                 title = "Patriot's Day (Athoubasinggi Numit)",
                 body = "Honoring the brave heroes of Manipur on August 13 with classic patriotic and cultural compositions.",
-                dateLabel = if (isToday) "Today • Aug 13, $year" else "Passed • Aug 13, $year",
+                dateLabel = relativeLabel,
                 iconName = "EVENT",
                 icon = Icons.Outlined.Event,
                 isToday = isToday,
@@ -265,7 +272,7 @@ object ManipurCalendarNotificationEngine {
                 id = "solar_chavang_kut_$year",
                 title = "Happy Chavang Kut!",
                 body = "Warm wishes on the autumn post-harvest festival of Kuki-Chin-Mizo communities in Manipur.",
-                dateLabel = if (isToday) "Today • Nov 1, $year" else "Passed • Nov 1, $year",
+                dateLabel = relativeLabel,
                 iconName = "CELEBRATION",
                 icon = Icons.Outlined.Celebration,
                 isToday = isToday,
@@ -275,7 +282,7 @@ object ManipurCalendarNotificationEngine {
                 id = "solar_nupi_lal_$year",
                 title = "Nupi Lal Numit (Dec 12)",
                 body = "Saluting the courage and resilience of Manipuri women who stood for justice and dignity.",
-                dateLabel = if (isToday) "Today • Dec 12, $year" else "Passed • Dec 12, $year",
+                dateLabel = relativeLabel,
                 iconName = "EVENT",
                 icon = Icons.Outlined.Event,
                 isToday = isToday,
@@ -297,7 +304,7 @@ object ManipurCalendarNotificationEngine {
                 id = "lunar_cheiraoba_$year",
                 title = "Yaiphare Sajibu Nongma Panba Cheiraoba!",
                 body = "Day 1 (Nongma Panba) of Sajibu — wishing you prosperity and joy on the Meitei Lunar New Year.",
-                dateLabel = if (isToday) "Today • $formattedDate" else "Passed • $formattedDate",
+                dateLabel = relativeLabel,
                 iconName = "CELEBRATION",
                 icon = Icons.Outlined.Celebration,
                 isToday = isToday,
@@ -315,7 +322,7 @@ object ManipurCalendarNotificationEngine {
                 id = "lunar_yaoshang_$year",
                 title = "Happy Yaoshang Festival!",
                 body = "Full moon (Thapiba) of Lamta — celebrate Manipur's vibrant spring festival and Thabal Chongba.",
-                dateLabel = if (isToday) "Today • $formattedDate" else "Passed • $formattedDate",
+                dateLabel = relativeLabel,
                 iconName = "CELEBRATION",
                 icon = Icons.Outlined.Celebration,
                 isToday = isToday,
@@ -333,7 +340,7 @@ object ManipurCalendarNotificationEngine {
                 id = "lunar_mera_hou_chongba_$year",
                 title = "Mera Hou Chongba Wishes!",
                 body = "Full moon of Mera — celebrating the timeless bond of brotherhood between hills and valley of Manipur.",
-                dateLabel = if (isToday) "Today • $formattedDate" else "Passed • $formattedDate",
+                dateLabel = relativeLabel,
                 iconName = "CELEBRATION",
                 icon = Icons.Outlined.Celebration,
                 isToday = isToday,
@@ -352,7 +359,7 @@ object ManipurCalendarNotificationEngine {
                 id = "lunar_ningol_chakkouba_$year",
                 title = "Happy Ningol Chakkouba!",
                 body = "Day 2 (Nini Panba) of Hiyangei — celebrating love, family blessings, and togetherness across Manipur.",
-                dateLabel = if (isToday) "Today • $formattedDate" else "Passed • $formattedDate",
+                dateLabel = relativeLabel,
                 iconName = "CELEBRATION",
                 icon = Icons.Outlined.Celebration,
                 isToday = isToday,
@@ -374,9 +381,8 @@ object ManipurCalendarNotificationEngine {
 
     /**
      * Checks ONLY today and already-passed past dates (NEVER unpassed future dates).
-     * Persists passed notifications in SharedPreferences, dispatches a device status-bar
-     * notification with the exact same text for any newly pulled notification, and updates
-     * both the in-app Alert UI state and outside launcher app icon badge.
+     * Dynamically recalculates `isToday` and `dateLabel` for all stored notifications so past
+     * notifications never remain stuck saying "Today".
      */
     fun checkAndDispatchDailyNotification(context: Context): List<CalendarEventNotification> {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -386,7 +392,14 @@ object ManipurCalendarNotificationEngine {
         val todayYear = nowCal.get(Calendar.YEAR)
         val todayMonth = nowCal.get(Calendar.MONTH) + 1
         val todayDay = nowCal.get(Calendar.DAY_OF_MONTH)
-        val todayDateStr = SimpleDateFormat("MMM d, yyyy", Locale.US).format(Date())
+        val todayDateStr = formatMonthDay(todayYear, todayMonth, todayDay)
+
+        val yesterdayCal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
+        val yesterdayDateStr = formatMonthDay(
+            yesterdayCal.get(Calendar.YEAR),
+            yesterdayCal.get(Calendar.MONTH) + 1,
+            yesterdayCal.get(Calendar.DAY_OF_MONTH)
+        )
 
         var newlyTriggeredEvent: CalendarEventNotification? = null
 
@@ -397,7 +410,8 @@ object ManipurCalendarNotificationEngine {
             day = todayDay,
             isToday = true,
             eventTimestampMs = nowCal.timeInMillis,
-            context = context
+            context = context,
+            isYesterday = false
         )
         if (todayEvent != null && !storedMap.containsKey(todayEvent.id)) {
             val unreadToday = todayEvent.copy(isUnread = true)
@@ -408,47 +422,116 @@ object ManipurCalendarNotificationEngine {
             storedMap[todayEvent.id] = existing.copy(isToday = true, dateLabel = todayEvent.dateLabel)
         }
 
-        // 2. Backfill passed past calendar events once on initial launch (scanning backwards 90 days, NEVER future!)
-        val alreadyScannedPast = prefs.getBoolean("calendar_past_scanned_v3", false)
-        if (!alreadyScannedPast) {
-            val pastCal = Calendar.getInstance()
-            for (daysAgo in 1..90) {
-                pastCal.add(Calendar.DAY_OF_YEAR, -1)
-                val y = pastCal.get(Calendar.YEAR)
-                val m = pastCal.get(Calendar.MONTH) + 1
-                val d = pastCal.get(Calendar.DAY_OF_MONTH)
-                val pastEv = getEventForDate(
-                    year = y,
-                    month = m,
-                    day = d,
-                    isToday = false,
-                    eventTimestampMs = pastCal.timeInMillis,
-                    context = context
-                )
-                if (pastEv != null && !storedMap.containsKey(pastEv.id)) {
-                    storedMap[pastEv.id] = pastEv.copy(isUnread = false)
+        // 2. Always scan past 90 days (lightweight <0.5ms loop) to backfill any missed past events
+        // and update any previously-stored event whose date has now passed so it NEVER stays "Today"!
+        val pastCal = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 9)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val alreadyInitializedPast = prefs.getBoolean("calendar_past_scanned_v3", false)
+        for (daysAgo in 1..90) {
+            pastCal.add(Calendar.DAY_OF_YEAR, -1)
+            val y = pastCal.get(Calendar.YEAR)
+            val m = pastCal.get(Calendar.MONTH) + 1
+            val d = pastCal.get(Calendar.DAY_OF_MONTH)
+            val isYest = (daysAgo == 1)
+            val pastEv = getEventForDate(
+                year = y,
+                month = m,
+                day = d,
+                isToday = false,
+                eventTimestampMs = pastCal.timeInMillis,
+                context = context,
+                isYesterday = isYest
+            )
+            if (pastEv != null) {
+                val existing = storedMap[pastEv.id]
+                if (existing == null) {
+                    // If app was already initialized previously and a festival happened yesterday/recently while app was closed,
+                    // add it with its accurate past date label (never "Today").
+                    storedMap[pastEv.id] = pastEv.copy(isUnread = alreadyInitializedPast && daysAgo <= 2)
+                } else {
+                    // Demote any previously stored "Today • ..." event to its accurate past/yesterday label!
+                    storedMap[pastEv.id] = existing.copy(
+                        isToday = false,
+                        dateLabel = pastEv.dateLabel,
+                        timestampMs = pastCal.timeInMillis
+                    )
                 }
             }
+        }
+        if (!alreadyInitializedPast) {
             prefs.edit().putBoolean("calendar_past_scanned_v3", true).apply()
         }
 
-        // 3. Ensure today's daily/initial app release notice is pulled on its date and stored
+        // 3. Ensure initial app release notice uses its true date (never falsely claiming "Today")
         val dailyReleaseId = "seitharol_release_notice_$todayYear"
+        val releaseCreatedDateKey = "release_notice_date_str_$todayYear"
+        val releaseCreatedTsKey = "release_notice_ts_$todayYear"
         if (!storedMap.containsKey(dailyReleaseId)) {
+            val savedDateStr = prefs.getString(releaseCreatedDateKey, null) ?: todayDateStr
+            val savedTs = prefs.getLong(releaseCreatedTsKey, 0L).takeIf { it > 0L } ?: (nowCal.timeInMillis - 7L * 86_400_000L)
+            prefs.edit()
+                .putString(releaseCreatedDateKey, savedDateStr)
+                .putLong(releaseCreatedTsKey, savedTs)
+                .apply()
             val releaseNotice = CalendarEventNotification(
                 id = dailyReleaseId,
                 title = "New Manipuri & Regional Releases",
                 body = "Fresh studio tracks from your favorite artists are ready to stream and save offline.",
-                dateLabel = "Pulled on $todayDateStr",
+                dateLabel = savedDateStr,
                 iconName = "MUSIC",
                 icon = Icons.Outlined.MusicNote,
-                isToday = true,
-                timestampMs = nowCal.timeInMillis - 1000L,
-                isUnread = true
+                isToday = false,
+                timestampMs = savedTs,
+                isUnread = false
             )
             storedMap[dailyReleaseId] = releaseNotice
-            if (newlyTriggeredEvent == null) {
-                newlyTriggeredEvent = releaseNotice
+        }
+
+        // 4. Sanitize ALL stored notifications so NO notification with a date other than todayEvent ever shows "Today"
+        val sanitizedKeys = storedMap.keys.toList()
+        for (key in sanitizedKeys) {
+            val ev = storedMap[key] ?: continue
+            if (todayEvent != null && ev.id == todayEvent.id) {
+                storedMap[key] = ev.copy(
+                    isToday = true,
+                    dateLabel = "Today • $todayDateStr"
+                )
+            } else {
+                val cleanDatePart = ev.dateLabel
+                    .removePrefix("Today • ")
+                    .removePrefix("Yesterday • ")
+                    .removePrefix("Passed • ")
+                    .removePrefix("Pulled on ")
+                    .trim()
+                    .ifBlank {
+                        if (ev.timestampMs > 0L) {
+                            SimpleDateFormat("MMM d, yyyy", Locale.US).format(Date(ev.timestampMs))
+                        } else {
+                            yesterdayDateStr
+                        }
+                    }
+
+                val updatedLabel = when (cleanDatePart) {
+                    todayDateStr -> if (ev.id.startsWith("seitharol_release_notice")) cleanDatePart else "Today • $todayDateStr"
+                    yesterdayDateStr -> "Yesterday • $yesterdayDateStr"
+                    else -> cleanDatePart
+                }
+                val isActuallyToday = (cleanDatePart == todayDateStr && !ev.id.startsWith("seitharol_release_notice"))
+                // Also ensure release notice doesn't sort above more recent festival notifications
+                val adjustedTs = if (ev.id.startsWith("seitharol_release_notice") && ev.timestampMs > nowCal.timeInMillis - 3L * 86_400_000L) {
+                    nowCal.timeInMillis - 15L * 86_400_000L
+                } else {
+                    ev.timestampMs
+                }
+                storedMap[key] = ev.copy(
+                    isToday = isActuallyToday,
+                    dateLabel = updatedLabel,
+                    timestampMs = adjustedTs
+                )
             }
         }
 
@@ -461,7 +544,7 @@ object ManipurCalendarNotificationEngine {
         _unreadCount.value = unreadItems.size
         _hasUnreadAlerts.value = unreadItems.isNotEmpty()
 
-        // 4. Fire device notification bar alert for newly pulled notification (or first unread notice not yet posted)
+        // 5. Fire device notification bar alert for newly pulled notification (or first unread notice not yet posted)
         val eventToNotify = newlyTriggeredEvent ?: unreadItems.firstOrNull {
             !prefs.getBoolean("device_bar_posted_${it.id}", false)
         }
@@ -780,7 +863,7 @@ fun NotificationsModal(
                                                 .size(8.dp)
                                                 .clip(CircleShape)
                                                 .background(Color(0xFFE53935))
-                                        )
+                                    )
                                     }
                                 }
                                 Spacer(modifier = Modifier.height(3.dp))
@@ -797,7 +880,7 @@ fun NotificationsModal(
                                     fontSize = 11.sp,
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.primary
+                                    color = if (item.timeAgo.startsWith("Today")) MaterialTheme.colorScheme.primary else SeitharolTextSecondary
                                 )
                             }
                         }

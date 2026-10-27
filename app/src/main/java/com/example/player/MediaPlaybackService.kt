@@ -40,15 +40,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Crash-proof Foreground Service for background audio playback with synchronized media notification.
- *
- * Key upgrades:
- * 1. Returns `START_STICKY` while playing and holds PARTIAL_WAKE_LOCK + WIFI_MODE_FULL_HIGH_PERF
- *    so background playback never stops mid-track when the Activity is reclaimed.
- * 2. Runs a 2-second playback state watchdog that synchronizes `AudioPlayerManager` and the
- *    notification with the actual ExoPlayer engine state so the notification NEVER falsely claims
- *    "Playing" if background playback paused or stalled.
- * 3. Uses the Seitharol app logo (`R.drawable.ic_splash_logo`) as the fallback notification
- *    largeIcon whenever playing local audio or when thumbnail loading fails on low internet.
+ * Optimized for 2GB RAM phones with bounded RGB_565 notification artwork cache and memory trimming.
  */
 class MediaPlaybackService : Service() {
 
@@ -61,7 +53,7 @@ class MediaPlaybackService : Service() {
     private var lockReleaseJob: Job? = null
     private var artLoadJob: Job? = null
     private var watchdogJob: Job? = null
-    private val artBitmapCache = LruCache<String, Bitmap>(24)
+    private val artBitmapCache = LruCache<String, Bitmap>(6)
     private var currentArtBitmap: Bitmap? = null
     private var fallbackLogoBitmap: Bitmap? = null
     private var currentTrackIdForArt: String? = null
@@ -82,6 +74,12 @@ class MediaPlaybackService : Service() {
         var playerManager: AudioPlayerManager? = null
         @Volatile var isRunning: Boolean = false
         @Volatile private var activeInstance: MediaPlaybackService? = null
+
+        fun trimMemory() {
+            runCatching {
+                activeInstance?.artBitmapCache?.evictAll()
+            }
+        }
 
         fun startService(context: Context) {
             if (isRunning) return
@@ -123,9 +121,12 @@ class MediaPlaybackService : Service() {
     private fun getOrDecodeAppLogoBitmap(): Bitmap? {
         fallbackLogoBitmap?.let { return it }
         return runCatching {
-            BitmapFactory.decodeResource(resources, R.drawable.ic_splash_logo) ?: run {
+            val opts = BitmapFactory.Options().apply {
+                inPreferredConfig = Bitmap.Config.RGB_565
+            }
+            BitmapFactory.decodeResource(resources, R.drawable.ic_splash_logo, opts) ?: run {
                 val drawable = ContextCompat.getDrawable(this, R.drawable.ic_splash_logo) ?: return@run null
-                val bmp = Bitmap.createBitmap(144, 144, Bitmap.Config.ARGB_8888)
+                val bmp = Bitmap.createBitmap(128, 128, Bitmap.Config.RGB_565)
                 val canvas = Canvas(bmp)
                 drawable.setBounds(0, 0, canvas.width, canvas.height)
                 drawable.draw(canvas)
@@ -221,7 +222,6 @@ class MediaPlaybackService : Service() {
         }
 
         // Background watchdog: keeps notification state 100% synchronized with ExoPlayer hardware state
-        // and recovers from any background buffer stall so notification never claims "Playing" when stopped.
         watchdogJob = serviceScope.launch {
             while (isActive && !isTerminating) {
                 delay(2000L)
@@ -230,6 +230,16 @@ class MediaPlaybackService : Service() {
                 mgr?.verifyAndSyncBackgroundPlayback()
             }
         }
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        runCatching { artBitmapCache.evictAll() }
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        runCatching { artBitmapCache.evictAll() }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -329,7 +339,7 @@ class MediaPlaybackService : Service() {
 
             val notification = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(resolveConsistentSmallIcon())
-                .setContentTitle("Seitharol")
+                .setContentTitle("SEITHAROL")
                 .setContentText(if (isBuffering) "Loading track..." else "Ready to play")
                 .setLargeIcon(getOrDecodeAppLogoBitmap())
                 .setContentIntent(openPendingIntent)
@@ -352,8 +362,10 @@ class MediaPlaybackService : Service() {
             val loader = coil.Coil.imageLoader(this@MediaPlaybackService)
             val request = ImageRequest.Builder(this@MediaPlaybackService)
                 .data(artUrl)
-                .size(144, 144)
+                .size(128, 128)
                 .allowHardware(false)
+                .allowRgb565(true)
+                .bitmapConfig(Bitmap.Config.RGB_565)
                 .build()
             val result = loader.execute(request).drawable
             (result as? BitmapDrawable)?.bitmap

@@ -38,7 +38,7 @@ import com.seitharol.ui.search.BackArrowSvgIcon
 import com.seitharol.ui.search.ChevronRightSvgIcon
 
 enum class InfoPageType(val title: String) {
-    ABOUT_APP("About Seitharol"),
+    ABOUT_APP("About SEITHAROL"),
     HELP("Help & Support"),
     PRIVACY_POLICY("Privacy Policy"),
     TERMS_CONDITIONS("Terms & Conditions")
@@ -537,7 +537,7 @@ fun InfoDetailScreen(
                     )
 
                     Text(
-                        text = "Developed by Yumkhaibam Johnson Singh • Version 2.0.1 Public Release",
+                        text = "Developed by Yumkhaibam Johnson Singh • Version 2.0.3 Public Release",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         lineHeight = 18.sp

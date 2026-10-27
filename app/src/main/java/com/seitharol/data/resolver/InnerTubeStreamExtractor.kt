@@ -992,8 +992,8 @@ object InnerTubeStreamExtractor {
         val isGeneralFeed = moodCategory.equals("All", true) || moodCategory.equals("For You", true)
         val hourOfDay = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
 
-        // 1. Automix radio continuations from the user's most recent played/liked tracks
-        val automixSeeds: List<String> = if (isGeneralFeed) validSeeds else validSeeds.take(2)
+        // 1. Automix radio continuations ONLY for general "All" / "For You" feeds (categories like Energize & Trending are 100% pure OuterTune-style YT feeds!)
+        val automixSeeds: List<String> = if (isGeneralFeed) validSeeds else emptyList()
         val automixJobs = automixSeeds.map { seedId ->
             async {
                 fetchAutomixQueue(seedId, limit = 12).shuffled()
@@ -1061,17 +1061,17 @@ object InnerTubeStreamExtractor {
                 "Manipuri indie & acoustic hit songs"
             ).shuffled().take(4)
             moodCategory.equals("Trending", true) -> listOf(
-                "Manipuri trending hit songs official",
-                "Imphal Manipuri top viral songs",
-                "Manipuri latest chart hit songs",
-                "Manipuri popular music official"
-            ).shuffled().take(3)
+                "YouTube Music Top Trending Songs 2026 Official",
+                "Trending Global & India Top Chart Hits",
+                "Manipuri & Indian Viral Trending Hit Songs",
+                "Top 50 Most Played Trending Music Official"
+            )
             moodCategory.equals("Energize", true) -> listOf(
-                "Energize upbeat pop dance hit songs",
-                "High energy feel good official songs",
-                "Upbeat party & energetic hits",
-                "Fast tempo electro pop & dance anthems"
-            ).shuffled().take(3)
+                "Energize High Energy Pop & Dance Anthems",
+                "Upbeat Feel Good Energize Workout Hits",
+                "Fast Tempo Electro Pop & Party Bangers",
+                "Energy Boost Hit Songs Official Audio"
+            )
             moodCategory.equals("Sad", true) -> listOf(
                 "Sad emotional heartbreak songs official",
                 "Acoustic sad songs & melancholic ballads",
@@ -1226,17 +1226,19 @@ object InnerTubeStreamExtractor {
             searchOfficialYtmSongs("Manipuri new song release official", limit = 14).shuffled()
         }
 
-        // 3. Personalization via Automix seed continuations (true musical similarity, never keyword title matching!)
+        val isGeneralMood = moodCategory.equals("All", true) || moodCategory.equals("For You", true)
+        // 3. Personalization via Automix seed continuations ONLY for general "All" feed (never for Energize, Trending, etc.)
         val automixPersonalizedJob = async {
-            validSeeds.take(2).flatMap { seed ->
+            if (!isGeneralMood) emptyList()
+            else validSeeds.take(2).flatMap { seed ->
                 runCatching { fetchAutomixQueue(seed, limit = 8) }.getOrDefault(emptyList())
             }.shuffled().take(6)
         }
 
-        // 4. Strictly verified releases actually BY the user's top artists (checking candidate.artist ONLY,
-        // never matching song title words, and capped at 2 songs per artist for healthy diversity)
+        // 4. Strictly verified releases actually BY the user's top artists (only when in "All" feed)
         val verifiedArtistReleasesJob = async {
-            cleanArtists.take(2).flatMap { artistName ->
+            if (!isGeneralMood) emptyList()
+            else cleanArtists.take(2).flatMap { artistName ->
                 runCatching {
                     searchOfficialYtmSongs(artistName, limit = 8)
                         .filter { cand ->
@@ -1316,26 +1318,219 @@ object InnerTubeStreamExtractor {
         }
     }
 
+    data class OuterTuneHomeShelves(
+        val mixes: List<YtmCollectionSummary>,
+        val playlists: List<YtmCollectionSummary>,
+        val albums: List<YtmCollectionSummary>
+    )
+
+    /**
+     * Fetches OuterTune-style YouTube Mixes (`RDAMVM...`, `RDCLAK5uy_...`), Curated Playlists (`VL...`),
+     * and Featured Albums (`MPREb_...`).
+     * When [moodCategory] is a specific category (like `Energize`, `Trending`, `Workout`, `Chill`, `Sad`, `Romantic`, `Lo-Fi`),
+     * personalization is completely bypassed so users get pure YouTube Music category feeds like OuterTune.
+     */
+    suspend fun fetchHomeMixesAndPlaylists(
+        favoriteArtists: List<String> = emptyList(),
+        seedVideoIds: List<String> = emptyList(),
+        moodCategory: String = "All"
+    ): OuterTuneHomeShelves = coroutineScope {
+        val isGeneralFeed = moodCategory.equals("All", true) || moodCategory.equals("For You", true)
+        val cleanArtists = if (isGeneralFeed) {
+            favoriteArtists.map { it.removeSuffix(" - Topic").removeSuffix("- Topic").trim() }
+                .filter { it.isNotBlank() && !it.equals("Unknown Artist", true) }
+                .distinct()
+                .take(4)
+        } else emptyList()
+        val validSeeds = if (isGeneralFeed) {
+            seedVideoIds.mapNotNull { extractVideoId(it) }.distinct().take(5)
+        } else emptyList()
+
+        val categoryPlaylistQueries = when {
+            moodCategory.equals("Energize", true) -> listOf("Energize Hits Mix", "High Energy Workout & Pop Playlist", "Feel Good Boost Playlist")
+            moodCategory.equals("Trending", true) -> listOf("Top Trending Hits Playlist", "Trending Now Global & India", "Manipuri & India Viral Hits")
+            moodCategory.equals("Manipuri Song", true) -> listOf("Manipuri Hit Songs Playlist", "Best of Manipuri Melodies", "Imphal Trending Songs Mix")
+            moodCategory.equals("Workout", true) -> listOf("Workout Gym Hype Playlist", "Cardio & Power Training Mix")
+            moodCategory.equals("Chill", true) -> listOf("Chill Vibes Acoustic Playlist", "Late Night Chillout Mix")
+            moodCategory.equals("Sad", true) -> listOf("Sad Heartbreak Ballads Playlist", "Emotional Acoustic Mix")
+            moodCategory.equals("Romantic", true) -> listOf("Romantic Love Songs Playlist", "Best Love Duets & Melodies")
+            moodCategory.equals("Lo-Fi", true) -> listOf("Lo-Fi Chill Study Beats Playlist", "Cozy Late Night Lofi Mix")
+            else -> listOf(
+                "Manipuri Hit Songs Playlist",
+                "Trending Hits Mix",
+                cleanArtists.firstOrNull()?.let { "$it Mix" } ?: "Top Global & Regional Hits"
+            )
+        }
+
+        // 1. Live FEmusic_home / FEmusic_explore shelves (extracts authentic RDCLAK5uy_ mixes & VLPL playlists)
+        val liveBrowseCollectionsJob = async {
+            val found = mutableListOf<YtmCollectionSummary>()
+            val browseTargets = if (isGeneralFeed) listOf("FEmusic_home", "FEmusic_explore") else listOf("FEmusic_explore", "FEmusic_moods_and_genres")
+            for (bId in browseTargets) {
+                runCatching {
+                    val payload = webRemixPayload().apply { put("browseId", bId) }
+                    val root = postWebRemix("https://music.youtube.com/youtubei/v1/browse?prettyPrint=false", payload) ?: return@runCatching
+                    val twoRows = mutableListOf<JSONObject>()
+                    fun walkTwoRows(node: Any?) {
+                        if (twoRows.size >= 40) return
+                        when (node) {
+                            is JSONObject -> {
+                                node.optJSONObject("musicTwoRowItemRenderer")?.let { twoRows.add(it); return }
+                                val keys = node.keys()
+                                while (keys.hasNext()) walkTwoRows(node.opt(keys.next()))
+                            }
+                            is JSONArray -> {
+                                for (i in 0 until node.length()) walkTwoRows(node.opt(i))
+                            }
+                        }
+                    }
+                    walkTwoRows(root)
+                    for (tr in twoRows) {
+                        val title = extractSimpleOrRunsText(tr.optJSONObject("title")).takeIf { it.isNotBlank() } ?: continue
+                        val subtitle = extractSimpleOrRunsText(tr.optJSONObject("subtitle")).ifBlank { "YouTube Music" }
+                        val thumb = extractBestThumbnail(
+                            tr.optJSONObject("thumbnailRenderer")
+                                ?.optJSONObject("musicThumbnailRenderer")
+                                ?.optJSONObject("thumbnail")
+                                ?.optJSONArray("thumbnails")
+                        )
+                        val navBrowseId = tr.optJSONObject("navigationEndpoint")
+                            ?.optJSONObject("browseEndpoint")
+                            ?.optString("browseId").orEmpty()
+                        val watchPlId = tr.optJSONObject("thumbnailOverlay")
+                            ?.optJSONObject("musicItemThumbnailOverlayRenderer")
+                            ?.optJSONObject("content")
+                            ?.optJSONObject("musicPlayButtonRenderer")
+                            ?.optJSONObject("playNavigationEndpoint")
+                            ?.optJSONObject("watchPlaylistEndpoint")
+                            ?.optString("playlistId").orEmpty()
+                        val effectiveId = navBrowseId.ifBlank { watchPlId }
+                        if (effectiveId.isBlank()) continue
+                        val isMix = effectiveId.startsWith("RD") || watchPlId.startsWith("RD") ||
+                            title.contains("Mix", ignoreCase = true) || title.contains("Radio", ignoreCase = true)
+                        val isAlbum = effectiveId.startsWith("MPREb_") || effectiveId.startsWith("OLAK5uy_") ||
+                            subtitle.contains("Album", ignoreCase = true)
+                        val cType = when {
+                            isMix -> "MIX"
+                            isAlbum -> "ALBUM"
+                            else -> "PLAYLIST"
+                        }
+                        found.add(
+                            YtmCollectionSummary(
+                                browseId = effectiveId,
+                                playlistId = watchPlId.ifBlank { effectiveId.removePrefix("VL") },
+                                title = title,
+                                subtitle = subtitle,
+                                thumbnailUrl = thumb,
+                                type = cType
+                            )
+                        )
+                    }
+                }
+            }
+            found
+        }
+
+        // 2. Search YouTube Music Community & Featured Playlists for the active category or home feed
+        val playlistSearchJobs = categoryPlaylistQueries.map { q ->
+            async {
+                searchYtmCollections(
+                    query = q,
+                    filterParams = "EgWKAQIoAWoKEAkQChADEAUQBA==",
+                    type = "PLAYLIST",
+                    limit = 8
+                )
+            }
+        }
+
+        // 3. Search Albums for the active category or home feed
+        val albumQuery = if (isGeneralFeed) {
+            cleanArtists.firstOrNull() ?: "Manipuri & Indian Hit Albums"
+        } else {
+            "$moodCategory Top Albums"
+        }
+        val albumSearchJob = async {
+            searchYtmCollections(
+                query = albumQuery,
+                filterParams = "EgWKAQIYAWoKEAkQChADEAUQBA==",
+                type = "ALBUM",
+                limit = 8
+            )
+        }
+
+        // 4. Build authentic YouTube Radio Mixes (`RDAMVM<videoId>`) from seed songs or top category songs
+        val seedMixJob = async {
+            val mixList = mutableListOf<YtmCollectionSummary>()
+            val mixSeedSongs = if (isGeneralFeed && validSeeds.isNotEmpty()) {
+                val seedStreams = mutableListOf<CandidateStream>()
+                for (vid in validSeeds.take(4)) {
+                    val auto = runCatching { fetchAutomixQueue(vid, limit = 2) }.getOrDefault(emptyList())
+                    auto.firstOrNull()?.let { seedStreams.add(it.copy(videoId = vid)) }
+                }
+                seedStreams
+            } else {
+                val q = categoryPlaylistQueries.firstOrNull() ?: "Top Trending Songs"
+                runCatching { searchOfficialYtmSongs(q, limit = 6) }.getOrDefault(emptyList())
+            }
+
+            for ((idx, song) in mixSeedSongs.take(5).withIndex()) {
+                val vid = extractVideoId(song.videoId) ?: continue
+                val cleanArt = song.artist.removeSuffix(" - Topic").removeSuffix("- Topic").trim()
+                val mixTitle = when {
+                    !isGeneralFeed -> "$moodCategory Mix: ${song.title.take(24)}"
+                    idx == 0 -> "My Supermix • $cleanArt"
+                    else -> "$cleanArt & More Mix"
+                }
+                mixList.add(
+                    YtmCollectionSummary(
+                        browseId = "RDAMVM$vid",
+                        playlistId = "RDAMVM$vid",
+                        title = mixTitle,
+                        subtitle = "YouTube Mix • Continuous radio based on ${song.title}",
+                        thumbnailUrl = song.thumbnailUrl.ifBlank { "https://i.ytimg.com/vi/$vid/hqdefault.jpg" },
+                        type = "MIX"
+                    )
+                )
+            }
+            mixList
+        }
+
+        val liveItems = liveBrowseCollectionsJob.await()
+        val searchedPlaylists = playlistSearchJobs.awaitAll().flatten()
+        val searchedAlbums = albumSearchJob.await()
+        val generatedMixes = seedMixJob.await()
+
+        val allMixes = (generatedMixes + liveItems.filter { it.type == "MIX" } +
+            searchedPlaylists.filter { it.title.contains("Mix", ignoreCase = true) || it.browseId.startsWith("RD") }.map { it.copy(type = "MIX") })
+            .distinctBy { it.browseId }
+            .take(12)
+
+        val allPlaylists = (searchedPlaylists.filterNot { it.type == "MIX" } + liveItems.filter { it.type == "PLAYLIST" })
+            .distinctBy { it.browseId }
+            .take(14)
+
+        val allAlbums = (searchedAlbums + liveItems.filter { it.type == "ALBUM" })
+            .distinctBy { it.browseId }
+            .take(10)
+
+        OuterTuneHomeShelves(
+            mixes = allMixes,
+            playlists = allPlaylists,
+            albums = allAlbums
+        )
+    }
+
     suspend fun fetchPersonalizedCollections(
         favoriteArtists: List<String>,
         seedVideoIds: List<String>,
         moodCategory: String = "All"
     ): List<YtmCollectionSummary> = coroutineScope {
-        val collections = mutableListOf<YtmCollectionSummary>()
-
-        val query = when {
-            moodCategory.equals("Manipuri Song", true) -> "Manipuri Hits"
-            !moodCategory.equals("All", true) && !moodCategory.equals("For You", true) -> "$moodCategory Music"
-            favoriteArtists.isNotEmpty() -> "${favoriteArtists.first()} best"
-            else -> "Trending Hits India"
-        }
-
-        val playlistDeferred = async { searchYtmCollections(query, filterParams = "EgWKAQIoAWoKEAkQChADEAUQBA==", type = "PLAYLIST", limit = 6) }
-        val albumDeferred = async { searchYtmCollections(query, filterParams = "EgWKAQIYAWoKEAkQChADEAUQBA==", type = "ALBUM", limit = 6) }
-
-        collections.addAll(playlistDeferred.await())
-        collections.addAll(albumDeferred.await())
-        collections.distinctBy { it.browseId }
+        val shelves = fetchHomeMixesAndPlaylists(
+            favoriteArtists = favoriteArtists,
+            seedVideoIds = seedVideoIds,
+            moodCategory = moodCategory
+        )
+        (shelves.mixes + shelves.playlists + shelves.albums).distinctBy { it.browseId }
     }
 
     suspend fun searchYtmCollections(
@@ -1420,6 +1615,88 @@ object InnerTubeStreamExtractor {
                         )
                     )
                     if (out.size >= limit) return@withContext out
+                }
+            }
+        }
+
+        // Fallback: if filtered YTM search returned fewer than 3 playlists, also query YouTube WEB playlist search (`EgIQAw==`)
+        if (out.size < 3 && type == "PLAYLIST") {
+            runCatching {
+                val conn = (URL("https://www.youtube.com/youtubei/v1/search?prettyPrint=false").openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 3500
+                    readTimeout = 3500
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+                    setRequestProperty("X-YouTube-Client-Name", "1")
+                    setRequestProperty("X-YouTube-Client-Version", "2.20250310.01.00")
+                }
+                val webPayload = JSONObject().apply {
+                    put("query", query)
+                    put("params", "EgIQAw==") // Playlists filter
+                    put("context", JSONObject().apply {
+                        put("client", JSONObject().apply {
+                            put("clientName", "WEB")
+                            put("clientVersion", "2.20250310.01.00")
+                            put("hl", "en")
+                            put("gl", resolveDeviceGl())
+                        })
+                    })
+                }
+                conn.outputStream.use { it.write(webPayload.toString().toByteArray(Charsets.UTF_8)) }
+                if (conn.responseCode == 200) {
+                    val webRoot = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                    val plNodes = mutableListOf<JSONObject>()
+                    fun walkPlaylists(node: Any?) {
+                        if (plNodes.size >= limit * 2) return
+                        when (node) {
+                            is JSONObject -> {
+                                node.optJSONObject("playlistRenderer")?.let { plNodes.add(it); return }
+                                node.optJSONObject("lockupViewModel")?.let { plNodes.add(it); return }
+                                val keys = node.keys()
+                                while (keys.hasNext()) walkPlaylists(node.opt(keys.next()))
+                            }
+                            is JSONArray -> {
+                                for (i in 0 until node.length()) walkPlaylists(node.opt(i))
+                            }
+                        }
+                    }
+                    walkPlaylists(webRoot)
+                    for (pr in plNodes) {
+                        val plId = pr.optString("playlistId").ifBlank {
+                            pr.optString("contentId")
+                        }.trim()
+                        if (plId.isBlank()) continue
+                        val plTitle = extractSimpleOrRunsText(pr.optJSONObject("title")).ifBlank {
+                            pr.optJSONObject("metadata")
+                                ?.optJSONObject("lockupMetadataViewModel")
+                                ?.optJSONObject("title")
+                                ?.optString("content").orEmpty()
+                        }.trim()
+                        if (plTitle.isBlank()) continue
+                        val authorTxt = extractSimpleOrRunsText(pr.optJSONObject("shortBylineText"))
+                            .ifBlank { extractSimpleOrRunsText(pr.optJSONObject("longBylineText")) }
+                            .ifBlank { "YouTube Playlist" }
+                        val countTxt = extractSimpleOrRunsText(pr.optJSONObject("videoCountText"))
+                            .ifBlank { pr.optString("videoCount") }
+                        val thumb = extractBestThumbnail(pr.optJSONObject("thumbnails")?.optJSONObject(0)?.optJSONArray("thumbnails"))
+                            .ifBlank { extractBestThumbnail(pr.optJSONObject("thumbnail")?.optJSONArray("thumbnails")) }
+                        val browseId = if (plId.startsWith("VL")) plId else "VL$plId"
+                        if (out.none { it.browseId == browseId }) {
+                            out.add(
+                                YtmCollectionSummary(
+                                    browseId = browseId,
+                                    playlistId = plId.removePrefix("VL"),
+                                    title = plTitle,
+                                    subtitle = if (countTxt.isNotBlank()) "$authorTxt • $countTxt" else authorTxt,
+                                    thumbnailUrl = thumb,
+                                    type = "PLAYLIST"
+                                )
+                            )
+                        }
+                        if (out.size >= limit) break
+                    }
                 }
             }
         }
@@ -1820,6 +2097,19 @@ object InnerTubeStreamExtractor {
 
         if (resolvedId.isBlank() && resolvedAvatar.isBlank() && channelUploads.isEmpty() && channelPlaylists.isEmpty()) {
             return@withContext null
+        }
+
+        if (channelUploads.size < 25 && resolvedTitle.isNotBlank()) {
+            runCatching {
+                val extraVideos = searchAllYoutubeVideos(resolvedTitle, limit = 45)
+                for (ev in extraVideos) {
+                    if (channelUploads.none { it.videoId == ev.videoId } &&
+                        belongsToArtist(resolvedTitle, ev.title, itemArtist = ev.artist)
+                    ) {
+                        channelUploads.add(ev.copy(artist = resolvedTitle, channelName = resolvedTitle))
+                    }
+                }
+            }
         }
 
         YouTubeChannelMeta(
@@ -2397,14 +2687,20 @@ object InnerTubeStreamExtractor {
             }
         }
 
-        if (topSongs.isEmpty()) {
-            val searchedSongs = searchOfficialYtmSongs(name, limit = 18)
+        // YouTube Music artist browse only includes 5 preview songs in musicShelfRenderer;
+        // always fetch the full artist song catalog (up to 35+ songs) and playlists so the Artist / Channel page is rich and complete!
+        if (topSongs.size < 25) {
+            val searchedSongs = runCatching { searchOfficialYtmSongs(name, limit = 35) }.getOrDefault(emptyList())
             val verified = searchedSongs.filter { song ->
-                val normArt = CanonicalAudioResolver.normalizeText(song.artist.removeSuffix(" - Topic").removeSuffix("- Topic"))
-                val normTarget = CanonicalAudioResolver.normalizeText(name)
-                normArt == normTarget || (normTarget.length >= 3 && (normArt.contains(normTarget) || normTarget.contains(normArt)))
+                belongsToArtist(name, song.title, itemArtist = song.artist)
             }
             topSongs.addAll(verified)
+        }
+        if (playlists.size < 4) {
+            val searchedPlaylists = runCatching {
+                searchYtmCollections("$name Mix Playlist", filterParams = "EgWKAQIoAWoKEAkQChADEAUQBA==", type = "PLAYLIST", limit = 8)
+            }.getOrDefault(emptyList())
+            playlists.addAll(searchedPlaylists)
         }
 
         val cleanedAlbums = albums.filterNot {

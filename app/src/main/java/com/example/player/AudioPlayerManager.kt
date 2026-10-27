@@ -98,6 +98,14 @@ class AudioPlayerManager(
     private val musicRepository: MusicRepository
 ) {
     private val TAG = "AudioPlayerManager"
+    // Lookahead lead time (ms) so lyrics highlight & scroll right on the vocal beat without animation lag
+    private val LYRIC_SYNC_LEAD_MS = 420L
+
+    private fun isLowMemoryDevice(): Boolean {
+        return runCatching {
+            com.example.CascadeApplication.isLowRamPhone(context)
+        }.getOrDefault(false)
+    }
     private var exoPlayer: ExoPlayer? = null
     private var videoExoPlayer: ExoPlayer? = null
     private var exoMediaSourceFactory: DefaultMediaSourceFactory? = null
@@ -756,15 +764,17 @@ class AudioPlayerManager(
 
             // Standard streaming buffer window (20s-60s ahead, 60s back-buffer) for responsive HTTP Range
             // streaming and instant seeking without forcing an upfront full-song download.
+            val lowRam = isLowMemoryDevice()
             val loadControl = DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
-                    /* minBufferMs = */ 15_000,
-                    /* maxBufferMs = */ 50_000,
+                    /* minBufferMs = */ if (lowRam) 8_000 else 14_000,
+                    /* maxBufferMs = */ if (lowRam) 22_000 else 42_000,
                     /* bufferForPlaybackMs = */ 250,
                     /* bufferForPlaybackAfterRebufferMs = */ 500
                 )
-                .setPrioritizeTimeOverSizeThresholds(true)
-                .setBackBuffer(/* backBufferDurationMs = */ 30_000, /* retainBackBufferFromKeyframe = */ true)
+                .setTargetBufferBytes(if (lowRam) 6 * 1024 * 1024 else 12 * 1024 * 1024)
+                .setPrioritizeTimeOverSizeThresholds(false)
+                .setBackBuffer(/* backBufferDurationMs = */ if (lowRam) 8_000 else 20_000, /* retainBackBufferFromKeyframe = */ true)
                 .build()
 
             val builder = ExoPlayer.Builder(context)
@@ -1167,15 +1177,17 @@ class AudioPlayerManager(
             val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
                 .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(/* minimumLoadableRetryCount = */ 1))
 
+            val lowRam = isLowMemoryDevice()
             val videoLoadControl = DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
-                    /* minBufferMs = */ 15_000,
-                    /* maxBufferMs = */ 60_000,
-                    /* bufferForPlaybackMs = */ 400,
-                    /* bufferForPlaybackAfterRebufferMs = */ 900
+                    /* minBufferMs = */ if (lowRam) 8_000 else 14_000,
+                    /* maxBufferMs = */ if (lowRam) 20_000 else 40_000,
+                    /* bufferForPlaybackMs = */ 350,
+                    /* bufferForPlaybackAfterRebufferMs = */ 800
                 )
-                .setPrioritizeTimeOverSizeThresholds(true)
-                .setBackBuffer(30_000, true)
+                .setTargetBufferBytes(if (lowRam) 6 * 1024 * 1024 else 14 * 1024 * 1024)
+                .setPrioritizeTimeOverSizeThresholds(false)
+                .setBackBuffer(if (lowRam) 6_000 else 15_000, true)
                 .build()
 
             videoExoPlayer = ExoPlayer.Builder(context)
@@ -1295,11 +1307,10 @@ class AudioPlayerManager(
             isRetryingOrLoading = true
             bufferingStartedAtMs = System.currentTimeMillis()
             startBufferingWatchdog(track.id)
-            player.repeatMode = when (_state.value.repeatMode) {
-                RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-                RepeatMode.ONE -> Player.REPEAT_MODE_ONE
-                RepeatMode.ALL -> Player.REPEAT_MODE_ALL
-            }
+            // Keep ExoPlayer native repeatMode at REPEAT_MODE_OFF because ExoPlayer holds a single MediaItem at a time;
+            // queue-level RepeatMode (OFF / ALL / ONE) is handled deterministically in onTrackCompleted() when STATE_ENDED fires.
+            player.repeatMode = Player.REPEAT_MODE_OFF
+            videoExoPlayer?.repeatMode = Player.REPEAT_MODE_OFF
             com.seitharol.player.AudioPlayerManager.stopActivePreviewIfAny()
             _activePreviewTrackId.value = null
             _isPreviewPlaying.value = false
@@ -1465,7 +1476,7 @@ class AudioPlayerManager(
                     checkSponsorSkip(pos)
 
                     val currentLyrics = _state.value.lyricLines
-                    val adjustedPos = pos + _state.value.lyricOffsetMs
+                    val adjustedPos = pos + _state.value.lyricOffsetMs + LYRIC_SYNC_LEAD_MS
                     val activeIdx = currentLyrics.indexOfLast { it.timestampMs <= adjustedPos }
 
                     val vp = videoExoPlayer
@@ -1523,7 +1534,7 @@ class AudioPlayerManager(
                         prefetchNextTrack()
                     }
                 }
-                delay(500L)
+                delay(75L)
             }
         }
     }
@@ -1950,7 +1961,7 @@ class AudioPlayerManager(
                 val localLyrics = parseLrc(current.lyrics)
                 val expectedDuration = if (current.durationMs > 0L) current.durationMs else 210000L
                 val initialPos = resumePositionMs.coerceAtLeast(0L)
-                val initialLyricIdx = localLyrics.indexOfLast { it.timestampMs <= initialPos + _state.value.lyricOffsetMs }
+                val initialLyricIdx = localLyrics.indexOfLast { it.timestampMs <= initialPos + _state.value.lyricOffsetMs + LYRIC_SYNC_LEAD_MS }
                 val isVideoTrack = current.isVideoTrack
 
                 recordSessionPlayed(current)
@@ -1965,8 +1976,8 @@ class AudioPlayerManager(
                     isVideoFrameRendered = if (isSameTrack) _state.value.isVideoFrameRendered else false
                 )
 
-                // Fetch synchronized lyrics asynchronously when online
-                if (localLyrics.isEmpty() && !isVideoTrack && !resolverEngine.isOfflineMode.value && com.example.util.ErrorFormatter.isOnline(context)) {
+                // Fetch synchronized lyrics asynchronously when online (for both audio songs and music videos)
+                if (localLyrics.isEmpty() && !resolverEngine.isOfflineMode.value && com.example.util.ErrorFormatter.isOnline(context)) {
                     coroutineScope.launch(Dispatchers.IO) {
                         val lrclibLines = com.example.network.NetworkClients.fetchLrclibLyrics(
                             artist = current.artist,
@@ -1974,7 +1985,14 @@ class AudioPlayerManager(
                             durationSec = expectedDuration / 1000L
                         )
                         if (lrclibLines.isNotEmpty() && _state.value.currentTrack?.id == current.id) {
-                            _state.value = _state.value.copy(lyricLines = lrclibLines)
+                            val livePos = (exoPlayer?.currentPosition?.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
+                            val updatedIdx = lrclibLines.indexOfLast {
+                                it.timestampMs <= livePos + _state.value.lyricOffsetMs + LYRIC_SYNC_LEAD_MS
+                            }
+                            _state.value = _state.value.copy(
+                                lyricLines = lrclibLines,
+                                activeLyricIndex = updatedIdx
+                            )
                         }
                     }
                 }
@@ -2481,7 +2499,7 @@ class AudioPlayerManager(
             userRequestedPlay = true
         }
 
-        val activeIdx = _state.value.lyricLines.indexOfLast { it.timestampMs <= clamped + _state.value.lyricOffsetMs }
+        val activeIdx = _state.value.lyricLines.indexOfLast { it.timestampMs <= clamped + _state.value.lyricOffsetMs + LYRIC_SYNC_LEAD_MS }
         _state.value = _state.value.copy(
             currentPositionMs = clamped,
             activeLyricIndex = activeIdx,
@@ -2560,21 +2578,35 @@ class AudioPlayerManager(
         val isLocalSingleOrOffline = resolverEngine.isOfflineMode.value ||
             (current?.isLocalOnlyTrack == true && queue.all { it.isLocalOnlyTrack })
 
-        if (isLast && _state.value.repeatMode != RepeatMode.ALL) {
+        if (isLast && !_state.value.isShuffle && _state.value.repeatMode != RepeatMode.ALL) {
             if (isAutoplayEnabled && !isLocalSingleOrOffline) {
                 triggerAutoplayNext()
                 return
-            } else if (_state.value.repeatMode == RepeatMode.OFF && !_state.value.isPartOfPlaylist) {
-                seekTo(0)
-                pause()
+            } else if (_state.value.repeatMode == RepeatMode.ONE) {
+                seekTo(0L)
+                exoPlayer?.playWhenReady = true
+                exoPlayer?.play()
+                _state.value = _state.value.copy(isPlaying = true, isEnded = false)
+                return
+            } else {
+                // RepeatMode.OFF at the end of the queue: stop cleanly and mark ended for replay
+                markTrackEndedForReplay()
                 return
             }
         }
 
-        val nextIndex = if (_state.value.isShuffle) {
+        val nextIndex = if (_state.value.isShuffle && queue.size > 1) {
             (0 until queue.size).filter { it != _state.value.currentIndex }.randomOrNull() ?: 0
         } else {
             (_state.value.currentIndex + 1) % queue.size
+        }
+        if (nextIndex == _state.value.currentIndex && queue.size == 1) {
+            seekTo(0L)
+            exoPlayer?.playWhenReady = true
+            exoPlayer?.play()
+            _state.value = _state.value.copy(isPlaying = true, isEnded = false, isBuffering = false)
+            startPositionTracker()
+            return
         }
         val nextTrack = queue[nextIndex]
         if (exoPlayer?.currentMediaItem?.mediaId != nextTrack.id) {
@@ -2644,13 +2676,9 @@ class AudioPlayerManager(
 
     fun setRepeatMode(mode: RepeatMode) {
         _state.value = _state.value.copy(repeatMode = mode)
-        val exoRepeat = when (mode) {
-            RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-            RepeatMode.ONE -> Player.REPEAT_MODE_ONE
-            RepeatMode.ALL -> Player.REPEAT_MODE_ALL
-        }
-        exoPlayer?.repeatMode = exoRepeat
-        videoExoPlayer?.repeatMode = exoRepeat
+        // Always keep ExoPlayer repeatMode at REPEAT_MODE_OFF so Player.STATE_ENDED triggers onTrackCompleted()
+        exoPlayer?.repeatMode = Player.REPEAT_MODE_OFF
+        videoExoPlayer?.repeatMode = Player.REPEAT_MODE_OFF
         persistCurrentPlaybackState()
     }
 
@@ -2669,8 +2697,15 @@ class AudioPlayerManager(
     }
 
     fun adjustLyricOffset(deltaMs: Long) {
-        val newOffset = _state.value.lyricOffsetMs + deltaMs
-        _state.value = _state.value.copy(lyricOffsetMs = newOffset)
+        val newOffset = (_state.value.lyricOffsetMs + deltaMs).coerceIn(-10_000L, 10_000L)
+        val pos = (exoPlayer?.currentPosition?.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
+        val updatedIdx = _state.value.lyricLines.indexOfLast {
+            it.timestampMs <= pos + newOffset + LYRIC_SYNC_LEAD_MS
+        }
+        _state.value = _state.value.copy(
+            lyricOffsetMs = newOffset,
+            activeLyricIndex = updatedIdx
+        )
     }
 
     fun setSleepTimer(minutes: Int) {
@@ -2770,27 +2805,56 @@ class AudioPlayerManager(
         persistCurrentPlaybackState()
     }
 
+    private fun restartCurrentTrackFromBeginning() {
+        val current = _state.value.currentTrack ?: return
+        val player = exoPlayer
+        userRequestedPlay = true
+        hasUserInitiatedPlaybackThisSession = true
+        val activeIdx = _state.value.lyricLines.indexOfLast {
+            it.timestampMs <= _state.value.lyricOffsetMs + LYRIC_SYNC_LEAD_MS
+        }
+        _state.value = _state.value.copy(
+            isEnded = false,
+            isBuffering = false,
+            isPlaying = true,
+            currentPositionMs = 0L,
+            activeLyricIndex = activeIdx
+        )
+        if (player != null && player.currentMediaItem != null && player.playerError == null && player.playbackState != Player.STATE_IDLE) {
+            requestAudioFocus()
+            player.seekTo(0L)
+            player.playWhenReady = true
+            player.play()
+            if (_state.value.isVideoMode || current.isVideoTrack) {
+                videoExoPlayer?.let { vp ->
+                    vp.seekTo(0L)
+                    vp.playWhenReady = true
+                    vp.play()
+                }
+            }
+            startPositionTracker()
+            persistCurrentPlaybackState()
+        } else {
+            loadAndPlayCurrent(resumePositionMs = 0L, forceRefresh = false)
+        }
+    }
+
     private fun onTrackCompleted() {
         runCatching {
             when (_state.value.repeatMode) {
                 RepeatMode.ONE -> {
-                    userRequestedPlay = true
-                    _state.value = _state.value.copy(isEnded = false, isBuffering = false, currentPositionMs = 0L)
-                    seekTo(0L)
-                    exoPlayer?.playWhenReady = true
-                    exoPlayer?.play()
-                    _state.value = _state.value.copy(isPlaying = true, isEnded = false)
+                    restartCurrentTrackFromBeginning()
                 }
                 RepeatMode.ALL -> {
                     if (_state.value.queue.size <= 1) {
-                        userRequestedPlay = true
-                        _state.value = _state.value.copy(isEnded = false, isBuffering = false, currentPositionMs = 0L)
-                        seekTo(0L)
-                        exoPlayer?.playWhenReady = true
-                        exoPlayer?.play()
-                        _state.value = _state.value.copy(isPlaying = true, isEnded = false)
+                        restartCurrentTrackFromBeginning()
                     } else {
-                        next()
+                        val nextIdx = if (_state.value.isShuffle) {
+                            (0 until _state.value.queue.size).filter { it != _state.value.currentIndex }.randomOrNull() ?: 0
+                        } else {
+                            (_state.value.currentIndex + 1) % _state.value.queue.size
+                        }
+                        playQueueIndex(nextIdx)
                     }
                 }
                 RepeatMode.OFF -> {
@@ -2798,7 +2862,7 @@ class AudioPlayerManager(
                     val current = _state.value.currentTrack
                     val isLocalSingleOrOffline = resolverEngine.isOfflineMode.value ||
                         (current?.isLocalOnlyTrack == true && _state.value.queue.all { it.isLocalOnlyTrack })
-                    if (isLast) {
+                    if (isLast && !_state.value.isShuffle) {
                         if (isAutoplayEnabled && !isLocalSingleOrOffline) {
                             triggerAutoplayNext()
                         } else {

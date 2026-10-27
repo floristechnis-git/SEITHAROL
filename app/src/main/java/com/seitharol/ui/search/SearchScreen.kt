@@ -233,11 +233,12 @@ fun SearchScreen(
 
             // 3. Search Results (Deduplicated + Indexed Keys to prevent LazyColumn key crashes)
             itemsIndexed(rankedResults, key = { idx, item -> "sr_${item.videoId}_$idx" }) { _, track ->
-                val optimizedThumb = remember(track.thumbnailUrl, settings.thumbnailQuality) {
+                val isVideoItem = track.videoType == "MUSIC_VIDEO_TYPE_OMV" || track.videoType == "MUSIC_VIDEO_TYPE_UGC"
+                val optimizedThumb = remember(track.thumbnailUrl, settings.thumbnailQuality, isVideoItem) {
                     ThumbnailUrlOptimizer.optimize(
                         track.thumbnailUrl,
                         settings.thumbnailQuality,
-                        ThumbnailTargetSize.LIST_THUMB,
+                        if (isVideoItem) ThumbnailTargetSize.CARD_MEDIUM else ThumbnailTargetSize.LIST_THUMB,
                         context
                     )
                 }
@@ -247,16 +248,23 @@ fun SearchScreen(
                         headlineColor = MaterialTheme.colorScheme.onSurface,
                         supportingColor = MaterialTheme.colorScheme.onSurfaceVariant
                     ),
-                    headlineContent = { Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    headlineContent = { Text(track.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
                     supportingContent = { Text(track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     leadingContent = {
                         AsyncImage(
                             model = optimizedThumb,
                             contentDescription = track.title,
                             contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(RoundedCornerShape(8.dp))
+                            modifier = if (isVideoItem) {
+                                Modifier
+                                    .width(124.dp)
+                                    .height(70.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                            } else {
+                                Modifier
+                                    .size(52.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                            }
                         )
                     },
                     modifier = Modifier.clickable {

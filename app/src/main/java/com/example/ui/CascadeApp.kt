@@ -1021,6 +1021,7 @@ fun CascadeApp(
 
         // Full-bleed root landscape video overlay (zIndex 500f):
         // Rotates the Activity to SCREEN_ORIENTATION_SENSOR_LANDSCAPE and fills 100% of the screen frame like YouTube.
+        var isFullscreenZoomCrop by remember { mutableStateOf(false) }
         if (isFullscreenVideo && playerState.currentTrack != null) {
             val fsTrack = playerState.currentTrack!!
             val totalDur = (if (playerState.durationMs > 0L) playerState.durationMs else (fsTrack.durationMs.takeIf { it > 0L } ?: 210_000L)).coerceAtLeast(1000L)
@@ -1052,8 +1053,8 @@ fun CascadeApp(
                 SeitharolFullscreenVideoModal(
                     viewModel = viewModel,
                     playerState = playerState,
-                    isZoomCrop = false,
-                    onToggleZoomCrop = {},
+                    isZoomCrop = isFullscreenZoomCrop,
+                    onToggleZoomCrop = { isFullscreenZoomCrop = !isFullscreenZoomCrop },
                     nextTrack = fullscreenNextTrack,
                     showNextCountdown = showFullscreenCountdown,
                     countdownSeconds = fullscreenCountdownSec,

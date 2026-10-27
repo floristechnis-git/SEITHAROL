@@ -1,5 +1,22 @@
 package com.example.data.model
 
+fun formatDurationMs(ms: Long): String {
+    if (ms <= 0L) return "0:00"
+    val totalSeconds = (ms / 1000L).coerceAtLeast(0L)
+    val hours = totalSeconds / 3600L
+    val minutes = (totalSeconds % 3600L) / 60L
+    val seconds = totalSeconds % 60L
+    return if (hours > 0L) {
+        "%d:%02d:%02d".format(hours, minutes, seconds)
+    } else {
+        "%d:%02d".format(minutes, seconds)
+    }
+}
+
+fun formatDurationSeconds(secondsInput: Int): String {
+    return formatDurationMs(secondsInput.coerceAtLeast(0).toLong() * 1000L)
+}
+
 data class Track(
     val id: String, // YouTube videoId or local ID
     val title: String,
@@ -20,12 +37,7 @@ data class Track(
     val codec: String = "Opus"
 ) {
     val durationFormatted: String
-        get() {
-            val totalSeconds = durationMs / 1000
-            val minutes = totalSeconds / 60
-            val seconds = totalSeconds % 60
-            return "%d:%02d".format(minutes, seconds)
-        }
+        get() = formatDurationMs(durationMs)
 
     val isVideoTrack: Boolean
         get() {

@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
@@ -152,6 +153,8 @@ fun HomeScreen(
     val trendingHits by viewModel.trendingHits.collectAsState()
     val freshReleases by viewModel.freshReleases.collectAsState()
     val personalizedTracks by viewModel.personalizedTracks.collectAsState()
+    val suggestedYoutubeMixes by viewModel.suggestedYoutubeMixes.collectAsState()
+    val suggestedYoutubePlaylists by viewModel.suggestedYoutubePlaylists.collectAsState()
     val selectedMood by viewModel.selectedMood.collectAsState()
     val isLoadingHome by viewModel.isLoadingHome.collectAsState()
     val hasCompletedInitialHomeLoad by viewModel.hasCompletedInitialHomeLoad.collectAsState()
@@ -280,14 +283,21 @@ fun HomeScreen(
         quickDialItems.map { it.id }.toSet()
     }
 
-    // Prepare Trending Items (Deduplicated, excluding Quick Dial items so shelves never duplicate each other)
-    val trendingItems = remember(deduplicatedTrendingHits, personalizedTracks, deduplicatedAllTracks, excludedHeroIds, quickDialIdSet) {
-        val basePool = if (deduplicatedTrendingHits.isNotEmpty()) {
+    // Prepare Trending Items (Deduplicated; when a category chip like Energize or Trending is selected, never mix personal history!)
+    val trendingItems = remember(deduplicatedTrendingHits, personalizedTracks, deduplicatedAllTracks, excludedHeroIds, quickDialIdSet, selectedMood) {
+        val isAll = selectedMood.equals("All", ignoreCase = true)
+        val basePool = if (!isAll && deduplicatedTrendingHits.isNotEmpty()) {
+            deduplicatedTrendingHits
+        } else if (deduplicatedTrendingHits.isNotEmpty()) {
             (deduplicatedTrendingHits + personalizedTracks).distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
         } else {
             deduplicatedAllTracks
         }
-        val filtered = basePool.filterNot { it.id in excludedHeroIds || it.id in quickDialIdSet || it.isLocalOnlyTrack }
+        val filtered = if (isAll) {
+            basePool.filterNot { it.id in excludedHeroIds || it.id in quickDialIdSet || it.isLocalOnlyTrack }
+        } else {
+            basePool.filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
+        }
         val effectivePool = if (filtered.size >= 8) filtered else basePool.filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
         effectivePool.take(24).map { it.toHomeMediaItem() }
     }
@@ -309,43 +319,92 @@ fun HomeScreen(
         pool.filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }.take(12).map { it.toHomeMediaItem() }
     }
 
-    // Prepare YouTube Mixes Shelf (only authentic continuous mixes from YouTube Music when online)
-    val youtubeMixes = remember(personalizedTracks, isOfflineMode) {
+    // Prepare YouTube Mixes Shelf (authentic continuous mixes from YouTube Music + fallback seed mixes when online)
+    val youtubeMixes = remember(suggestedYoutubeMixes, personalizedTracks, deduplicatedTrendingHits, isOfflineMode, selectedMood) {
         if (isOfflineMode) emptyList()
-        else personalizedTracks
-            .filter { it.id.startsWith("RD") && !it.isLocalOnlyTrack }
-            .map { it.toHomeMediaItem(isMix = true) }
-            .distinctBy { it.id }
-            .take(6)
+        else {
+            val fromSuggested = suggestedYoutubeMixes.map { col ->
+                HomeMediaItem(
+                    id = col.browseId.ifBlank { col.playlistId.orEmpty() },
+                    title = col.title,
+                    subtitle = col.subtitle,
+                    thumbnailUrl = col.thumbnailUrl,
+                    isMix = true,
+                    isAlbumOrPlaylist = true
+                )
+            }
+            if (fromSuggested.isNotEmpty()) {
+                fromSuggested.distinctBy { it.id }.take(10)
+            } else {
+                val seedPool = if (selectedMood.equals("All", ignoreCase = true)) {
+                    (personalizedTracks + deduplicatedTrendingHits)
+                } else {
+                    deduplicatedTrendingHits
+                }
+                seedPool
+                    .filterNot { it.isLocalOnlyTrack }
+                    .distinctBy { it.artist.lowercase().trim() }
+                    .take(6)
+                    .map { track ->
+                        HomeMediaItem(
+                            id = "RDAMVM${track.id}",
+                            title = "${track.artist} Mix",
+                            subtitle = "YouTube Mix • Based on ${track.title}",
+                            thumbnailUrl = track.artUrl,
+                            isMix = true,
+                            isAlbumOrPlaylist = true,
+                            originalTrack = track
+                        )
+                    }
+            }
+        }
     }
 
-    // Prepare Featured Albums & Playlists (Liked Songs once on far left, non-empty playlists only)
-    val albumsAndPlaylists = remember(playlists, likedTracks) {
-        val likedItem = if (likedTracks.isNotEmpty()) {
-            HomeMediaItem(
-                id = "liked_songs",
-                title = "Liked Songs",
-                subtitle = "${likedTracks.size} songs",
-                thumbnailUrl = likedTracks.first().artUrl,
-                isAlbumOrPlaylist = true
-            )
-        } else null
+    // Prepare Featured Albums & Curated YouTube Playlists (Liked Songs on far left when in All, plus local & online YouTube playlists)
+    val albumsAndPlaylists = remember(playlists, likedTracks, suggestedYoutubePlaylists, isOfflineMode, selectedMood) {
+        val isAll = selectedMood.equals("All", ignoreCase = true)
         val list = mutableListOf<HomeMediaItem>()
-        if (likedItem != null) list.add(likedItem)
-        list.addAll(
-            playlists
-                .filter { it.trackCount > 0 && !it.coverUrl.isNullOrBlank() }
-                .map { playlist ->
+        if (isAll && likedTracks.isNotEmpty()) {
+            list.add(
+                HomeMediaItem(
+                    id = "liked_songs",
+                    title = "Liked Songs",
+                    subtitle = "${likedTracks.size} songs",
+                    thumbnailUrl = likedTracks.first().artUrl,
+                    isAlbumOrPlaylist = true
+                )
+            )
+        }
+        if (isAll) {
+            list.addAll(
+                playlists
+                    .filter { it.trackCount > 0 && !it.coverUrl.isNullOrBlank() }
+                    .map { playlist ->
+                        HomeMediaItem(
+                            id = playlist.id,
+                            title = playlist.title,
+                            subtitle = "${playlist.trackCount} tracks",
+                            thumbnailUrl = playlist.coverUrl.orEmpty(),
+                            isAlbumOrPlaylist = true
+                        )
+                    }
+            )
+        }
+        if (!isOfflineMode) {
+            list.addAll(
+                suggestedYoutubePlaylists.map { col ->
                     HomeMediaItem(
-                        id = playlist.id,
-                        title = playlist.title,
-                        subtitle = "${playlist.trackCount} tracks",
-                        thumbnailUrl = playlist.coverUrl.orEmpty(),
+                        id = col.browseId.ifBlank { col.playlistId.orEmpty() },
+                        title = col.title,
+                        subtitle = col.subtitle,
+                        thumbnailUrl = col.thumbnailUrl,
+                        isMix = col.type.equals("MIX", ignoreCase = true),
                         isAlbumOrPlaylist = true
                     )
                 }
-        )
-        list
+            )
+        }
+        list.distinctBy { it.id }.take(14)
     }
 
     // Dynamic suggested artists strictly personalized from online listening history and liked songs (never local songs!)
@@ -917,6 +976,14 @@ fun HomeScreen(
                             val track = item.originalTrack ?: item.toTrack()
                             viewModel.addToQueue(track)
                         },
+                        onStartRadio = { item ->
+                            val track = item.originalTrack ?: item.toTrack()
+                            viewModel.startRadioMix(track)
+                        },
+                        onToggleLike = { item ->
+                            val track = item.originalTrack ?: item.toTrack()
+                            viewModel.toggleLike(track)
+                        },
                         onAddToPlaylist = { item ->
                             trackToAddToPlaylist = item.originalTrack ?: item.toTrack()
                         },
@@ -1190,23 +1257,43 @@ fun DeveloperWelcomePopupModal(
 
                     Spacer(modifier = Modifier.height(22.dp))
 
-                    Button(
-                        onClick = onDismiss,
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                    ) {
-                        Text(
-                            text = "Got it",
-                            fontFamily = SyneFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp
-                        )
+                    if (canDismissWithCross) {
+                        Button(
+                            onClick = onDismiss,
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                        ) {
+                            Text(
+                                text = "Get Started",
+                                fontFamily = SyneFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp
+                            )
+                        }
+                    } else {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = "Please wait ${countdownSeconds}s...",
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -1338,6 +1425,8 @@ fun TrendingSongsHorizontalShelf(
     onMoreClick: ((HomeMediaItem) -> Unit)? = null,
     onPlayNext: (HomeMediaItem) -> Unit = {},
     onAddToQueue: (HomeMediaItem) -> Unit = {},
+    onStartRadio: (HomeMediaItem) -> Unit = {},
+    onToggleLike: (HomeMediaItem) -> Unit = {},
     onAddToPlaylist: (HomeMediaItem) -> Unit = {},
     onGoToArtist: (String) -> Unit = {},
     onDownload: (HomeMediaItem, DownloadTier) -> Unit = { _, _ -> }
@@ -1427,7 +1516,10 @@ fun TrendingSongsHorizontalShelf(
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1500)
                             )
                             Text(
                                 text = track.subtitle,
@@ -1438,17 +1530,27 @@ fun TrendingSongsHorizontalShelf(
                             )
                         }
 
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            var showDownloadSheet by remember { mutableStateOf(false) }
+                            val context = androidx.compose.ui.platform.LocalContext.current
+
+                            Surface(
                                 onClick = { onTrackClick(track) },
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
                                 modifier = Modifier.size(32.dp)
                             ) {
-                                Icon(
-                                    imageVector = if (isPlaying) Icons.Default.GraphicEq else Icons.Default.PlayArrow,
-                                    contentDescription = "Play",
-                                    tint = if (isPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp)
-                                )
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = if (isPlaying) Icons.Default.GraphicEq else Icons.Default.PlayArrow,
+                                        contentDescription = "Play",
+                                        tint = if (isPlaying) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             }
 
                             Box {
@@ -1474,8 +1576,45 @@ fun TrendingSongsHorizontalShelf(
                                     DropdownMenu(
                                         expanded = showMenu,
                                         onDismissRequest = { showMenu = false },
-                                        modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+                                        modifier = Modifier
+                                            .widthIn(min = 235.dp, max = 290.dp)
+                                            .background(MaterialTheme.colorScheme.surface)
                                     ) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                                        ) {
+                                            Text(
+                                                text = track.title,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                fontFamily = SyneFontFamily,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.5.sp,
+                                                lineHeight = 18.sp,
+                                                maxLines = 4,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = track.subtitle,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                fontFamily = OutfitFontFamily,
+                                                fontSize = 11.5.sp,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                                        DropdownMenuItem(
+                                            text = { Text("Play Now", color = MaterialTheme.colorScheme.onSurface) },
+                                            leadingIcon = { Icon(Icons.Default.PlayArrow, null, tint = MaterialTheme.colorScheme.primary) },
+                                            onClick = {
+                                                showMenu = false
+                                                onTrackClick(track)
+                                            }
+                                        )
                                         DropdownMenuItem(
                                             text = { Text("Play Next", color = MaterialTheme.colorScheme.onSurface) },
                                             leadingIcon = { Icon(Icons.Default.PlaylistPlay, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -1490,6 +1629,34 @@ fun TrendingSongsHorizontalShelf(
                                             onClick = {
                                                 showMenu = false
                                                 onAddToQueue(track)
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Start Radio Mix", color = MaterialTheme.colorScheme.onSurface) },
+                                            leadingIcon = { Icon(Icons.Default.Radio, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                            onClick = {
+                                                showMenu = false
+                                                onStartRadio(track)
+                                            }
+                                        )
+                                        val isLiked = track.originalTrack?.isLiked == true
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    if (isLiked) "Remove from Liked Songs" else "Save to Liked Songs",
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    if (isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
+                                                    null,
+                                                    tint = if (isLiked) SeitharolRedHeart else MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            },
+                                            onClick = {
+                                                showMenu = false
+                                                onToggleLike(track)
                                             }
                                         )
                                         DropdownMenuItem(
@@ -1518,15 +1685,43 @@ fun TrendingSongsHorizontalShelf(
                                             )
                                         }
                                         DropdownMenuItem(
-                                            text = { Text("Download (Standard)", color = MaterialTheme.colorScheme.onSurface) },
-                                            leadingIcon = { Icon(Icons.Default.CloudDownload, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                            text = { Text("Download (Format & Quality)", color = MaterialTheme.colorScheme.onSurface) },
+                                            leadingIcon = { Icon(Icons.Default.CloudDownload, null, tint = MaterialTheme.colorScheme.primary) },
                                             onClick = {
                                                 showMenu = false
-                                                onDownload(track, DownloadTier.STANDARD)
+                                                showDownloadSheet = true
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Share", color = MaterialTheme.colorScheme.onSurface) },
+                                            leadingIcon = { Icon(Icons.Default.Share, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                            onClick = {
+                                                showMenu = false
+                                                runCatching {
+                                                    val domTrack = track.originalTrack ?: track.toTrack()
+                                                    val msg = com.example.ui.components.SeitharolDeepLinkHelper.buildTrackShareMessage(domTrack)
+                                                    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                                        type = "text/plain"
+                                                        putExtra(android.content.Intent.EXTRA_TEXT, msg)
+                                                    }
+                                                    context.startActivity(android.content.Intent.createChooser(intent, "Share Track"))
+                                                }
                                             }
                                         )
                                     }
                                 }
+                            }
+
+                            if (showDownloadSheet) {
+                                val domTrack = track.originalTrack ?: track.toTrack()
+                                com.example.ui.components.TrackDownloadFormatQualitySheet(
+                                    track = domTrack,
+                                    onDismiss = { showDownloadSheet = false },
+                                    onConfirmDownload = { chosenTier ->
+                                        showDownloadSheet = false
+                                        onDownload(track, chosenTier)
+                                    }
+                                )
                             }
                         }
                     }

@@ -383,6 +383,8 @@ class CascadeViewModel(
     val trendingHits = MutableStateFlow<List<Track>>(emptyList())
     val freshReleases = MutableStateFlow<List<Track>>(emptyList())
     val personalizedTracks = MutableStateFlow<List<Track>>(emptyList())
+    val suggestedYoutubeMixes = MutableStateFlow<List<com.seitharol.data.resolver.YtmCollectionSummary>>(emptyList())
+    val suggestedYoutubePlaylists = MutableStateFlow<List<com.seitharol.data.resolver.YtmCollectionSummary>>(emptyList())
     val selectedMood = MutableStateFlow("All")
     val isLoadingHome = MutableStateFlow(true)
     val isHomeLoading: StateFlow<Boolean> = isLoadingHome.asStateFlow()
@@ -409,6 +411,8 @@ class CascadeViewModel(
     val selectedProviderFilter = MutableStateFlow(ProviderFilter.ALL)
     private val onlineSearchResults = MutableStateFlow<List<Track>>(emptyList())
     val searchedVerifiedArtists = MutableStateFlow<List<com.seitharol.data.resolver.YtmArtistPreview>>(emptyList())
+    val searchedOnlinePlaylists = MutableStateFlow<List<com.seitharol.data.resolver.YtmCollectionSummary>>(emptyList())
+    val searchedOnlineAlbums = MutableStateFlow<List<com.seitharol.data.resolver.YtmCollectionSummary>>(emptyList())
     val isSearchingOnline = MutableStateFlow(false)
     val hasCompletedOnlineSearch = MutableStateFlow(false)
     private var searchRequestToken = 0
@@ -443,6 +447,8 @@ class CascadeViewModel(
             searchRequestToken++
             onlineSearchResults.value = emptyList()
             searchedVerifiedArtists.value = emptyList()
+            searchedOnlinePlaylists.value = emptyList()
+            searchedOnlineAlbums.value = emptyList()
             isSearchingOnline.value = false
             hasCompletedOnlineSearch.value = true
             return
@@ -456,7 +462,31 @@ class CascadeViewModel(
             try {
                 val verifiedArtistsDeferred = async {
                     if (filter == ProviderFilter.ALL || filter == ProviderFilter.MUSIC) {
-                        InnerTubeStreamExtractor.searchVerifiedArtists(clean, limit = 4)
+                        InnerTubeStreamExtractor.searchVerifiedArtists(clean, limit = 5)
+                    } else {
+                        emptyList()
+                    }
+                }
+                val onlinePlaylistsDeferred = async {
+                    if (filter != ProviderFilter.LOCAL && filter != ProviderFilter.JIOSAAVN) {
+                        InnerTubeStreamExtractor.searchYtmCollections(
+                            query = clean,
+                            filterParams = "EgWKAQIoAWoKEAkQChADEAUQBA==",
+                            type = "PLAYLIST",
+                            limit = 10
+                        )
+                    } else {
+                        emptyList()
+                    }
+                }
+                val onlineAlbumsDeferred = async {
+                    if (filter == ProviderFilter.ALL || filter == ProviderFilter.MUSIC) {
+                        InnerTubeStreamExtractor.searchYtmCollections(
+                            query = clean,
+                            filterParams = "EgWKAQIYAWoKEAkQChADEAUQBA==",
+                            type = "ALBUM",
+                            limit = 8
+                        )
                     } else {
                         emptyList()
                     }
@@ -533,8 +563,12 @@ class CascadeViewModel(
                     )
                 }
                 val verifiedArtists = runCatching { verifiedArtistsDeferred.await() }.getOrDefault(emptyList())
+                val onlinePlaylists = runCatching { onlinePlaylistsDeferred.await() }.getOrDefault(emptyList())
+                val onlineAlbums = runCatching { onlineAlbumsDeferred.await() }.getOrDefault(emptyList())
                 if (token == searchRequestToken) {
                     searchedVerifiedArtists.value = verifiedArtists
+                    searchedOnlinePlaylists.value = onlinePlaylists
+                    searchedOnlineAlbums.value = onlineAlbums
                     isSearchingOnline.value = false
                     hasCompletedOnlineSearch.value = true
                 }
@@ -607,7 +641,45 @@ class CascadeViewModel(
             }
         }
 
-        override suspend fun getRelatedPlaylists(seedTrack: Track): List<com.example.player.SuggestedPlaylist> = emptyList()
+        override suspend fun getRelatedPlaylists(seedTrack: Track): List<com.example.player.SuggestedPlaylist> {
+            if (seedTrack.isLocalOnlyTrack || isOfflineMode.value) return emptyList()
+            return try {
+                val cleanArtist = seedTrack.artist.removeSuffix(" - Topic").removeSuffix("- Topic").trim()
+                val seedVid = InnerTubeStreamExtractor.extractVideoId(seedTrack.id)
+                val out = mutableListOf<com.example.player.SuggestedPlaylist>()
+                if (!seedVid.isNullOrBlank()) {
+                    out.add(
+                        com.example.player.SuggestedPlaylist(
+                            id = "RDAMVM$seedVid",
+                            title = "${seedTrack.title.take(24)} Radio Mix",
+                            subtitle = "YouTube Mix • Continuous radio",
+                            artUrl = seedTrack.artUrl,
+                            trackCount = 35
+                        )
+                    )
+                }
+                val collections = InnerTubeStreamExtractor.searchYtmCollections(
+                    query = "$cleanArtist Mix Playlist",
+                    filterParams = "EgWKAQIoAWoKEAkQChADEAUQBA==",
+                    type = "PLAYLIST",
+                    limit = 5
+                )
+                collections.forEach { col ->
+                    out.add(
+                        com.example.player.SuggestedPlaylist(
+                            id = col.browseId,
+                            title = col.title,
+                            subtitle = col.subtitle,
+                            artUrl = col.thumbnailUrl.ifBlank { seedTrack.artUrl },
+                            trackCount = 25
+                        )
+                    )
+                }
+                out.distinctBy { it.id }.take(6)
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
     }
 
     val autoSuggestManager: com.example.player.AutoSuggestQueueManager = com.example.player.AutoSuggestQueueManager(recommendationRepository)
@@ -818,9 +890,27 @@ class CascadeViewModel(
                     )
                 }
 
+                val shelvesDeferred = async {
+                    InnerTubeStreamExtractor.fetchHomeMixesAndPlaylists(
+                        favoriteArtists = topArtists,
+                        seedVideoIds = seedIds,
+                        moodCategory = selectedMood.value
+                    )
+                }
+
                 val personalizedCandidates = personalizedDeferred.await()
                 val trendingCandidates = trendingDeferred.await()
                 val freshCandidates = freshDeferred.await()
+                val homeShelves = runCatching { shelvesDeferred.await() }.getOrNull()
+                if (homeShelves != null) {
+                    if (homeShelves.mixes.isNotEmpty()) {
+                        suggestedYoutubeMixes.value = homeShelves.mixes
+                    }
+                    val combinedCols = (homeShelves.playlists + homeShelves.albums).distinctBy { it.browseId }
+                    if (combinedCols.isNotEmpty()) {
+                        suggestedYoutubePlaylists.value = combinedCols
+                    }
+                }
 
                 fun cleanAndMap(list: List<com.seitharol.data.resolver.CandidateStream>): List<Track> {
                     return list
@@ -1079,18 +1169,47 @@ class CascadeViewModel(
                 val likedIds = likedTrackIds.value
                 val dlMap = downloadedTracksById.value
 
-                val feed = InnerTubeStreamExtractor.buildPersonalizedHomeFeed(
-                    seedVideoIds = emptyList(),
-                    favoriteArtists = emptyList(),
-                    moodCategory = targetMood
-                ).map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
+                val feedDeferred = async {
+                    InnerTubeStreamExtractor.buildPersonalizedHomeFeed(
+                        seedVideoIds = emptyList(),
+                        favoriteArtists = emptyList(),
+                        moodCategory = targetMood,
+                        recentSearchQueries = emptyList()
+                    )
+                }
+                val freshCategoryDeferred = async {
+                    InnerTubeStreamExtractor.buildFreshNewMusicFeed(
+                        seedVideoIds = emptyList(),
+                        favoriteArtists = emptyList(),
+                        moodCategory = targetMood
+                    )
+                }
+                val categoryShelvesDeferred = async {
+                    InnerTubeStreamExtractor.fetchHomeMixesAndPlaylists(
+                        favoriteArtists = emptyList(),
+                        seedVideoIds = emptyList(),
+                        moodCategory = targetMood
+                    )
+                }
+
+                val feed = feedDeferred.await()
+                    .map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
                     .filterNot { it.isLocalOnlyTrack }
                     .distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
+                val freshCat = freshCategoryDeferred.await()
+                    .map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
+                    .filterNot { it.isLocalOnlyTrack }
+                    .distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
+                val catShelves = runCatching { categoryShelvesDeferred.await() }.getOrNull()
 
                 if (feed.isNotEmpty()) {
-                    personalizedTracks.value = feed
-                    trendingHits.value = feed.take(20)
-                    freshReleases.value = feed.drop(20).ifEmpty { feed.reversed().take(12) }
+                    trendingHits.value = feed.take(24)
+                    freshReleases.value = if (freshCat.isNotEmpty()) freshCat.take(14) else feed.drop(12).ifEmpty { feed.reversed().take(12) }
+                }
+                if (catShelves != null) {
+                    if (catShelves.mixes.isNotEmpty()) suggestedYoutubeMixes.value = catShelves.mixes
+                    val cols = (catShelves.playlists + catShelves.albums).distinctBy { it.browseId }
+                    if (cols.isNotEmpty()) suggestedYoutubePlaylists.value = cols
                 }
             } catch (e: Exception) {
                 Log.w("CascadeViewModel", "Mood switch failed: ${e.message}")

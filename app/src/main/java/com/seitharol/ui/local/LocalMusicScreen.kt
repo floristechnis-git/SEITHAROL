@@ -352,7 +352,7 @@ fun LocalMusicScreen(
                             } else {
                                 Image(
                                     painter = appLogoPainter,
-                                    contentDescription = "Seitharol Logo",
+                                    contentDescription = "SEITHAROL Logo",
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize()
                                 )
@@ -414,12 +414,62 @@ fun LocalMusicScreen(
                                 )
                             }
                         }
-                        IconButton(onClick = { trackPendingPlaylistAdd = track }) {
-                            Icon(
-                                imageVector = Icons.Default.MoreVert,
-                                contentDescription = "Add to Playlist",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        var showLocalMenu by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { showLocalMenu = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.MoreVert,
+                                    contentDescription = "More Options",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showLocalMenu,
+                                onDismissRequest = { showLocalMenu = false },
+                                modifier = Modifier
+                                    .widthIn(min = 225.dp, max = 280.dp)
+                                    .background(MaterialTheme.colorScheme.surface)
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                                ) {
+                                    Text(
+                                        text = track.title,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.5.sp,
+                                        lineHeight = 18.sp,
+                                        maxLines = 4,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = track.artist,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 11.5.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                                DropdownMenuItem(
+                                    text = { Text("Play Now", color = MaterialTheme.colorScheme.onSurface) },
+                                    onClick = {
+                                        showLocalMenu = false
+                                        onPlayLocalTrack(track)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Add to Playlist", color = MaterialTheme.colorScheme.onSurface) },
+                                    onClick = {
+                                        showLocalMenu = false
+                                        trackPendingPlaylistAdd = track
+                                    }
+                                )
+                            }
                         }
                     }
                 }

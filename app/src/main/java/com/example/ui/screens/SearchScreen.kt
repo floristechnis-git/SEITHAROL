@@ -74,6 +74,9 @@ fun SearchScreen(
     val playlists by viewModel.playlists.collectAsState()
     val currentProvider by viewModel.selectedProviderFilter.collectAsState()
     val verifiedSearchArtists by viewModel.searchedVerifiedArtists.collectAsState()
+    val searchedOnlinePlaylists by viewModel.searchedOnlinePlaylists.collectAsState()
+    val searchedOnlineAlbums by viewModel.searchedOnlineAlbums.collectAsState()
+    val suggestedYoutubePlaylists by viewModel.suggestedYoutubePlaylists.collectAsState()
     val personalizedTracks by viewModel.personalizedTracks.collectAsState()
     val trendingHits by viewModel.trendingHits.collectAsState()
 
@@ -766,22 +769,48 @@ fun SearchScreen(
                 }
             }
 
-            // Matching Playlists
+            // Matching Playlists (Local + Live Online YouTube / YouTube Music Playlists)
             if (selectedTab == SearchTab.TOP || selectedTab == SearchTab.PLAYLISTS) {
-                if (filteredPlaylists.isNotEmpty()) {
+                val activeOnlinePlaylists = if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
+                    emptyList()
+                } else if (query.trim().length >= 2) {
+                    searchedOnlinePlaylists
+                } else {
+                    suggestedYoutubePlaylists.filter { it.type == "PLAYLIST" || it.type == "MIX" }
+                }
+                val displayedOnlinePlaylists = if (selectedTab == SearchTab.TOP) {
+                    activeOnlinePlaylists.take(4)
+                } else {
+                    activeOnlinePlaylists
+                }
+
+                if (filteredPlaylists.isNotEmpty() || displayedOnlinePlaylists.isNotEmpty()) {
                     item {
                         Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = "Playlists",
-                            fontFamily = SyneFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 16.sp,
-                            color = SeitharolDark,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
-                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Playlists & Mixes",
+                                fontFamily = SyneFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 16.sp,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Text(
+                                text = "${filteredPlaylists.size + displayedOnlinePlaylists.size} playlists",
+                                fontFamily = OutfitFontFamily,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
 
-                    items(filteredPlaylists) { pl ->
+                    items(filteredPlaylists, key = { "loc_pl_${it.id}" }) { pl ->
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -801,8 +830,8 @@ fun SearchScreen(
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(44.dp)
-                                        .clip(RoundedCornerShape(10.dp))
+                                        .size(54.dp)
+                                        .clip(RoundedCornerShape(12.dp))
                                         .background(MaterialTheme.colorScheme.surfaceVariant),
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -819,16 +848,16 @@ fun SearchScreen(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = pl.title,
-                                        color = SeitharolDark,
+                                        color = MaterialTheme.colorScheme.onBackground,
                                         fontSize = 15.sp,
                                         fontFamily = OutfitFontFamily,
-                                        fontWeight = FontWeight.Medium,
-                                        maxLines = 1,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 2,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = pl.description,
-                                        color = SeitharolTextSecondary,
+                                        text = "${pl.trackCount} tracks • ${pl.description}",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         fontSize = 12.sp,
                                         fontFamily = OutfitFontFamily,
                                         maxLines = 1,
@@ -836,12 +865,216 @@ fun SearchScreen(
                                     )
                                 }
 
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
-                                    contentDescription = "Open Playlist",
-                                    tint = SeitharolDark,
-                                    modifier = Modifier.size(16.dp)
-                                )
+                                Surface(
+                                    onClick = {
+                                        dismissSearchKeyboard()
+                                        viewModel.playPlaylistOrMix(pl.id)
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    modifier = Modifier.size(34.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.PlayArrow,
+                                            contentDescription = "Play Playlist",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    items(displayedOnlinePlaylists, key = { "ytm_pl_${it.browseId}" }) { onlinePl ->
+                        val plTargetId = onlinePl.browseId.ifBlank { onlinePl.playlistId.orEmpty() }
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 2.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable {
+                                    dismissSearchKeyboard()
+                                    onNavigateToPlaylist(plTargetId)
+                                },
+                            color = Color.Transparent
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(56.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    AsyncImage(
+                                        model = onlinePl.thumbnailUrl,
+                                        contentDescription = onlinePl.title,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.width(12.dp))
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = onlinePl.title,
+                                        color = MaterialTheme.colorScheme.onBackground,
+                                        fontSize = 15.sp,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = onlinePl.subtitle.ifBlank { "YouTube Playlist" },
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 12.sp,
+                                        fontFamily = OutfitFontFamily,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                Surface(
+                                    onClick = {
+                                        dismissSearchKeyboard()
+                                        viewModel.playPlaylistOrMix(plTargetId)
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    modifier = Modifier.size(34.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.PlayArrow,
+                                            contentDescription = "Play Playlist",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if (selectedTab == SearchTab.PLAYLISTS && !isSearchingOnline && hasCompletedOnlineSearch) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(40.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "No playlists found for "$query"",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 14.sp,
+                                fontFamily = OutfitFontFamily
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Matching Online Albums
+            if (selectedTab == SearchTab.TOP || selectedTab == SearchTab.ALBUMS) {
+                val activeAlbums = if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
+                    emptyList()
+                } else if (query.trim().length >= 2) {
+                    if (selectedTab == SearchTab.TOP) searchedOnlineAlbums.take(3) else searchedOnlineAlbums
+                } else {
+                    suggestedYoutubePlaylists.filter { it.type == "ALBUM" }.take(4)
+                }
+                if (activeAlbums.isNotEmpty()) {
+                    item {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "Albums",
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                        )
+                    }
+                    items(activeAlbums, key = { "ytm_alb_${it.browseId}" }) { alb ->
+                        val albTargetId = alb.browseId.ifBlank { alb.playlistId.orEmpty() }
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 2.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable {
+                                    dismissSearchKeyboard()
+                                    onNavigateToPlaylist(albTargetId)
+                                },
+                            color = Color.Transparent
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(56.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    AsyncImage(
+                                        model = alb.thumbnailUrl,
+                                        contentDescription = alb.title,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = alb.title,
+                                        color = MaterialTheme.colorScheme.onBackground,
+                                        fontSize = 15.sp,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = alb.subtitle.ifBlank { "Album" },
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 12.sp,
+                                        fontFamily = OutfitFontFamily,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Surface(
+                                    onClick = {
+                                        dismissSearchKeyboard()
+                                        viewModel.playPlaylistOrMix(albTargetId)
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    modifier = Modifier.size(34.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.PlayArrow,
+                                            contentDescription = "Play Album",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -929,6 +1162,7 @@ fun SearchScreen(
                         },
                         onPlayNextClick = { viewModel.playNext(track) },
                         onAddToQueueClick = { viewModel.addToQueue(track) },
+                        onStartRadioClick = { viewModel.startRadioMix(track) },
                         onAddToPlaylistClick = { trackToAddToPlaylist = track },
                         onGoToArtistClick = { creatorName ->
                             viewModel.navigateToArtist(creatorName, isChannel = isVideo)

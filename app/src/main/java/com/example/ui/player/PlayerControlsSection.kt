@@ -1,6 +1,7 @@
 package com.example.ui.player
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -9,16 +10,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import com.example.data.model.Track
+import com.example.data.model.formatDurationMs
 import com.example.player.PlayerState
-import java.util.concurrent.TimeUnit
 
-fun formatDuration(ms: Long): String {
-    val totalSeconds = TimeUnit.MILLISECONDS.toSeconds(ms.coerceAtLeast(0L))
-    val minutes = totalSeconds / 60
-    val seconds = totalSeconds % 60
-    return "%d:%02d".format(minutes, seconds)
-}
+fun formatDuration(ms: Long): String = formatDurationMs(ms)
 
 @Composable
 fun PlayerControlsSection(
@@ -148,6 +143,7 @@ fun PlayerControlsSection(
             }
             FilledIconButton(
                 onClick = onPlayPause,
+                shape = RoundedCornerShape(18.dp),
                 colors = IconButtonDefaults.filledIconButtonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = Color.White

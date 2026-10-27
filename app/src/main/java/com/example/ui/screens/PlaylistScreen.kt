@@ -270,7 +270,7 @@ fun PlaylistScreen(
                             ) {
                                 Surface(
                                     modifier = Modifier.size(48.dp),
-                                    shape = CircleShape,
+                                    shape = RoundedCornerShape(14.dp),
                                     color = MaterialTheme.colorScheme.surfaceVariant
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
@@ -305,7 +305,7 @@ fun PlaylistScreen(
                             ) {
                                 Surface(
                                     modifier = Modifier.size(64.dp),
-                                    shape = CircleShape,
+                                    shape = RoundedCornerShape(18.dp),
                                     color = MaterialTheme.colorScheme.primary
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
@@ -329,12 +329,43 @@ fun PlaylistScreen(
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier.clickable {
+                                    if (filteredTracks.isNotEmpty()) {
+                                        viewModel.playQueue(filteredTracks.shuffled(), 0)
+                                    }
+                                }
+                            ) {
+                                Surface(
+                                    modifier = Modifier.size(48.dp),
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Shuffle,
+                                            contentDescription = "Shuffle",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Shuffle",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.sp,
+                                    fontFamily = OutfitFontFamily
+                                )
+                            }
+
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.clickable {
                                     viewModel.togglePlaylistLike(currentPlaylist)
                                 }
                             ) {
                                 Surface(
                                     modifier = Modifier.size(48.dp),
-                                    shape = CircleShape,
+                                    shape = RoundedCornerShape(14.dp),
                                     color = MaterialTheme.colorScheme.surfaceVariant
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
@@ -439,7 +470,14 @@ fun PlaylistScreen(
                             onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
                             onPlayNextClick = { viewModel.playNext(track) },
                             onAddToQueueClick = { viewModel.addToQueue(track) },
+                            onStartRadioClick = { viewModel.startRadioMix(track) },
                             onAddToPlaylistClick = { trackToAddToPlaylist = track },
+                            onGoToArtistClick = { creator ->
+                                viewModel.navigateToArtist(creator, isChannel = track.isVideoTrack)
+                            },
+                            onRemoveFromPlaylistClick = if (savedPlaylist != null) {
+                                { viewModel.removeTrackFromPlaylist(currentPlaylist.id, track.id) }
+                            } else null,
                             onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                         )

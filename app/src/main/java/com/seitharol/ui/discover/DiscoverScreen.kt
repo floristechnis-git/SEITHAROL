@@ -422,7 +422,7 @@ private fun DiscoverShortPage(
                     .align(Alignment.Center)
                     .offset(y = (-48).dp)
                     .size(68.dp)
-                    .clip(CircleShape)
+                    .clip(RoundedCornerShape(18.dp))
                     .background(Color.Black.copy(alpha = 0.65f)),
                 contentAlignment = Alignment.Center
             ) {
@@ -438,7 +438,7 @@ private fun DiscoverShortPage(
                     .align(Alignment.Center)
                     .offset(y = (-48).dp)
                     .size(68.dp)
-                    .clip(CircleShape)
+                    .clip(RoundedCornerShape(18.dp))
                     .background(Color.Black.copy(alpha = 0.65f)),
                 contentAlignment = Alignment.Center
             ) {

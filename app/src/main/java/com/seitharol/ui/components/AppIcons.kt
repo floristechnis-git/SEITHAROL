@@ -367,13 +367,13 @@ fun PlaylistThumbnailWithBadge(
             }
         }
 
-        // Floating Playlist SVG Badge at bottom-right
+        // Floating Playlist SVG Badge at bottom-right (Square with border radius)
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(6.dp)
                 .size(26.dp)
-                .clip(CircleShape)
+                .clip(RoundedCornerShape(8.dp))
                 .background(Color.Black.copy(alpha = 0.75f)),
             contentAlignment = Alignment.Center
         ) {

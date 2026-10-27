@@ -3,8 +3,10 @@ package com.example.ui.components
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
@@ -37,8 +39,9 @@ import com.example.ui.theme.*
 /**
  * YouTube / YouTube Music Floating MiniPlayer Pill:
  * - Height: 60.dp, pill rounded 30.dp, adaptive surfaceVariant container with crisp contrast in Light & Dark themes.
- * - Uses the Seitharol app logo (`R.drawable.ic_splash_logo`) as placeholder/error/fallback for local audio and low-internet loads.
+ * - Uses smooth basicMarquee on the song title so long song names are always readable in full.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MiniPlayer(
     playerState: PlayerState,
@@ -166,7 +169,10 @@ fun MiniPlayer(
                             fontFamily = OutfitFontFamily,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1200)
                         )
                         Text(
                             text = track.artist,
@@ -194,34 +200,38 @@ fun MiniPlayer(
                     )
                 }
 
-                // Play / Pause Button
-                IconButton(
+                // Play / Pause Button (Square with border radius)
+                Surface(
                     onClick = onTogglePlay,
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(36.dp)
                         .testTag("mini_player_play_pause")
                 ) {
-                    if (playerState.isBuffering) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Icon(
-                            imageVector = when {
-                                playerState.isPlaying -> Icons.Default.Pause
-                                playerState.isEnded -> Icons.Default.Replay
-                                else -> Icons.Default.PlayArrow
-                            },
-                            contentDescription = when {
-                                playerState.isPlaying -> "Pause"
-                                playerState.isEnded -> "Replay"
-                                else -> "Play"
-                            },
-                            tint = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.size(24.dp)
-                        )
+                    Box(contentAlignment = Alignment.Center) {
+                        if (playerState.isBuffering) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(
+                                imageVector = when {
+                                    playerState.isPlaying -> Icons.Default.Pause
+                                    playerState.isEnded -> Icons.Default.Replay
+                                    else -> Icons.Default.PlayArrow
+                                },
+                                contentDescription = when {
+                                    playerState.isPlaying -> "Pause"
+                                    playerState.isEnded -> "Replay"
+                                    else -> "Play"
+                                },
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
                 }
 
@@ -249,7 +259,7 @@ fun MiniPlayer(
                     .height(2.5.dp)
                     .align(Alignment.BottomCenter),
                 color = MaterialTheme.colorScheme.primary,
-                trackColor = Color.Transparent
+                trackColor = MaterialTheme.colorScheme.surface
             )
         }
     }

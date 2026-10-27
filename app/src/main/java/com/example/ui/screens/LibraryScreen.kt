@@ -469,14 +469,40 @@ fun LibraryScreen(
                             containerColor = MaterialTheme.colorScheme.surface
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Open", color = MaterialTheme.colorScheme.onSurface) },
+                                text = { Text("Play Playlist", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = { Icon(Icons.Default.PlayArrow, null, tint = MaterialTheme.colorScheme.primary) },
+                                onClick = {
+                                    showItemMenu = false
+                                    viewModel.playPlaylistOrMix(pl.id)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Open Playlist", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = { Icon(Icons.Default.QueueMusic, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                                 onClick = {
                                     showItemMenu = false
                                     onNavigateToPlaylist(pl.id)
                                 }
                             )
+                            val ctx = LocalContext.current
+                            DropdownMenuItem(
+                                text = { Text("Share Playlist", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = { Icon(Icons.Default.Share, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                onClick = {
+                                    showItemMenu = false
+                                    runCatching {
+                                        val msg = com.example.ui.components.SeitharolDeepLinkHelper.buildPlaylistShareMessage(pl.title, pl.id)
+                                        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(android.content.Intent.EXTRA_TEXT, msg)
+                                        }
+                                        ctx.startActivity(android.content.Intent.createChooser(intent, "Share Playlist"))
+                                    }
+                                }
+                            )
                             DropdownMenuItem(
                                 text = { Text("Delete Playlist", color = MaterialTheme.colorScheme.error) },
+                                leadingIcon = { Icon(Icons.Default.DeleteOutline, null, tint = MaterialTheme.colorScheme.error) },
                                 onClick = {
                                     showItemMenu = false
                                     viewModel.deletePlaylist(pl.id)
@@ -694,7 +720,12 @@ fun HistoryScreen(
                             onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
                             onPlayNextClick = { viewModel.playNext(track) },
                             onAddToQueueClick = { viewModel.addToQueue(track) },
+                            onStartRadioClick = { viewModel.startRadioMix(track) },
                             onAddToPlaylistClick = { onAddToPlaylist(track) },
+                            onGoToArtistClick = { creator ->
+                                viewModel.navigateToArtist(creator, isChannel = track.isVideoTrack)
+                            },
+                            onRemoveFromHistoryClick = { viewModel.deleteTrackFromHistory(track.id) },
                             onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                         )
@@ -867,10 +898,14 @@ fun DownloadsScreen(
                             isPlaying = playerState.currentTrack?.id == track.id,
                             onTrackClick = { viewModel.playTrack(track) },
                             onLikeClick = { viewModel.toggleLike(track) },
-                            onDownloadClick = { },
+                            onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
                             onPlayNextClick = { viewModel.playNext(track) },
                             onAddToQueueClick = { viewModel.addToQueue(track) },
+                            onStartRadioClick = { viewModel.startRadioMix(track) },
                             onAddToPlaylistClick = { onAddToPlaylist(track) },
+                            onGoToArtistClick = { creator ->
+                                viewModel.navigateToArtist(creator, isChannel = track.isVideoTrack)
+                            },
                             onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                         )
@@ -1106,7 +1141,11 @@ fun LikedSongsScreen(
                             onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
                             onPlayNextClick = { viewModel.playNext(track) },
                             onAddToQueueClick = { viewModel.addToQueue(track) },
+                            onStartRadioClick = { viewModel.startRadioMix(track) },
                             onAddToPlaylistClick = { onAddToPlaylist(track) },
+                            onGoToArtistClick = { creator ->
+                                viewModel.navigateToArtist(creator, isChannel = track.isVideoTrack)
+                            },
                             onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                         )

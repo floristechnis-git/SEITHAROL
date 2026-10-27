@@ -1,23 +1,23 @@
 package com.example.ui.screens
 
+import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.CloudOff
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,26 +26,43 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.data.model.DownloadTier
 import com.example.data.model.Track
+import com.example.data.model.formatDurationSeconds
 import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
+import com.example.ui.components.AddToPlaylistModal
+import com.example.ui.components.CreatePlaylistModal
+import com.example.ui.components.SeitharolDeepLinkHelper
+import com.example.ui.components.TrackCard
+import com.example.ui.components.TrackDownloadFormatQualitySheet
+import com.example.ui.theme.*
 import com.seitharol.data.resolver.CandidateStream
 import com.seitharol.data.resolver.InnerTubeStreamExtractor
 import com.seitharol.data.resolver.YtmArtistPageData
 import com.seitharol.ui.search.BackArrowSvgIcon
 
 private enum class ChannelVideoSortFilter(val label: String) {
-    MOST_RECENT("Most Recent"),
-    MOST_VIEWS("Most Views")
+    MOST_RECENT("Latest"),
+    MOST_VIEWS("Popular"),
+    OLDEST("Oldest")
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+private enum class ArtistChannelTab(val label: String) {
+    ALL("Overview"),
+    VIDEOS_OR_TRACKS("All Uploads"),
+    PLAYLISTS("Playlists & Mixes"),
+    RELEASES("Albums & Singles")
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ArtistScreen(
     artistName: String,
@@ -58,13 +75,23 @@ fun ArtistScreen(
 ) {
     BackHandler(onBack = onBack)
 
+    val context = LocalContext.current
     val isOfflineMode by viewModel.isOfflineMode.collectAsState()
     val downloadedTracks by viewModel.downloadedTracks.collectAsState()
+    val playlists by viewModel.playlists.collectAsState()
+    val likedTrackIds by viewModel.likedTrackIds.collectAsState()
+
     var artistData by remember(artistName, isChannel) { mutableStateOf<YtmArtistPageData?>(null) }
     var isLoading by remember(artistName, isChannel) { mutableStateOf(true) }
 
-    var channelVideoSearchQuery by remember(artistName, isChannel) { mutableStateOf("") }
-    var channelVideoSortFilter by remember(artistName, isChannel) { mutableStateOf(ChannelVideoSortFilter.MOST_RECENT) }
+    var searchQuery by remember(artistName, isChannel) { mutableStateOf("") }
+    var sortFilter by remember(artistName, isChannel) { mutableStateOf(ChannelVideoSortFilter.MOST_RECENT) }
+    var selectedTab by remember(artistName, isChannel) { mutableStateOf(ArtistChannelTab.ALL) }
+    var showFullBio by remember(artistName, isChannel) { mutableStateOf(false) }
+
+    var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
+    var showCreatePlaylistDialog by remember { mutableStateOf(false) }
+    var trackForDownloadSheet by remember { mutableStateOf<Track?>(null) }
 
     LaunchedEffect(artistName, isChannel, isOfflineMode) {
         isLoading = true
@@ -91,12 +118,20 @@ fun ArtistScreen(
             .background(MaterialTheme.colorScheme.background)
     ) {
         if (isLoading && artistData == null) {
-            CircularProgressIndicator(
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.align(Alignment.Center)
-            )
+            Column(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = if (isChannel) "Loading channel studio..." else "Loading artist discography...",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontFamily = OutfitFontFamily,
+                    fontSize = 13.sp
+                )
+            }
         } else if (artistData == null) {
-            // Safe Offline / Error Fallback with Back Button and any downloaded songs by this artist
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -115,7 +150,9 @@ fun ArtistScreen(
                         text = artistName,
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 8.dp),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -133,37 +170,20 @@ fun ArtistScreen(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
                     )
                     LazyColumn(contentPadding = PaddingValues(bottom = 120.dp)) {
-                        items(offlineArtistTracks, key = { "off_art_${it.id}" }) { track ->
-                            ListItem(
-                                colors = ListItemDefaults.colors(
-                                    containerColor = Color.Transparent,
-                                    headlineColor = MaterialTheme.colorScheme.onBackground,
-                                    supportingColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                ),
-                                headlineContent = {
-                                    Text(
-                                        text = track.title,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onBackground
-                                    )
+                        itemsIndexed(offlineArtistTracks, key = { _, t -> "off_art_${t.id}" }) { idx, track ->
+                            TrackCard(
+                                track = track,
+                                isPlaying = playerState.currentTrack?.id == track.id,
+                                rankNumber = idx + 1,
+                                onTrackClick = {
+                                    viewModel.playQueue(offlineArtistTracks, idx, isPlaylist = false)
                                 },
-                                supportingContent = {
-                                    Text(
-                                        text = "${track.artist} • Offline",
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                },
-                                leadingContent = {
-                                    AsyncImage(
-                                        model = track.artUrl,
-                                        contentDescription = track.title,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.size(48.dp).clip(RoundedCornerShape(10.dp))
-                                    )
-                                },
-                                modifier = Modifier.clickable {
-                                    viewModel.playQueue(offlineArtistTracks, offlineArtistTracks.indexOf(track).coerceAtLeast(0), isPlaylist = false)
-                                }
+                                onLikeClick = { viewModel.toggleLike(track) },
+                                onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
+                                onPlayNextClick = { viewModel.playNext(track) },
+                                onAddToQueueClick = { viewModel.addToQueue(track) },
+                                onAddToPlaylistClick = { trackToAddToPlaylist = track },
+                                onRemoveDownloadClick = { viewModel.removeDownload(track.id) }
                             )
                         }
                     }
@@ -178,13 +198,13 @@ fun ArtistScreen(
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = "Artist page unavailable offline",
+                                text = "Channel / Artist page unavailable offline",
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onBackground
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Connect to the internet to browse full discography for $artistName.",
+                                text = "Connect to the internet to explore full videos, songs, and playlists for $artistName.",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center,
                                 fontSize = 13.sp
@@ -196,46 +216,94 @@ fun ArtistScreen(
         } else {
             val page = artistData ?: return@Box
             val effectiveIsChannel = isChannel || page.isChannel
-            val domainTopSongs = remember(page.topSongs, effectiveIsChannel) {
-                page.topSongs.distinctBy { it.videoId }.map { it.toDomainTrack(forceVideo = effectiveIsChannel) }
+            val downloadedIds = remember(downloadedTracks) { downloadedTracks.map { it.id }.toSet() }
+
+            val allCandidates = remember(page.topSongs) {
+                page.topSongs.distinctBy { it.videoId }
             }
 
-            // Filtered & sorted channel videos when visiting a Channel
-            val filteredChannelCandidates = remember(page.topSongs, channelVideoSearchQuery, channelVideoSortFilter) {
-                val distinct = page.topSongs.distinctBy { it.videoId }
-                val q = channelVideoSearchQuery.trim().lowercase()
+            val filteredCandidates = remember(allCandidates, searchQuery, sortFilter, effectiveIsChannel) {
+                val q = searchQuery.trim().lowercase()
                 val searched = if (q.isBlank()) {
-                    distinct
+                    allCandidates
                 } else {
-                    distinct.filter {
+                    allCandidates.filter {
                         it.title.lowercase().contains(q) ||
                             it.artist.lowercase().contains(q) ||
+                            (it.albumName?.lowercase()?.contains(q) == true) ||
                             it.viewCountText.lowercase().contains(q) ||
                             it.publishedTimeText.lowercase().contains(q)
                     }
                 }
-                when (channelVideoSortFilter) {
-                    ChannelVideoSortFilter.MOST_RECENT -> searched.sortedBy { it.publishedAgeSeconds }
-                    ChannelVideoSortFilter.MOST_VIEWS -> searched.sortedByDescending { it.viewCount }
+                if (effectiveIsChannel) {
+                    when (sortFilter) {
+                        ChannelVideoSortFilter.MOST_RECENT -> searched.sortedBy { it.publishedAgeSeconds }
+                        ChannelVideoSortFilter.MOST_VIEWS -> searched.sortedByDescending { it.viewCount }
+                        ChannelVideoSortFilter.OLDEST -> searched.sortedByDescending { it.publishedAgeSeconds }
+                    }
+                } else {
+                    when (sortFilter) {
+                        ChannelVideoSortFilter.MOST_RECENT -> searched
+                        ChannelVideoSortFilter.MOST_VIEWS -> searched.sortedByDescending { it.viewCount }
+                        ChannelVideoSortFilter.OLDEST -> searched.reversed()
+                    }
                 }
             }
-            val filteredChannelDomainTracks = remember(filteredChannelCandidates) {
-                filteredChannelCandidates.map { it.toDomainTrack(forceVideo = true) }
+
+            val filteredDomainTracks = remember(filteredCandidates, effectiveIsChannel, likedTrackIds, downloadedIds) {
+                filteredCandidates.map { cand ->
+                    val base = cand.toDomainTrack(forceVideo = effectiveIsChannel)
+                    base.copy(
+                        isLiked = likedTrackIds.contains(base.id),
+                        isDownloaded = downloadedIds.contains(base.id)
+                    )
+                }
+            }
+
+            val pureAlbums = remember(page.albums, effectiveIsChannel) {
+                if (effectiveIsChannel) emptyList()
+                else page.albums.filter {
+                    (it.browseId.startsWith("MPREb_") || it.browseId.startsWith("OLAK5uy_")) &&
+                        !it.type.equals("SINGLE", true) &&
+                        !it.subtitle.contains("Single", true) &&
+                        !it.title.contains("YouTube Video", true)
+                }.distinctBy { it.browseId }
+            }
+
+            val cleanSingles = remember(page.singles, effectiveIsChannel) {
+                if (effectiveIsChannel) emptyList()
+                else page.singles.filterNot {
+                    it.title.contains("YouTube Video", true) ||
+                        it.subtitle.contains("YouTube Video", true)
+                }.distinctBy { it.browseId }
+            }
+
+            val availableTabs = remember(effectiveIsChannel, page.playlists, pureAlbums, cleanSingles) {
+                buildList {
+                    add(ArtistChannelTab.ALL)
+                    add(ArtistChannelTab.VIDEOS_OR_TRACKS)
+                    if (page.playlists.isNotEmpty()) add(ArtistChannelTab.PLAYLISTS)
+                    if (!effectiveIsChannel && (pureAlbums.isNotEmpty() || cleanSingles.isNotEmpty())) {
+                        add(ArtistChannelTab.RELEASES)
+                    }
+                }
             }
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 120.dp)
+                contentPadding = PaddingValues(bottom = 135.dp)
             ) {
-                // 1. Artist / Channel Banner + Circular Verified Avatar Header
+                // ────────────────────────────────────────────────────────────
+                // 1. Immersive Editorial Hero Header + Stats + Action Bar
+                // ────────────────────────────────────────────────────────────
                 item {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(290.dp)
+                            .height(320.dp)
                     ) {
                         AsyncImage(
-                            model = page.bannerUrl,
+                            model = page.bannerUrl.ifBlank { page.avatarUrl },
                             contentDescription = page.name,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize()
@@ -246,762 +314,1110 @@ fun ArtistScreen(
                                 .background(
                                     Brush.verticalGradient(
                                         colors = listOf(
-                                            Color.Black.copy(alpha = 0.25f),
-                                            Color.Black.copy(alpha = 0.45f),
+                                            Color.Black.copy(alpha = 0.35f),
+                                            Color.Black.copy(alpha = 0.55f),
                                             MaterialTheme.colorScheme.background
                                         )
                                     )
                                 )
                         )
 
-                        // Top Back & Share Bar
+                        // Top Floating Navigation Bar
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .statusBarsPadding()
                                 .padding(horizontal = 16.dp, vertical = 10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            IconButton(
+                            Surface(
                                 onClick = onBack,
-                                modifier = Modifier
-                                    .clip(CircleShape)
-                                    .background(Color.Black.copy(alpha = 0.45f))
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color.Black.copy(alpha = 0.50f),
+                                modifier = Modifier.size(42.dp)
                             ) {
-                                BackArrowSvgIcon(tint = Color.White, modifier = Modifier.size(22.dp))
+                                Box(contentAlignment = Alignment.Center) {
+                                    BackArrowSvgIcon(tint = Color.White, modifier = Modifier.size(20.dp))
+                                }
                             }
-                            IconButton(
-                                onClick = { onShareArtist(page.name) },
-                                modifier = Modifier
-                                    .clip(CircleShape)
-                                    .background(Color.Black.copy(alpha = 0.45f))
-                            ) {
-                                Icon(Icons.Default.Share, contentDescription = "Share", tint = Color.White)
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Surface(
+                                    onClick = { onShareArtist(page.name) },
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = Color.Black.copy(alpha = 0.50f),
+                                    modifier = Modifier.size(42.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Share,
+                                            contentDescription = "Share",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(19.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
 
-                        // Avatar + Name + Subscriber Count
-                        Row(
+                        // Creator / Artist Identity Card at bottom of Hero
+                        Column(
                             modifier = Modifier
                                 .align(Alignment.BottomStart)
                                 .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 14.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(horizontal = 20.dp, vertical = 12.dp)
                         ) {
-                            if (page.avatarUrl.isNotBlank() && InnerTubeStreamExtractor.isAuthenticArtistAvatar(page.avatarUrl)) {
-                                AsyncImage(
-                                    model = page.avatarUrl,
-                                    contentDescription = page.name,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier
-                                        .size(76.dp)
-                                        .clip(CircleShape)
-                                        .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
-                                )
-                            } else {
-                                Box(
-                                    modifier = Modifier
-                                        .size(76.dp)
-                                        .clip(CircleShape)
-                                        .background(
-                                            Brush.linearGradient(
-                                                colors = listOf(
-                                                    MaterialTheme.colorScheme.primaryContainer,
-                                                    MaterialTheme.colorScheme.primary
-                                                )
-                                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Box(modifier = Modifier.size(84.dp)) {
+                                    if (page.avatarUrl.isNotBlank()) {
+                                        AsyncImage(
+                                            model = page.avatarUrl,
+                                            contentDescription = page.name,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .size(84.dp)
+                                                .clip(RoundedCornerShape(22.dp))
+                                                .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(22.dp))
                                         )
-                                        .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    val initial = page.name.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "A"
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(84.dp)
+                                                .clip(RoundedCornerShape(22.dp))
+                                                .background(
+                                                    Brush.linearGradient(
+                                                        colors = listOf(
+                                                            MaterialTheme.colorScheme.primary,
+                                                            MaterialTheme.colorScheme.primaryContainer
+                                                        )
+                                                    )
+                                                )
+                                                .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(22.dp)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            val initial = page.name.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "A"
+                                            Text(
+                                                text = initial,
+                                                color = Color.White,
+                                                fontSize = 32.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                fontFamily = SyneFontFamily
+                                            )
+                                        }
+                                    }
+
+                                    // Verified Badge
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .size(24.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = if (effectiveIsChannel) Icons.Default.Tv else Icons.Default.Verified,
+                                                contentDescription = "Verified",
+                                                tint = MaterialTheme.colorScheme.onPrimary,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.width(16.dp))
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                                    ) {
+                                        Text(
+                                            text = if (effectiveIsChannel) "YOUTUBE CHANNEL" else "OFFICIAL ARTIST",
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontSize = 10.sp,
+                                            fontFamily = OutfitFontFamily,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            letterSpacing = 0.8.sp,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = initial,
-                                        color = Color.White,
-                                        fontSize = 30.sp,
-                                        fontWeight = FontWeight.ExtraBold
+                                        text = page.name,
+                                        color = MaterialTheme.colorScheme.onBackground,
+                                        fontSize = 24.sp,
+                                        fontFamily = SyneFontFamily,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1500)
                                     )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        val subLabel = page.subscriberCountText.ifBlank {
+                                            if (effectiveIsChannel) "Creator Channel" else "Verified Artist"
+                                        }
+                                        Text(
+                                            text = "$subLabel • ${allCandidates.size} ${if (effectiveIsChannel) "videos" else "tracks"}",
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontSize = 12.5.sp,
+                                            fontFamily = OutfitFontFamily,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column(modifier = Modifier.weight(1f)) {
+
+                            if (page.description.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = page.name,
-                                    color = MaterialTheme.colorScheme.onBackground,
-                                    fontSize = 26.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                val isOfficial = page.browseId.startsWith("UC") || page.browseId.startsWith("MPLA")
-                                val subtitleText = when {
-                                    effectiveIsChannel && page.subscriberCountText.isNotBlank() && !page.subscriberCountText.contains("Channel", true) ->
-                                        "${page.subscriberCountText} • Channel"
-                                    effectiveIsChannel -> "YouTube Channel"
-                                    isOfficial && page.subscriberCountText.isNotBlank() && !page.subscriberCountText.contains("Artist", true) ->
-                                        "${page.subscriberCountText} • Official Artist"
-                                    isOfficial && page.subscriberCountText.isNotBlank() -> page.subscriberCountText
-                                    isOfficial -> "Official Artist"
-                                    page.subscriberCountText.isNotBlank() -> page.subscriberCountText
-                                    else -> "Artist"
-                                }
-                                Text(
-                                    text = subtitleText,
+                                    text = page.description,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium
+                                    fontSize = 12.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    lineHeight = 16.sp,
+                                    maxLines = if (showFullBio) 6 else 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.clickable { showFullBio = !showFullBio }
                                 )
                             }
                         }
                     }
                 }
 
-                // 2. Play Top Songs & Radio Mix / Shuffle Action Row
+                // ────────────────────────────────────────────────────────────
+                // 2. Action Bar: Rounded-Square Play All, Shuffle, & Radio Mix
+                // ────────────────────────────────────────────────────────────
                 item {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Button(
                             onClick = {
-                                val targetQueue = if (effectiveIsChannel && filteredChannelDomainTracks.isNotEmpty()) {
-                                    filteredChannelDomainTracks
-                                } else {
-                                    domainTopSongs
-                                }
-                                if (targetQueue.isNotEmpty()) {
-                                    viewModel.playQueue(targetQueue, 0, isPlaylist = false)
+                                if (filteredDomainTracks.isNotEmpty()) {
+                                    viewModel.playQueue(filteredDomainTracks, 0, isPlaylist = true)
                                 }
                             },
-                            shape = RoundedCornerShape(50),
+                            shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = Color.White
+                                contentColor = MaterialTheme.colorScheme.onPrimary
                             ),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                            modifier = Modifier.weight(1f).height(42.dp)
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                            modifier = Modifier
+                                .weight(1.1f)
+                                .height(46.dp)
                         ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = if (effectiveIsChannel) "Play Videos" else "Play Top",
-                                color = Color.White,
+                                text = if (effectiveIsChannel) "Play All Videos" else "Play All",
+                                fontFamily = SyneFontFamily,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
+                                fontSize = 13.5.sp,
                                 maxLines = 1,
-                                softWrap = false,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
 
                         OutlinedButton(
                             onClick = {
-                                if (effectiveIsChannel) {
-                                    val targetQueue = if (filteredChannelDomainTracks.isNotEmpty()) filteredChannelDomainTracks else domainTopSongs
-                                    if (targetQueue.isNotEmpty()) {
-                                        viewModel.playQueue(targetQueue.shuffled(), 0, isPlaylist = false)
-                                    }
-                                } else {
-                                    val seed = domainTopSongs.firstOrNull()
-                                    if (seed != null) {
-                                        viewModel.startRadioMix(seed)
-                                    } else if (!page.radioPlaylistId.isNullOrBlank()) {
-                                        viewModel.playPlaylistOrMix(page.radioPlaylistId)
-                                    }
+                                if (filteredDomainTracks.isNotEmpty()) {
+                                    viewModel.playQueue(filteredDomainTracks.shuffled(), 0, isPlaylist = true)
                                 }
                             },
-                            shape = RoundedCornerShape(50),
+                            shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.outlinedButtonColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
                                 contentColor = MaterialTheme.colorScheme.onSurface
                             ),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                            modifier = Modifier.weight(1f).height(42.dp)
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                            modifier = Modifier
+                                .weight(0.95f)
+                                .height(46.dp)
                         ) {
-                            Icon(Icons.Default.Shuffle, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(
+                                imageVector = Icons.Default.Shuffle,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = if (effectiveIsChannel) "Shuffle Channel" else "Artist Radio",
-                                color = MaterialTheme.colorScheme.onSurface,
+                                text = "Shuffle",
+                                fontFamily = SyneFontFamily,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Ellipsis
+                                fontSize = 13.5.sp,
+                                maxLines = 1
+                            )
+                        }
+
+                        Surface(
+                            onClick = {
+                                val seed = filteredDomainTracks.firstOrNull()
+                                if (seed != null) {
+                                    viewModel.startRadioMix(seed)
+                                } else if (!page.radioPlaylistId.isNullOrBlank()) {
+                                    viewModel.playPlaylistOrMix(page.radioPlaylistId)
+                                }
+                            },
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier = Modifier.size(46.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Radio,
+                                    contentDescription = "Start Radio Mix",
+                                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.size(21.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // ────────────────────────────────────────────────────────────
+                // 3. Navigation Category Tabs (Overview, All Uploads, Playlists, Releases)
+                // ────────────────────────────────────────────────────────────
+                if (availableTabs.size > 1) {
+                    item {
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(availableTabs) { tab ->
+                                val isSelected = selectedTab == tab
+                                val tabTitle = when (tab) {
+                                    ArtistChannelTab.ALL -> "Overview"
+                                    ArtistChannelTab.VIDEOS_OR_TRACKS -> if (effectiveIsChannel) "Videos (${allCandidates.size})" else "Songs (${allCandidates.size})"
+                                    ArtistChannelTab.PLAYLISTS -> "Playlists (${page.playlists.size})"
+                                    ArtistChannelTab.RELEASES -> "Albums & Singles (${pureAlbums.size + cleanSingles.size})"
+                                }
+                                Surface(
+                                    onClick = { selectedTab = tab },
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
+                                ) {
+                                    Text(
+                                        text = tabTitle,
+                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        fontSize = 13.sp,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ────────────────────────────────────────────────────────────
+                // 4. Featured Spotlight Card (Most Recent / Top Release) on Overview
+                // ────────────────────────────────────────────────────────────
+                if (selectedTab == ArtistChannelTab.ALL && filteredCandidates.isNotEmpty() && searchQuery.isBlank()) {
+                    val spotlight = filteredCandidates.first()
+                    val spotlightTrack = filteredDomainTracks.first()
+                    val spotlightDur = formatDurationSeconds(spotlight.durationSeconds)
+                    item {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .clickable {
+                                    viewModel.playQueue(filteredDomainTracks, 0, isPlaylist = true)
+                                },
+                            shape = RoundedCornerShape(20.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(136.dp)
+                                        .height(78.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(MaterialTheme.colorScheme.surface)
+                                ) {
+                                    AsyncImage(
+                                        model = spotlight.thumbnailUrl,
+                                        contentDescription = spotlight.title,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = Color.Black.copy(alpha = 0.78f),
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .padding(5.dp)
+                                    ) {
+                                        Text(
+                                            text = spotlightDur,
+                                            color = Color.White,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.width(14.dp))
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = if (effectiveIsChannel) "FEATURED UPLOAD" else "TOP RELEASE",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontSize = 10.sp,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        letterSpacing = 0.7.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = spotlight.title,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontFamily = SyneFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.5.sp,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(modifier = Modifier.height(3.dp))
+                                    val metaInfo = listOfNotNull(
+                                        spotlight.viewCountText.takeIf { it.isNotBlank() },
+                                        spotlight.publishedTimeText.takeIf { it.isNotBlank() }
+                                    ).joinToString(" • ").ifBlank { "${page.name} • $spotlightDur" }
+                                    Text(
+                                        text = metaInfo,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontFamily = OutfitFontFamily,
+                                        fontSize = 11.5.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.width(8.dp))
+
+                                Surface(
+                                    onClick = {
+                                        viewModel.playQueue(filteredDomainTracks, 0, isPlaylist = true)
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(40.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.PlayArrow,
+                                            contentDescription = "Play Spotlight",
+                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ────────────────────────────────────────────────────────────
+                // 5. Playlists & Mixes Shelf (shown on Overview & Playlists tab)
+                // ────────────────────────────────────────────────────────────
+                if ((selectedTab == ArtistChannelTab.ALL || selectedTab == ArtistChannelTab.PLAYLISTS) && page.playlists.isNotEmpty()) {
+                    item {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (effectiveIsChannel) "Channel Playlists (${page.playlists.size})" else "Artist Playlists & Mixes (${page.playlists.size})",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            items(page.playlists.distinctBy { it.browseId }, key = { "pl_card_${it.browseId}" }) { pl ->
+                                val targetId = pl.browseId.ifBlank { pl.playlistId.orEmpty() }
+                                val isMix = pl.type.equals("MIX", true) || pl.title.contains("Mix", true) || targetId.startsWith("RD")
+                                Column(
+                                    modifier = Modifier
+                                        .width(156.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .clickable { onNavigateToPlaylist(targetId) }
+                                ) {
+                                    Box(modifier = Modifier.size(156.dp)) {
+                                        AsyncImage(
+                                            model = pl.thumbnailUrl,
+                                            contentDescription = pl.title,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .clip(RoundedCornerShape(14.dp))
+                                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                        )
+                                        Surface(
+                                            color = Color(0xFF1B1C1C).copy(alpha = 0.85f),
+                                            shape = RoundedCornerShape(6.dp),
+                                            modifier = Modifier
+                                                .align(Alignment.BottomStart)
+                                                .padding(8.dp)
+                                        ) {
+                                            Text(
+                                                text = if (isMix) "MIX" else "PLAYLIST",
+                                                color = Color.White,
+                                                fontSize = 9.5.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                        Surface(
+                                            onClick = { viewModel.playPlaylistOrMix(targetId) },
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier
+                                                .align(Alignment.BottomEnd)
+                                                .padding(8.dp)
+                                                .size(32.dp)
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Icon(
+                                                    imageVector = Icons.Default.PlayArrow,
+                                                    contentDescription = "Play Playlist",
+                                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = pl.title,
+                                        color = MaterialTheme.colorScheme.onBackground,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 13.5.sp,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = pl.subtitle,
+                                        fontSize = 11.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ────────────────────────────────────────────────────────────
+                // 6. Search & Sort Filter Bar + Native Lazy Video / Song Catalog
+                // ────────────────────────────────────────────────────────────
+                if (selectedTab == ArtistChannelTab.ALL || selectedTab == ArtistChannelTab.VIDEOS_OR_TRACKS) {
+                    item {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (effectiveIsChannel) "Channel Videos (${filteredCandidates.size})" else "Songs & Releases (${filteredCandidates.size})",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    ChannelVideoSortFilter.entries.forEach { option ->
+                                        val selected = sortFilter == option
+                                        Surface(
+                                            onClick = { sortFilter = option },
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                                        ) {
+                                            Text(
+                                                text = option.label,
+                                                fontSize = 11.5.sp,
+                                                fontFamily = OutfitFontFamily,
+                                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            OutlinedTextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                placeholder = {
+                                    Text(
+                                        text = if (effectiveIsChannel) "Filter ${allCandidates.size} videos in ${page.name}..." else "Filter ${allCandidates.size} songs by ${page.name}...",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Search,
+                                        contentDescription = "Filter",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                },
+                                trailingIcon = {
+                                    if (searchQuery.isNotEmpty()) {
+                                        IconButton(onClick = { searchQuery = "" }) {
+                                            Icon(
+                                                imageVector = Icons.Default.Clear,
+                                                contentDescription = "Clear",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                },
+                                singleLine = true,
+                                shape = RoundedCornerShape(14.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                    cursorColor = MaterialTheme.colorScheme.primary,
+                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+
+                    if (filteredCandidates.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 32.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "No items match \"${searchQuery.trim()}\"",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 14.sp
+                                )
+                            }
+                        }
+                    } else if (effectiveIsChannel) {
+                        // Native LazyColumn items for Channel Videos with 16:9 thumbnail, H:MM:SS duration, and full 3-dot menu!
+                        itemsIndexed(
+                            items = filteredCandidates,
+                            key = { idx, item -> "ch_vid_${item.videoId}_$idx" }
+                        ) { index, videoCand ->
+                            val domainTrack = filteredDomainTracks.getOrElse(index) {
+                                videoCand.toDomainTrack(forceVideo = true)
+                            }
+                            val isPlaying = playerState.currentTrack?.id == domainTrack.id
+                            val durFormatted = formatDurationSeconds(videoCand.durationSeconds)
+                            val metaParts = buildList {
+                                if (videoCand.viewCountText.isNotBlank()) add(videoCand.viewCountText)
+                                if (videoCand.publishedTimeText.isNotBlank()) add(videoCand.publishedTimeText)
+                                if (isEmpty()) add(page.name)
+                            }
+                            val metaSubtitle = metaParts.joinToString(" • ")
+                            var showMenu by remember { mutableStateOf(false) }
+
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 4.dp)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .clickable {
+                                        viewModel.playQueue(filteredDomainTracks, index, isPlaylist = true)
+                                    },
+                                color = if (isPlaying) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                shape = RoundedCornerShape(16.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(128.dp)
+                                            .height(72.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        AsyncImage(
+                                            model = videoCand.thumbnailUrl,
+                                            contentDescription = videoCand.title,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                        if (isPlaying) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .background(Color.Black.copy(alpha = 0.55f)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.GraphicEq,
+                                                    contentDescription = "Playing",
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(24.dp)
+                                                )
+                                            }
+                                        } else {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = Color.Black.copy(alpha = 0.50f),
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.PlayArrow,
+                                                        contentDescription = "Play",
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        if (videoCand.durationSeconds > 0) {
+                                            Surface(
+                                                color = Color.Black.copy(alpha = 0.82f),
+                                                shape = RoundedCornerShape(5.dp),
+                                                modifier = Modifier
+                                                    .align(Alignment.BottomEnd)
+                                                    .padding(4.dp)
+                                            ) {
+                                                Text(
+                                                    text = durFormatted,
+                                                    color = Color.White,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.width(12.dp))
+
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = videoCand.title,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            fontFamily = OutfitFontFamily,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 14.sp,
+                                            lineHeight = 18.sp,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = metaSubtitle,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontFamily = OutfitFontFamily,
+                                            fontSize = 11.5.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+
+                                    Box {
+                                        IconButton(
+                                            onClick = { showMenu = true },
+                                            modifier = Modifier.size(34.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.MoreVert,
+                                                contentDescription = "Video Options",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+
+                                        DropdownMenu(
+                                            expanded = showMenu,
+                                            onDismissRequest = { showMenu = false },
+                                            modifier = Modifier
+                                                .widthIn(min = 235.dp, max = 290.dp)
+                                                .background(MaterialTheme.colorScheme.surface)
+                                        ) {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 14.dp, vertical = 8.dp)
+                                            ) {
+                                                Text(
+                                                    text = videoCand.title,
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                    fontFamily = SyneFontFamily,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.5.sp,
+                                                    lineHeight = 18.sp,
+                                                    maxLines = 4,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Text(
+                                                    text = "${page.name} • $durFormatted",
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    fontFamily = OutfitFontFamily,
+                                                    fontSize = 11.5.sp
+                                                )
+                                            }
+                                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                                            DropdownMenuItem(
+                                                text = { Text("Play Video Now", color = MaterialTheme.colorScheme.onSurface) },
+                                                leadingIcon = { Icon(Icons.Default.PlayArrow, null, tint = MaterialTheme.colorScheme.primary) },
+                                                onClick = {
+                                                    showMenu = false
+                                                    viewModel.playQueue(filteredDomainTracks, index, isPlaylist = true)
+                                                }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Play Next", color = MaterialTheme.colorScheme.onSurface) },
+                                                leadingIcon = { Icon(Icons.Default.PlaylistPlay, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                                onClick = {
+                                                    showMenu = false
+                                                    viewModel.playNext(domainTrack)
+                                                }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Add to Queue", color = MaterialTheme.colorScheme.onSurface) },
+                                                leadingIcon = { Icon(Icons.Default.QueueMusic, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                                onClick = {
+                                                    showMenu = false
+                                                    viewModel.addToQueue(domainTrack)
+                                                }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Start Radio Mix", color = MaterialTheme.colorScheme.onSurface) },
+                                                leadingIcon = { Icon(Icons.Default.Radio, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                                onClick = {
+                                                    showMenu = false
+                                                    viewModel.startRadioMix(domainTrack)
+                                                }
+                                            )
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Text(
+                                                        if (domainTrack.isLiked) "Remove from Liked Songs" else "Save to Liked Songs",
+                                                        color = MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                },
+                                                leadingIcon = {
+                                                    Icon(
+                                                        if (domainTrack.isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
+                                                        null,
+                                                        tint = if (domainTrack.isLiked) SeitharolRedHeart else MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                },
+                                                onClick = {
+                                                    showMenu = false
+                                                    viewModel.toggleLike(domainTrack)
+                                                }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Add to Playlist", color = MaterialTheme.colorScheme.onSurface) },
+                                                leadingIcon = { Icon(Icons.Default.PlaylistAdd, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                                onClick = {
+                                                    showMenu = false
+                                                    trackToAddToPlaylist = domainTrack
+                                                }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Download (Format & Quality)", color = MaterialTheme.colorScheme.onSurface) },
+                                                leadingIcon = { Icon(Icons.Default.CloudDownload, null, tint = MaterialTheme.colorScheme.primary) },
+                                                onClick = {
+                                                    showMenu = false
+                                                    trackForDownloadSheet = domainTrack
+                                                }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Quick Download Video (MP4)", color = MaterialTheme.colorScheme.onSurface) },
+                                                leadingIcon = { Icon(Icons.Default.Videocam, null, tint = MaterialTheme.colorScheme.primary) },
+                                                onClick = {
+                                                    showMenu = false
+                                                    viewModel.startDownload(domainTrack, DownloadTier.VIDEO_MP4)
+                                                }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Share", color = MaterialTheme.colorScheme.onSurface) },
+                                                leadingIcon = { Icon(Icons.Default.Share, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                                onClick = {
+                                                    showMenu = false
+                                                    runCatching {
+                                                        val msg = SeitharolDeepLinkHelper.buildTrackShareMessage(domainTrack)
+                                                        val intent = Intent(Intent.ACTION_SEND).apply {
+                                                            type = "text/plain"
+                                                            putExtra(Intent.EXTRA_TEXT, msg)
+                                                        }
+                                                        context.startActivity(Intent.createChooser(intent, "Share Video"))
+                                                    }
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Native LazyColumn items for Artist Songs using TrackCard (with full 3-dot menu, like, download, playlist, radio)
+                        itemsIndexed(
+                            items = filteredDomainTracks,
+                            key = { idx, item -> "art_song_${item.id}_$idx" }
+                        ) { index, track ->
+                            TrackCard(
+                                track = track,
+                                isPlaying = playerState.currentTrack?.id == track.id,
+                                rankNumber = index + 1,
+                                onTrackClick = {
+                                    viewModel.playQueue(filteredDomainTracks, index, isPlaylist = true)
+                                },
+                                onLikeClick = { viewModel.toggleLike(track) },
+                                onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
+                                onPlayNextClick = { viewModel.playNext(track) },
+                                onAddToQueueClick = { viewModel.addToQueue(track) },
+                                onStartRadioClick = { viewModel.startRadioMix(track) },
+                                onAddToPlaylistClick = { trackToAddToPlaylist = track },
+                                onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
                             )
                         }
                     }
                 }
 
-                // 3. When visiting a Channel: show Channel Playlists Carousel first so playlists are immediately accessible!
-                if (effectiveIsChannel && page.playlists.isNotEmpty()) {
-                    item {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = "Channel Playlists (${page.playlists.size})",
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
-                        )
-                        LazyRow(
-                            contentPadding = PaddingValues(horizontal = 20.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            items(page.playlists.distinctBy { it.browseId }, key = { "ch_pl_${it.browseId}" }) { pl ->
-                                Column(
-                                    modifier = Modifier
-                                        .width(148.dp)
-                                        .clickable { onNavigateToPlaylist(pl.browseId) }
-                                ) {
-                                    Box(modifier = Modifier.size(148.dp)) {
-                                        AsyncImage(
-                                            model = pl.thumbnailUrl,
-                                            contentDescription = pl.title,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                        )
-                                        Surface(
-                                            color = Color(0xFF1B1C1C).copy(alpha = 0.85f),
-                                            shape = RoundedCornerShape(6.dp),
-                                            modifier = Modifier
-                                                .align(Alignment.BottomStart)
-                                                .padding(6.dp)
-                                        ) {
-                                            Text(
-                                                text = "PLAYLIST",
-                                                color = Color.White,
-                                                fontSize = 9.sp,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = pl.title,
-                                        color = MaterialTheme.colorScheme.onBackground,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 14.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = pl.subtitle,
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 4. Channel All Videos Searchable Div (with Most Views / Most Recent filter chips) OR Artist Top Songs
-                if (effectiveIsChannel) {
-                    item {
-                        Spacer(modifier = Modifier.height(14.dp))
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp),
-                            shape = RoundedCornerShape(20.dp),
-                            color = MaterialTheme.colorScheme.surface,
-                            tonalElevation = 2.dp,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(14.dp)
+                // ────────────────────────────────────────────────────────────
+                // 7. Albums & Singles Section (shown on Overview & Releases tab)
+                // ────────────────────────────────────────────────────────────
+                if (selectedTab == ArtistChannelTab.ALL || selectedTab == ArtistChannelTab.RELEASES) {
+                    if (pureAlbums.isNotEmpty()) {
+                        item {
+                            Spacer(modifier = Modifier.height(18.dp))
+                            Text(
+                                text = "Albums (${pureAlbums.size})",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onBackground,
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                            )
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "All Videos (${filteredChannelCandidates.size})",
-                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Text(
-                                        text = channelVideoSortFilter.label,
-                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                // Searchable Input inside All Videos Div
-                                OutlinedTextField(
-                                    value = channelVideoSearchQuery,
-                                    onValueChange = { channelVideoSearchQuery = it },
-                                    placeholder = {
+                                items(pureAlbums, key = { "alb_${it.browseId}" }) { release ->
+                                    Column(
+                                        modifier = Modifier
+                                            .width(150.dp)
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .clickable { onNavigateToPlaylist(release.browseId) }
+                                    ) {
+                                        Box(modifier = Modifier.size(150.dp)) {
+                                            AsyncImage(
+                                                model = release.thumbnailUrl,
+                                                contentDescription = release.title,
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .clip(RoundedCornerShape(14.dp))
+                                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                            )
+                                            Surface(
+                                                color = Color(0xFF1B1C1C).copy(alpha = 0.85f),
+                                                shape = RoundedCornerShape(6.dp),
+                                                modifier = Modifier
+                                                    .align(Alignment.BottomStart)
+                                                    .padding(8.dp)
+                                            ) {
+                                                Text(
+                                                    text = "ALBUM",
+                                                    color = Color.White,
+                                                    fontSize = 9.5.sp,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                            Surface(
+                                                onClick = { viewModel.playPlaylistOrMix(release.browseId) },
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier
+                                                    .align(Alignment.BottomEnd)
+                                                    .padding(8.dp)
+                                                    .size(32.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.PlayArrow,
+                                                        contentDescription = "Play Album",
+                                                        tint = MaterialTheme.colorScheme.onPrimary,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(6.dp))
                                         Text(
-                                            text = "Search videos in ${page.name}...",
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontSize = 13.sp,
+                                            text = release.title,
+                                            color = MaterialTheme.colorScheme.onBackground,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 14.sp,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
-                                    },
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = Icons.Default.Search,
-                                            contentDescription = "Search Channel Videos",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    },
-                                    trailingIcon = {
-                                        if (channelVideoSearchQuery.isNotEmpty()) {
-                                            IconButton(onClick = { channelVideoSearchQuery = "" }) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Clear,
-                                                    contentDescription = "Clear",
-                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    modifier = Modifier.size(18.dp)
-                                                )
-                                            }
-                                        }
-                                    },
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(14.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                                        cursorColor = MaterialTheme.colorScheme.primary,
-                                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                                    ),
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                // Filter Chips: Most Recent & Most Views
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    ChannelVideoSortFilter.entries.forEach { filterOption ->
-                                        val selected = channelVideoSortFilter == filterOption
-                                        FilterChip(
-                                            selected = selected,
-                                            onClick = { channelVideoSortFilter = filterOption },
-                                            label = {
-                                                Text(
-                                                    text = filterOption.label,
-                                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                                    color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                                                )
-                                            },
-                                            colors = FilterChipDefaults.filterChipColors(
-                                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                                labelColor = MaterialTheme.colorScheme.onSurface,
-                                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                                            )
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                if (filteredChannelCandidates.isEmpty()) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 24.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
                                         Text(
-                                            text = "No videos match \"${channelVideoSearchQuery.trim()}\"",
+                                            text = release.subtitle,
+                                            fontSize = 12.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontSize = 13.sp
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
-                                } else {
+                                }
+                            }
+                        }
+                    }
+
+                    if (cleanSingles.isNotEmpty()) {
+                        item {
+                            Spacer(modifier = Modifier.height(18.dp))
+                            Text(
+                                text = "Singles & EPs (${cleanSingles.size})",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onBackground,
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                            )
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                items(cleanSingles, key = { "sgl_${it.browseId}_${it.title}" }) { singleItem ->
                                     Column(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        modifier = Modifier
+                                            .width(144.dp)
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .clickable { viewModel.playSingleRelease(singleItem, page.name) }
                                     ) {
-                                        filteredChannelCandidates.forEachIndexed { index, videoCand ->
-                                            val durMin = videoCand.durationSeconds / 60
-                                            val durSec = videoCand.durationSeconds % 60
-                                            val durFormatted = "%d:%02d".format(durMin, durSec)
-                                            val metaParts = buildList {
-                                                if (videoCand.viewCountText.isNotBlank()) add(videoCand.viewCountText)
-                                                if (videoCand.publishedTimeText.isNotBlank()) add(videoCand.publishedTimeText)
-                                                if (isEmpty()) add(page.name)
-                                            }
-                                            val metaSubtitle = metaParts.joinToString(" • ")
-
-                                            Row(
+                                        Box(modifier = Modifier.size(144.dp)) {
+                                            AsyncImage(
+                                                model = singleItem.thumbnailUrl,
+                                                contentDescription = singleItem.title,
+                                                contentScale = ContentScale.Crop,
                                                 modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .clip(RoundedCornerShape(12.dp))
-                                                    .clickable {
-                                                        viewModel.playQueue(filteredChannelDomainTracks, index, isPlaylist = false)
-                                                    }
-                                                    .padding(vertical = 6.dp, horizontal = 4.dp),
-                                                verticalAlignment = Alignment.CenterVertically
+                                                    .fillMaxSize()
+                                                    .clip(RoundedCornerShape(14.dp))
+                                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                            )
+                                            Surface(
+                                                onClick = { viewModel.playSingleRelease(singleItem, page.name) },
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier
+                                                    .align(Alignment.BottomEnd)
+                                                    .padding(8.dp)
+                                                    .size(32.dp)
                                             ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .width(104.dp)
-                                                        .height(60.dp)
-                                                        .clip(RoundedCornerShape(10.dp))
-                                                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                                                ) {
-                                                    AsyncImage(
-                                                        model = videoCand.thumbnailUrl,
-                                                        contentDescription = videoCand.title,
-                                                        contentScale = ContentScale.Crop,
-                                                        modifier = Modifier.fillMaxSize()
-                                                    )
-                                                    if (videoCand.durationSeconds > 0) {
-                                                        Surface(
-                                                            color = Color.Black.copy(alpha = 0.78f),
-                                                            shape = RoundedCornerShape(4.dp),
-                                                            modifier = Modifier
-                                                                .align(Alignment.BottomEnd)
-                                                                .padding(4.dp)
-                                                        ) {
-                                                            Text(
-                                                                text = durFormatted,
-                                                                color = Color.White,
-                                                                fontSize = 10.sp,
-                                                                fontWeight = FontWeight.Bold,
-                                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                                            )
-                                                        }
-                                                    }
-                                                }
-                                                Spacer(modifier = Modifier.width(12.dp))
-                                                Column(modifier = Modifier.weight(1f)) {
-                                                    Text(
-                                                        text = videoCand.title,
-                                                        color = MaterialTheme.colorScheme.onSurface,
-                                                        fontWeight = FontWeight.SemiBold,
-                                                        fontSize = 14.sp,
-                                                        maxLines = 2,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
-                                                    Spacer(modifier = Modifier.height(2.dp))
-                                                    Text(
-                                                        text = metaSubtitle,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                        fontSize = 12.sp,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.PlayArrow,
+                                                        contentDescription = "Play Single",
+                                                        tint = MaterialTheme.colorScheme.onPrimary,
+                                                        modifier = Modifier.size(18.dp)
                                                     )
                                                 }
                                             }
-                                            if (index < filteredChannelCandidates.lastIndex) {
-                                                HorizontalDivider(
-                                                    thickness = 0.5.dp,
-                                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                                                )
-                                            }
                                         }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else if (domainTopSongs.isNotEmpty()) {
-                    item {
-                        Text(
-                            text = "Top Songs (${domainTopSongs.size})",
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
-                        )
-                    }
-                    items(domainTopSongs.distinctBy { it.id }.take(20), key = { "art_song_${it.id}" }) { track ->
-                        ListItem(
-                            colors = ListItemDefaults.colors(
-                                containerColor = Color.Transparent,
-                                headlineColor = MaterialTheme.colorScheme.onBackground,
-                                supportingColor = MaterialTheme.colorScheme.onSurfaceVariant
-                            ),
-                            headlineContent = {
-                                Text(
-                                    text = track.title,
-                                    color = MaterialTheme.colorScheme.onBackground,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            },
-                            supportingContent = {
-                                Text(
-                                    text = track.artist,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            },
-                            leadingContent = {
-                                AsyncImage(
-                                    model = track.artUrl,
-                                    contentDescription = track.title,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier
-                                        .size(50.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                )
-                            },
-                            modifier = Modifier.clickable {
-                                val idx = domainTopSongs.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
-                                viewModel.playQueue(domainTopSongs, idx)
-                            }
-                        )
-                    }
-                }
-
-                // 4A. Official Multi-Track Albums Carousel (for Music Artists)
-                val pureAlbums = if (effectiveIsChannel) {
-                    emptyList()
-                } else {
-                    page.albums.filter {
-                        (it.browseId.startsWith("MPREb_") || it.browseId.startsWith("OLAK5uy_")) &&
-                            !it.type.equals("SINGLE", true) &&
-                            !it.subtitle.contains("Single", true) &&
-                            !it.subtitle.contains("1 song", true) &&
-                            !it.subtitle.contains("1 track", true) &&
-                            !it.title.contains("YouTube Video", true) &&
-                            !it.subtitle.contains("YouTube Video", true) &&
-                            !it.title.equals("Videos", true) &&
-                            !it.title.equals("YouTube Videos", true)
-                    }
-                }
-                if (pureAlbums.isNotEmpty()) {
-                    item {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "Albums",
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
-                        )
-                        LazyRow(
-                            contentPadding = PaddingValues(horizontal = 20.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            items(pureAlbums.distinctBy { it.browseId }, key = { "alb_${it.browseId}" }) { release ->
-                                Column(
-                                    modifier = Modifier
-                                        .width(142.dp)
-                                        .clickable { onNavigateToPlaylist(release.browseId) }
-                                ) {
-                                    Box(modifier = Modifier.size(142.dp)) {
-                                        AsyncImage(
-                                            model = release.thumbnailUrl,
-                                            contentDescription = release.title,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Text(
+                                            text = singleItem.title,
+                                            color = MaterialTheme.colorScheme.onBackground,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 13.5.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
-                                        Surface(
-                                            color = Color(0xFF1B1C1C).copy(alpha = 0.85f),
-                                            shape = RoundedCornerShape(6.dp),
-                                            modifier = Modifier
-                                                .align(Alignment.BottomStart)
-                                                .padding(6.dp)
-                                        ) {
-                                            Text(
-                                                text = "ALBUM",
-                                                color = Color.White,
-                                                fontSize = 9.sp,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = release.title,
-                                        color = MaterialTheme.colorScheme.onBackground,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 14.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = release.subtitle,
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 4B. Singles (for Music Artists)
-                val cleanSingles = if (effectiveIsChannel) {
-                    emptyList()
-                } else {
-                    page.singles.filterNot {
-                        it.title.contains("YouTube Video", true) ||
-                            it.subtitle.contains("YouTube Video", true) ||
-                            it.title.equals("Videos", true)
-                    }
-                }
-                if (cleanSingles.isNotEmpty()) {
-                    item {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "Singles",
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
-                        )
-                    }
-                    items(cleanSingles.distinctBy { it.title.lowercase().trim() }.take(10), key = { "single_song_${it.browseId}_${it.title}" }) { singleItem ->
-                        ListItem(
-                            colors = ListItemDefaults.colors(
-                                containerColor = Color.Transparent,
-                                headlineColor = MaterialTheme.colorScheme.onBackground,
-                                supportingColor = MaterialTheme.colorScheme.onSurfaceVariant
-                            ),
-                            headlineContent = {
-                                Text(
-                                    text = singleItem.title,
-                                    color = MaterialTheme.colorScheme.onBackground,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            },
-                            supportingContent = {
-                                Text(
-                                    text = "${page.name} • Single Track",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            },
-                            leadingContent = {
-                                AsyncImage(
-                                    model = singleItem.thumbnailUrl,
-                                    contentDescription = singleItem.title,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier
-                                        .size(50.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                                )
-                            },
-                            trailingContent = {
-                                IconButton(onClick = { viewModel.playSingleRelease(singleItem, page.name) }) {
-                                    Icon(
-                                        imageVector = Icons.Default.PlayArrow,
-                                        contentDescription = "Play Single",
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            },
-                            modifier = Modifier.clickable {
-                                viewModel.playSingleRelease(singleItem, page.name)
-                            }
-                        )
-                    }
-                }
-
-                // 5. Artist Playlists & Mixes Carousel (for Music Artists)
-                if (!effectiveIsChannel && page.playlists.isNotEmpty()) {
-                    item {
-                        Spacer(modifier = Modifier.height(18.dp))
-                        Text(
-                            text = "Artist Playlists & Mixes",
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
-                        )
-                        LazyRow(
-                            contentPadding = PaddingValues(horizontal = 20.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            items(page.playlists.distinctBy { it.browseId }, key = { "art_pl_${it.browseId}" }) { pl ->
-                                Column(
-                                    modifier = Modifier
-                                        .width(142.dp)
-                                        .clickable { onNavigateToPlaylist(pl.browseId) }
-                                ) {
-                                    Box(modifier = Modifier.size(142.dp)) {
-                                        AsyncImage(
-                                            model = pl.thumbnailUrl,
-                                            contentDescription = pl.title,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                        Text(
+                                            text = singleItem.subtitle.ifBlank { "Single • ${page.name}" },
+                                            fontSize = 11.5.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
-                                        val tag = if (pl.type.equals("MIX", true) || pl.title.contains("Mix", true) || pl.browseId.startsWith("RD")) "MIX" else "PLAYLIST"
-                                        Surface(
-                                            color = Color(0xFF1B1C1C).copy(alpha = 0.85f),
-                                            shape = RoundedCornerShape(6.dp),
-                                            modifier = Modifier
-                                                .align(Alignment.BottomStart)
-                                                .padding(6.dp)
-                                        ) {
-                                            Text(
-                                                text = tag,
-                                                color = Color.White,
-                                                fontSize = 9.sp,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
                                     }
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = pl.title,
-                                        color = MaterialTheme.colorScheme.onBackground,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 14.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = pl.subtitle,
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
                                 }
                             }
                         }
                     }
                 }
 
-                // 6. Fans Also Like (Similar Artists)
+                // ────────────────────────────────────────────────────────────
+                // 8. Fans Also Like (Similar Artists)
+                // ────────────────────────────────────────────────────────────
                 if (page.similarArtists.isNotEmpty()) {
                     item {
                         Spacer(modifier = Modifier.height(18.dp))
                         Text(
                             text = "Fans Also Like",
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onBackground,
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
                         )
@@ -1066,6 +1482,47 @@ fun ArtistScreen(
                 }
             }
         }
+    }
+
+    trackToAddToPlaylist?.let { track ->
+        AddToPlaylistModal(
+            track = track,
+            playlists = playlists,
+            onSelectPlaylist = { playlistId ->
+                viewModel.addTrackToPlaylist(playlistId, track)
+                trackToAddToPlaylist = null
+            },
+            onCreateNewPlaylist = {
+                showCreatePlaylistDialog = true
+            },
+            onDismiss = {
+                trackToAddToPlaylist = null
+            }
+        )
+    }
+
+    if (showCreatePlaylistDialog) {
+        CreatePlaylistModal(
+            onConfirm = { name ->
+                viewModel.createPlaylist(name, "User created playlist", trackToAddToPlaylist)
+                trackToAddToPlaylist = null
+                showCreatePlaylistDialog = false
+            },
+            onDismiss = {
+                showCreatePlaylistDialog = false
+            }
+        )
+    }
+
+    trackForDownloadSheet?.let { track ->
+        TrackDownloadFormatQualitySheet(
+            track = track,
+            onDismiss = { trackForDownloadSheet = null },
+            onConfirmDownload = { chosenTier ->
+                viewModel.startDownload(track, chosenTier)
+                trackForDownloadSheet = null
+            }
+        )
     }
 }
 

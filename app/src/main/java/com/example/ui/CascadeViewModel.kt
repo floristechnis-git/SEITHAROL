@@ -193,6 +193,15 @@ class CascadeViewModel(
     val artistNavigationEvent: SharedFlow<String> = _artistNavigationEvent.asSharedFlow()
     val isArtistNavigationChannel = MutableStateFlow(false)
 
+    private val _playlistNavigationEvent = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val playlistNavigationEvent: SharedFlow<String> = _playlistNavigationEvent.asSharedFlow()
+
+    fun navigateToPlaylist(playlistId: String) {
+        val cleanId = playlistId.trim()
+        if (cleanId.isBlank()) return
+        viewModelScope.launch(vmExceptionHandler) { _playlistNavigationEvent.emit(cleanId) }
+    }
+
     private val _playerExpandEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val playerExpandEvent: SharedFlow<Unit> = _playerExpandEvent.asSharedFlow()
 
@@ -439,6 +448,11 @@ class CascadeViewModel(
                     navigateToArtist(target.artistName)
                     return
                 }
+                is SeitharolDeepLinkHelper.DeepLinkTarget.PlaylistTarget -> {
+                    searchQuery.value = ""
+                    navigateToPlaylist(target.playlistId)
+                    return
+                }
                 else -> Unit
             }
         }
@@ -654,7 +668,9 @@ class CascadeViewModel(
                             title = "${seedTrack.title.take(24)} Radio Mix",
                             subtitle = "YouTube Mix • Continuous radio",
                             artUrl = seedTrack.artUrl,
-                            trackCount = 35
+                            thumbnailUrl = seedTrack.artUrl,
+                            trackCount = 35,
+                            tracks = emptyList()
                         )
                     )
                 }
@@ -665,13 +681,16 @@ class CascadeViewModel(
                     limit = 5
                 )
                 collections.forEach { col ->
+                    val resolvedArt = col.thumbnailUrl.ifBlank { seedTrack.artUrl }
                     out.add(
                         com.example.player.SuggestedPlaylist(
                             id = col.browseId,
                             title = col.title,
                             subtitle = col.subtitle,
-                            artUrl = col.thumbnailUrl.ifBlank { seedTrack.artUrl },
-                            trackCount = 25
+                            artUrl = resolvedArt,
+                            thumbnailUrl = resolvedArt,
+                            trackCount = 25,
+                            tracks = emptyList()
                         )
                     )
                 }

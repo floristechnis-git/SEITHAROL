@@ -973,7 +973,7 @@ fun SearchScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "No playlists found for "$query"",
+                                text = "No playlists found for \"$query\"",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 14.sp,
                                 fontFamily = OutfitFontFamily

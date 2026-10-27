@@ -102,7 +102,7 @@ class AudioPlayerManager(
     private val LYRIC_SYNC_LEAD_MS = 420L
 
     private fun isLowMemoryDevice(): Boolean {
-        return runCatching {
+        return runCatching<Boolean> {
             com.example.CascadeApplication.isLowRamPhone(context)
         }.getOrDefault(false)
     }

@@ -234,6 +234,14 @@ fun CascadeApp(
         }
     }
 
+    // Collect playlist navigation events from shared playlist deep links
+    LaunchedEffect(Unit) {
+        viewModel.playlistNavigationEvent.collectLatest { playlistId ->
+            isPlayerExpanded = false
+            currentSubScreen = SubScreen.Playlist(playlistId = playlistId)
+        }
+    }
+
     // Auto-expand PlayerScreen when opening a shared track via HTTPS deep link or seitharol://
     LaunchedEffect(Unit) {
         viewModel.playerExpandEvent.collectLatest {

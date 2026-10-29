@@ -102,7 +102,7 @@ class AudioPlayerManager(
     private val LYRIC_SYNC_LEAD_MS = 420L
 
     private fun isLowMemoryDevice(): Boolean {
-        return runCatching<Boolean> {
+        return runCatching {
             com.example.CascadeApplication.isLowRamPhone(context)
         }.getOrDefault(false)
     }
@@ -1527,7 +1527,7 @@ class AudioPlayerManager(
                     }
 
                     val remainingMs = safeDur - pos
-                    if (safeDur >= 20_000L && remainingMs in 1L..14_000L) {
+                    if (safeDur >= 20_000L && remainingMs in 1L..14_000L && _state.value.repeatMode != RepeatMode.ONE) {
                         if (_state.value.currentIndex >= _state.value.queue.lastIndex && isAutoplayEnabled) {
                             prefetchAutoplayRecommendation()
                         }
@@ -1540,7 +1540,7 @@ class AudioPlayerManager(
     }
 
     private fun prefetchNextTrack() {
-        if (resolverEngine.isOfflineMode.value) return
+        if (resolverEngine.isOfflineMode.value || _state.value.repeatMode == RepeatMode.ONE) return
         val q = _state.value.queue
         val nextIndex = _state.value.currentIndex + 1
         if (nextIndex in q.indices) {
@@ -2879,7 +2879,7 @@ class AudioPlayerManager(
     }
 
     private fun prefetchAutoplayRecommendation() {
-        if (isFetchingAutoplay || resolverEngine.isOfflineMode.value || !isAutoplayEnabled) return
+        if (isFetchingAutoplay || resolverEngine.isOfflineMode.value || !isAutoplayEnabled || _state.value.repeatMode == RepeatMode.ONE) return
         val current = _state.value.currentTrack ?: return
         val isLocalSingle = current.isLocalOnlyTrack && _state.value.queue.all { it.isLocalOnlyTrack }
         if (isLocalSingle) return
@@ -2938,7 +2938,7 @@ class AudioPlayerManager(
                     )
                     musicRepository.insertTrack(newTrack)
                     withContext(Dispatchers.Main) {
-                        if (isAutoplayEnabled) {
+                        if (isAutoplayEnabled && _state.value.repeatMode != RepeatMode.ONE) {
                             addToQueue(newTrack)
                         }
                     }

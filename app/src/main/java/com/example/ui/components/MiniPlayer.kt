@@ -85,7 +85,7 @@ fun MiniPlayer(
                 translationY = animatedOffsetY.coerceAtLeast(0f)
                 alpha = if (isDismissed) 0f else (1f - (animatedOffsetY / (miniHeightPx * 2f))).coerceIn(0f, 1f)
             }
-            .clip(RoundedCornerShape(30.dp))
+            .clip(RoundedCornerShape(22.dp))
             .pointerInput(track.id) {
                 detectVerticalDragGestures(
                     onDragEnd = {
@@ -110,7 +110,7 @@ fun MiniPlayer(
             }
             .testTag("mini_player_bar"),
         color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(30.dp),
+        shape = RoundedCornerShape(22.dp),
         shadowElevation = 10.dp
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -131,7 +131,7 @@ fun MiniPlayer(
                     Box(
                         modifier = Modifier
                             .size(44.dp)
-                            .clip(CircleShape)
+                            .clip(RoundedCornerShape(12.dp))
                             .background(MaterialTheme.colorScheme.surface),
                         contentAlignment = Alignment.Center
                     ) {

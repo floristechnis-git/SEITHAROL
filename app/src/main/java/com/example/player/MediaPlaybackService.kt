@@ -339,7 +339,7 @@ class MediaPlaybackService : Service() {
 
             val notification = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(resolveConsistentSmallIcon())
-                .setContentTitle("SEITHAROL")
+                .setContentTitle("Seitharol")
                 .setContentText(if (isBuffering) "Loading track..." else "Ready to play")
                 .setLargeIcon(getOrDecodeAppLogoBitmap())
                 .setContentIntent(openPendingIntent)

@@ -222,10 +222,6 @@ class MainActivity : ComponentActivity() {
                                 pendingDeepLink = null
                                 viewModel.navigateToArtist(target.artistName)
                             }
-                            is SeitharolDeepLinkHelper.DeepLinkTarget.PlaylistTarget -> {
-                                pendingDeepLink = null
-                                viewModel.navigateToPlaylist(target.playlistId)
-                            }
                             is SeitharolDeepLinkHelper.DeepLinkTarget.AudioFileTarget -> {
                                 pendingDeepLink = null
                                 viewModel.playExternalAudioUri(

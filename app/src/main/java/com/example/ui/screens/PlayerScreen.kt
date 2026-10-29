@@ -124,47 +124,51 @@ fun SeitharolSkip10sBadgeOverlay(
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "yt_skip_arrows")
     val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.45f,
+        initialValue = 0.55f,
         targetValue = 1.0f,
         animationSpec = infiniteRepeatable(
-            animation = tween(360, easing = FastOutSlowInEasing),
+            animation = tween(340, easing = FastOutSlowInEasing),
             repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
         ),
         label = "yt_skip_pulse"
     )
 
     Surface(
-        modifier = modifier
-            .shadow(10.dp, RoundedCornerShape(24.dp))
-            .border(1.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(24.dp)),
-        shape = RoundedCornerShape(24.dp),
-        color = Color.Black.copy(alpha = 0.68f)
+        modifier = modifier,
+        shape = RoundedCornerShape(22.dp),
+        color = Color(0xE81E2024),
+        tonalElevation = 6.dp,
+        shadowElevation = 8.dp
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                val icon = if (isForward) Icons.Default.FastForward else Icons.Default.FastRewind
+            if (!isForward) {
                 Icon(
-                    imageVector = icon,
+                    imageVector = Icons.Default.FastRewind,
                     contentDescription = null,
                     tint = Color.White.copy(alpha = pulseAlpha),
-                    modifier = Modifier.size(26.dp)
+                    modifier = Modifier.size(22.dp)
                 )
             }
             Text(
-                text = "${skipSeconds} seconds",
+                text = if (isForward) "+${skipSeconds}s" else "-${skipSeconds}s",
                 color = Color.White,
                 fontFamily = OutfitFontFamily,
                 fontWeight = FontWeight.Bold,
-                fontSize = 13.sp,
-                letterSpacing = 0.3.sp
+                fontSize = 14.sp,
+                letterSpacing = 0.2.sp
             )
+            if (isForward) {
+                Icon(
+                    imageVector = Icons.Default.FastForward,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = pulseAlpha),
+                    modifier = Modifier.size(22.dp)
+                )
+            }
         }
     }
 }
@@ -623,6 +627,7 @@ fun PlayerScreen(
     onOpenEqualizer: () -> Unit = {},
     onOpenSleepTimer: () -> Unit = {},
     onShareTrack: (String) -> Unit = {},
+    onAddToPlaylist: (com.example.data.model.Track) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val track = playerState.currentTrack ?: return
@@ -636,6 +641,7 @@ fun PlayerScreen(
     var showAudioAdjustSheet by remember { mutableStateOf(false) }
     var showDownloadOptionsSheet by remember { mutableStateOf(false) }
     var showVideoDescriptionSheet by remember { mutableStateOf(false) }
+    var showPlayerMoreSheet by remember { mutableStateOf(false) }
     val showFullscreenVideo by viewModel.isFullscreenVideo.collectAsState()
     var isVideoZoomCrop by remember { mutableStateOf(false) }
     var playerSkipFeedbackIsForward by remember { mutableStateOf<Boolean?>(null) }
@@ -818,20 +824,41 @@ fun PlayerScreen(
                 )
             }
 
-            IconButton(
-                onClick = { viewModel.toggleLike(track) },
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .testTag("player_like_btn")
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(
-                    imageVector = if (isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
-                    contentDescription = "Like",
-                    tint = if (isLiked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(22.dp)
-                )
+                IconButton(
+                    onClick = { viewModel.toggleLike(track) },
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .testTag("player_like_btn")
+                ) {
+                    Icon(
+                        imageVector = if (isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
+                        contentDescription = "Like",
+                        tint = if (isLiked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(21.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = { showPlayerMoreSheet = true },
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .testTag("player_more_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MoreVert,
+                        contentDescription = "More Options",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(21.dp)
+                    )
+                }
             }
         }
 
@@ -1396,6 +1423,13 @@ fun PlayerScreen(
                     }
                 )
             }
+            IconButton(onClick = { onAddToPlaylist(track) }) {
+                Icon(
+                    imageVector = Icons.Default.PlaylistAdd,
+                    contentDescription = "Add to Playlist",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             IconButton(onClick = { showLyrics = !showLyrics }) {
                 Icon(
                     imageVector = Icons.Outlined.Subtitles,
@@ -1599,9 +1633,12 @@ fun PlayerScreen(
         }
 
         // ────────────────────────────────────────────────────────────
-        // 10s Countdown Before Next Song/Video & Up Next Queue Card
+        // Google Pixel Material 3 Countdown Banner & Up Next Pill Sheet
+        // (Strictly suppressed when RepeatMode.ONE is active or single song is looping)
         // ────────────────────────────────────────────────────────────
+        val isSingleSongLooping = playerState.repeatMode == RepeatMode.ONE
         val nextTrack = when {
+            isSingleSongLooping -> null
             playerState.currentIndex in 0 until playerState.queue.size - 1 ->
                 playerState.queue[playerState.currentIndex + 1]
             playerState.repeatMode == RepeatMode.ALL && playerState.queue.size > 1 ->
@@ -1609,12 +1646,15 @@ fun PlayerScreen(
             else -> null
         }
         val remainingMs = (totalDuration - displayPosition).coerceAtLeast(0L)
-        var dismissedCountdownForTrackId by remember(track.id) { mutableStateOf(false) }
+        var dismissedCountdownForTrackId by remember(track.id, playerState.repeatMode) { mutableStateOf(false) }
         val showNextCountdown = playerState.isPlaying &&
             !playerState.isBuffering &&
+            !isSingleSongLooping &&
+            playerState.durationMs >= 15_000L &&
             totalDuration >= 15_000L &&
             remainingMs in 1L..10_000L &&
             nextTrack != null &&
+            nextTrack.id != track.id &&
             !dismissedCountdownForTrackId
         val countdownSeconds = ((remainingMs + 999L) / 1000L).toInt().coerceIn(1, 10)
         val countdownProgress = (remainingMs.toFloat() / 10_000f).coerceIn(0f, 1f)
@@ -1624,123 +1664,160 @@ fun PlayerScreen(
             enter = fadeIn(tween(220)) + slideInVertically(initialOffsetY = { it / 2 }),
             exit = fadeOut(tween(180)) + slideOutVertically(targetOffsetY = { it / 2 })
         ) {
-            if (nextTrack != null) {
+            if (nextTrack != null && !isSingleSongLooping) {
                 SeitharolNextTrackCountdownBanner(
                     nextTrack = nextTrack,
                     countdownSeconds = countdownSeconds,
                     countdownProgress = countdownProgress,
                     onPlayNow = { viewModel.next() },
                     onDismiss = { dismissedCountdownForTrackId = true },
+                    isDarkOverlay = false,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .padding(horizontal = 20.dp, vertical = 4.dp)
                 )
             }
         }
 
         AnimatedVisibility(
-            visible = isUpNextVisible && hasClickedQueueButton && !(showNextCountdown && !showFullscreenVideo),
-            enter = slideInVertically(initialOffsetY = { it }),
-            exit = slideOutVertically(targetOffsetY = { it })
+            visible = isUpNextVisible && hasClickedQueueButton && !isSingleSongLooping && !(showNextCountdown && !showFullscreenVideo),
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(tween(180)),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(tween(150))
         ) {
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 6.dp)
-                    .clip(RoundedCornerShape(20.dp))
+                    .padding(horizontal = 20.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(24.dp))
                     .pointerInput(Unit) {
                         detectVerticalDragGestures { _, dragAmount ->
-                            if (dragAmount > 18f) {
+                            if (dragAmount < -14f) {
+                                showQueue = true
+                            } else if (dragAmount > 18f) {
                                 isUpNextVisible = false
                             }
                         }
                     }
                     .clickable { showQueue = true }
                     .testTag("player_upnext_button"),
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                tonalElevation = 2.dp
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                border = androidx.compose.foundation.BorderStroke(
+                    width = 1.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                ),
+                tonalElevation = 4.dp
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    // Subtle Google Pixel bottom-sheet handle pill
+                    Box(
+                        modifier = Modifier
+                            .padding(bottom = 8.dp)
+                            .width(28.dp)
+                            .height(3.5.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
+                    )
+
                     Row(
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.surface),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.QueueMusic,
-                                contentDescription = "Queue",
-                                tint = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "UP NEXT",
-                                    fontSize = 11.sp,
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    letterSpacing = 1.sp
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "• ${playerState.queue.size} in queue",
-                                    fontSize = 11.sp,
-                                    fontFamily = OutfitFontFamily,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                                )
-                            }
-                            Text(
-                                text = nextTrack?.let { "${it.title} • ${it.artist}" } ?: "Tap to view upcoming tracks",
-                                fontSize = 13.sp,
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        onClick = { showQueue = true }
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Text(
-                                text = "Up Next",
-                                fontSize = 12.sp,
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                            Icon(
-                                imageVector = Icons.Default.KeyboardArrowUp,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(16.dp)
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (nextTrack != null && nextTrack.artUrl.isNotBlank()) {
+                                    AsyncImage(
+                                        model = InnerTubeResolver.upgradeThumbnailUrl(nextTrack.artUrl),
+                                        contentDescription = nextTrack.title,
+                                        placeholder = appLogoPainter,
+                                        error = appLogoPainter,
+                                        fallback = appLogoPainter,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.QueueMusic,
+                                        contentDescription = "Up Next Queue",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = MaterialTheme.colorScheme.primaryContainer
+                                    ) {
+                                        Text(
+                                            text = "Up next",
+                                            fontSize = 10.5.sp,
+                                            fontFamily = OutfitFontFamily,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    Text(
+                                        text = "${playerState.queue.size} in queue",
+                                        fontSize = 11.5.sp,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Text(
+                                    text = nextTrack?.let { "${it.title} · ${it.artist}" } ?: "Swipe up or tap to manage queue",
+                                    fontSize = 13.5.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            onClick = { showQueue = true },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowUp,
+                                    contentDescription = "Expand Queue",
+                                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -1803,8 +1880,306 @@ fun PlayerScreen(
             onDismiss = { showExpandedLyrics = false }
         )
     }
+
+    if (showPlayerMoreSheet) {
+        PlayerTrackOptionsSheet(
+            track = track,
+            playerState = playerState,
+            isLiked = isLiked,
+            isDownloaded = isDownloaded,
+            onToggleLike = { viewModel.toggleLike(track) },
+            onAddToPlaylist = {
+                showPlayerMoreSheet = false
+                onAddToPlaylist(track)
+            },
+            onCycleRepeatMode = { viewModel.cycleRepeatMode() },
+            onOpenQueue = {
+                showPlayerMoreSheet = false
+                hasClickedQueueButton = true
+                isUpNextVisible = true
+                showQueue = true
+            },
+            onOpenAudioAdjust = {
+                showPlayerMoreSheet = false
+                showAudioAdjustSheet = true
+            },
+            onOpenSleepTimer = {
+                showPlayerMoreSheet = false
+                onOpenSleepTimer()
+            },
+            onOpenDownloadOptions = {
+                showPlayerMoreSheet = false
+                if (!isDownloaded && !track.isLocalOnlyTrack) {
+                    showDownloadOptionsSheet = true
+                }
+            },
+            onOpenDetails = {
+                showPlayerMoreSheet = false
+                showVideoDescriptionSheet = true
+            },
+            onNavigateArtist = if (track.isNavigableArtist && !track.isLocalOnlyTrack) {
+                {
+                    showPlayerMoreSheet = false
+                    onDismiss()
+                    viewModel.navigateToArtist(track.artist, isChannel = isVideoTrack)
+                }
+            } else null,
+            onShare = if (!track.isLocalOnlyTrack) {
+                {
+                    showPlayerMoreSheet = false
+                    onShareTrack(track.title)
+                }
+            } else null,
+            onDismiss = { showPlayerMoreSheet = false }
+        )
+    }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PlayerTrackOptionsSheet(
+    track: com.example.data.model.Track,
+    playerState: PlayerState,
+    isLiked: Boolean,
+    isDownloaded: Boolean,
+    onToggleLike: () -> Unit,
+    onAddToPlaylist: () -> Unit,
+    onCycleRepeatMode: () -> Unit,
+    onOpenQueue: () -> Unit,
+    onOpenAudioAdjust: () -> Unit,
+    onOpenSleepTimer: () -> Unit,
+    onOpenDownloadOptions: () -> Unit,
+    onOpenDetails: () -> Unit,
+    onNavigateArtist: (() -> Unit)?,
+    onShare: (() -> Unit)?,
+    onDismiss: () -> Unit
+) {
+    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .navigationBarsPadding()
+        ) {
+            // Track Header Card (Google Pixel M3 Tonal Card)
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    AsyncImage(
+                        model = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl).ifBlank { R.drawable.ic_splash_logo },
+                        contentDescription = track.title,
+                        placeholder = appLogoPainter,
+                        error = appLogoPainter,
+                        fallback = appLogoPainter,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = track.title,
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "${track.artist} • ${track.durationFormatted}",
+                            fontFamily = OutfitFontFamily,
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Surface(
+                        onClick = onToggleLike,
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isLiked) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
+                                contentDescription = "Like",
+                                tint = if (isLiked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            @Composable
+            fun PixelSheetOptionRow(
+                icon: androidx.compose.ui.graphics.vector.ImageVector,
+                title: String,
+                subtitle: String? = null,
+                accentTint: Boolean = false,
+                onClick: () -> Unit
+            ) {
+                Surface(
+                    onClick = onClick,
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color.Transparent,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (accentTint) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = title,
+                                    tint = if (accentTint) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = title,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.5.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            if (!subtitle.isNullOrBlank()) {
+                                Text(
+                                    text = subtitle,
+                                    fontFamily = OutfitFontFamily,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            PixelSheetOptionRow(
+                icon = Icons.Default.PlaylistAdd,
+                title = "Add to Playlist",
+                subtitle = "Save this track to one of your playlists",
+                onClick = onAddToPlaylist
+            )
+
+            val repeatLabel = when (playerState.repeatMode) {
+                RepeatMode.OFF -> "Repeat: Off"
+                RepeatMode.ALL -> "Repeat: All Queue Tracks"
+                RepeatMode.ONE -> "Repeat: Loop Current Song (Repeat 1)"
+            }
+            PixelSheetOptionRow(
+                icon = if (playerState.repeatMode == RepeatMode.ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
+                title = repeatLabel,
+                subtitle = "Tap to cycle repeat mode (Off → All → Repeat 1)",
+                accentTint = playerState.repeatMode != RepeatMode.OFF,
+                onClick = onCycleRepeatMode
+            )
+
+            PixelSheetOptionRow(
+                icon = Icons.Default.QueueMusic,
+                title = "Up Next Queue (${playerState.queue.size})",
+                subtitle = "View upcoming tracks and recommendations",
+                onClick = onOpenQueue
+            )
+
+            if (onNavigateArtist != null) {
+                val isVid = playerState.isVideoMode || track.isVideoTrack
+                PixelSheetOptionRow(
+                    icon = if (isVid) Icons.Default.Tv else Icons.Default.Person,
+                    title = if (isVid) "Visit Channel (${track.artist})" else "Go to Artist (${track.artist})",
+                    subtitle = "Explore songs, videos, albums & mixes",
+                    onClick = onNavigateArtist
+                )
+            }
+
+            PixelSheetOptionRow(
+                icon = Icons.Default.Tune,
+                title = "Equalizer & Audio Adjustments",
+                subtitle = "5-band studio EQ, normalization & streaming quality",
+                onClick = onOpenAudioAdjust
+            )
+
+            PixelSheetOptionRow(
+                icon = Icons.Outlined.Timer,
+                title = if (playerState.sleepTimerMinutesLeft > 0) "Sleep Timer (${playerState.sleepTimerMinutesLeft}m left)" else "Sleep Timer",
+                subtitle = "Automatically pause playback after a set duration",
+                accentTint = playerState.sleepTimerMinutesLeft > 0,
+                onClick = onOpenSleepTimer
+            )
+
+            if (!track.isLocalOnlyTrack) {
+                PixelSheetOptionRow(
+                    icon = if (isDownloaded) Icons.Default.CheckCircle else Icons.Default.Download,
+                    title = if (isDownloaded) "Downloaded for Offline Playback" else "Download Track / Video",
+                    subtitle = if (isDownloaded) "Saved on device storage" else "Save audio or MP4 video for offline listening",
+                    accentTint = isDownloaded,
+                    onClick = onOpenDownloadOptions
+                )
+            }
+
+            PixelSheetOptionRow(
+                icon = Icons.Outlined.Info,
+                title = "Track & Video Details",
+                subtitle = "View full title, metadata, and description",
+                onClick = onOpenDetails
+            )
+
+            if (onShare != null) {
+                PixelSheetOptionRow(
+                    icon = Icons.Outlined.Share,
+                    title = "Share",
+                    subtitle = "Share link with friends",
+                    onClick = onShare
+                )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+        }
+    }
+}
+
+/**
+ * Authentic Google Pixel (Material 3 / Android 15 Media Control) Next-Track Countdown Card:
+ * - Uses adaptive Material You tonal container (surfaceContainerHigh) or Pixel dark glass in fullscreen.
+ * - Features an unobstructed rounded-square (12.dp) thumbnail on the left, a clean Pixel tonal status chip
+ *   ("Up next in Xs"), 1-line title & artist, a rounded-square "Play now" tonal button, and a subtle bottom progress bar.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SeitharolNextTrackCountdownBanner(
     nextTrack: com.example.data.model.Track,
@@ -1812,90 +2187,63 @@ fun SeitharolNextTrackCountdownBanner(
     countdownProgress: Float,
     onPlayNow: () -> Unit,
     onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isDarkOverlay: Boolean = false
 ) {
     val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
     val accentColor = MaterialTheme.colorScheme.primary
+    val containerBg = if (isDarkOverlay) Color(0xF21E2024) else MaterialTheme.colorScheme.surfaceContainerHigh
+    val borderColor = if (isDarkOverlay) Color.White.copy(alpha = 0.14f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)
+    val primaryTextColor = if (isDarkOverlay) Color.White else MaterialTheme.colorScheme.onSurface
+    val secondaryTextColor = if (isDarkOverlay) Color.White.copy(alpha = 0.72f) else MaterialTheme.colorScheme.onSurfaceVariant
+    val chipBgColor = if (isDarkOverlay) accentColor.copy(alpha = 0.22f) else MaterialTheme.colorScheme.primaryContainer
+    val chipTextColor = if (isDarkOverlay) Color(0xFFFFB4AB) else MaterialTheme.colorScheme.onPrimaryContainer
+
     val animatedCountdownProgress by animateFloatAsState(
         targetValue = countdownProgress.coerceIn(0f, 1f),
-        animationSpec = tween(durationMillis = 320, easing = LinearEasing),
+        animationSpec = tween(durationMillis = 300, easing = LinearEasing),
         label = "countdown_banner_progress"
     )
 
     Surface(
         modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
-            .border(
-                width = 1.dp,
-                brush = Brush.horizontalGradient(
-                    colors = listOf(
-                        accentColor.copy(alpha = 0.42f),
-                        Color.White.copy(alpha = 0.12f)
-                    )
-                ),
-                shape = RoundedCornerShape(20.dp)
-            )
-            .clickable { onPlayNow() },
-        shape = RoundedCornerShape(20.dp),
-        color = Color(0xF517191C),
-        tonalElevation = 8.dp,
-        shadowElevation = 14.dp
+            .clip(RoundedCornerShape(24.dp))
+            .clickable { onPlayNow() }
+            .testTag("next_track_countdown_banner"),
+        shape = RoundedCornerShape(24.dp),
+        color = containerBg,
+        border = androidx.compose.foundation.BorderStroke(1.dp, borderColor),
+        tonalElevation = 6.dp,
+        shadowElevation = 10.dp
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 10.dp, end = 8.dp, top = 9.dp, bottom = 9.dp),
+                    .padding(start = 12.dp, end = 10.dp, top = 10.dp, bottom = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(11.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Unified Artwork + Circular Countdown Ring Anchor (saves horizontal space so text never wraps/clips)
+                // Crisp Unobstructed Rounded-Square Thumbnail (Google Pixel Media style)
                 Box(
-                    modifier = Modifier.size(46.dp),
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (isDarkOverlay) Color(0xFF2C2E33) else MaterialTheme.colorScheme.surfaceVariant),
                     contentAlignment = Alignment.Center
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(11.dp))
-                            .background(Color(0xFF26292E))
-                    ) {
-                        AsyncImage(
-                            model = InnerTubeResolver.upgradeThumbnailUrl(nextTrack.artUrl).ifBlank { R.drawable.ic_splash_logo },
-                            contentDescription = nextTrack.title,
-                            placeholder = appLogoPainter,
-                            error = appLogoPainter,
-                            fallback = appLogoPainter,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color.Black.copy(alpha = 0.46f))
-                        )
-                    }
-
-                    CircularProgressIndicator(
-                        progress = { animatedCountdownProgress },
-                        modifier = Modifier.fillMaxSize(),
-                        color = accentColor,
-                        trackColor = Color.White.copy(alpha = 0.14f),
-                        strokeWidth = 2.4.dp
-                    )
-
-                    Text(
-                        text = "${countdownSeconds}s",
-                        color = Color.White,
-                        fontFamily = OutfitFontFamily,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        softWrap = false
+                    AsyncImage(
+                        model = InnerTubeResolver.upgradeThumbnailUrl(nextTrack.artUrl).ifBlank { R.drawable.ic_splash_logo },
+                        contentDescription = nextTrack.title,
+                        placeholder = appLogoPainter,
+                        error = appLogoPainter,
+                        fallback = appLogoPainter,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
                     )
                 }
 
-                // Fitted Typography Column: Overline Pill + Track Title + Artist Subtitle
+                // Clean Google Pixel Typography Stack
                 Column(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(2.dp)
@@ -1905,47 +2253,48 @@ fun SeitharolNextTrackCountdownBanner(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Surface(
-                            shape = RoundedCornerShape(5.dp),
-                            color = accentColor.copy(alpha = 0.20f)
+                            shape = RoundedCornerShape(6.dp),
+                            color = chipBgColor
                         ) {
-                            Text(
-                                text = "UP NEXT",
-                                color = accentColor,
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 9.sp,
-                                letterSpacing = 0.6.sp,
-                                maxLines = 1,
-                                softWrap = false,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(5.dp)
+                                        .clip(RoundedCornerShape(2.5.dp))
+                                        .background(accentColor)
+                                )
+                                Text(
+                                    text = "Up next in ${countdownSeconds}s",
+                                    color = chipTextColor,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 10.5.sp,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
                         }
-                        Text(
-                            text = "Starting in ${countdownSeconds}s",
-                            color = Color.White.copy(alpha = 0.72f),
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 10.5.sp,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
-                        )
                     }
 
                     Text(
                         text = nextTrack.title,
-                        color = Color.White,
-                        fontFamily = SyneFontFamily,
+                        color = primaryTextColor,
+                        fontFamily = OutfitFontFamily,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 13.5.sp,
-                        lineHeight = 16.sp,
+                        fontSize = 14.sp,
+                        lineHeight = 17.sp,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.basicMarquee(iterations = 1, initialDelayMillis = 800)
                     )
 
                     Text(
                         text = nextTrack.artist,
-                        color = Color.White.copy(alpha = 0.68f),
+                        color = secondaryTextColor,
                         fontFamily = OutfitFontFamily,
                         fontWeight = FontWeight.Medium,
                         fontSize = 11.5.sp,
@@ -1955,76 +2304,67 @@ fun SeitharolNextTrackCountdownBanner(
                     )
                 }
 
-                // Right Action Cluster: Non-wrapping Play CTA Pill + Dismiss Icon
+                // Right Action Cluster: Google Pixel Rounded-Square Play Button + Dismiss Squircle
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Surface(
-                        shape = RoundedCornerShape(14.dp),
+                        onClick = onPlayNow,
+                        shape = RoundedCornerShape(12.dp),
                         color = accentColor,
-                        modifier = Modifier
-                            .height(32.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .clickable { onPlayNow() }
+                        modifier = Modifier.height(34.dp)
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 10.dp),
+                            modifier = Modifier.padding(horizontal = 11.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Default.SkipNext,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(15.dp)
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "Play Next Now",
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(16.dp)
                             )
                             Text(
                                 text = "Play",
-                                color = Color.White,
+                                color = MaterialTheme.colorScheme.onPrimary,
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 11.5.sp,
+                                fontSize = 12.sp,
                                 maxLines = 1,
                                 softWrap = false
                             )
                         }
                     }
 
-                    IconButton(
+                    Surface(
                         onClick = onDismiss,
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(CircleShape)
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (isDarkOverlay) Color.White.copy(alpha = 0.10f) else MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.size(32.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Dismiss countdown",
-                            tint = Color.White.copy(alpha = 0.65f),
-                            modifier = Modifier.size(15.dp)
-                        )
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Dismiss countdown",
+                                tint = secondaryTextColor,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
             }
 
-            // Sleek Bottom Progress Drain Line
-            Box(
+            // Subtle Google Pixel Linear Progress Bar at bottom edge
+            LinearProgressIndicator(
+                progress = { animatedCountdownProgress },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(2.5.dp)
-                    .background(Color.White.copy(alpha = 0.08f))
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .fillMaxWidth(animatedCountdownProgress)
-                        .background(
-                            Brush.horizontalGradient(
-                                colors = listOf(accentColor.copy(alpha = 0.65f), accentColor)
-                            )
-                        )
-                )
-            }
+                    .height(2.5.dp),
+                color = accentColor,
+                trackColor = if (isDarkOverlay) Color.White.copy(alpha = 0.10f) else MaterialTheme.colorScheme.surfaceVariant
+            )
         }
     }
 }
@@ -3128,7 +3468,11 @@ fun SeitharolFullscreenVideoModal(
                                                         Surface(
                                                             onClick = {
                                                                 showSuggestionsDrawer = false
-                                                                viewModel.playTrack(sugTrack.copy(genre = "YouTube Video", itag = 18, codec = "MP4"))
+                                                                val videoQueue = relatedSuggestions.map {
+                                                                    it.copy(genre = "YouTube Video", album = "YouTube Video", itag = 18, codec = "MP4")
+                                                                }
+                                                                val targetIdx = videoQueue.indexOfFirst { it.id == sugTrack.id }.coerceAtLeast(0)
+                                                                viewModel.playQueue(videoQueue, targetIdx, isPlaylist = true)
                                                             },
                                                             shape = RoundedCornerShape(14.dp),
                                                             color = Color.White.copy(alpha = 0.08f),
@@ -3317,7 +3661,7 @@ fun SeitharolFullscreenVideoModal(
                 }
 
                 AnimatedVisibility(
-                    visible = showNextCountdown && nextTrack != null && !showSuggestionsDrawer && !isControlsLocked,
+                    visible = showNextCountdown && playerState.repeatMode != RepeatMode.ONE && nextTrack != null && !showSuggestionsDrawer && !isControlsLocked,
                     enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
                     exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
                     modifier = Modifier
@@ -3325,14 +3669,15 @@ fun SeitharolFullscreenVideoModal(
                         .navigationBarsPadding()
                         .padding(horizontal = 24.dp, vertical = if (showControls) 110.dp else 32.dp)
                 ) {
-                    if (nextTrack != null) {
+                    if (nextTrack != null && playerState.repeatMode != RepeatMode.ONE) {
                         SeitharolNextTrackCountdownBanner(
                             nextTrack = nextTrack,
                             countdownSeconds = countdownSeconds,
                             countdownProgress = countdownProgress,
                             onPlayNow = { viewModel.next() },
                             onDismiss = onDismissCountdown,
-                            modifier = Modifier.widthIn(max = 380.dp)
+                            isDarkOverlay = true,
+                            modifier = Modifier.widthIn(max = 390.dp)
                         )
                     }
                 }

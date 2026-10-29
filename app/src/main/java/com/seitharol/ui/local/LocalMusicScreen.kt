@@ -352,7 +352,7 @@ fun LocalMusicScreen(
                             } else {
                                 Image(
                                     painter = appLogoPainter,
-                                    contentDescription = "SEITHAROL Logo",
+                                    contentDescription = "Seitharol Logo",
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize()
                                 )

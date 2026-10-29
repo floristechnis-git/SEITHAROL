@@ -234,14 +234,6 @@ fun CascadeApp(
         }
     }
 
-    // Collect playlist navigation events from shared playlist deep links
-    LaunchedEffect(Unit) {
-        viewModel.playlistNavigationEvent.collectLatest { playlistId ->
-            isPlayerExpanded = false
-            currentSubScreen = SubScreen.Playlist(playlistId = playlistId)
-        }
-    }
-
     // Auto-expand PlayerScreen when opening a shared track via HTTPS deep link or seitharol://
     LaunchedEffect(Unit) {
         viewModel.playerExpandEvent.collectLatest {
@@ -951,7 +943,8 @@ fun CascadeApp(
                                 }
                                 context.startActivity(Intent.createChooser(sendIntent, "Share Track"))
                             }
-                        }
+                        },
+                        onAddToPlaylist = { trackToAddToPlaylist = it }
                     )
                 }
 
@@ -1034,7 +1027,9 @@ fun CascadeApp(
             val fsTrack = playerState.currentTrack!!
             val totalDur = (if (playerState.durationMs > 0L) playerState.durationMs else (fsTrack.durationMs.takeIf { it > 0L } ?: 210_000L)).coerceAtLeast(1000L)
             val dispPos = playerState.currentPositionMs.coerceAtLeast(0L)
+            val isSingleLoop = playerState.repeatMode == com.example.player.RepeatMode.ONE
             val fullscreenNextTrack = when {
+                isSingleLoop -> null
                 playerState.currentIndex in 0 until playerState.queue.size - 1 ->
                     playerState.queue[playerState.currentIndex + 1]
                 playerState.repeatMode == com.example.player.RepeatMode.ALL && playerState.queue.size > 1 ->
@@ -1042,12 +1037,15 @@ fun CascadeApp(
                 else -> null
             }
             val fullscreenRemainingMs = (totalDur - dispPos).coerceAtLeast(0L)
-            var dismissedFullscreenCountdown by remember(fsTrack.id) { mutableStateOf(false) }
+            var dismissedFullscreenCountdown by remember(fsTrack.id, playerState.repeatMode) { mutableStateOf(false) }
             val showFullscreenCountdown = playerState.isPlaying &&
                 !playerState.isBuffering &&
+                !isSingleLoop &&
+                playerState.durationMs >= 15_000L &&
                 totalDur >= 15_000L &&
                 fullscreenRemainingMs in 1L..10_000L &&
                 fullscreenNextTrack != null &&
+                fullscreenNextTrack.id != fsTrack.id &&
                 !dismissedFullscreenCountdown
             val fullscreenCountdownSec = ((fullscreenRemainingMs + 999L) / 1000L).toInt().coerceIn(1, 10)
             val fullscreenCountdownProg = (fullscreenRemainingMs.toFloat() / 10_000f).coerceIn(0f, 1f)

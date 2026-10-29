@@ -87,11 +87,6 @@ object SeitharolDeepLinkHelper {
             val browseId: String?
         ) : DeepLinkTarget
 
-        data class PlaylistTarget(
-            val playlistId: String,
-            val title: String = ""
-        ) : DeepLinkTarget
-
         data class AudioFileTarget(
             val uri: Uri,
             val title: String,
@@ -213,9 +208,6 @@ object SeitharolDeepLinkHelper {
                             artistName = name,
                             browseId = id.takeIf { it.startsWith("UC") || it.startsWith("MPLA") }
                         )
-                    } else if (type == "playlist" || type == "album") {
-                        val title = uri.getQueryParameter("title")?.let(::decodeParam).orEmpty()
-                        DeepLinkTarget.PlaylistTarget(playlistId = id, title = title)
                     } else null
                 }
                 else -> {
@@ -261,9 +253,6 @@ object SeitharolDeepLinkHelper {
                         artistName = name,
                         browseId = rawId.takeIf { it.startsWith("UC") || it.startsWith("MPLA") }
                     )
-                } else if (entityType == "playlist" || entityType == "album") {
-                    val title = uri.getQueryParameter("title")?.let(::decodeParam).orEmpty()
-                    return DeepLinkTarget.PlaylistTarget(playlistId = rawId, title = title)
                 }
             }
 

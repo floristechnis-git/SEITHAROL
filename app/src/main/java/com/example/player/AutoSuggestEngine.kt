@@ -8,11 +8,8 @@ import kotlinx.coroutines.flow.asStateFlow
 data class SuggestedPlaylist(
     val id: String,
     val title: String,
-    val subtitle: String = "",
-    val artUrl: String = "",
-    val thumbnailUrl: String = artUrl,
-    val trackCount: Int = 0,
-    val tracks: List<Track> = emptyList()
+    val thumbnailUrl: String,
+    val tracks: List<Track>
 )
 
 interface RecommendationRepository {

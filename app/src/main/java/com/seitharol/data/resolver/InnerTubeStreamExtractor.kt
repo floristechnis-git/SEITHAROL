@@ -1680,7 +1680,7 @@ object InnerTubeStreamExtractor {
                             .ifBlank { "YouTube Playlist" }
                         val countTxt = extractSimpleOrRunsText(pr.optJSONObject("videoCountText"))
                             .ifBlank { pr.optString("videoCount") }
-                        val thumb = extractBestThumbnail(pr.optJSONObject("thumbnails")?.optJSONObject(0)?.optJSONArray("thumbnails"))
+                        val thumb = extractBestThumbnail(pr.optJSONArray("thumbnails")?.optJSONObject(0)?.optJSONArray("thumbnails"))
                             .ifBlank { extractBestThumbnail(pr.optJSONObject("thumbnail")?.optJSONArray("thumbnails")) }
                         val browseId = if (plId.startsWith("VL")) plId else "VL$plId"
                         if (out.none { it.browseId == browseId }) {

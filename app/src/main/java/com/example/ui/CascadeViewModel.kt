@@ -652,6 +652,8 @@ class CascadeViewModel(
                         com.example.player.SuggestedPlaylist(
                             id = "RDAMVM$seedVid",
                             title = "${seedTrack.title.take(24)} Radio Mix",
+                            thumbnailUrl = seedTrack.artUrl,
+                            tracks = emptyList(),
                             subtitle = "YouTube Mix • Continuous radio",
                             artUrl = seedTrack.artUrl,
                             trackCount = 35
@@ -665,12 +667,15 @@ class CascadeViewModel(
                     limit = 5
                 )
                 collections.forEach { col ->
+                    val resolvedThumb = col.thumbnailUrl.ifBlank { seedTrack.artUrl }
                     out.add(
                         com.example.player.SuggestedPlaylist(
                             id = col.browseId,
                             title = col.title,
+                            thumbnailUrl = resolvedThumb,
+                            tracks = emptyList(),
                             subtitle = col.subtitle,
-                            artUrl = col.thumbnailUrl.ifBlank { seedTrack.artUrl },
+                            artUrl = resolvedThumb,
                             trackCount = 25
                         )
                     )

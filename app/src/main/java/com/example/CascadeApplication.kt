@@ -125,5 +125,16 @@ class CascadeApplication : Application(), coil.ImageLoaderFactory {
     companion object {
         lateinit var instance: CascadeApplication
             private set
+
+        fun isLowRamPhone(context: Context? = null): Boolean {
+            return try {
+                val ctx = context ?: (if (::instance.isInitialized) instance else null)
+                val am = ctx?.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+                val maxHeap = Runtime.getRuntime().maxMemory()
+                am?.isLowRamDevice == true || maxHeap <= 200L * 1024L * 1024L
+            } catch (_: Throwable) {
+                false
+            }
+        }
     }
 }

@@ -731,6 +731,14 @@ fun PlayerScreen(
 
     val likedTrackIds by viewModel.likedTrackIds.collectAsState()
     val isLiked = track.id in likedTrackIds || track.isLiked
+    val downloads by viewModel.activeDownloads.collectAsState()
+    val trackDownload = downloads.firstOrNull {
+        it.trackId == track.id || (it.title.equals(track.title, ignoreCase = true) && it.artist.equals(track.artist, ignoreCase = true))
+    }
+    val isDownloaded = track.isDownloaded || trackDownload?.state == com.example.data.model.DownloadState.COMPLETED
+    val isDownloading = trackDownload?.state == com.example.data.model.DownloadState.DOWNLOADING || trackDownload?.state == com.example.data.model.DownloadState.FINALIZING
+    val rawDownloadProgress = trackDownload?.progress ?: 0f
+    val downloadProgress = if (rawDownloadProgress.isNaN() || rawDownloadProgress.isInfinite()) 0f else rawDownloadProgress.coerceIn(0f, 1f)
 
     Column(
         modifier = modifier
@@ -1332,16 +1340,8 @@ fun PlayerScreen(
         }
 
         // ────────────────────────────────────────────────────────────
-        // Secondary Actions Row (EQ, Timer, Download / Cancel, Share, Lyrics, Queue)
+        // Secondary Actions Row (EQ, Timer, Download / Cancel, Share, Add to Playlist, Lyrics, Queue)
         // ────────────────────────────────────────────────────────────
-        val downloads by viewModel.activeDownloads.collectAsState()
-        val trackDownload = downloads.firstOrNull {
-            it.trackId == track.id || (it.title.equals(track.title, ignoreCase = true) && it.artist.equals(track.artist, ignoreCase = true))
-        }
-        val isDownloaded = track.isDownloaded || trackDownload?.state == com.example.data.model.DownloadState.COMPLETED
-        val isDownloading = trackDownload?.state == com.example.data.model.DownloadState.DOWNLOADING || trackDownload?.state == com.example.data.model.DownloadState.FINALIZING
-        val rawDownloadProgress = trackDownload?.progress ?: 0f
-        val downloadProgress = if (rawDownloadProgress.isNaN() || rawDownloadProgress.isInfinite()) 0f else rawDownloadProgress.coerceIn(0f, 1f)
 
         Row(
             modifier = Modifier

@@ -151,7 +151,7 @@ fun PlaylistScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(340.dp)
+                        .heightIn(min = 340.dp)
                         .background(
                             Brush.verticalGradient(
                                 listOf(
@@ -171,7 +171,7 @@ fun PlaylistScreen(
                     ) {
                         Surface(
                             modifier = Modifier.size(44.dp),
-                            shape = CircleShape,
+                            shape = RoundedCornerShape(14.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant,
                             onClick = onBack
                         ) {
@@ -187,7 +187,7 @@ fun PlaylistScreen(
 
                         Surface(
                             modifier = Modifier.size(44.dp),
-                            shape = CircleShape,
+                            shape = RoundedCornerShape(14.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant,
                             onClick = { showMoreSheet = true }
                         ) {
@@ -204,8 +204,10 @@ fun PlaylistScreen(
 
                     Column(
                         modifier = Modifier
+                            .fillMaxWidth()
                             .align(Alignment.Center)
-                            .padding(top = 40.dp),
+                            .statusBarsPadding()
+                            .padding(start = 28.dp, end = 28.dp, top = 56.dp, bottom = 20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         val badgeTag = remember(playlistId, displayTitle, displayDescription) {
@@ -224,7 +226,7 @@ fun PlaylistScreen(
                         }
 
                         Surface(
-                            shape = RoundedCornerShape(4.dp),
+                            shape = RoundedCornerShape(8.dp),
                             color = badgeColor
                         ) {
                             Text(
@@ -233,27 +235,41 @@ fun PlaylistScreen(
                                 fontWeight = FontWeight.ExtraBold,
                                 color = Color.White,
                                 letterSpacing = 0.8.sp,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         Text(
                             text = currentPlaylist.title,
                             fontFamily = SyneFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 26.sp,
-                            color = MaterialTheme.colorScheme.onBackground
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 23.sp,
+                            lineHeight = 29.sp,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            maxLines = 3,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp)
                         )
 
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
 
                         Text(
-                            text = currentPlaylist.description.ifBlank { "The best tracks every week" },
+                            text = currentPlaylist.description.ifBlank { "Curated tracks & releases" },
                             fontFamily = OutfitFontFamily,
                             fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            lineHeight = 18.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            maxLines = 2,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp)
                         )
 
                         Spacer(modifier = Modifier.height(20.dp))

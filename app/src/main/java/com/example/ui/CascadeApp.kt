@@ -918,8 +918,14 @@ fun CascadeApp(
                 AnimatedVisibility(
                     visible = isPlayerExpanded,
                     modifier = Modifier.zIndex(30f),
-                    enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-                    exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
+                    enter = slideInVertically(
+                        animationSpec = tween(durationMillis = 280),
+                        initialOffsetY = { it }
+                    ) + fadeIn(animationSpec = tween(220)),
+                    exit = slideOutVertically(
+                        animationSpec = tween(durationMillis = 240),
+                        targetOffsetY = { it }
+                    ) + fadeOut(animationSpec = tween(180))
                 ) {
                     BackHandler { isPlayerExpanded = false }
                     PlayerScreen(
@@ -944,7 +950,11 @@ fun CascadeApp(
                                 context.startActivity(Intent.createChooser(sendIntent, "Share Track"))
                             }
                         },
-                        onAddToPlaylist = { trackToAddToPlaylist = it }
+                        onAddToPlaylist = { trackToAddToPlaylist = it },
+                        onNavigateToPlaylist = { plId ->
+                            isPlayerExpanded = false
+                            currentSubScreen = SubScreen.PlaylistDetail(plId)
+                        }
                     )
                 }
 

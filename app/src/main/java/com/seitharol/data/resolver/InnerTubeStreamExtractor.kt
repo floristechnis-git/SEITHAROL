@@ -1096,6 +1096,42 @@ object InnerTubeStreamExtractor {
                 "Power workout official audio tracks",
                 "Cardio & lifting hype anthems"
             ).shuffled().take(3)
+            moodCategory.equals("Relax", true) -> listOf(
+                "Relaxing acoustic & ambient official songs",
+                "Calm peaceful indie & soft pop songs",
+                "Unwind evening acoustic melodies official",
+                "Soothing vocal & acoustic chill tracks"
+            ).shuffled().take(3)
+            moodCategory.equals("Focus", true) -> listOf(
+                "Deep focus study instrumental & lofi beats",
+                "Concentration ambient & piano study music",
+                "Coding & reading chill focus tracks",
+                "Calm productive instrumental mixes"
+            ).shuffled().take(3)
+            moodCategory.equals("Commute", true) -> listOf(
+                "Driving road trip upbeat pop & rock hits",
+                "Morning commute feel good songs official",
+                "Cruising indie pop & synthwave hits",
+                "Best driving singalong hit songs"
+            ).shuffled().take(3)
+            moodCategory.equals("Feel Good", true) -> listOf(
+                "Feel good happy upbeat pop songs",
+                "Good vibes sunshine pop & soul hits",
+                "Uplifting joyful anthem songs official",
+                "Positive energy hit songs"
+            ).shuffled().take(3)
+            moodCategory.equals("Party", true) -> listOf(
+                "Party dance club bangers & EDM hits",
+                "Weekend party hip hop & pop anthems",
+                "High energy dancefloor hit songs",
+                "Top party remix & club hits"
+            ).shuffled().take(3)
+            moodCategory.equals("Sleep", true) -> listOf(
+                "Sleep ambient soft piano & rain sounds",
+                "Deep sleep calm acoustic & lofi tracks",
+                "Peaceful night lullaby & ambient music",
+                "Soothing bedtime instrumental songs"
+            ).shuffled().take(3)
             moodCategory.equals("Lo-Fi", true) -> listOf(
                 "Lofi chill beats study & relax",
                 "Late night lo-fi hip hop & aesthetic beats",
@@ -1198,16 +1234,18 @@ object InnerTubeStreamExtractor {
             .distinct()
             .take(3)
 
-        // 1. Regional-first Fresh Releases (Manipuri & Northeast / India new official songs)
+        // 1. Category-pure Fresh Releases when a category is selected; Regional-first when in "All"
+        val isGeneralMood = moodCategory.equals("All", true) || moodCategory.equals("For You", true)
         val regionalFreshQueries = when {
             moodCategory.equals("Manipuri Song", true) -> listOf(
                 "Manipuri new official song releases",
                 "Latest Imphal Manipuri official audio",
                 "Manipuri modern folk & romantic new songs"
             )
-            !moodCategory.equals("All", true) && !moodCategory.equals("For You", true) -> listOf(
-                "Manipuri new official song releases",
-                "$moodCategory latest official audio releases"
+            !isGeneralMood -> listOf(
+                "$moodCategory new official songs 2026",
+                "$moodCategory latest official audio releases",
+                "Top $moodCategory hits official audio"
             )
             else -> listOf(
                 "Manipuri latest official new songs",
@@ -1221,12 +1259,16 @@ object InnerTubeStreamExtractor {
             async { searchOfficialYtmSongs(q, limit = 10).shuffled() }
         }
 
-        // 2. Fresh Manipuri New Releases shelf
+        // 2. Fresh New Releases shelf (pure category releases when a category is active)
         val liveNewReleasesJob = async {
-            searchOfficialYtmSongs("Manipuri new song release official", limit = 14).shuffled()
+            val query = if (isGeneralMood || moodCategory.equals("Manipuri Song", true)) {
+                "Manipuri new song release official"
+            } else {
+                "New $moodCategory music releases official"
+            }
+            searchOfficialYtmSongs(query, limit = 14).shuffled()
         }
 
-        val isGeneralMood = moodCategory.equals("All", true) || moodCategory.equals("For You", true)
         // 3. Personalization via Automix seed continuations ONLY for general "All" feed (never for Energize, Trending, etc.)
         val automixPersonalizedJob = async {
             if (!isGeneralMood) emptyList()
@@ -1353,7 +1395,13 @@ object InnerTubeStreamExtractor {
             moodCategory.equals("Workout", true) -> listOf("Workout Gym Hype Playlist", "Cardio & Power Training Mix")
             moodCategory.equals("Chill", true) -> listOf("Chill Vibes Acoustic Playlist", "Late Night Chillout Mix")
             moodCategory.equals("Sad", true) -> listOf("Sad Heartbreak Ballads Playlist", "Emotional Acoustic Mix")
-            moodCategory.equals("Romantic", true) -> listOf("Romantic Love Songs Playlist", "Best Love Duets & Melodies")
+            moodCategory.equals("Romantic", true) || moodCategory.equals("Romance", true) -> listOf("Romantic Love Songs Playlist", "Best Love Duets & Melodies")
+            moodCategory.equals("Relax", true) -> listOf("Relaxing Acoustic & Chill Playlist", "Peaceful Evening Unwind Mix", "Calm Indie & Soft Pop Playlist")
+            moodCategory.equals("Focus", true) -> listOf("Deep Focus Study & Work Playlist", "Instrumental Concentration Mix", "Productive Coding & Reading Beats")
+            moodCategory.equals("Commute", true) -> listOf("Road Trip & Driving Hits Playlist", "Morning Commute Singalong Mix", "Upbeat Highway Pop & Indie")
+            moodCategory.equals("Feel Good", true) -> listOf("Feel Good Happy Hits Playlist", "Good Vibes Sunshine Pop Mix", "Uplifting Anthems Playlist")
+            moodCategory.equals("Party", true) -> listOf("Ultimate Party Dance Hits Playlist", "Club Bangers & EDM Mix", "Weekend Party Anthems")
+            moodCategory.equals("Sleep", true) -> listOf("Deep Sleep Piano & Rain Playlist", "Calm Night Ambient Mix", "Bedtime Acoustic & Lofi")
             moodCategory.equals("Lo-Fi", true) -> listOf("Lo-Fi Chill Study Beats Playlist", "Cozy Late Night Lofi Mix")
             else -> listOf(
                 "Manipuri Hit Songs Playlist",

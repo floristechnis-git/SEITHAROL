@@ -169,10 +169,16 @@ fun MiniPlayer(
                             fontFamily = OutfitFontFamily,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                            softWrap = false,
+                            overflow = TextOverflow.Clip,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1200)
+                                .basicMarquee(
+                                    iterations = Int.MAX_VALUE,
+                                    initialDelayMillis = 1000,
+                                    repeatDelayMillis = 1000,
+                                    velocity = 28.dp
+                                )
                         )
                         Text(
                             text = track.artist,
@@ -180,7 +186,16 @@ fun MiniPlayer(
                             fontSize = 11.sp,
                             fontFamily = OutfitFontFamily,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            softWrap = false,
+                            overflow = TextOverflow.Clip,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .basicMarquee(
+                                    iterations = Int.MAX_VALUE,
+                                    initialDelayMillis = 1000,
+                                    repeatDelayMillis = 1000,
+                                    velocity = 26.dp
+                                )
                         )
                     }
                 }

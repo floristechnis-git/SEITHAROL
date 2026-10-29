@@ -1746,6 +1746,194 @@ class CascadeViewModel(
         playedTrackKeys.clear()
         autoSuggestManager.resetSessionHistory()
     }
+
+    data class PlayerRelatedData(
+        val seedTrackId: String = "",
+        val isLoading: Boolean = false,
+        val relatedTracks: List<Track> = emptyList(),
+        val relatedPlaylistsAndMixes: List<com.seitharol.data.resolver.YtmCollectionSummary> = emptyList(),
+        val artistAlbumsAndSingles: List<com.seitharol.data.resolver.YtmCollectionSummary> = emptyList(),
+        val similarArtists: List<com.seitharol.data.resolver.YtmArtistPreview> = emptyList(),
+        val artistName: String = "",
+        val artistAvatarUrl: String = "",
+        val artistSubscribers: String = "",
+        val artistDescription: String = ""
+    )
+
+    private val _playerRelatedData = MutableStateFlow(PlayerRelatedData())
+    val playerRelatedData: StateFlow<PlayerRelatedData> = _playerRelatedData.asStateFlow()
+    private var relatedFetchJob: Job? = null
+
+    /**
+     * Loads YouTube Music-style "Related" data (Similar Songs/Videos, Related Playlists & Mixes,
+     * More from Artist Albums/Singles, Similar Artists, and About the Artist) WITHOUT modifying
+     * or affecting the active Up Next queue.
+     */
+    fun loadRelatedForTrack(seedTrack: Track?, forceReload: Boolean = false) {
+        val track = seedTrack ?: playerState.value.currentTrack ?: return
+        if (!forceReload && _playerRelatedData.value.seedTrackId == track.id &&
+            (_playerRelatedData.value.relatedTracks.isNotEmpty() || _playerRelatedData.value.isLoading)
+        ) {
+            return
+        }
+        if (track.isLocalOnlyTrack || isOfflineMode.value) {
+            _playerRelatedData.value = PlayerRelatedData(
+                seedTrackId = track.id,
+                isLoading = false,
+                relatedTracks = downloadedTracks.value.filter { it.id != track.id }.take(16),
+                artistName = track.artist
+            )
+            return
+        }
+
+        relatedFetchJob?.cancel()
+        _playerRelatedData.value = PlayerRelatedData(
+            seedTrackId = track.id,
+            isLoading = true,
+            artistName = track.artist
+        )
+
+        relatedFetchJob = viewModelScope.launch(vmExceptionHandler) {
+            val isVid = playerState.value.isVideoMode || track.isVideoTrack
+            val cleanArtist = track.artist
+                .removeSuffix(" - Topic")
+                .removeSuffix("- Topic")
+                .split(",", "&", "feat.", "ft.", "/")
+                .firstOrNull()
+                ?.trim()
+                .orEmpty()
+            val likedIds = likedTrackIds.value
+            val dlMap = downloadedTracksById.value
+
+            val relatedTracksDeferred = async(Dispatchers.IO) {
+                runCatching {
+                    val seedMeta = com.seitharol.data.resolver.TrackMetadata(
+                        id = track.id,
+                        title = track.title,
+                        artist = track.artist,
+                        album = if (isVid) "YouTube Video" else track.album,
+                        durationSeconds = (track.durationMs / 1000L).toInt(),
+                        thumbnailUrl = track.artUrl,
+                        source = if (isVid) "YOUTUBE_VIDEO" else "YOUTUBE"
+                    )
+                    val recs = com.seitharol.player.QueueRecommendationEngine.fetchRelevantRecommendations(
+                        currentTrack = seedMeta,
+                        queueTracks = listOf(seedMeta),
+                        limit = 20
+                    )
+                    recs.map { r ->
+                        val recIsVideo = isVid || r.source.equals("YOUTUBE_VIDEO", ignoreCase = true)
+                        enrichTrackStatus(
+                            Track(
+                                id = r.id,
+                                title = r.title,
+                                artist = r.artist,
+                                album = if (recIsVideo) "YouTube Video" else r.album.takeUnless {
+                                    it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
+                                }.orEmpty(),
+                                durationMs = r.durationSeconds * 1000L,
+                                artUrl = r.thumbnailUrl,
+                                genre = if (recIsVideo) "YouTube Video" else "Music",
+                                itag = if (recIsVideo) 18 else 251,
+                                codec = if (recIsVideo) "MP4" else "Opus"
+                            ),
+                            likedIds,
+                            dlMap
+                        )
+                    }
+                }.getOrDefault(emptyList())
+            }
+
+            val relatedPlaylistsDeferred = async(Dispatchers.IO) {
+                runCatching {
+                    val list = mutableListOf<com.seitharol.data.resolver.YtmCollectionSummary>()
+                    val seedVid = InnerTubeStreamExtractor.extractVideoId(track.id)
+                    if (!seedVid.isNullOrBlank()) {
+                        list.add(
+                            com.seitharol.data.resolver.YtmCollectionSummary(
+                                browseId = "RDAMVM$seedVid",
+                                playlistId = "RDAMVM$seedVid",
+                                title = "${track.title.take(28)} Mix",
+                                subtitle = "YouTube Mix • Continuous station",
+                                thumbnailUrl = track.artUrl,
+                                type = "MIX"
+                            )
+                        )
+                    }
+                    val query = if (cleanArtist.isNotBlank()) "$cleanArtist ${track.title} Mix Playlist" else "${track.title} Playlist"
+                    val searched = InnerTubeStreamExtractor.searchYtmCollections(
+                        query = query,
+                        filterParams = "EgWKAQIoAWoKEAkQChADEAUQBA==",
+                        type = "PLAYLIST",
+                        limit = 8
+                    )
+                    list.addAll(searched)
+                    list.distinctBy { it.browseId }.take(10)
+                }.getOrDefault(emptyList())
+            }
+
+            val artistPageDeferred = async(Dispatchers.IO) {
+                if (cleanArtist.length >= 2 && track.isNavigableArtist) {
+                    runCatching {
+                        InnerTubeStreamExtractor.fetchArtistPageData(cleanArtist, isChannelMode = isVid)
+                    }.getOrNull()
+                } else null
+            }
+
+            val relTracks = relatedTracksDeferred.await()
+            val relPlaylists = relatedPlaylistsDeferred.await()
+            val artistPage = artistPageDeferred.await()
+
+            val artistTopFallback = artistPage?.topSongs.orEmpty().map { cand ->
+                enrichTrackStatus(cand.toTrack(), likedIds, dlMap)
+            }
+            val mergedRelatedTracks = (relTracks + artistTopFallback)
+                .filter { it.id != track.id }
+                .distinctBy { it.id }
+                .take(20)
+
+            val mergedPlaylists = (relPlaylists + artistPage?.playlists.orEmpty())
+                .distinctBy { it.browseId }
+                .take(10)
+
+            val artistReleases = (artistPage?.albums.orEmpty() + artistPage?.singles.orEmpty())
+                .distinctBy { it.browseId }
+                .take(12)
+
+            _playerRelatedData.value = PlayerRelatedData(
+                seedTrackId = track.id,
+                isLoading = false,
+                relatedTracks = mergedRelatedTracks,
+                relatedPlaylistsAndMixes = mergedPlaylists,
+                artistAlbumsAndSingles = artistReleases,
+                similarArtists = artistPage?.similarArtists.orEmpty().distinctBy { it.browseId }.take(10),
+                artistName = artistPage?.name?.ifBlank { cleanArtist } ?: cleanArtist.ifBlank { track.artist },
+                artistAvatarUrl = artistPage?.avatarUrl.orEmpty().ifBlank { track.artUrl },
+                artistSubscribers = artistPage?.subscriberCountText.orEmpty(),
+                artistDescription = artistPage?.description.orEmpty()
+            )
+        }
+    }
+
+    /**
+     * Plays a song selected from the "Related" sheet immediately WITHOUT wiping out the
+     * user's existing Up Next queue.
+     */
+    fun playRelatedTrackPreservingQueue(track: Track) {
+        val dlMatch = downloadedTracksById.value[track.id]
+        val effectiveTrack = if (dlMatch != null && (!track.isVideoTrack || isOfflineMode.value || dlMatch.localPath?.endsWith(".mp4", true) == true)) {
+            track.copy(isDownloaded = true, localPath = dlMatch.localPath)
+        } else track
+        viewModelScope.launch(vmExceptionHandler) {
+            runCatching {
+                if (!effectiveTrack.isLocalOnlyTrack) {
+                    musicRepository.insertTrack(effectiveTrack)
+                }
+                musicRepository.recordPlayHistory(effectiveTrack)
+            }
+        }
+        playerManager.playTrackPreservingQueue(effectiveTrack)
+    }
 }
 
 class CascadeViewModelFactory(

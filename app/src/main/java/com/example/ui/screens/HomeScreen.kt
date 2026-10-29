@@ -483,14 +483,20 @@ fun HomeScreen(
 
     val moodChips = remember {
         listOf(
+            "Relax",
             "Energize",
+            "Workout",
+            "Commute",
+            "Focus",
+            "Chill",
+            "Feel Good",
+            "Party",
+            "Romantic",
+            "Sad",
             "Trending",
             "Manipuri Song",
-            "Sad",
-            "Chill",
-            "Romantic",
-            "Workout",
-            "Lo-Fi"
+            "Lo-Fi",
+            "Sleep"
         )
     }
 
@@ -700,36 +706,90 @@ fun HomeScreen(
             }
 
             // ────────────────────────────────────────────────────────────
-            // 1. YouTube Music Style Category Filter Chips
+            // 1. OuterTune / YouTube Music Category Filter Chip Bar (Google Pixel Material 3 UI)
             // ────────────────────────────────────────────────────────────
             item {
+                val isAllSelected = selectedMood.equals("All", ignoreCase = true)
+                val orderedChips = remember(selectedMood, moodChips) {
+                    if (isAllSelected) moodChips
+                    else listOf(selectedMood) + moodChips.filterNot { it.equals(selectedMood, ignoreCase = true) }
+                }
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    items(moodChips) { mood ->
-                        val isSelected = mood.equals(selectedMood, ignoreCase = true) || (mood == "All" && selectedMood == "All")
-                        Surface(
-                            shape = RoundedCornerShape(20.dp),
-                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(20.dp))
-                                .clickable {
-                                    if (isSelected && mood != "All") {
-                                        viewModel.selectHomeMood("All")
-                                    } else {
-                                        viewModel.selectHomeMood(mood)
-                                    }
+                    if (!isAllSelected) {
+                        item(key = "clear_category_chip") {
+                            Surface(
+                                onClick = { viewModel.selectHomeMood("All") },
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.outlineVariant
+                                ),
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear Category Filter",
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.size(18.dp)
+                                    )
                                 }
+                            }
+                        }
+                    }
+
+                    items(orderedChips, key = { "chip_$it" }) { mood ->
+                        val isSelected = mood.equals(selectedMood, ignoreCase = true)
+                        Surface(
+                            onClick = {
+                                if (isSelected) {
+                                    viewModel.selectHomeMood("All")
+                                } else {
+                                    viewModel.selectHomeMood(mood)
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isSelected) {
+                                MaterialTheme.colorScheme.onSurface
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            },
+                            border = if (isSelected) null else androidx.compose.foundation.BorderStroke(
+                                width = 1.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
+                            ),
+                            modifier = Modifier.height(36.dp)
                         ) {
-                            Text(
-                                text = mood,
-                                color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontFamily = OutfitFontFamily,
-                                fontSize = 13.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                if (isSelected) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(RoundedCornerShape(3.dp))
+                                            .background(MaterialTheme.colorScheme.primary)
+                                    )
+                                }
+                                Text(
+                                    text = mood,
+                                    color = if (isSelected) {
+                                        MaterialTheme.colorScheme.surface
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
+                                    fontFamily = OutfitFontFamily,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                )
+                            }
                         }
                     }
                 }
@@ -876,171 +936,396 @@ fun HomeScreen(
                 }
             }
 
-            // ────────────────────────────────────────────────────────────
-            // 2. Spotify-Style 2-Column "Speed Dial / Quick Picks" Bento Grid (All) OR Category Active Header
-            // ────────────────────────────────────────────────────────────
             val isAllMood = selectedMood.equals("All", ignoreCase = true)
+
             if (isAllMood) {
+                // ────────────────────────────────────────────────────────────
+                // DEFAULT HOME VIEW (OuterTune + YouTube Music Structure)
+                // ────────────────────────────────────────────────────────────
                 if (quickDialItems.isNotEmpty()) {
                     item {
-                        QuickDialBentoSection(
-                            items = quickDialItems,
-                            onItemClick = { item ->
-                                if (item.isMix || item.isAlbumOrPlaylist) {
-                                    viewModel.playPlaylistOrMix(item.id)
-                                } else {
-                                    val track = item.originalTrack ?: item.toTrack()
-                                    viewModel.playTrack(track)
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            SectionHeader(
+                                title = "Listen Again",
+                                subtitle = "Your speed dial & quick favorites"
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            QuickDialBentoSection(
+                                items = quickDialItems,
+                                onItemClick = { item ->
+                                    if (item.isMix || item.isAlbumOrPlaylist) {
+                                        viewModel.playPlaylistOrMix(item.id)
+                                    } else {
+                                        val track = item.originalTrack ?: item.toTrack()
+                                        viewModel.playTrack(track)
+                                    }
                                 }
+                            )
+                        }
+                    }
+                }
+
+                if (trendingItems.isNotEmpty()) {
+                    item {
+                        val shelfTitle = if (isOfflineMode) "Offline Library Tracks" else "Quick Picks"
+                        val shelfSubtitle = if (isOfflineMode) "Ready for zero-data playback" else "Start a radio or swipe through top tracks"
+                        TrendingSongsHorizontalShelf(
+                            tracks = trendingItems,
+                            title = shelfTitle,
+                            subtitle = shelfSubtitle,
+                            currentPlayingId = playerState.currentTrack?.id,
+                            onTrackClick = { item ->
+                                val track = item.originalTrack ?: item.toTrack()
+                                viewModel.playTrack(track)
+                            },
+                            onPlayNext = { item ->
+                                val track = item.originalTrack ?: item.toTrack()
+                                viewModel.playNext(track)
+                            },
+                            onAddToQueue = { item ->
+                                val track = item.originalTrack ?: item.toTrack()
+                                viewModel.addToQueue(track)
+                            },
+                            onStartRadio = { item ->
+                                val track = item.originalTrack ?: item.toTrack()
+                                viewModel.startRadioMix(track)
+                            },
+                            onToggleLike = { item ->
+                                val track = item.originalTrack ?: item.toTrack()
+                                viewModel.toggleLike(track)
+                            },
+                            onAddToPlaylist = { item ->
+                                trackToAddToPlaylist = item.originalTrack ?: item.toTrack()
+                            },
+                            onGoToArtist = { artistName -> onNavigateToArtist(artistName) },
+                            onDownload = { item, tier ->
+                                val track = item.originalTrack ?: item.toTrack()
+                                viewModel.startDownload(track, tier)
+                            }
+                        )
+                    }
+                }
+
+                if (youtubeMixes.isNotEmpty()) {
+                    item {
+                        MediaCarouselShelf(
+                            title = "Mixed for You",
+                            subtitle = "Continuous YouTube Music stations & personalized mixes",
+                            items = youtubeMixes,
+                            badgeText = "MIX",
+                            onItemClick = { item ->
+                                onNavigateToPlaylist(item.id)
+                            }
+                        )
+                    }
+                }
+
+                if (albumsAndPlaylists.isNotEmpty()) {
+                    item {
+                        MediaCarouselShelf(
+                            title = "Featured Playlists & Albums",
+                            subtitle = "Curated community playlists and full releases",
+                            items = albumsAndPlaylists,
+                            badgeText = "PLAYLIST",
+                            onItemClick = { item ->
+                                onNavigateToPlaylist(item.id)
+                            }
+                        )
+                    }
+                }
+
+                // OuterTune / YouTube Music "Moods & Genres" Google Pixel Grid Section
+                item {
+                    OuterTuneMoodsAndGenresSection(
+                        categories = moodChips,
+                        selectedCategory = selectedMood,
+                        onSelectCategory = { cat -> viewModel.selectHomeMood(cat) }
+                    )
+                }
+
+                if (freshItems.isNotEmpty()) {
+                    item {
+                        FreshNewMusicShelf(
+                            tracks = freshItems,
+                            onTrackClick = { item ->
+                                val track = item.originalTrack ?: item.toTrack()
+                                viewModel.playTrack(track)
                             }
                         )
                     }
                 }
             } else {
+                // ────────────────────────────────────────────────────────────
+                // CATEGORY ACTIVE VIEW (Exact OuterTune & YouTube Music Category Page Structure)
+                // 1. Google Pixel Category Hero Card (Title + Vibe Subtitle + Play All / Shuffle)
+                // 2. Featured <Category> Playlists Carousel (Top Shelf, just like YT Music / OuterTune!)
+                // 3. <Category> Quick Picks (4-Row Horizontal Snap Grid)
+                // 4. <Category> Mixes & Stations Carousel
+                // 5. <Category> New & Popular Releases Shelf
+                // 6. Explore Other Moods & Genres Grid
+                // ────────────────────────────────────────────────────────────
                 item {
-                    Column(
+                    val categorySubtitle = when {
+                        selectedMood.equals("Relax", true) -> "Unwind with soothing acoustic, ambient & calm melodies"
+                        selectedMood.equals("Energize", true) -> "High-energy pop, upbeat dance & power anthems"
+                        selectedMood.equals("Workout", true) -> "High-tempo gym phonk, cardio & training motivation"
+                        selectedMood.equals("Commute", true) -> "Road trip favorites, driving hits & singalong classics"
+                        selectedMood.equals("Focus", true) -> "Deep concentration beats, study lofi & ambient piano"
+                        selectedMood.equals("Chill", true) -> "Laid-back indie, R&B & late-night chillout vibes"
+                        selectedMood.equals("Feel Good", true) -> "Sunshine pop, uplifting hooks & positive energy"
+                        selectedMood.equals("Party", true) -> "Club bangers, weekend dancefloor & remix hits"
+                        selectedMood.equals("Romantic", true) -> "Heartfelt love ballads, acoustic duets & soulful melodies"
+                        selectedMood.equals("Sad", true) -> "Emotional ballads, acoustic heartbreak & late-night reflection"
+                        selectedMood.equals("Trending", true) -> "Top viral chart hits & fastest-rising global and regional tracks"
+                        selectedMood.equals("Manipuri Song", true) -> "Official Manipuri hits, modern folk & Imphal chart toppers"
+                        selectedMood.equals("Lo-Fi", true) -> "Cozy late-night lofi beats, chill hop & rainy aesthetics"
+                        selectedMood.equals("Sleep", true) -> "Peaceful bedtime ambient, soft piano & restful soundscapes"
+                        else -> "Curated playlists, mixes, and top songs for $selectedMood"
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(24.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                        ),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 6.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                            .padding(horizontal = 16.dp)
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
+                        Column(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable { viewModel.selectHomeMood("All") }
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 18.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Clear Category",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(14.dp)
-                                )
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer
+                                ) {
+                                    Text(
+                                        text = "MOODS & GENRES",
+                                        fontSize = 10.sp,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        letterSpacing = 0.8.sp,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+
+                                Surface(
+                                    onClick = { viewModel.selectHomeMood("All") },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Back to All",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Text(
+                                            text = "All Home",
+                                            fontSize = 11.5.sp,
+                                            fontFamily = OutfitFontFamily,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+
+                            Column(modifier = Modifier.fillMaxWidth()) {
                                 Text(
-                                    text = "Clear",
-                                    fontSize = 12.sp,
+                                    text = selectedMood,
+                                    fontFamily = SyneFontFamily,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 26.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = categorySubtitle,
                                     fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.primary
+                                    fontSize = 13.sp,
+                                    lineHeight = 18.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                        }
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Text(
-                                text = "$selectedMood Hits",
-                                fontFamily = SyneFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 20.sp,
-                                color = MaterialTheme.colorScheme.onBackground,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = "Filtered specifically for $selectedMood vibes",
-                                fontFamily = OutfitFontFamily,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+
+                            if (trendingItems.isNotEmpty()) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Surface(
+                                        onClick = {
+                                            val queueTracks = trendingItems.map { it.originalTrack ?: it.toTrack() }
+                                            viewModel.playQueue(queueTracks, 0, isPlaylist = true)
+                                        },
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.height(40.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 16.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.PlayArrow,
+                                                contentDescription = "Play Category",
+                                                tint = MaterialTheme.colorScheme.onPrimary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Text(
+                                                text = "Play $selectedMood",
+                                                color = MaterialTheme.colorScheme.onPrimary,
+                                                fontFamily = OutfitFontFamily,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp
+                                            )
+                                        }
+                                    }
+
+                                    Surface(
+                                        onClick = {
+                                            val queueTracks = trendingItems.map { it.originalTrack ?: it.toTrack() }.shuffled()
+                                            viewModel.playQueue(queueTracks, 0, isPlaylist = true)
+                                        },
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = MaterialTheme.colorScheme.secondaryContainer,
+                                        modifier = Modifier.height(40.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 16.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Shuffle,
+                                                contentDescription = "Shuffle Category",
+                                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                modifier = Modifier.size(17.dp)
+                                            )
+                                            Text(
+                                                text = "Shuffle",
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                fontFamily = OutfitFontFamily,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 13.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-            }
 
-            // ────────────────────────────────────────────────────────────
-            // 3. "Trending Songs for You" — YouTube Music 4-Row Horizontal Snap Grid
-            // ────────────────────────────────────────────────────────────
-            if (trendingItems.isNotEmpty()) {
-                item {
-                    val shelfTitle = if (isOfflineMode) "Offline Library Tracks" else if (isAllMood) "Trending Songs for You" else "$selectedMood Top Songs"
-                    val shelfSubtitle = if (isOfflineMode) "Ready for zero-data playback" else if (isAllMood) "Swipe for top charts & viral tracks" else "Popular releases under $selectedMood"
-                    TrendingSongsHorizontalShelf(
-                        tracks = trendingItems,
-                        title = shelfTitle,
-                        subtitle = shelfSubtitle,
-                        currentPlayingId = playerState.currentTrack?.id,
-                        onTrackClick = { item ->
-                            val track = item.originalTrack ?: item.toTrack()
-                            viewModel.playTrack(track)
-                        },
-                        onPlayNext = { item ->
-                            val track = item.originalTrack ?: item.toTrack()
-                            viewModel.playNext(track)
-                        },
-                        onAddToQueue = { item ->
-                            val track = item.originalTrack ?: item.toTrack()
-                            viewModel.addToQueue(track)
-                        },
-                        onStartRadio = { item ->
-                            val track = item.originalTrack ?: item.toTrack()
-                            viewModel.startRadioMix(track)
-                        },
-                        onToggleLike = { item ->
-                            val track = item.originalTrack ?: item.toTrack()
-                            viewModel.toggleLike(track)
-                        },
-                        onAddToPlaylist = { item ->
-                            trackToAddToPlaylist = item.originalTrack ?: item.toTrack()
-                        },
-                        onGoToArtist = { artistName -> onNavigateToArtist(artistName) },
-                        onDownload = { item, tier ->
-                            val track = item.originalTrack ?: item.toTrack()
-                            viewModel.startDownload(track, tier)
-                        }
-                    )
+                // 1. Featured Playlists for Category (First Shelf on YT Music / OuterTune Category pages!)
+                if (albumsAndPlaylists.isNotEmpty()) {
+                    item {
+                        MediaCarouselShelf(
+                            title = "Featured $selectedMood Playlists",
+                            subtitle = "Curated YouTube Music playlists for $selectedMood",
+                            items = albumsAndPlaylists,
+                            badgeText = "PLAYLIST",
+                            onItemClick = { item ->
+                                onNavigateToPlaylist(item.id)
+                            }
+                        )
+                    }
                 }
-            }
 
-            // ────────────────────────────────────────────────────────────
-            // 4. "Fresh New Music" — High-Res Editorial Cards with Headphone SVG
-            // ────────────────────────────────────────────────────────────
-            if (freshItems.isNotEmpty()) {
-                item {
-                    FreshNewMusicShelf(
-                        tracks = freshItems,
-                        onTrackClick = { item ->
-                            val track = item.originalTrack ?: item.toTrack()
-                            viewModel.playTrack(track)
-                        }
-                    )
+                // 2. Category Quick Picks (4-Row Horizontal Snap Grid)
+                if (trendingItems.isNotEmpty()) {
+                    item {
+                        TrendingSongsHorizontalShelf(
+                            tracks = trendingItems,
+                            title = "$selectedMood Quick Picks",
+                            subtitle = "Top songs & community favorites in $selectedMood",
+                            currentPlayingId = playerState.currentTrack?.id,
+                            onTrackClick = { item ->
+                                val track = item.originalTrack ?: item.toTrack()
+                                viewModel.playTrack(track)
+                            },
+                            onPlayNext = { item ->
+                                val track = item.originalTrack ?: item.toTrack()
+                                viewModel.playNext(track)
+                            },
+                            onAddToQueue = { item ->
+                                val track = item.originalTrack ?: item.toTrack()
+                                viewModel.addToQueue(track)
+                            },
+                            onStartRadio = { item ->
+                                val track = item.originalTrack ?: item.toTrack()
+                                viewModel.startRadioMix(track)
+                            },
+                            onToggleLike = { item ->
+                                val track = item.originalTrack ?: item.toTrack()
+                                viewModel.toggleLike(track)
+                            },
+                            onAddToPlaylist = { item ->
+                                trackToAddToPlaylist = item.originalTrack ?: item.toTrack()
+                            },
+                            onGoToArtist = { artistName -> onNavigateToArtist(artistName) },
+                            onDownload = { item, tier ->
+                                val track = item.originalTrack ?: item.toTrack()
+                                viewModel.startDownload(track, tier)
+                            }
+                        )
+                    }
                 }
-            }
 
-            // ────────────────────────────────────────────────────────────
-            // 5. "Mixed for You" (YouTube Mixes Carousel)
-            // ────────────────────────────────────────────────────────────
-            if (youtubeMixes.isNotEmpty()) {
-                item {
-                    MediaCarouselShelf(
-                        title = "Mixed for You",
-                        subtitle = "Continuous personalized listening based on your taste",
-                        items = youtubeMixes,
-                        badgeText = "MIX",
-                        onItemClick = { item ->
-                            onNavigateToPlaylist(item.id)
-                        }
-                    )
+                // 3. Category Mixes & Continuous Stations
+                if (youtubeMixes.isNotEmpty()) {
+                    item {
+                        MediaCarouselShelf(
+                            title = "$selectedMood Mixes & Stations",
+                            subtitle = "Non-stop radio mixes tuned to $selectedMood",
+                            items = youtubeMixes,
+                            badgeText = "MIX",
+                            onItemClick = { item ->
+                                onNavigateToPlaylist(item.id)
+                            }
+                        )
+                    }
                 }
-            }
 
-            // ────────────────────────────────────────────────────────────
-            // 6. "Featured Albums & Curated Playlists"
-            // ────────────────────────────────────────────────────────────
-            if (albumsAndPlaylists.isNotEmpty()) {
+                // 4. Category Fresh Releases & More Hits
+                if (freshItems.isNotEmpty()) {
+                    item {
+                        FreshNewMusicShelf(
+                            tracks = freshItems,
+                            title = "More $selectedMood Releases",
+                            subtitle = "Fresh tracks and popular picks in $selectedMood",
+                            onTrackClick = { item ->
+                                val track = item.originalTrack ?: item.toTrack()
+                                viewModel.playTrack(track)
+                            }
+                        )
+                    }
+                }
+
+                // 5. Browse Other Moods & Genres
                 item {
-                    MediaCarouselShelf(
-                        title = "Featured Albums & Playlists",
-                        subtitle = "Full albums and curated tracklists",
-                        items = albumsAndPlaylists,
-                        badgeText = "PLAYLIST",
-                        onItemClick = { item ->
-                            onNavigateToPlaylist(item.id)
-                        }
+                    OuterTuneMoodsAndGenresSection(
+                        categories = moodChips,
+                        selectedCategory = selectedMood,
+                        onSelectCategory = { cat -> viewModel.selectHomeMood(cat) }
                     )
                 }
             }
@@ -1532,14 +1817,14 @@ fun TrendingSongsHorizontalShelf(
 
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            horizontalArrangement = Arrangement.spacedBy(0.dp)
                         ) {
                             var showDownloadSheet by remember { mutableStateOf(false) }
                             val context = androidx.compose.ui.platform.LocalContext.current
 
                             Surface(
                                 onClick = { onTrackClick(track) },
-                                shape = RoundedCornerShape(10.dp),
+                                shape = RoundedCornerShape(topStart = 10.dp, bottomStart = 10.dp, topEnd = 0.dp, bottomEnd = 0.dp),
                                 color = if (isPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
                                 modifier = Modifier.size(32.dp)
                             ) {
@@ -1553,8 +1838,15 @@ fun TrendingSongsHorizontalShelf(
                                 }
                             }
 
+                            Box(
+                                modifier = Modifier
+                                    .width(1.dp)
+                                    .height(18.dp)
+                                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                            )
+
                             Box {
-                                IconButton(
+                                Surface(
                                     onClick = {
                                         if (onMoreClick != null) {
                                             onMoreClick(track)
@@ -1562,14 +1854,18 @@ fun TrendingSongsHorizontalShelf(
                                             showMenu = true
                                         }
                                     },
+                                    shape = RoundedCornerShape(topStart = 0.dp, bottomStart = 0.dp, topEnd = 10.dp, bottomEnd = 10.dp),
+                                    color = MaterialTheme.colorScheme.surface,
                                     modifier = Modifier.size(32.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.MoreVert,
-                                        contentDescription = "More Options",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(18.dp)
-                                    )
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.MoreVert,
+                                            contentDescription = "More Options",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
                                 }
 
                                 if (onMoreClick == null) {
@@ -1735,13 +2031,15 @@ fun TrendingSongsHorizontalShelf(
 @Composable
 fun FreshNewMusicShelf(
     tracks: List<HomeMediaItem>,
+    title: String = "Fresh New Music",
+    subtitle: String = "Latest releases in high definition",
     onTrackClick: (HomeMediaItem) -> Unit
 ) {
     val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
     Column(modifier = Modifier.fillMaxWidth()) {
         SectionHeader(
-            title = "Fresh New Music",
-            subtitle = "Latest releases in high definition"
+            title = title,
+            subtitle = subtitle
         )
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -2098,6 +2396,105 @@ fun HomeScreenKanglaFooterImage(modifier: Modifier = Modifier) {
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
             )
+        }
+    }
+}
+
+
+/**
+ * OuterTune / YouTube Music "Moods & Genres" 2-Row Horizontal Grid Section
+ * built with Google Pixel Material 3 tonal cards and color-coded accent bars.
+ */
+@Composable
+fun OuterTuneMoodsAndGenresSection(
+    categories: List<String>,
+    selectedCategory: String,
+    onSelectCategory: (String) -> Unit
+) {
+    val columns = remember(categories) { categories.chunked(2) }
+    val accentColors = remember {
+        listOf(
+            Color(0xFFFF5252),
+            Color(0xFF448AFF),
+            Color(0xFF00E676),
+            Color(0xFFFFAB40),
+            Color(0xFFE040FB),
+            Color(0xFF18FFFF),
+            Color(0xFFFFD740),
+            Color(0xFFFF4081)
+        )
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        SectionHeader(
+            title = "Moods & Genres",
+            subtitle = "Explore YouTube Music & OuterTune category feeds"
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            itemsIndexed(columns) { colIdx, pair ->
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.width(168.dp)
+                ) {
+                    pair.forEachIndexed { rowIdx, category ->
+                        val isSelected = category.equals(selectedCategory, ignoreCase = true)
+                        val stripeColor = accentColors[(colIdx * 2 + rowIdx) % accentColors.size]
+                        Surface(
+                            onClick = {
+                                if (isSelected) onSelectCategory("All") else onSelectCategory(category)
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (isSelected) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            },
+                            border = androidx.compose.foundation.BorderStroke(
+                                width = 1.dp,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(54.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(6.dp)
+                                        .fillMaxHeight()
+                                        .background(stripeColor)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(
+                                    text = category,
+                                    color = if (isSelected) {
+                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 10.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

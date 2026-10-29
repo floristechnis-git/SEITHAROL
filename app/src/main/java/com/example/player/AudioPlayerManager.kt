@@ -1890,6 +1890,62 @@ class AudioPlayerManager(
         } catch (_: Throwable) {}
     }
 
+    /**
+     * Plays [track] immediately while keeping the rest of the existing Up Next queue intact
+     * (used when selecting a track from the YouTube Music-style "Related" sheet).
+     */
+    fun playTrackPreservingQueue(track: Track) {
+        val currentQueue = _state.value.queue.toMutableList()
+        if (currentQueue.size <= 1) {
+            playTrack(track)
+            return
+        }
+        val existingIdx = currentQueue.indexOfFirst { it.id == track.id }
+        if (existingIdx >= 0) {
+            playQueueIndex(existingIdx)
+            return
+        }
+        val insertIdx = _state.value.currentIndex.coerceIn(0, currentQueue.size)
+        currentQueue.add(insertIdx, track)
+        hasUserInitiatedPlaybackThisSession = true
+        userRequestedPlay = true
+        trackRetryCount = 0
+        stallRecoveryCount = 0
+        lastFailedTrackId = null
+        pendingSeekPositionMs = null
+        loadTrackJob?.cancel()
+        retryJob?.cancel()
+        bufferingWatchdogJob?.cancel()
+        com.seitharol.player.AudioPlayerManager.stopActivePreviewIfAny()
+        val p = exoPlayer
+        if (p?.currentMediaItem?.mediaId != track.id) {
+            positionJob?.cancel()
+            runCatching {
+                p?.playWhenReady = false
+                p?.pause()
+                p?.stop()
+                p?.clearMediaItems()
+                stopVideoPlayer()
+            }
+        }
+        recordSessionPlayed(track)
+        _state.value = _state.value.copy(
+            queue = currentQueue,
+            currentIndex = insertIdx,
+            currentTrack = track,
+            currentPositionMs = 0L,
+            bufferedPositionMs = 0L,
+            bufferedFraction = 0f,
+            activeStream = null,
+            isPlaying = false,
+            isBuffering = true,
+            isVideoMode = track.isVideoTrack,
+            isVideoFrameRendered = false,
+            isEnded = false
+        )
+        loadAndPlayCurrent(resumePositionMs = 0L)
+    }
+
     fun addToQueue(track: Track) {
         val q = _state.value.queue.toMutableList()
         q.add(track)

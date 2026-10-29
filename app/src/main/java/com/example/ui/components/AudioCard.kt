@@ -360,35 +360,50 @@ fun TrackCard(
                 }
             }
 
-            // Like action
-            IconButton(
+            // Connected Google Pixel Split-Action Pill (Like + 3-Dot Options with 0.dp center border-radius)
+            Surface(
                 onClick = onLikeClick,
+                shape = RoundedCornerShape(topStart = 10.dp, bottomStart = 10.dp, topEnd = 0.dp, bottomEnd = 0.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
                 modifier = Modifier
                     .size(34.dp)
                     .testTag("track_like_btn_${track.id}")
             ) {
-                Icon(
-                    imageVector = if (track.isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
-                    contentDescription = if (track.isLiked) "Unlike" else "Like",
-                    tint = if (track.isLiked) SeitharolRedHeart else SeitharolTextSecondary,
-                    modifier = Modifier.size(19.dp)
-                )
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = if (track.isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
+                        contentDescription = if (track.isLiked) "Unlike" else "Like",
+                        tint = if (track.isLiked) SeitharolRedHeart else SeitharolTextSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
+
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .height(20.dp)
+                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            )
 
             // Complete 3-Dot Options Menu
             Box {
-                IconButton(
+                Surface(
                     onClick = {
                         if (onOptionsClick != null) onOptionsClick() else showMenu = true
                     },
-                    modifier = Modifier.size(32.dp)
+                    shape = RoundedCornerShape(topStart = 0.dp, bottomStart = 0.dp, topEnd = 10.dp, bottomEnd = 10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                    modifier = Modifier.size(34.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.MoreVert,
-                        contentDescription = "More actions",
-                        tint = SeitharolTextSecondary,
-                        modifier = Modifier.size(20.dp)
-                    )
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.MoreVert,
+                            contentDescription = "More actions",
+                            tint = SeitharolTextSecondary,
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
                 }
 
                 DropdownMenu(

@@ -64,6 +64,7 @@ import kotlin.math.roundToInt
  *    - When playing an Audio Song, suggests ONLY Audio Songs (no videos).
  * 5. Suppresses suggestions ONLY when playing a local single file (`isLocalOnlyTrack` with no online queue context).
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlaybackQueueModal(
     viewModel: CascadeViewModel,
@@ -242,44 +243,40 @@ fun PlaybackQueueModal(
         }
     }
 
-    Surface(
-        modifier = modifier
-            .fillMaxSize()
-            .testTag("playback_queue_modal"),
-        color = MaterialTheme.colorScheme.background
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        dragHandle = {
+            Box(
+                modifier = Modifier
+                    .padding(top = 12.dp, bottom = 6.dp)
+                    .width(36.dp)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+            )
+        }
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
+            modifier = modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.90f)
                 .navigationBarsPadding()
+                .testTag("playback_queue_modal")
         ) {
-            // Google Pixel Sheet Drag Handle + Header Bar
+            // Google Pixel Sheet Header Bar
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .pointerInput(Unit) {
-                        detectVerticalDragGestures { _, dragAmount ->
-                            if (dragAmount > 28f) {
-                                onDismiss()
-                            }
-                        }
-                    },
+                modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Box(
-                    modifier = Modifier
-                        .padding(top = 10.dp, bottom = 4.dp)
-                        .width(36.dp)
-                        .height(4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f))
-                )
-
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 18.dp, vertical = 8.dp),
+                        .padding(horizontal = 18.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {

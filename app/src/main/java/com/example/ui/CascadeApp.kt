@@ -3,6 +3,7 @@ package com.example.ui
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -953,7 +954,7 @@ fun CascadeApp(
                         onAddToPlaylist = { trackToAddToPlaylist = it },
                         onNavigateToPlaylist = { plId ->
                             isPlayerExpanded = false
-                            currentSubScreen = SubScreen.PlaylistDetail(plId)
+                            currentSubScreen = SubScreen.Playlist(plId)
                         }
                     )
                 }

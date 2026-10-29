@@ -1874,9 +1874,11 @@ class CascadeViewModel(
 
             val artistPageDeferred = async(Dispatchers.IO) {
                 if (cleanArtist.length >= 2 && track.isNavigableArtist) {
-                    runCatching {
-                        InnerTubeStreamExtractor.fetchArtistPageData(cleanArtist, isChannelMode = isVid)
-                    }.getOrNull()
+                    try {
+                        InnerTubeStreamExtractor.fetchArtistPage(artistName = cleanArtist, isChannel = isVid)
+                    } catch (_: Throwable) {
+                        null
+                    }
                 } else null
             }
 

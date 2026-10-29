@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 data class UserSettings(
     val onboarded: Boolean = false,
-    val userName: String = "",
+    val userName: String = "Johnson",
     val userAge: String = "",
     val userBirthdate: String = "",
     val themeMode: String = "SYSTEM", // "SYSTEM", "LIGHT", "DARK"
@@ -68,7 +68,7 @@ class AppPreferences private constructor(context: Context) {
         }
         return UserSettings(
             onboarded = prefs.getBoolean("onboarded", false),
-            userName = prefs.getString("user_name", "") ?: "",
+            userName = prefs.getString("user_name", "Johnson")?.ifBlank { "Johnson" } ?: "Johnson",
             userAge = prefs.getString("user_age", "") ?: "",
             userBirthdate = prefs.getString("user_birthdate", "") ?: "",
             themeMode = prefs.getString("theme_mode", "SYSTEM") ?: "SYSTEM",

@@ -230,7 +230,7 @@ fun InDiscoverSearchSurface(
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(bottom = 90.dp)
+                contentPadding = PaddingValues(bottom = 210.dp)
             ) {
                 items(results.distinctBy { it.sourceId }, key = { "disc_sr_${it.sourceId}" }) { item ->
                     val isThisPlaying = activePreviewId == item.sourceId && isPreviewPlaying

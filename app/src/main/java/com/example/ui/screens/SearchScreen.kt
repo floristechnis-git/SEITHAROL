@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.R
 import com.example.data.model.DownloadTier
+import com.example.data.model.Playlist
 import com.example.data.model.Track
 import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
@@ -45,13 +46,177 @@ import com.example.ui.components.CreatePlaylistModal
 import com.example.ui.components.SeitharolPullToRefreshBox
 import com.example.ui.components.TrackCard
 import com.example.ui.theme.*
+import com.seitharol.data.resolver.CanonicalAudioResolver
+import com.seitharol.data.resolver.YtmArtistPreview
+import com.seitharol.data.resolver.YtmCollectionSummary
 
 enum class SearchTab(val label: String) {
-    TOP("Top"),
+    TOP("All"),
     SONGS("Songs"),
     ARTISTS("Artists"),
     PLAYLISTS("Playlists"),
     ALBUMS("Albums")
+}
+
+private enum class SearchCategorySection {
+    SONGS,
+    ARTISTS,
+    ALBUMS,
+    PLAYLISTS
+}
+
+private fun rankDomainTracksByQueryRelevance(query: String, tracks: List<Track>): List<Track> {
+    val cleanQuery = CanonicalAudioResolver.normalizeText(query)
+    if (cleanQuery.isBlank()) return tracks.distinctBy { it.id }
+    val rawLower = query.lowercase().trim()
+    val queryTokens = cleanQuery.split(" ").filter { it.isNotBlank() }
+
+    return tracks
+        .distinctBy { it.id }
+        .mapIndexed { originalIndex, track ->
+            var relevance = (30 - originalIndex * 2).coerceAtLeast(0)
+            val normTitle = CanonicalAudioResolver.normalizeText(track.title)
+            val normArtist = CanonicalAudioResolver.normalizeText(track.artist)
+            val combined = "$normTitle $normArtist".trim()
+            val combinedRev = "$normArtist $normTitle".trim()
+
+            if (normTitle == cleanQuery) relevance += 130
+            else if (normTitle.startsWith(cleanQuery)) relevance += 90
+            else if (normTitle.contains(cleanQuery)) relevance += 60
+
+            if (normArtist == cleanQuery) relevance += 85
+            else if (normArtist.startsWith(cleanQuery)) relevance += 55
+
+            if (combined == cleanQuery || combinedRev == cleanQuery) relevance += 150
+
+            if (queryTokens.isNotEmpty()) {
+                val matched = queryTokens.count { token -> combined.contains(token) }
+                relevance += (matched * 65) / queryTokens.size
+                if (matched == 0) relevance -= 120
+            }
+
+            if (track.isOfficial && !track.isLocalOnlyTrack) {
+                relevance += 35
+            }
+
+            if (CanonicalAudioResolver.containsBannedModifier(rawLower, track.title)) {
+                relevance -= 150
+            }
+
+            track to relevance
+        }
+        .sortedByDescending { it.second }
+        .map { it.first }
+}
+
+private fun computeOrderedSectionsForAllTab(
+    query: String,
+    shouldShowArtists: Boolean,
+    verifiedArtists: List<YtmArtistPreview>,
+    displayedTracks: List<Track>,
+    activeAlbums: List<YtmCollectionSummary>,
+    filteredLocalPlaylists: List<Playlist>,
+    onlinePlaylists: List<YtmCollectionSummary>
+): List<SearchCategorySection> {
+    val normQ = CanonicalAudioResolver.normalizeText(query)
+    if (normQ.isBlank()) {
+        return listOf(
+            SearchCategorySection.SONGS,
+            SearchCategorySection.PLAYLISTS,
+            SearchCategorySection.ALBUMS,
+            SearchCategorySection.ARTISTS
+        )
+    }
+
+    val rawLower = query.lowercase().trim()
+    val queryTokens = normQ.split(" ").filter { it.isNotBlank() }
+
+    val hasPlaylistKeyword = rawLower.contains("playlist") || rawLower.contains("mix") || rawLower.contains("radio")
+    val hasAlbumKeyword = rawLower.contains("album") || rawLower.contains("ep") || rawLower.contains("ost") || rawLower.contains("soundtrack")
+    val hasArtistKeyword = rawLower.contains("artist") || rawLower.contains("singer")
+    val hasSongKeyword = rawLower.contains("song") || rawLower.contains("track") || rawLower.contains("lyrics") || rawLower.contains("audio")
+
+    val topSong = displayedTracks.firstOrNull()
+    val topSongNormTitle = topSong?.let { CanonicalAudioResolver.normalizeText(it.title) }.orEmpty()
+    val topSongNormArtist = topSong?.let { CanonicalAudioResolver.normalizeText(it.artist) }.orEmpty()
+    val topSongCombined = "$topSongNormTitle $topSongNormArtist".trim()
+    val topSongCombinedRev = "$topSongNormArtist $topSongNormTitle".trim()
+
+    // 1. Song section fit score
+    val songScore = if (topSong == null) 0 else {
+        var s = when {
+            topSongCombined == normQ || topSongCombinedRev == normQ -> 1160
+            topSongNormTitle == normQ -> 1060
+            topSongNormTitle.startsWith(normQ) -> 870
+            queryTokens.size >= 2 && queryTokens.all { topSongCombined.contains(it) } &&
+                queryTokens.any { topSongNormTitle.contains(it) } &&
+                queryTokens.any { topSongNormArtist.contains(it) } -> 1080
+            topSongNormTitle.contains(normQ) -> 760
+            else -> 690
+        }
+        if (hasSongKeyword) s += 300
+        s
+    }
+
+    // 2. Artist section fit score
+    val topArtist = verifiedArtists.firstOrNull()
+    val artistScore = if (!shouldShowArtists || topArtist == null) -1 else {
+        val normArt = CanonicalAudioResolver.normalizeText(topArtist.name)
+        var s = when {
+            normArt == normQ -> {
+                if (topSongNormTitle == normQ && topSongNormArtist != normQ && !hasArtistKeyword) 980 else 1120
+            }
+            normArt.startsWith(normQ) && normQ.length >= 3 -> {
+                if (topSongNormTitle == normQ || (topSongNormTitle.startsWith(normQ) && !topSongNormArtist.startsWith(normQ))) 790 else 930
+            }
+            normArt.contains(normQ) -> 600
+            else -> 250
+        }
+        if (hasArtistKeyword) s += 300
+        s
+    }
+
+    // 3. Album section fit score
+    val topAlbum = activeAlbums.firstOrNull()
+    val albumScore = if (topAlbum == null) 0 else {
+        val normAlb = CanonicalAudioResolver.normalizeText(topAlbum.title)
+        val normAlbSub = CanonicalAudioResolver.normalizeText(topAlbum.subtitle)
+        val albCombined = "$normAlb $normAlbSub".trim()
+        var s = when {
+            normAlb == normQ -> {
+                if (topSongNormTitle == normQ && !hasAlbumKeyword) 910 else 1090
+            }
+            albCombined == normQ || (queryTokens.size >= 2 && queryTokens.all { albCombined.contains(it) } && hasAlbumKeyword) -> 1140
+            normAlb.startsWith(normQ) -> 740
+            normAlb.contains(normQ) -> 560
+            else -> 320
+        }
+        if (hasAlbumKeyword) s += 350
+        s
+    }
+
+    // 4. Playlist section fit score
+    val topPlTitle = filteredLocalPlaylists.firstOrNull()?.title ?: onlinePlaylists.firstOrNull()?.title.orEmpty()
+    val playlistScore = if (topPlTitle.isBlank()) 0 else {
+        val normPl = CanonicalAudioResolver.normalizeText(topPlTitle)
+        var s = when {
+            normPl == normQ -> 1070
+            normPl.startsWith(normQ) -> 750
+            normPl.contains(normQ) -> 530
+            else -> 280
+        }
+        if (hasPlaylistKeyword) s += 420
+        s
+    }
+
+    return listOf(
+        SearchCategorySection.SONGS to songScore,
+        SearchCategorySection.ARTISTS to artistScore,
+        SearchCategorySection.ALBUMS to albumScore,
+        SearchCategorySection.PLAYLISTS to playlistScore
+    )
+        .sortedByDescending { it.second }
+        .map { it.first }
 }
 
 @Composable
@@ -109,41 +274,12 @@ fun SearchScreen(
     val appPreferences = remember { com.example.data.AppPreferences(context) }
     val recentSearches by appPreferences.recentSearches.collectAsState()
 
-    val allArtists = remember(allTracksList, historyTracks, searchResults, currentProvider, downloadedTracks) {
-        val bannedModifiers = listOf("loop", "extended", "1 hour", "slowed", "reverb", "cover", "8d", "nightcore", "mashup", "bass boosted")
-        val bannedArtists = listOf("local artist", "device storage", "downloaded in seitharol", "<unknown>", "unknown artist", "unknown", "various artists", "various", "download", "seitharol", "blog", "blogger", "blogspot", ".com", ".net", ".org")
-        val splitRegex = Regex("[,/;&]|\\s+(?:feat\\.?|ft\\.?|&|x)\\s+", RegexOption.IGNORE_CASE)
-        val sourceTracks = if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
-            downloadedTracks
-        } else {
-            searchResults + historyTracks + allTracksList
-        }
-        sourceTracks
-            .flatMap { track ->
-                track.artist.split(splitRegex).map { it.trim() }
-            }
-            .filter { artist ->
-                artist.isNotBlank() &&
-                    artist.length >= 2 &&
-                    !artist.contains(",") &&
-                    !artist.contains("&") &&
-                    !artist.contains("http", ignoreCase = true) &&
-                    !artist.contains("www.", ignoreCase = true) &&
-                    !artist.contains(".com", ignoreCase = true) &&
-                    !artist.contains(".net", ignoreCase = true) &&
-                    !artist.contains(".org", ignoreCase = true) &&
-                    !artist.contains("blog", ignoreCase = true) &&
-                    bannedArtists.none { banned -> artist.contains(banned, ignoreCase = true) } &&
-                    bannedModifiers.none { mod -> artist.contains(mod, ignoreCase = true) }
-            }
-            .distinctBy { it.lowercase() }
-    }
-
+    // Ensure the most relevant song is ALWAYS placed at the top of the Songs section
     val displayedTracks = remember(searchResults, query, currentProvider, personalizedTracks, trendingHits, historyTracks, downloadedTracks) {
         when {
-            currentProvider == com.example.ui.ProviderFilter.LOCAL -> searchResults
+            currentProvider == com.example.ui.ProviderFilter.LOCAL -> rankDomainTracksByQueryRelevance(query, searchResults)
             currentProvider == com.example.ui.ProviderFilter.YOUTUBE -> searchResults
-            query.isNotBlank() -> searchResults.filterNot { it.isVideoTrack }
+            query.isNotBlank() -> rankDomainTracksByQueryRelevance(query, searchResults.filterNot { it.isVideoTrack })
             else -> {
                 (personalizedTracks + trendingHits + historyTracks)
                     .filterNot {
@@ -155,38 +291,20 @@ fun SearchScreen(
         }
     }
 
-    val filteredArtists = remember(query, allArtists, currentProvider) {
-        val cleanQuery = query.trim()
-        if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
-            if (cleanQuery.isBlank()) {
-                emptyList()
-            } else {
-                allArtists
-                    .filter { it.contains(cleanQuery, ignoreCase = true) }
-                    .sortedWith(compareBy<String> {
-                        when {
-                            it.equals(cleanQuery, ignoreCase = true) -> 0
-                            it.startsWith(cleanQuery, ignoreCase = true) -> 1
-                            else -> 2
-                        }
-                    }.thenBy { it.length })
-                    .take(5)
-            }
+    // Identify the most-viewed official song card so it receives a slightly different highlight color
+    val mostViewedOfficialTrackId = remember(displayedTracks, query) {
+        if (query.trim().isBlank() || displayedTracks.isEmpty()) {
+            null
         } else {
-            if (cleanQuery.isBlank()) {
-                allArtists.take(5)
-            } else {
-                allArtists
-                    .filter { it.contains(cleanQuery, ignoreCase = true) }
-                    .sortedWith(compareBy<String> {
-                        when {
-                            it.equals(cleanQuery, ignoreCase = true) -> 0
-                            it.startsWith(cleanQuery, ignoreCase = true) -> 1
-                            else -> 2
-                        }
-                    }.thenBy { it.length })
-                    .take(5)
+            val officialTracks = displayedTracks.filter {
+                !it.isLocalOnlyTrack &&
+                    it.isOfficial &&
+                    !CanonicalAudioResolver.containsBannedModifier(query, it.title)
+            }.ifEmpty {
+                displayedTracks.filter { !it.isLocalOnlyTrack && it.isOfficial }
             }
+            val withViews = officialTracks.filter { it.viewCount > 0L }
+            (withViews.maxByOrNull { it.viewCount } ?: officialTracks.firstOrNull())?.id
         }
     }
 
@@ -195,6 +313,65 @@ fun SearchScreen(
         else playlists.filter {
             it.title.contains(query, ignoreCase = true) ||
                 it.description.contains(query, ignoreCase = true)
+        }
+    }
+
+    val shouldShowArtists = if (currentProvider == com.example.ui.ProviderFilter.LOCAL || currentProvider == com.example.ui.ProviderFilter.YOUTUBE) {
+        false
+    } else {
+        query.trim().length >= 2 &&
+            (selectedTab == SearchTab.TOP || selectedTab == SearchTab.ARTISTS) &&
+            verifiedSearchArtists.isNotEmpty()
+    }
+
+    val activeOnlinePlaylists = remember(currentProvider, query, searchedOnlinePlaylists, suggestedYoutubePlaylists) {
+        if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
+            emptyList()
+        } else if (query.trim().length >= 2) {
+            searchedOnlinePlaylists
+        } else {
+            suggestedYoutubePlaylists.filter { it.type == "PLAYLIST" || it.type == "MIX" }
+        }
+    }
+    val displayedOnlinePlaylists = remember(selectedTab, activeOnlinePlaylists) {
+        if (selectedTab == SearchTab.TOP) activeOnlinePlaylists.take(4) else activeOnlinePlaylists
+    }
+
+    val activeAlbums = remember(currentProvider, query, selectedTab, searchedOnlineAlbums, suggestedYoutubePlaylists) {
+        if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
+            emptyList()
+        } else if (query.trim().length >= 2) {
+            if (selectedTab == SearchTab.TOP) searchedOnlineAlbums.take(3) else searchedOnlineAlbums
+        } else {
+            suggestedYoutubePlaylists.filter { it.type == "ALBUM" }.take(4)
+        }
+    }
+
+    // Dynamically order sections in "All" (TOP) category based on which section best fits the search query
+    val orderedSections = remember(
+        selectedTab,
+        query,
+        shouldShowArtists,
+        verifiedSearchArtists,
+        displayedTracks,
+        activeAlbums,
+        filteredPlaylists,
+        displayedOnlinePlaylists
+    ) {
+        when (selectedTab) {
+            SearchTab.TOP -> computeOrderedSectionsForAllTab(
+                query = query,
+                shouldShowArtists = shouldShowArtists,
+                verifiedArtists = verifiedSearchArtists,
+                displayedTracks = displayedTracks,
+                activeAlbums = activeAlbums,
+                filteredLocalPlaylists = filteredPlaylists,
+                onlinePlaylists = displayedOnlinePlaylists
+            )
+            SearchTab.SONGS -> listOf(SearchCategorySection.SONGS)
+            SearchTab.ARTISTS -> listOf(SearchCategorySection.ARTISTS)
+            SearchTab.PLAYLISTS -> listOf(SearchCategorySection.PLAYLISTS)
+            SearchTab.ALBUMS -> listOf(SearchCategorySection.ALBUMS, SearchCategorySection.SONGS)
         }
     }
 
@@ -245,7 +422,7 @@ fun SearchScreen(
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 140.dp)
+            contentPadding = PaddingValues(bottom = 200.dp)
         ) {
             // Full-Width Search Bar
             item {
@@ -542,7 +719,7 @@ fun SearchScreen(
                 }
             }
 
-            // Real Dynamic Trending Searches from YouTube (only shown when live trending items exist)
+            // Real Dynamic Trending Searches from YouTube
             if (query.isBlank() && currentProvider != com.example.ui.ProviderFilter.LOCAL && trendingSearches.isNotEmpty()) {
                 item {
                     Text(
@@ -642,7 +819,7 @@ fun SearchScreen(
                 }
             }
 
-            // Filter Pills: "Top", "Songs", "Artists", "Playlists", "Albums"
+            // Filter Pills: "All", "Songs", "Artists", "Playlists", "Albums"
             item {
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 20.dp),
@@ -688,198 +865,307 @@ fun SearchScreen(
                 }
             }
 
-            // Matching Verified Artists (strictly from real YouTube Music artist profiles, never scraped from song results)
-            val shouldShowArtists = if (currentProvider == com.example.ui.ProviderFilter.LOCAL || currentProvider == com.example.ui.ProviderFilter.YOUTUBE) {
-                false
-            } else {
-                query.trim().length >= 2 &&
-                    (selectedTab == SearchTab.TOP || selectedTab == SearchTab.ARTISTS) &&
-                    verifiedSearchArtists.isNotEmpty()
-            }
-            if (shouldShowArtists) {
-                item {
-                    Text(
-                        text = "Artists",
-                        fontFamily = SyneFontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 16.sp,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
-                    )
-                }
-
-                items(verifiedSearchArtists, key = { "ver_art_${it.browseId}" }) { artistPreview ->
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 2.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .clickable {
-                                dismissSearchKeyboard()
-                                viewModel.navigateToArtist(artistPreview.name, isChannel = false)
-                            },
-                        color = Color.Transparent
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 8.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            AsyncImage(
-                                model = artistPreview.avatarUrl,
-                                contentDescription = artistPreview.name,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .size(46.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                            )
-
-                            Spacer(modifier = Modifier.width(12.dp))
-
-                            Column(modifier = Modifier.weight(1f)) {
+            // Render dynamically ordered sections based on query fit
+            for (section in orderedSections) {
+                when (section) {
+                    SearchCategorySection.ARTISTS -> {
+                        if (shouldShowArtists) {
+                            item(key = "header_artists") {
                                 Text(
-                                    text = artistPreview.name,
+                                    text = "Artists",
+                                    fontFamily = SyneFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 16.sp,
                                     color = MaterialTheme.colorScheme.onBackground,
-                                    fontSize = 15.sp,
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.Medium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = artistPreview.subscribers.ifBlank { "Verified Artist" },
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 12.sp,
-                                    fontFamily = OutfitFontFamily,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
                                 )
                             }
 
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
-                                contentDescription = "View Artist",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
-                }
-            }
+                            items(verifiedSearchArtists, key = { "ver_art_${it.browseId}" }) { artistPreview ->
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 2.dp)
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .clickable {
+                                            dismissSearchKeyboard()
+                                            viewModel.navigateToArtist(artistPreview.name, isChannel = false)
+                                        },
+                                    color = Color.Transparent
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        AsyncImage(
+                                            model = artistPreview.avatarUrl,
+                                            contentDescription = artistPreview.name,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .size(46.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                        )
 
-            // Matching Playlists (Local + Live Online YouTube / YouTube Music Playlists)
-            if (selectedTab == SearchTab.TOP || selectedTab == SearchTab.PLAYLISTS) {
-                val activeOnlinePlaylists = if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
-                    emptyList()
-                } else if (query.trim().length >= 2) {
-                    searchedOnlinePlaylists
-                } else {
-                    suggestedYoutubePlaylists.filter { it.type == "PLAYLIST" || it.type == "MIX" }
-                }
-                val displayedOnlinePlaylists = if (selectedTab == SearchTab.TOP) {
-                    activeOnlinePlaylists.take(4)
-                } else {
-                    activeOnlinePlaylists
-                }
+                                        Spacer(modifier = Modifier.width(12.dp))
 
-                if (filteredPlaylists.isNotEmpty() || displayedOnlinePlaylists.isNotEmpty()) {
-                    item {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Playlists & Mixes",
-                                fontFamily = SyneFontFamily,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 16.sp,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
-                            Text(
-                                text = "${filteredPlaylists.size + displayedOnlinePlaylists.size} playlists",
-                                fontFamily = OutfitFontFamily,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
+                                        Column(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .padding(horizontal = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = artistPreview.name,
+                                                color = MaterialTheme.colorScheme.onBackground,
+                                                fontSize = 15.sp,
+                                                fontFamily = OutfitFontFamily,
+                                                fontWeight = FontWeight.Medium,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = artistPreview.subscribers.ifBlank { "Verified Artist" },
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                fontSize = 12.sp,
+                                                fontFamily = OutfitFontFamily,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
 
-                    items(filteredPlaylists, key = { "loc_pl_${it.id}" }) { pl ->
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 2.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable {
-                                    dismissSearchKeyboard()
-                                    onNavigateToPlaylist(pl.id)
-                                },
-                            color = Color.Transparent
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+                                            contentDescription = "View Artist",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        } else if (selectedTab == SearchTab.ARTISTS && !isSearchingOnline && hasCompletedOnlineSearch) {
+                            item(key = "empty_artists") {
                                 Box(
                                     modifier = Modifier
-                                        .size(54.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 24.dp, vertical = 40.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    AsyncImage(
-                                        model = pl.coverUrl,
-                                        contentDescription = pl.title,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.width(12.dp))
-
-                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = pl.title,
-                                        color = MaterialTheme.colorScheme.onBackground,
-                                        fontSize = 15.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = "${pl.trackCount} tracks • ${pl.description}",
+                                        text = "No verified artists found for \"$query\"",
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 12.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        fontSize = 14.sp,
+                                        fontFamily = OutfitFontFamily
                                     )
                                 }
+                            }
+                        }
+                    }
 
-                                Surface(
-                                    onClick = {
-                                        dismissSearchKeyboard()
-                                        viewModel.playPlaylistOrMix(pl.id)
-                                    },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    modifier = Modifier.size(34.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.PlayArrow,
-                                            contentDescription = "Play Playlist",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(18.dp)
+                    SearchCategorySection.PLAYLISTS -> {
+                        if (selectedTab == SearchTab.TOP || selectedTab == SearchTab.PLAYLISTS) {
+                            if (filteredPlaylists.isNotEmpty() || displayedOnlinePlaylists.isNotEmpty()) {
+                                item(key = "header_playlists") {
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 20.dp, vertical = 8.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "Playlists & Mixes",
+                                            fontFamily = SyneFontFamily,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 16.sp,
+                                            color = MaterialTheme.colorScheme.onBackground
+                                        )
+                                        Text(
+                                            text = "${filteredPlaylists.size + displayedOnlinePlaylists.size} playlists",
+                                            fontFamily = OutfitFontFamily,
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+
+                                items(filteredPlaylists, key = { "loc_pl_${it.id}" }) { pl ->
+                                    Surface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 2.dp)
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .clickable {
+                                                dismissSearchKeyboard()
+                                                onNavigateToPlaylist(pl.id)
+                                            },
+                                        color = Color.Transparent
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(54.dp)
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                AsyncImage(
+                                                    model = pl.coverUrl,
+                                                    contentDescription = pl.title,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier.fillMaxSize()
+                                                )
+                                            }
+
+                                            Spacer(modifier = Modifier.width(12.dp))
+
+                                            Column(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .padding(horizontal = 4.dp)
+                                            ) {
+                                                Text(
+                                                    text = pl.title,
+                                                    color = MaterialTheme.colorScheme.onBackground,
+                                                    fontSize = 15.sp,
+                                                    fontFamily = OutfitFontFamily,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = "${pl.trackCount} tracks • ${pl.description}",
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    fontSize = 12.sp,
+                                                    fontFamily = OutfitFontFamily,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+
+                                            Surface(
+                                                onClick = {
+                                                    dismissSearchKeyboard()
+                                                    viewModel.playPlaylistOrMix(pl.id)
+                                                },
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = MaterialTheme.colorScheme.primaryContainer,
+                                                modifier = Modifier.size(34.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.PlayArrow,
+                                                        contentDescription = "Play Playlist",
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                items(displayedOnlinePlaylists, key = { "ytm_pl_${it.browseId}" }) { onlinePl ->
+                                    val plTargetId = onlinePl.browseId.ifBlank { onlinePl.playlistId.orEmpty() }
+                                    Surface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 2.dp)
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .clickable {
+                                                dismissSearchKeyboard()
+                                                onNavigateToPlaylist(plTargetId)
+                                            },
+                                        color = Color.Transparent
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(56.dp)
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                AsyncImage(
+                                                    model = onlinePl.thumbnailUrl,
+                                                    contentDescription = onlinePl.title,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier.fillMaxSize()
+                                                )
+                                            }
+
+                                            Spacer(modifier = Modifier.width(12.dp))
+
+                                            Column(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .padding(horizontal = 4.dp)
+                                            ) {
+                                                Text(
+                                                    text = onlinePl.title,
+                                                    color = MaterialTheme.colorScheme.onBackground,
+                                                    fontSize = 15.sp,
+                                                    fontFamily = OutfitFontFamily,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = onlinePl.subtitle.ifBlank { "YouTube Playlist" },
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    fontSize = 12.sp,
+                                                    fontFamily = OutfitFontFamily,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+
+                                            Surface(
+                                                onClick = {
+                                                    dismissSearchKeyboard()
+                                                    viewModel.playPlaylistOrMix(plTargetId)
+                                                },
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = MaterialTheme.colorScheme.primaryContainer,
+                                                modifier = Modifier.size(34.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.PlayArrow,
+                                                        contentDescription = "Play Playlist",
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if (selectedTab == SearchTab.PLAYLISTS && !isSearchingOnline && hasCompletedOnlineSearch) {
+                                item(key = "empty_playlists") {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 24.dp, vertical = 40.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "No playlists found for \"$query\"",
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontSize = 14.sp,
+                                            fontFamily = OutfitFontFamily
                                         )
                                     }
                                 }
@@ -887,289 +1173,196 @@ fun SearchScreen(
                         }
                     }
 
-                    items(displayedOnlinePlaylists, key = { "ytm_pl_${it.browseId}" }) { onlinePl ->
-                        val plTargetId = onlinePl.browseId.ifBlank { onlinePl.playlistId.orEmpty() }
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 2.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable {
-                                    dismissSearchKeyboard()
-                                    onNavigateToPlaylist(plTargetId)
-                                },
-                            color = Color.Transparent
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(56.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    AsyncImage(
-                                        model = onlinePl.thumbnailUrl,
-                                        contentDescription = onlinePl.title,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.width(12.dp))
-
-                                Column(modifier = Modifier.weight(1f)) {
+                    SearchCategorySection.ALBUMS -> {
+                        if (selectedTab == SearchTab.TOP || selectedTab == SearchTab.ALBUMS) {
+                            if (activeAlbums.isNotEmpty()) {
+                                item(key = "header_albums") {
+                                    Spacer(modifier = Modifier.height(10.dp))
                                     Text(
-                                        text = onlinePl.title,
-                                        color = MaterialTheme.colorScheme.onBackground,
-                                        fontSize = 15.sp,
-                                        fontFamily = OutfitFontFamily,
+                                        text = "Albums",
+                                        fontFamily = SyneFontFamily,
                                         fontWeight = FontWeight.SemiBold,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = onlinePl.subtitle.ifBlank { "YouTube Playlist" },
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 12.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        fontSize = 16.sp,
+                                        color = MaterialTheme.colorScheme.onBackground,
+                                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
                                     )
                                 }
-
-                                Surface(
-                                    onClick = {
-                                        dismissSearchKeyboard()
-                                        viewModel.playPlaylistOrMix(plTargetId)
-                                    },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    modifier = Modifier.size(34.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.PlayArrow,
-                                            contentDescription = "Play Playlist",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
+                                items(activeAlbums, key = { "ytm_alb_${it.browseId}" }) { alb ->
+                                    val albTargetId = alb.browseId.ifBlank { alb.playlistId.orEmpty() }
+                                    Surface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 2.dp)
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .clickable {
+                                                dismissSearchKeyboard()
+                                                onNavigateToPlaylist(albTargetId)
+                                            },
+                                        color = Color.Transparent
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(56.dp)
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                AsyncImage(
+                                                    model = alb.thumbnailUrl,
+                                                    contentDescription = alb.title,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier.fillMaxSize()
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                            Column(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .padding(horizontal = 4.dp)
+                                            ) {
+                                                Text(
+                                                    text = alb.title,
+                                                    color = MaterialTheme.colorScheme.onBackground,
+                                                    fontSize = 15.sp,
+                                                    fontFamily = OutfitFontFamily,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = alb.subtitle.ifBlank { "Album" },
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    fontSize = 12.sp,
+                                                    fontFamily = OutfitFontFamily,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                            Surface(
+                                                onClick = {
+                                                    dismissSearchKeyboard()
+                                                    viewModel.playPlaylistOrMix(albTargetId)
+                                                },
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = MaterialTheme.colorScheme.primaryContainer,
+                                                modifier = Modifier.size(34.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.PlayArrow,
+                                                        contentDescription = "Play Album",
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                } else if (selectedTab == SearchTab.PLAYLISTS && !isSearchingOnline && hasCompletedOnlineSearch) {
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(40.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "No playlists found for \"$query\"",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 14.sp,
-                                fontFamily = OutfitFontFamily
-                            )
-                        }
-                    }
-                }
-            }
 
-            // Matching Online Albums
-            if (selectedTab == SearchTab.TOP || selectedTab == SearchTab.ALBUMS) {
-                val activeAlbums = if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
-                    emptyList()
-                } else if (query.trim().length >= 2) {
-                    if (selectedTab == SearchTab.TOP) searchedOnlineAlbums.take(3) else searchedOnlineAlbums
-                } else {
-                    suggestedYoutubePlaylists.filter { it.type == "ALBUM" }.take(4)
-                }
-                if (activeAlbums.isNotEmpty()) {
-                    item {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = "Albums",
-                            fontFamily = SyneFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 16.sp,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
-                        )
-                    }
-                    items(activeAlbums, key = { "ytm_alb_${it.browseId}" }) { alb ->
-                        val albTargetId = alb.browseId.ifBlank { alb.playlistId.orEmpty() }
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 2.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable {
-                                    dismissSearchKeyboard()
-                                    onNavigateToPlaylist(albTargetId)
-                                },
-                            color = Color.Transparent
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(56.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    AsyncImage(
-                                        model = alb.thumbnailUrl,
-                                        contentDescription = alb.title,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = alb.title,
-                                        color = MaterialTheme.colorScheme.onBackground,
-                                        fontSize = 15.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = alb.subtitle.ifBlank { "Album" },
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 12.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                Surface(
-                                    onClick = {
-                                        dismissSearchKeyboard()
-                                        viewModel.playPlaylistOrMix(albTargetId)
-                                    },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    modifier = Modifier.size(34.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.PlayArrow,
-                                            contentDescription = "Play Album",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(18.dp)
+                    SearchCategorySection.SONGS -> {
+                        if (selectedTab == SearchTab.TOP || selectedTab == SearchTab.SONGS || selectedTab == SearchTab.ALBUMS) {
+                            val hasActiveSearchQuery = query.trim().length >= 2
+                            val showHeader = displayedTracks.isNotEmpty() || (hasActiveSearchQuery && hasCompletedOnlineSearch)
+                            if (showHeader) {
+                                item(key = "header_songs") {
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 20.dp, vertical = 8.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = when {
+                                                query.isBlank() -> "Recommended Songs"
+                                                currentProvider == com.example.ui.ProviderFilter.YOUTUBE -> "YouTube Videos & Audio"
+                                                else -> "Songs"
+                                            },
+                                            fontFamily = SyneFontFamily,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 16.sp,
+                                            color = SeitharolDark
                                         )
+                                        if (displayedTracks.isNotEmpty()) {
+                                            Text(
+                                                text = "${displayedTracks.size} results",
+                                                fontFamily = OutfitFontFamily,
+                                                fontSize = 12.sp,
+                                                color = SeitharolTextSecondary
+                                            )
+                                        }
                                     }
                                 }
                             }
-                        }
-                    }
-                }
-            }
 
-            // Matching Songs / YouTube Results (ONLY show header when displayedTracks is non-empty or an active search completed!)
-            if (selectedTab == SearchTab.TOP || selectedTab == SearchTab.SONGS || selectedTab == SearchTab.ALBUMS) {
-                val hasActiveSearchQuery = query.trim().length >= 2
-                val showHeader = displayedTracks.isNotEmpty() || (hasActiveSearchQuery && hasCompletedOnlineSearch)
-                if (showHeader) {
-                    item {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = when {
-                                    query.isBlank() -> "Recommended Songs"
-                                    currentProvider == com.example.ui.ProviderFilter.YOUTUBE -> "YouTube Videos & Audio"
-                                    else -> "Songs"
-                                },
-                                fontFamily = SyneFontFamily,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 16.sp,
-                                color = SeitharolDark
-                            )
-                            if (displayedTracks.isNotEmpty()) {
-                                Text(
-                                    text = "${displayedTracks.size} results",
-                                    fontFamily = OutfitFontFamily,
-                                    fontSize = 12.sp,
-                                    color = SeitharolTextSecondary
-                                )
+                            if (displayedTracks.isEmpty() && ((!isSearchingOnline && hasCompletedOnlineSearch && hasActiveSearchQuery) || currentProvider == com.example.ui.ProviderFilter.LOCAL)) {
+                                if (hasActiveSearchQuery || currentProvider == com.example.ui.ProviderFilter.LOCAL) {
+                                    item(key = "empty_songs") {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 24.dp, vertical = 40.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
+                                                    if (query.isBlank()) "No downloaded songs on this device yet."
+                                                    else "No downloaded songs match \"$query\""
+                                                } else {
+                                                    "No results found for \"$query\""
+                                                },
+                                                color = SeitharolTextSecondary,
+                                                fontSize = 14.sp,
+                                                fontFamily = OutfitFontFamily
+                                            )
+                                        }
+                                    }
+                                }
                             }
-                        }
-                    }
-                }
 
-                if (displayedTracks.isEmpty() && ((!isSearchingOnline && hasCompletedOnlineSearch && hasActiveSearchQuery) || currentProvider == com.example.ui.ProviderFilter.LOCAL)) {
-                    if (hasActiveSearchQuery || currentProvider == com.example.ui.ProviderFilter.LOCAL) {
-                        item {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(40.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
-                                        if (query.isBlank()) "No downloaded songs on this device yet."
-                                        else "No downloaded songs match \"$query\""
-                                    } else {
-                                        "No results found for \"$query\""
+                            items(displayedTracks, key = { "search_item_${it.id}" }) { track ->
+                                val isVideo = track.isVideoTrack
+                                val isMostViewedOfficial = query.isNotBlank() && track.id == mostViewedOfficialTrackId
+                                TrackCard(
+                                    track = track,
+                                    isPlaying = playerState.currentTrack?.id == track.id,
+                                    isHighlightedOfficial = isMostViewedOfficial,
+                                    subtitleText = if (isVideo) {
+                                        "${track.artist} • MP4 Video • ${track.durationFormatted}"
+                                    } else null,
+                                    onTrackClick = {
+                                        focusManager.clearFocus()
+                                        keyboardController?.hide()
+                                        onPlayTrackAndMaximize(track)
                                     },
-                                    color = SeitharolTextSecondary,
-                                    fontSize = 14.sp,
-                                    fontFamily = OutfitFontFamily
+                                    onLikeClick = { viewModel.toggleLike(track) },
+                                    onDownloadClick = { tier: DownloadTier ->
+                                        viewModel.startDownload(track, tier)
+                                    },
+                                    onPlayNextClick = { viewModel.playNext(track) },
+                                    onAddToQueueClick = { viewModel.addToQueue(track) },
+                                    onStartRadioClick = { viewModel.startRadioMix(track) },
+                                    onAddToPlaylistClick = { trackToAddToPlaylist = track },
+                                    onGoToArtistClick = { creatorName ->
+                                        viewModel.navigateToArtist(creatorName, isChannel = isVideo)
+                                    },
+                                    onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                                 )
                             }
                         }
                     }
-                }
-
-                items(displayedTracks, key = { "search_item_${it.id}" }) { track ->
-                    val isVideo = track.isVideoTrack
-                    TrackCard(
-                        track = track,
-                        isPlaying = playerState.currentTrack?.id == track.id,
-                        subtitleText = if (isVideo) {
-                            "${track.artist} • MP4 Video • ${track.durationFormatted}"
-                        } else null,
-                        onTrackClick = {
-                            focusManager.clearFocus()
-                            keyboardController?.hide()
-                            onPlayTrackAndMaximize(track)
-                        },
-                        onLikeClick = { viewModel.toggleLike(track) },
-                        onDownloadClick = { tier: DownloadTier ->
-                            viewModel.startDownload(track, tier)
-                        },
-                        onPlayNextClick = { viewModel.playNext(track) },
-                        onAddToQueueClick = { viewModel.addToQueue(track) },
-                        onStartRadioClick = { viewModel.startRadioMix(track) },
-                        onAddToPlaylistClick = { trackToAddToPlaylist = track },
-                        onGoToArtistClick = { creatorName ->
-                            viewModel.navigateToArtist(creatorName, isChannel = isVideo)
-                        },
-                        onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
-                    )
                 }
             }
         }

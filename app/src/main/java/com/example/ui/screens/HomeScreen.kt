@@ -27,6 +27,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -599,18 +600,69 @@ fun HomeScreen(
             }
 
             // ────────────────────────────────────────────────────────────
-            // Time-of-day Greeting & Search Bar
+            // Top Section Hero Name ("Johnson") + Time-of-day Greeting & Search Bar
             // ────────────────────────────────────────────────────────────
             item {
-                Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                    Text(
-                        text = greeting,
-                        fontFamily = SyneFontFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 24.sp,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
-                    )
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    // Oversized "Johnson" hero display typography:
+                    // Starts at horizontal center of the display (maxWidth / 2).
+                    // Scaled dynamically so on mobile only "Jo" fits from center to right edge,
+                    // and on tablet "John" fits from center to right edge in the most expanded view.
+                    BoxWithConstraints(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clipToBounds()
+                            .padding(top = 4.dp, bottom = 2.dp)
+                    ) {
+                        val density = androidx.compose.ui.platform.LocalDensity.current
+                        val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
+                        val isTabletExpanded = maxWidth >= 600.dp
+                        val visiblePrefix = if (isTabletExpanded) "John" else "Jo"
+                        val halfScreenPx = with(density) { (maxWidth / 2f).toPx() }
+                        val baseStyle = androidx.compose.ui.text.TextStyle(
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 100.sp
+                        )
+                        val measuredPrefixWidthPx = remember(visiblePrefix, textMeasurer) {
+                            textMeasurer.measure(
+                                text = androidx.compose.ui.text.AnnotatedString(visiblePrefix),
+                                style = baseStyle,
+                                softWrap = false,
+                                maxLines = 1
+                            ).size.width.coerceAtLeast(1)
+                        }
+                        val computedFontSizeSp = with(density) {
+                            val rawSp = 100f * (halfScreenPx / measuredPrefixWidthPx.toFloat())
+                            rawSp.coerceIn(48f, 260f).sp
+                        }
+
+                        Text(
+                            text = "Johnson",
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = computedFontSizeSp,
+                            lineHeight = computedFontSizeSp,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.92f),
+                            softWrap = false,
+                            maxLines = 1,
+                            overflow = TextOverflow.Visible,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = maxWidth / 2f)
+                                .testTag("home_hero_johnson_text")
+                        )
+                    }
+
+                    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                        Text(
+                            text = greeting,
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 22.sp,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
+                        )
                     Spacer(modifier = Modifier.height(8.dp))
                     Surface(
                         modifier = Modifier
@@ -644,6 +696,7 @@ fun HomeScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
+                    }
                     }
                 }
             }
@@ -1348,7 +1401,7 @@ fun HomeScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 195.dp)
+                                .padding(bottom = 225.dp)
                                 .zIndex(1f)
                         ) {
                             SectionHeader(
@@ -1369,7 +1422,7 @@ fun HomeScreen(
                             }
                         }
                     } else {
-                        Spacer(modifier = Modifier.height(195.dp))
+                        Spacer(modifier = Modifier.height(225.dp))
                     }
                 }
             }
@@ -1688,7 +1741,7 @@ fun AestheticMusicHomeScreen(
 
         item {
             Box(modifier = Modifier.fillMaxWidth()) {
-                Spacer(modifier = Modifier.height(195.dp))
+                Spacer(modifier = Modifier.height(225.dp))
                 HomeScreenKanglaFooterImage(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1804,7 +1857,6 @@ fun TrendingSongsHorizontalShelf(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1500)
                             )
                             Text(
                                 text = track.subtitle,
@@ -2136,7 +2188,8 @@ fun FreshNewMusicShelf(
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 6.dp)
                     )
                     Text(
                         text = track.subtitle,
@@ -2144,7 +2197,8 @@ fun FreshNewMusicShelf(
                         fontSize = 12.sp,
                         fontFamily = OutfitFontFamily,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
             }
@@ -2315,7 +2369,8 @@ fun MediaCarouselShelf(
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 6.dp)
                     )
                     Text(
                         text = item.subtitle,
@@ -2323,7 +2378,8 @@ fun MediaCarouselShelf(
                         fontSize = 12.sp,
                         fontFamily = OutfitFontFamily,
                         maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
             }

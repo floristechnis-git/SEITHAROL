@@ -3,27 +3,61 @@ package com.example.ui.components
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Base64
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
 import com.example.data.model.Track
 import com.seitharol.data.resolver.InnerTubeStreamExtractor
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.net.URLDecoder
 import java.net.URLEncoder
+import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
 
 /**
- * Universal HTTPS Share & Deep Link Helper for SEITHAROL:
+ * Universal HTTPS Share & Serverless Device-to-Device Deep Link Helper for SEITHAROL:
  * - Uses `https://seitharol.vercel.app` as the canonical web share & deep-link bridge host.
- * - Replaces custom fake bottom-sheet share UI with native Android system share chooser (`Intent.createChooser`)
- *   matching track share behavior.
- * - Supports opening shared tracks/artists via `Intent.ACTION_VIEW` (`https://seitharol.vercel.app/...`,
- *   `https://seitharol.app/...`, `seitharol://...`), `Intent.ACTION_SEND`, and pasting into Search.
+ * - Personal device-created playlists share ONLY online songs (YouTube / JioSaavn IDs),
+ *   strictly excluding offline on-device local audio/video files.
+ * - Encodes both the raw YouTube/JioSaavn ID list (`ids=...`) AND a compact GZIP+Base64URL
+ *   track metadata bundle (`data=...`) directly in the URL so device-to-device playlist sharing
+ *   works 100% serverlessly with instant reconstruction on the receiving device.
+ * - Also parses external playlist links from YouTube, YouTube Music, Spotify, and Apple Music.
  */
 object SeitharolDeepLinkHelper {
     const val WEB_SHARE_HOST = "https://seitharol.vercel.app"
 
+    fun isOnlineShareableTrack(track: Track): Boolean {
+        if (track.isLocalOnlyTrack) return false
+        val id = track.id.trim()
+        if (id.isBlank()) return false
+        val lower = id.lowercase()
+        if (lower.startsWith("local_") ||
+            lower.startsWith("file_") ||
+            lower.startsWith("vidfile_") ||
+            lower.startsWith("content://") ||
+            lower.startsWith("file://") ||
+            lower.startsWith("/")
+        ) {
+            return false
+        }
+        return true
+    }
+
+    fun normalizeOnlineTrackId(rawId: String): String {
+        val trimmed = rawId.trim()
+        if (trimmed.startsWith("saavn_", ignoreCase = true)) {
+            return "saavn_${trimmed.removePrefix("saavn_").removePrefix("SAAVN_")}"
+        }
+        return InnerTubeStreamExtractor.extractVideoId(trimmed) ?: trimmed
+    }
+
     fun buildTrackShareUrl(track: Track): String {
-        val cleanId = InnerTubeStreamExtractor.extractVideoId(track.id) ?: track.id.trim()
+        val cleanId = normalizeOnlineTrackId(track.id)
         val encTitle = encodeParam(track.title)
         val encArtist = encodeParam(track.artist)
         return "$WEB_SHARE_HOST/share/track/${encodeParam(cleanId)}?title=$encTitle&artist=$encArtist"
@@ -52,11 +86,136 @@ object SeitharolDeepLinkHelper {
         return "Check out $artistName on SEITHAROL:\n$launcherUrl$ytChannelLink"
     }
 
-    fun buildPlaylistShareMessage(playlistTitle: String, playlistId: String): String {
+    /**
+     * Encodes online tracks into a compact GZIP + URL-safe Base64 string for serverless device-to-device sharing.
+     */
+    fun encodeServerlessPlaylistPayload(playlistTitle: String, onlineTracks: List<Track>): String {
+        return runCatching {
+            val root = JSONObject()
+            root.put("t", playlistTitle.trim().ifBlank { "Shared Playlist" })
+            val items = JSONArray()
+            onlineTracks.take(80).forEach { track ->
+                val arr = JSONArray()
+                arr.put(normalizeOnlineTrackId(track.id))
+                arr.put(track.title.take(90))
+                arr.put(track.artist.take(70))
+                arr.put((track.durationMs / 1000L).toInt().coerceAtLeast(0))
+                items.put(arr)
+            }
+            root.put("i", items)
+            val rawBytes = root.toString().toByteArray(Charsets.UTF_8)
+            val baos = ByteArrayOutputStream()
+            GZIPOutputStream(baos).use { gzip ->
+                gzip.write(rawBytes)
+            }
+            Base64.encodeToString(
+                baos.toByteArray(),
+                Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+            )
+        }.getOrDefault("")
+    }
+
+    fun decodeServerlessPlaylistPayload(encoded: String?): Pair<String?, List<Track>> {
+        if (encoded.isNullOrBlank()) return null to emptyList()
+        return runCatching {
+            val compressed = Base64.decode(encoded.trim(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            val jsonStr = GZIPInputStream(ByteArrayInputStream(compressed)).bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val root = JSONObject(jsonStr)
+            val title = root.optString("t").takeIf { it.isNotBlank() }
+            val items = root.optJSONArray("i") ?: JSONArray()
+            val tracks = mutableListOf<Track>()
+            for (idx in 0 until items.length()) {
+                val arr = items.optJSONArray(idx) ?: continue
+                val id = arr.optString(0).trim()
+                if (id.isBlank()) continue
+                val trackTitle = arr.optString(1).ifBlank { "Track ${idx + 1}" }
+                val trackArtist = arr.optString(2).ifBlank { "Artist" }
+                val durSec = arr.optInt(3, 210).coerceAtLeast(0)
+                val ytId = InnerTubeStreamExtractor.extractVideoId(id)
+                val artUrl = if (!ytId.isNullOrBlank()) "https://i.ytimg.com/vi/$ytId/hqdefault.jpg" else ""
+                tracks.add(
+                    Track(
+                        id = id,
+                        title = trackTitle,
+                        artist = trackArtist,
+                        album = "",
+                        durationMs = durSec * 1000L,
+                        artUrl = artUrl
+                    )
+                )
+            }
+            title to tracks
+        }.getOrDefault(null to emptyList())
+    }
+
+    /**
+     * Builds a serverless device-to-device share message for personal playlists.
+     * Strictly includes ONLY online songs (YouTube & JioSaavn) and excludes offline on-device local files.
+     */
+    fun buildPersonalPlaylistShareUrl(playlistTitle: String, tracks: List<Track>): String {
+        val onlineTracks = tracks.filter { isOnlineShareableTrack(it) }.distinctBy { normalizeOnlineTrackId(it.id) }
+        val cleanTitle = playlistTitle.trim().ifBlank { "Shared Playlist" }
+        val encTitle = encodeParam(cleanTitle)
+        val idsParam = onlineTracks.take(100).joinToString(",") { normalizeOnlineTrackId(it.id) }
+        val payload = encodeServerlessPlaylistPayload(cleanTitle, onlineTracks)
+        return buildString {
+            append("$WEB_SHARE_HOST/share/playlist/shared?title=$encTitle")
+            if (idsParam.isNotBlank()) {
+                append("&ids=${encodeParam(idsParam)}")
+            }
+            if (payload.isNotBlank()) {
+                append("&data=$payload")
+            }
+        }
+    }
+
+    fun buildPlaylistShareMessage(
+        playlistTitle: String,
+        playlistId: String,
+        tracks: List<Track> = emptyList()
+    ): String {
+        val isPersonalPlaylist = playlistId.startsWith("pl_", ignoreCase = true) ||
+            playlistId.equals("shared", ignoreCase = true) ||
+            tracks.isNotEmpty()
+        val onlineTracks = tracks.filter { isOnlineShareableTrack(it) }.distinctBy { normalizeOnlineTrackId(it.id) }
+
+        if (isPersonalPlaylist && onlineTracks.isNotEmpty()) {
+            val shareUrl = buildPersonalPlaylistShareUrl(playlistTitle, onlineTracks)
+            val ytIds = onlineTracks.mapNotNull { InnerTubeStreamExtractor.extractVideoId(it.id) }
+            val ytQuickWatchLink = if (ytIds.isNotEmpty()) {
+                "\nYouTube Queue: https://www.youtube.com/watch_videos?video_ids=${ytIds.take(40).joinToString(",")}"
+            } else ""
+            val trackPreviewLines = onlineTracks.take(8).mapIndexed { i, t ->
+                "${i + 1}. ${t.title} — ${t.artist} [${normalizeOnlineTrackId(t.id)}]"
+            }.joinToString("\n")
+            val moreLine = if (onlineTracks.size > 8) "\n...and ${onlineTracks.size - 8} more online tracks" else ""
+            return "Listen to \"$playlistTitle\" (${onlineTracks.size} online songs) on SEITHAROL:\n$shareUrl$ytQuickWatchLink\n\nTracks:\n$trackPreviewLines$moreLine"
+        }
+
         val encTitle = encodeParam(playlistTitle)
         val encId = encodeParam(playlistId)
         val launcherUrl = "$WEB_SHARE_HOST/share/playlist/$encId?title=$encTitle"
         return "Listen to \"$playlistTitle\" on SEITHAROL:\n$launcherUrl"
+    }
+
+    fun sharePlaylistSystemChooser(
+        context: Context,
+        playlistTitle: String,
+        playlistId: String,
+        tracks: List<Track> = emptyList()
+    ) {
+        runCatching {
+            val shareText = buildPlaylistShareMessage(playlistTitle, playlistId, tracks)
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                putExtra(Intent.EXTRA_SUBJECT, "$playlistTitle on Seitharol")
+                putExtra(Intent.EXTRA_TEXT, shareText)
+                type = "text/plain"
+            }
+            val chooserIntent = Intent.createChooser(sendIntent, "Share Playlist").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooserIntent)
+        }
     }
 
     fun shareArtistSystemChooser(context: Context, artistName: String, browseId: String? = null) {
@@ -87,6 +246,14 @@ object SeitharolDeepLinkHelper {
             val browseId: String?
         ) : DeepLinkTarget
 
+        data class PlaylistTarget(
+            val playlistId: String,
+            val title: String,
+            val trackIds: List<String> = emptyList(),
+            val sharedTracks: List<Track> = emptyList(),
+            val externalUrl: String? = null
+        ) : DeepLinkTarget
+
         data class AudioFileTarget(
             val uri: Uri,
             val title: String,
@@ -95,17 +262,32 @@ object SeitharolDeepLinkHelper {
             val album: String = "Local Audio",
             val isVideo: Boolean = false
         ) : DeepLinkTarget
+
+        data class NotFoundTarget(
+            val message: String
+        ) : DeepLinkTarget
     }
 
     fun parseSharedTextOrUrl(rawText: String?): DeepLinkTarget? {
         if (rawText.isNullOrBlank()) return null
+        val trimmed = rawText.trim()
+        if (trimmed.startsWith("spotify:playlist:", ignoreCase = true)) {
+            val spotId = trimmed.substringAfter("spotify:playlist:").substringBefore("?").trim()
+            if (spotId.isNotBlank()) {
+                return DeepLinkTarget.PlaylistTarget(
+                    playlistId = "spotify:$spotId",
+                    title = "Spotify Playlist",
+                    externalUrl = "https://open.spotify.com/playlist/$spotId"
+                )
+            }
+        }
         val urlRegex = Regex("""(https?://[^\s"<>]+|seitharol://[^\s"<>]+)""", RegexOption.IGNORE_CASE)
         val matches = urlRegex.findAll(rawText).map { it.value }.toList()
         for (candidate in matches) {
             val parsedUri = runCatching { Uri.parse(candidate) }.getOrNull() ?: continue
             parseUriTarget(parsedUri)?.let { return it }
         }
-        val directUri = runCatching { Uri.parse(rawText.trim()) }.getOrNull()
+        val directUri = runCatching { Uri.parse(trimmed) }.getOrNull()
         if (directUri != null) {
             parseUriTarget(directUri)?.let { return it }
         }
@@ -171,12 +353,30 @@ object SeitharolDeepLinkHelper {
         return parseUriTarget(uri)
     }
 
+    private fun parsePlaylistQueryTarget(uri: Uri, rawIdSegment: String): DeepLinkTarget.PlaylistTarget {
+        val rawTitle = uri.getQueryParameter("title")?.let(::decodeParam).orEmpty()
+        val dataParam = uri.getQueryParameter("data")
+        val idsParam = uri.getQueryParameter("ids")?.let(::decodeParam).orEmpty()
+        val (decodedTitle, decodedTracks) = decodeServerlessPlaylistPayload(dataParam)
+        val parsedIds = idsParam
+            .split(",", ";", "|")
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        val finalTitle = rawTitle.ifBlank { decodedTitle.orEmpty() }.ifBlank { "Shared Playlist" }
+        return DeepLinkTarget.PlaylistTarget(
+            playlistId = rawIdSegment.ifBlank { "shared" },
+            title = finalTitle,
+            trackIds = parsedIds,
+            sharedTracks = decodedTracks
+        )
+    }
+
     private fun parseUriTarget(uri: Uri): DeepLinkTarget? {
         val scheme = uri.scheme?.lowercase().orEmpty()
         val host = uri.host?.lowercase().orEmpty()
         val segments = uri.pathSegments.orEmpty()
 
-        // Custom scheme: seitharol://track/[id] or seitharol://share/track/[id] or seitharol://artist/[name]
+        // Custom scheme: seitharol://track/[id], seitharol://artist/[name], seitharol://playlist/[id]
         if (scheme == "seitharol") {
             return when {
                 host == "track" && segments.isNotEmpty() -> {
@@ -194,27 +394,39 @@ object SeitharolDeepLinkHelper {
                         browseId = rawId.takeIf { it.startsWith("UC") || it.startsWith("MPLA") }
                     )
                 }
+                host == "playlist" -> {
+                    val rawId = segments.firstOrNull()?.let(::decodeParam).orEmpty()
+                    parsePlaylistQueryTarget(uri, rawId)
+                }
                 host == "share" && segments.size >= 2 -> {
                     val type = segments[0].lowercase()
                     val id = decodeParam(segments[1])
-                    if (type == "track") {
-                        val title = uri.getQueryParameter("title")?.let(::decodeParam).orEmpty()
-                        val artist = uri.getQueryParameter("artist")?.let(::decodeParam).orEmpty()
-                        val art = uri.getQueryParameter("art")?.let(::decodeParam).orEmpty()
-                        DeepLinkTarget.TrackTarget(id, title, artist, art)
-                    } else if (type == "artist") {
-                        val name = uri.getQueryParameter("name")?.let(::decodeParam)?.ifBlank { id } ?: id
-                        DeepLinkTarget.ArtistTarget(
-                            artistName = name,
-                            browseId = id.takeIf { it.startsWith("UC") || it.startsWith("MPLA") }
-                        )
-                    } else null
+                    when (type) {
+                        "track" -> {
+                            val title = uri.getQueryParameter("title")?.let(::decodeParam).orEmpty()
+                            val artist = uri.getQueryParameter("artist")?.let(::decodeParam).orEmpty()
+                            val art = uri.getQueryParameter("art")?.let(::decodeParam).orEmpty()
+                            DeepLinkTarget.TrackTarget(id, title, artist, art)
+                        }
+                        "artist" -> {
+                            val name = uri.getQueryParameter("name")?.let(::decodeParam)?.ifBlank { id } ?: id
+                            DeepLinkTarget.ArtistTarget(
+                                artistName = name,
+                                browseId = id.takeIf { it.startsWith("UC") || it.startsWith("MPLA") }
+                            )
+                        }
+                        "playlist" -> parsePlaylistQueryTarget(uri, id)
+                        else -> DeepLinkTarget.NotFoundTarget("404: Unknown share link type '$type'")
+                    }
                 }
                 else -> {
                     val typeParam = uri.getQueryParameter("type")?.lowercase().orEmpty()
                     val idParam = (uri.getQueryParameter("id") ?: uri.getQueryParameter("v"))?.let(::decodeParam).orEmpty()
                     val nameParam = uri.getQueryParameter("name")?.let(::decodeParam).orEmpty()
                     when {
+                        typeParam == "playlist" || !uri.getQueryParameter("ids").isNullOrBlank() || !uri.getQueryParameter("data").isNullOrBlank() -> {
+                            parsePlaylistQueryTarget(uri, idParam)
+                        }
                         (typeParam == "track" || idParam.isNotBlank()) && idParam.isNotBlank() -> {
                             val title = uri.getQueryParameter("title")?.let(::decodeParam).orEmpty()
                             val artist = uri.getQueryParameter("artist")?.let(::decodeParam).orEmpty()
@@ -236,23 +448,34 @@ object SeitharolDeepLinkHelper {
             }
         }
 
-        // HTTPS / HTTP routes: https://seitharol.vercel.app/share/track/[id], /track/[id], /share/artist/[id], /artist/[name], query params, and YouTube links
         if (scheme == "https" || scheme == "http") {
             val shareIdx = segments.indexOfFirst { it.equals("share", ignoreCase = true) }
-            if (shareIdx >= 0 && segments.size > shareIdx + 2) {
+            if (shareIdx >= 0 && segments.size > shareIdx + 1) {
                 val entityType = segments[shareIdx + 1].lowercase()
-                val rawId = decodeParam(segments[shareIdx + 2])
-                if (entityType == "track") {
-                    val title = uri.getQueryParameter("title")?.let(::decodeParam).orEmpty()
-                    val artist = uri.getQueryParameter("artist")?.let(::decodeParam).orEmpty()
-                    val art = uri.getQueryParameter("art")?.let(::decodeParam).orEmpty()
-                    return DeepLinkTarget.TrackTarget(rawId, title, artist, art)
-                } else if (entityType == "artist") {
-                    val name = uri.getQueryParameter("name")?.let(::decodeParam)?.ifBlank { rawId } ?: rawId
-                    return DeepLinkTarget.ArtistTarget(
-                        artistName = name,
-                        browseId = rawId.takeIf { it.startsWith("UC") || it.startsWith("MPLA") }
-                    )
+                val rawId = if (segments.size > shareIdx + 2) decodeParam(segments[shareIdx + 2]) else ""
+                when (entityType) {
+                    "track" -> {
+                        val title = uri.getQueryParameter("title")?.let(::decodeParam).orEmpty()
+                        val artist = uri.getQueryParameter("artist")?.let(::decodeParam).orEmpty()
+                        val art = uri.getQueryParameter("art")?.let(::decodeParam).orEmpty()
+                        return if (rawId.isNotBlank()) DeepLinkTarget.TrackTarget(rawId, title, artist, art)
+                        else DeepLinkTarget.NotFoundTarget("404: Shared track ID is missing.")
+                    }
+                    "artist" -> {
+                        val name = uri.getQueryParameter("name")?.let(::decodeParam)?.ifBlank { rawId } ?: rawId
+                        return if (name.isNotBlank()) {
+                            DeepLinkTarget.ArtistTarget(
+                                artistName = name,
+                                browseId = rawId.takeIf { it.startsWith("UC") || it.startsWith("MPLA") }
+                            )
+                        } else DeepLinkTarget.NotFoundTarget("404: Shared artist could not be found.")
+                    }
+                    "playlist" -> {
+                        return parsePlaylistQueryTarget(uri, rawId)
+                    }
+                    else -> {
+                        return DeepLinkTarget.NotFoundTarget("404: Page '/share/$entityType' was not found.")
+                    }
                 }
             }
 
@@ -272,9 +495,15 @@ object SeitharolDeepLinkHelper {
                         browseId = rawId.takeIf { it.startsWith("UC") || it.startsWith("MPLA") }
                     )
                 }
+                if (segments.isNotEmpty() && segments[0].equals("playlist", ignoreCase = true)) {
+                    val rawId = segments.getOrNull(1)?.let(::decodeParam).orEmpty()
+                    return parsePlaylistQueryTarget(uri, rawId)
+                }
                 val typeParam = uri.getQueryParameter("type")?.lowercase().orEmpty()
                 val idParam = (uri.getQueryParameter("id") ?: uri.getQueryParameter("v"))?.let(::decodeParam).orEmpty()
-                if (typeParam == "track" && idParam.isNotBlank()) {
+                if (typeParam == "playlist" || !uri.getQueryParameter("ids").isNullOrBlank() || !uri.getQueryParameter("data").isNullOrBlank()) {
+                    return parsePlaylistQueryTarget(uri, idParam)
+                } else if (typeParam == "track" && idParam.isNotBlank()) {
                     val title = uri.getQueryParameter("title")?.let(::decodeParam).orEmpty()
                     val artist = uri.getQueryParameter("artist")?.let(::decodeParam).orEmpty()
                     val art = uri.getQueryParameter("art")?.let(::decodeParam).orEmpty()
@@ -285,17 +514,69 @@ object SeitharolDeepLinkHelper {
                         artistName = name,
                         browseId = idParam.takeIf { it.startsWith("UC") || it.startsWith("MPLA") }
                     )
+                } else if (segments.isNotEmpty()) {
+                    return DeepLinkTarget.NotFoundTarget("404: Page '${uri.path}' not found on Seitharol.")
                 }
             }
 
+            // YouTube / YouTube Music Playlist & watch_videos links
             if (host.contains("youtube.com") || host.contains("youtu.be")) {
+                val videoIdsParam = uri.getQueryParameter("video_ids")
+                if (!videoIdsParam.isNullOrBlank()) {
+                    val ids = videoIdsParam.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                    if (ids.isNotEmpty()) {
+                        return DeepLinkTarget.PlaylistTarget(
+                            playlistId = "yt_queue",
+                            title = uri.getQueryParameter("title")?.let(::decodeParam).orEmpty().ifBlank { "Imported YouTube Queue" },
+                            trackIds = ids,
+                            externalUrl = uri.toString()
+                        )
+                    }
+                }
+                val listId = uri.getQueryParameter("list")?.trim().orEmpty()
                 val ytId = InnerTubeStreamExtractor.extractVideoId(uri.toString())
+                if (listId.isNotBlank() && (uri.path?.contains("playlist", ignoreCase = true) == true || ytId.isNullOrBlank())) {
+                    return DeepLinkTarget.PlaylistTarget(
+                        playlistId = listId,
+                        title = "YouTube Playlist",
+                        externalUrl = uri.toString()
+                    )
+                }
                 if (!ytId.isNullOrBlank()) {
                     return DeepLinkTarget.TrackTarget(
                         trackId = ytId,
                         title = uri.getQueryParameter("title")?.let(::decodeParam).orEmpty(),
                         artist = uri.getQueryParameter("artist")?.let(::decodeParam).orEmpty(),
                         artUrl = "https://i.ytimg.com/vi/$ytId/hqdefault.jpg"
+                    )
+                }
+            }
+
+            // Spotify Playlist / Album links
+            if (host.contains("spotify.com") || host.contains("spotify.link")) {
+                val plIdx = segments.indexOfFirst { it.equals("playlist", ignoreCase = true) || it.equals("album", ignoreCase = true) }
+                if (plIdx >= 0 && segments.size > plIdx + 1) {
+                    val spotId = segments[plIdx + 1]
+                    return DeepLinkTarget.PlaylistTarget(
+                        playlistId = "spotify:$spotId",
+                        title = "Spotify Playlist",
+                        externalUrl = uri.toString()
+                    )
+                }
+            }
+
+            // Apple Music Playlist / Album links
+            if (host.contains("music.apple.com") || host.contains("itunes.apple.com")) {
+                if (segments.any { it.equals("playlist", ignoreCase = true) || it.equals("album", ignoreCase = true) }) {
+                    val appleId = segments.lastOrNull().orEmpty()
+                    val nameHint = segments.getOrNull(segments.size - 2)
+                        ?.replace("-", " ")
+                        ?.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+                        ?: "Apple Music Playlist"
+                    return DeepLinkTarget.PlaylistTarget(
+                        playlistId = "apple:$appleId",
+                        title = nameHint,
+                        externalUrl = uri.toString()
                     )
                 }
             }

@@ -69,7 +69,7 @@ fun ProfileScreen(
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
                 .testTag("profile_screen"),
-            contentPadding = PaddingValues(bottom = 140.dp)
+            contentPadding = PaddingValues(bottom = 225.dp)
         ) {
             item {
                 Box(

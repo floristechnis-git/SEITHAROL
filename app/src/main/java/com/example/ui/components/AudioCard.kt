@@ -3,10 +3,9 @@ package com.example.ui.components
 import android.content.Intent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -171,11 +170,10 @@ fun SeitharolPullToRefreshBox(
 
 /**
  * Standard Track Row from SEITHAROL design:
- * - Full song/video title visibility (2-line support + marquee when playing + full untruncated header in 3-dot menu).
- * - Complete 3-dot popup menu across all pages (Play Now, Play Next, Add to Queue, Start Radio Mix, Like/Unlike,
- *   Add to Playlist, Go to Artist / Visit Channel, Download Format & Quality, Share, Remove from Playlist/History/Offline).
+ * - Full song/video title visibility (2-line support + full untruncated header in 3-dot menu).
+ * - Horizontal auto-scroll is strictly reserved for MiniPlayer, not individual cards.
+ * - Supports slightly different card color (`isHighlightedOfficial`) for the most-viewed official song in search results.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TrackCard(
     track: Track,
@@ -186,6 +184,7 @@ fun TrackCard(
     modifier: Modifier = Modifier,
     rankNumber: Int? = null,
     subtitleText: String? = null,
+    isHighlightedOfficial: Boolean = false,
     onOptionsClick: (() -> Unit)? = null,
     onPlayNextClick: (() -> Unit)? = null,
     onAddToQueueClick: (() -> Unit)? = null,
@@ -203,13 +202,23 @@ fun TrackCard(
     val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
     val context = LocalContext.current
 
+    val cardColor = when {
+        isPlaying -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+        isHighlightedOfficial -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.62f)
+        else -> Color.Transparent
+    }
+    val cardBorder = if (isHighlightedOfficial && !isPlaying) {
+        BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f))
+    } else null
+
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onTrackClick)
             .testTag("track_card_${track.id}"),
-        color = if (isPlaying) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f) else Color.Transparent,
+        color = cardColor,
+        border = cardBorder,
         shape = RoundedCornerShape(16.dp)
     ) {
         Row(
@@ -326,16 +335,10 @@ fun TrackCard(
                     fontSize = 14.5.sp,
                     lineHeight = 18.sp,
                     fontFamily = OutfitFontFamily,
-                    fontWeight = if (isPlaying) FontWeight.Bold else FontWeight.Medium,
-                    maxLines = if (isPlaying) 1 else 2,
+                    fontWeight = if (isPlaying || isHighlightedOfficial) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = if (isPlaying) {
-                        Modifier
-                            .fillMaxWidth()
-                            .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1000)
-                    } else {
-                        Modifier.fillMaxWidth()
-                    }
+                    modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {

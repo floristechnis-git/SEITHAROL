@@ -215,6 +215,16 @@ class MusicRepository(
             }
         }
 
+    suspend fun renamePlaylist(playlistId: String, newTitle: String, newDescription: String = "") =
+        withContext(Dispatchers.IO) {
+            val cleanTitle = newTitle.trim()
+            if (cleanTitle.isNotBlank()) {
+                val existing = playlistDao.getPlaylistById(playlistId)
+                val desc = newDescription.trim().ifBlank { existing?.description ?: "Personal playlist" }
+                playlistDao.renamePlaylist(playlistId, cleanTitle, desc)
+            }
+        }
+
     suspend fun deletePlaylist(playlistId: String) = withContext(Dispatchers.IO) {
         playlistDao.deleteAllItemsForPlaylist(playlistId)
         playlistDao.deletePlaylist(playlistId)

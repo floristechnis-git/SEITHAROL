@@ -315,7 +315,7 @@ fun LocalMusicScreen(
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 110.dp),
+            contentPadding = PaddingValues(bottom = 215.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             itemsIndexed(displayedTracks.distinctBy { it.videoId }, key = { idx, track -> "local_${track.videoId}_$idx" }) { _, track ->

@@ -169,7 +169,7 @@ fun ArtistScreen(
                         color = MaterialTheme.colorScheme.onBackground,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
                     )
-                    LazyColumn(contentPadding = PaddingValues(bottom = 120.dp)) {
+                    LazyColumn(contentPadding = PaddingValues(bottom = 215.dp)) {
                         itemsIndexed(offlineArtistTracks, key = { _, t -> "off_art_${t.id}" }) { idx, track ->
                             TrackCard(
                                 track = track,
@@ -187,7 +187,7 @@ fun ArtistScreen(
                             )
                         }
                     }
-                } else {
+                } else if (isOfflineMode) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(
@@ -211,6 +211,14 @@ fun ArtistScreen(
                             )
                         }
                     }
+                } else {
+                    NotFound404Screen(
+                        title = "404 — Artist Not Found",
+                        message = "We couldn't find an official artist or channel page for "$artistName".",
+                        attemptedPathOrQuery = artistName,
+                        onBack = onBack,
+                        onGoHome = onBack
+                    )
                 }
             }
         } else {
@@ -291,7 +299,7 @@ fun ArtistScreen(
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 135.dp)
+                contentPadding = PaddingValues(bottom = 215.dp)
             ) {
                 // ────────────────────────────────────────────────────────────
                 // 1. Immersive Editorial Hero Header + Stats + Action Bar
@@ -457,7 +465,6 @@ fun ArtistScreen(
                                         overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1500)
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Row(
@@ -833,14 +840,16 @@ fun ArtistScreen(
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 13.5.sp,
                                         maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(horizontal = 6.dp)
                                     )
                                     Text(
                                         text = pl.subtitle,
                                         fontSize = 11.5.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                     )
                                 }
                             }
@@ -1322,14 +1331,16 @@ fun ArtistScreen(
                                             fontWeight = FontWeight.SemiBold,
                                             fontSize = 14.sp,
                                             maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.padding(horizontal = 6.dp)
                                         )
                                         Text(
                                             text = release.subtitle,
                                             fontSize = 12.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                         )
                                     }
                                 }
@@ -1393,14 +1404,16 @@ fun ArtistScreen(
                                             fontWeight = FontWeight.SemiBold,
                                             fontSize = 13.5.sp,
                                             maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.padding(horizontal = 6.dp)
                                         )
                                         Text(
                                             text = singleItem.subtitle.ifBlank { "Single • ${page.name}" },
                                             fontSize = 11.5.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                         )
                                     }
                                 }

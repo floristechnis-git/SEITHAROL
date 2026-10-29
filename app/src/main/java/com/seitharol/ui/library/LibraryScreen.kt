@@ -99,7 +99,7 @@ fun LibraryScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
-        contentPadding = PaddingValues(bottom = 110.dp)
+        contentPadding = PaddingValues(bottom = 215.dp)
     ) {
         // 1. History Shelf on TOP of Library nav pills
         if (historyTracks.isNotEmpty()) {
@@ -290,7 +290,7 @@ fun LibraryScreen(
 
                     Spacer(modifier = Modifier.width(14.dp))
 
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(modifier = Modifier.weight(1f).padding(horizontal = 6.dp, vertical = 2.dp)) {
                         Text(
                             text = item.title,
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
@@ -475,7 +475,7 @@ fun LibrarySubPageScreen(
                 .padding(horizontal = 16.dp, vertical = 6.dp)
         )
 
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 215.dp)) {
             items(filteredTracks.distinctBy { it.videoId }, key = { "sub_${it.videoId}" }) { track ->
                 val optimizedThumb = remember(track.thumbnailUrl, settings.thumbnailQuality) {
                     ThumbnailUrlOptimizer.optimize(

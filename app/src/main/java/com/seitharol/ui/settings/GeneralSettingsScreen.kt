@@ -253,7 +253,7 @@ fun GeneralSettingsScreen(
         }
 
         item {
-            Spacer(modifier = Modifier.height(160.dp))
+            Spacer(modifier = Modifier.height(225.dp))
         }
     }
 

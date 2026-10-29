@@ -77,7 +77,7 @@ fun SoundSettingsScreen(
             .background(SeitharolBg)
             .statusBarsPadding()
             .testTag("sound_settings_screen"),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 140.dp),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 225.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // Top Bar: Close (X) icon on left, Title centered

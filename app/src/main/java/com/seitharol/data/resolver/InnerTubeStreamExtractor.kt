@@ -1810,6 +1810,10 @@ object InnerTubeStreamExtractor {
         val clean = raw.lowercase(Locale.US)
             .replace("views", "")
             .replace("view", "")
+            .replace("plays", "")
+            .replace("play", "")
+            .replace("listens", "")
+            .replace("listen", "")
             .replace(",", "")
             .trim()
         val match = Regex("([0-9]+(?:\\.[0-9]+)?)\\s*([kmb]?)").find(clean) ?: return 0L
@@ -3046,6 +3050,8 @@ object InnerTubeStreamExtractor {
         var artistBrowseId: String? = null
         var albumName: String? = defaultAlbum
         var durationSeconds = 0
+        var viewCountText = ""
+        var viewCount = 0L
 
         for (colIdx in 1 until flexColumns.length()) {
             val subRuns = flexColumns.optJSONObject(colIdx)
@@ -3061,8 +3067,15 @@ object InnerTubeStreamExtractor {
                 val browseId = runObj.optJSONObject("navigationEndpoint")
                     ?.optJSONObject("browseEndpoint")
                     ?.optString("browseId")
+                val lowerText = text.lowercase(Locale.US)
 
-                if ((browseId?.startsWith("UC") == true || browseId?.startsWith("MPLA") == true) ||
+                if (lowerText.contains("play") || lowerText.contains("view") || lowerText.contains("listen")) {
+                    val parsed = parseViewCountLong(text)
+                    if (parsed > viewCount) {
+                        viewCount = parsed
+                        viewCountText = text
+                    }
+                } else if ((browseId?.startsWith("UC") == true || browseId?.startsWith("MPLA") == true) ||
                     (artist == defaultArtist && colIdx == 1 && !text.matches(Regex("\\d+:\\d+")))
                 ) {
                     if (artist == defaultArtist || artist == "Unknown Artist") {
@@ -3113,7 +3126,9 @@ object InnerTubeStreamExtractor {
             durationSeconds = if (durationSeconds > 0) durationSeconds else 210,
             videoType = resolvedVideoType,
             thumbnailUrl = thumbUrl,
-            isVerifiedArtist = true
+            isVerifiedArtist = true,
+            viewCountText = viewCountText,
+            viewCount = viewCount
         )
     }
 

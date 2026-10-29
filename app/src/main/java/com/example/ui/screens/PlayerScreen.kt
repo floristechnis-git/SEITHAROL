@@ -650,6 +650,7 @@ fun PlayerScreen(
     var playerSkipAccumulatedSec by remember { mutableIntStateOf(10) }
     var playerSkipLastTapMs by remember { mutableLongStateOf(0L) }
     var isTitleExpanded by remember(track.id) { mutableStateOf(false) }
+    var isTitleOverflowing by remember(track.id, track.title) { mutableStateOf(false) }
 
     LaunchedEffect(playerSkipFeedbackIsForward, playerSkipAccumulatedSec) {
         if (playerSkipFeedbackIsForward != null) {
@@ -1060,56 +1061,7 @@ fun PlayerScreen(
                     }
                 }
 
-                // Inline Lyric Sync Offset Fine-Tuning Row (-0.2s / +0.2s)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 6.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable { viewModel.adjustLyricOffset(-200L) }
-                    ) {
-                        Text(
-                            text = "-0.2s Sync",
-                            fontSize = 11.sp,
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = if (playerState.lyricOffsetMs == 0L) "Auto Synced"
-                        else "Offset: ${if (playerState.lyricOffsetMs > 0) "+" else ""}${playerState.lyricOffsetMs}ms",
-                        fontSize = 11.sp,
-                        fontFamily = OutfitFontFamily,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable { viewModel.adjustLyricOffset(200L) }
-                    ) {
-                        Text(
-                            text = "+0.2s Sync",
-                            fontSize = 11.sp,
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
-                    }
-                }
+                // Sync offset controls moved exclusively to Full-Screen Lyrics mode
 
                 if (playerState.lyricLines.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1349,18 +1301,23 @@ fun PlayerScreen(
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp, vertical = 8.dp)
         ) {
+            val canExpandTitle = isVideoTrack || isTitleOverflowing || isTitleExpanded
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(8.dp))
-                    .clickable {
-                        if (isVideoTrack) {
-                            showVideoDescriptionSheet = true
-                        } else {
-                            isTitleExpanded = !isTitleExpanded
-                        }
-                    }
+                    .then(
+                        if (canExpandTitle) {
+                            Modifier.clickable {
+                                if (isVideoTrack) {
+                                    showVideoDescriptionSheet = true
+                                } else {
+                                    isTitleExpanded = !isTitleExpanded
+                                }
+                            }
+                        } else Modifier
+                    )
             ) {
                 Text(
                     text = track.title,
@@ -1371,25 +1328,25 @@ fun PlayerScreen(
                     lineHeight = 25.sp,
                     maxLines = if (isTitleExpanded) 3 else 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = if (isTitleExpanded) {
-                        Modifier
-                            .weight(1f)
-                            .testTag("player_song_title")
-                    } else {
-                        Modifier
-                            .weight(1f)
-                            .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1200)
-                            .testTag("player_song_title")
-                    }
+                    onTextLayout = { layoutResult ->
+                        if (!isTitleExpanded) {
+                            isTitleOverflowing = layoutResult.hasVisualOverflow
+                        }
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("player_song_title")
                 )
-                Spacer(modifier = Modifier.width(4.dp))
-                Icon(
-                    imageVector = if (isVideoTrack) Icons.Default.KeyboardArrowUp
-                    else if (isTitleExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = "View full title",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp)
-                )
+                if (canExpandTitle) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = if (isVideoTrack) Icons.Default.KeyboardArrowUp
+                        else if (isTitleExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = "View full title",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(6.dp))
             @OptIn(ExperimentalMaterial3Api::class)
@@ -2506,7 +2463,6 @@ fun SeitharolNextTrackCountdownBanner(
                         lineHeight = 17.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.basicMarquee(iterations = 1, initialDelayMillis = 800)
                     )
 
                     Text(
@@ -3393,7 +3349,6 @@ fun SeitharolFullscreenVideoModal(
                                                 overflow = TextOverflow.Ellipsis,
                                                 modifier = Modifier
                                                     .weight(1f, fill = false)
-                                                    .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1200)
                                             )
                                             Spacer(modifier = Modifier.width(4.dp))
                                             Icon(
@@ -4070,6 +4025,58 @@ fun ExpandedLyricsModal(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                    }
+                }
+
+                // Full-Screen Lyric Sync Offset Fine-Tuning Row (-0.2s / Auto Synced / +0.2s)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { viewModel.adjustLyricOffset(-200L) }
+                    ) {
+                        Text(
+                            text = "-0.2s Sync",
+                            fontSize = 11.5.sp,
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = if (playerState.lyricOffsetMs == 0L) "Auto Synced"
+                        else "Offset: ${if (playerState.lyricOffsetMs > 0) "+" else ""}${playerState.lyricOffsetMs}ms",
+                        fontSize = 12.sp,
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { viewModel.adjustLyricOffset(200L) }
+                    ) {
+                        Text(
+                            text = "+0.2s Sync",
+                            fontSize = 11.5.sp,
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                        )
                     }
                 }
 
@@ -5012,7 +5019,8 @@ fun PlayerRelatedModalSheet(
                                                 fontSize = 13.5.sp,
                                                 color = MaterialTheme.colorScheme.onSurface,
                                                 maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.padding(horizontal = 6.dp)
                                             )
                                             Text(
                                                 text = col.subtitle,
@@ -5020,7 +5028,8 @@ fun PlayerRelatedModalSheet(
                                                 fontSize = 11.5.sp,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                             )
                                         }
                                     }
@@ -5109,7 +5118,8 @@ fun PlayerRelatedModalSheet(
                                                 fontSize = 13.5.sp,
                                                 color = MaterialTheme.colorScheme.onSurface,
                                                 maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.padding(horizontal = 6.dp)
                                             )
                                             Text(
                                                 text = rel.subtitle.ifBlank { if (isSingle) "Single" else "Album" },
@@ -5117,7 +5127,8 @@ fun PlayerRelatedModalSheet(
                                                 fontSize = 11.5.sp,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                             )
                                         }
                                     }

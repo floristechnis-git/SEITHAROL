@@ -34,7 +34,9 @@ data class Track(
     val loudnessGainDb: Float = 0f,
     val audioUrl: String = "",
     val itag: Int = 251, // Default 251 = Opus 160kbps
-    val codec: String = "Opus"
+    val codec: String = "Opus",
+    val viewCount: Long = 0L,
+    val isOfficial: Boolean = true
 ) {
     val durationFormatted: String
         get() = formatDurationMs(durationMs)

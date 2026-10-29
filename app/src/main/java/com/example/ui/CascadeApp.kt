@@ -52,6 +52,7 @@ sealed interface SubScreen {
     data object SoundSettings : SubScreen
     data object Discover : SubScreen
     data object LocalMusic : SubScreen
+    data class NotFound(val queryOrUrl: String = "", val title: String = "404 — Page Not Found") : SubScreen
 }
 
 @Composable
@@ -240,6 +241,22 @@ fun CascadeApp(
         viewModel.playerExpandEvent.collectLatest {
             currentSubScreen = SubScreen.None
             isPlayerExpanded = true
+        }
+    }
+
+    // Navigate to imported or shared playlist when resolved
+    LaunchedEffect(Unit) {
+        viewModel.playlistNavigationEvent.collectLatest { playlistId ->
+            isPlayerExpanded = false
+            currentSubScreen = SubScreen.Playlist(playlistId)
+        }
+    }
+
+    // Navigate to 404 Not Found screen when an invalid link or missing resource is opened
+    LaunchedEffect(Unit) {
+        viewModel.notFoundNavigationEvent.collectLatest { rawQueryOrUrl ->
+            isPlayerExpanded = false
+            currentSubScreen = SubScreen.NotFound(queryOrUrl = rawQueryOrUrl)
         }
     }
 
@@ -480,6 +497,18 @@ fun CascadeApp(
                                     isPlayerExpanded = true
                                 },
                                 onNavigateBack = { currentSubScreen = SubScreen.None }
+                            )
+                        }
+                        is SubScreen.NotFound -> {
+                            NotFound404Screen(
+                                title = sub.title,
+                                message = "The requested page, playlist, or link could not be found.",
+                                attemptedPathOrQuery = sub.queryOrUrl,
+                                onBack = { currentSubScreen = SubScreen.None },
+                                onGoHome = {
+                                    currentSubScreen = SubScreen.None
+                                    currentDestination = AppDestination.HOME
+                                }
                             )
                         }
                         is SubScreen.None -> when (currentDestination) {
@@ -752,6 +781,19 @@ fun CascadeApp(
                                 isPlayerExpanded = true
                             },
                             onNavigateBack = { currentSubScreen = SubScreen.None }
+                        )
+                    }
+                    is SubScreen.NotFound -> {
+                        BackHandler { currentSubScreen = SubScreen.None }
+                        NotFound404Screen(
+                            title = sub.title,
+                            message = "The requested page, playlist, or link could not be found.",
+                            attemptedPathOrQuery = sub.queryOrUrl,
+                            onBack = { currentSubScreen = SubScreen.None },
+                            onGoHome = {
+                                currentSubScreen = SubScreen.None
+                                currentDestination = AppDestination.HOME
+                            }
                         )
                     }
                     is SubScreen.None -> {

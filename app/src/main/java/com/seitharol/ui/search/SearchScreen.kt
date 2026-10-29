@@ -13,7 +13,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -85,7 +84,7 @@ fun SearchScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     val listState = rememberLazyListState()
 
-    // Fetch live trending queries directly from music.youtube.com (no hardcoded artist names)
+    // Fetch live trending queries directly from music.youtube.com
     LaunchedEffect(Unit) {
         val charts = runCatching {
             InnerTubeStreamExtractor.searchOfficialYtmSongs("Trending Music Charts", limit = 10)
@@ -105,6 +104,12 @@ fun SearchScreen(
 
     val rankedResults = remember(query, searchResults) {
         CanonicalAudioResolver.rankSearchResultsByRelevance(query, searchResults)
+    }
+
+    val mostViewedOfficialId = remember(rankedResults, query) {
+        val official = rankedResults.filter { it.isVerifiedArtist || it.videoType == "MUSIC_VIDEO_TYPE_ATV" }
+        val withViews = official.filter { it.viewCount > 0L }
+        (withViews.maxByOrNull { it.viewCount } ?: official.firstOrNull())?.videoId
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -174,7 +179,11 @@ fun SearchScreen(
             )
         }
 
-        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 200.dp)
+        ) {
             // 1. Last 4 Search Queries
             if (query.isBlank() && recentQueries.isNotEmpty()) {
                 item {
@@ -231,9 +240,10 @@ fun SearchScreen(
                 }
             }
 
-            // 3. Search Results (Deduplicated + Indexed Keys to prevent LazyColumn key crashes)
+            // 3. Search Results (Deduplicated + Indexed Keys + Most Viewed Official Highlight)
             itemsIndexed(rankedResults, key = { idx, item -> "sr_${item.videoId}_$idx" }) { _, track ->
                 val isVideoItem = track.videoType == "MUSIC_VIDEO_TYPE_OMV" || track.videoType == "MUSIC_VIDEO_TYPE_UGC"
+                val isMostViewedOfficial = query.isNotBlank() && track.videoId == mostViewedOfficialId
                 val optimizedThumb = remember(track.thumbnailUrl, settings.thumbnailQuality, isVideoItem) {
                     ThumbnailUrlOptimizer.optimize(
                         track.thumbnailUrl,
@@ -244,11 +254,22 @@ fun SearchScreen(
                 }
                 ListItem(
                     colors = ListItemDefaults.colors(
-                        containerColor = Color.Transparent,
+                        containerColor = if (isMostViewedOfficial) {
+                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f)
+                        } else {
+                            Color.Transparent
+                        },
                         headlineColor = MaterialTheme.colorScheme.onSurface,
                         supportingColor = MaterialTheme.colorScheme.onSurfaceVariant
                     ),
-                    headlineContent = { Text(track.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                    headlineContent = {
+                        Text(
+                            text = track.title,
+                            fontWeight = if (isMostViewedOfficial) FontWeight.Bold else FontWeight.Normal,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
                     supportingContent = { Text(track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     leadingContent = {
                         AsyncImage(
@@ -267,14 +288,17 @@ fun SearchScreen(
                             }
                         )
                     },
-                    modifier = Modifier.clickable {
-                        if (query.isNotBlank()) {
-                            recentQueries = saveSearchQueryMaxFour(context, query)
+                    modifier = Modifier
+                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable {
+                            if (query.isNotBlank()) {
+                                recentQueries = saveSearchQueryMaxFour(context, query)
+                            }
+                            focusManager.clearFocus(force = true)
+                            keyboardController?.hide()
+                            onPlaySongAndMaximizePlayer(track)
                         }
-                        focusManager.clearFocus(force = true)
-                        keyboardController?.hide()
-                        onPlaySongAndMaximizePlayer(track)
-                    }
                 )
             }
         }

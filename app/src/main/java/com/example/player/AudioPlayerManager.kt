@@ -873,6 +873,22 @@ class AudioPlayerManager(
                                 lastFailedTrackId = null
                                 initEqualizer(audioSessionId)
                                 persistCurrentPlaybackState()
+                                val readyTrack = _state.value.currentTrack
+                                if (readyTrack != null && _state.value.lyricLines.isEmpty() && safeDur > 0L && !resolverEngine.isOfflineMode.value) {
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        val synced = com.example.network.NetworkClients.fetchLrclibLyrics(
+                                            artist = readyTrack.artist,
+                                            title = readyTrack.title,
+                                            durationSec = safeDur / 1000L,
+                                            videoId = readyTrack.id
+                                        )
+                                        if (synced.isNotEmpty() && _state.value.currentTrack?.id == readyTrack.id && _state.value.lyricLines.isEmpty()) {
+                                            val livePos = (exoPlayer?.currentPosition?.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
+                                            val idx = synced.indexOfLast { it.timestampMs <= livePos + _state.value.lyricOffsetMs + LYRIC_SYNC_LEAD_MS }
+                                            _state.value = _state.value.copy(lyricLines = synced, activeLyricIndex = idx)
+                                        }
+                                    }
+                                }
                                 if (activelyPlaying) {
                                     startPositionTracker()
                                 }
@@ -2034,13 +2050,15 @@ class AudioPlayerManager(
                     isVideoFrameRendered = if (isSameTrack) _state.value.isVideoFrameRendered else false
                 )
 
-                // Fetch synchronized lyrics asynchronously when online (for both audio songs and music videos)
+                // Fetch synchronized lyrics asynchronously when online (multi-source LRCLIB + NetEase + KuGou + YT Timed Captions)
                 if (localLyrics.isEmpty() && !resolverEngine.isOfflineMode.value && com.example.util.ErrorFormatter.isOnline(context)) {
                     coroutineScope.launch(Dispatchers.IO) {
+                        val realDurSec = if (current.durationMs > 0L && current.durationMs != 210_000L) current.durationMs / 1000L else 0L
                         val lrclibLines = com.example.network.NetworkClients.fetchLrclibLyrics(
                             artist = current.artist,
                             title = current.title,
-                            durationSec = expectedDuration / 1000L
+                            durationSec = realDurSec,
+                            videoId = current.id
                         )
                         if (lrclibLines.isNotEmpty() && _state.value.currentTrack?.id == current.id) {
                             val livePos = (exoPlayer?.currentPosition?.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)

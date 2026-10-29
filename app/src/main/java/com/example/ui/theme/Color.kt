@@ -130,5 +130,5 @@ val SeitharolAccent: Color
     @ReadOnlyComposable
     get() = MaterialTheme.colorScheme.primary
 
-val SeitharolRedHeart: Color = Color(0xFFFF3B56)
+val SeitharolRedHeart: Color = Color(0xFFB71C1C)
 val SeitharolGreen: Color = Color(0xFF00C853)

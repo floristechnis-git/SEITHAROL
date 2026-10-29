@@ -38,6 +38,9 @@ import com.example.data.model.Track
 import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
 import com.example.ui.components.AddToPlaylistModal
+import com.example.ui.components.DeletePlaylistConfirmDialog
+import com.example.ui.components.ImportPlaylistDialog
+import com.example.ui.components.RenamePlaylistDialog
 import com.example.ui.components.SeitharolPullToRefreshBox
 import com.example.ui.components.TrackCard
 import com.example.ui.theme.*
@@ -81,6 +84,11 @@ fun LibraryScreen(
     var selectedNavTab by remember { mutableStateOf("All") }
     var showFilterMenu by remember { mutableStateOf(false) }
     var activeFilter by remember { mutableStateOf(LibraryFilterOption.RECENT) }
+    var playlistToRename by remember { mutableStateOf<Playlist?>(null) }
+    var playlistToDelete by remember { mutableStateOf<Playlist?>(null) }
+    var showImportPlaylistDialog by remember { mutableStateOf(false) }
+    val isImportingPlaylist by viewModel.isImportingPlaylist.collectAsState()
+    val context = LocalContext.current
 
     val filteredPlaylists = remember(playlists, selectedNavTab, activeFilter) {
         val base = when (selectedNavTab) {
@@ -107,7 +115,7 @@ fun LibraryScreen(
             .testTag("library_screen")
     ) {
         LazyColumn(
-            contentPadding = PaddingValues(bottom = 140.dp)
+            contentPadding = PaddingValues(bottom = 215.dp)
         ) {
         item {
             Row(
@@ -125,33 +133,68 @@ fun LibraryScreen(
                     color = SeitharolDark
                 )
 
-                Surface(
-                    modifier = Modifier
-                        .height(36.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .clickable(onClick = onCreatePlaylist)
-                        .testTag("library_create_playlist_btn"),
-                    shape = RoundedCornerShape(18.dp),
-                    color = SeitharolPillBg
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    Surface(
+                        modifier = Modifier
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .clickable { showImportPlaylistDialog = true }
+                            .testTag("library_import_playlist_btn"),
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = null,
-                            tint = SeitharolPillText,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = "New",
-                            color = SeitharolPillText,
-                            fontSize = 13.sp,
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Medium
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Link,
+                                contentDescription = "Import Playlist",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Import",
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 13.sp,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    Surface(
+                        modifier = Modifier
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .clickable(onClick = onCreatePlaylist)
+                            .testTag("library_create_playlist_btn"),
+                        shape = RoundedCornerShape(18.dp),
+                        color = SeitharolPillBg
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = null,
+                                tint = SeitharolPillText,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "New",
+                                color = SeitharolPillText,
+                                fontSize = 13.sp,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                     }
                 }
             }
@@ -424,7 +467,7 @@ fun LibraryScreen(
 
         items(filteredPlaylists.distinctBy { it.id }, key = { "pl_${it.id}" }) { pl ->
             ClampedSwipeToDeleteRow(
-                onDelete = { viewModel.deletePlaylist(pl.id) }
+                onDelete = { playlistToDelete = pl }
             ) {
                 var showItemMenu by remember { mutableStateOf(false) }
                 Row(
@@ -441,7 +484,11 @@ fun LibraryScreen(
                         cornerRadius = 10.dp
                     )
                     Spacer(modifier = Modifier.width(14.dp))
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
                         Text(
                             text = pl.title,
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
@@ -449,10 +496,13 @@ fun LibraryScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "${pl.trackCount} songs",
+                            text = "${pl.trackCount} songs" + if (pl.description.isNotBlank()) " • ${pl.description}" else "",
                             style = MaterialTheme.typography.bodySmall,
-                            color = SeitharolTextSecondary
+                            color = SeitharolTextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                     Box {
@@ -484,19 +534,38 @@ fun LibraryScreen(
                                     onNavigateToPlaylist(pl.id)
                                 }
                             )
+                            DropdownMenuItem(
+                                text = { Text("Rename Playlist", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = { Icon(Icons.Default.Edit, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                onClick = {
+                                    showItemMenu = false
+                                    playlistToRename = pl
+                                }
+                            )
                             val ctx = LocalContext.current
                             DropdownMenuItem(
-                                text = { Text("Share Playlist", color = MaterialTheme.colorScheme.onSurface) },
+                                text = { Text("Share Playlist (Online Songs)", color = MaterialTheme.colorScheme.onSurface) },
                                 leadingIcon = { Icon(Icons.Default.Share, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                                 onClick = {
                                     showItemMenu = false
-                                    runCatching {
-                                        val msg = com.example.ui.components.SeitharolDeepLinkHelper.buildPlaylistShareMessage(pl.title, pl.id)
-                                        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                            type = "text/plain"
-                                            putExtra(android.content.Intent.EXTRA_TEXT, msg)
+                                    viewModel.loadPlaylistTracks(pl.id) { loadedTracks ->
+                                        val onlineOnly = loadedTracks.filterNot { it.isLocalOnlyTrack }
+                                        if (onlineOnly.isEmpty()) {
+                                            android.widget.Toast.makeText(
+                                                ctx,
+                                                "No online (YouTube/JioSaavn) songs to share. Offline device files are excluded.",
+                                                android.widget.Toast.LENGTH_LONG
+                                            ).show()
+                                        } else {
+                                            val excludedCount = (loadedTracks.size - onlineOnly.size).coerceAtLeast(0)
+                                            com.example.ui.components.SeitharolDeepLinkHelper.sharePersonalPlaylistSystemChooser(
+                                                context = ctx,
+                                                playlistTitle = pl.title,
+                                                playlistId = pl.id,
+                                                tracks = loadedTracks,
+                                                excludedOfflineCount = excludedCount
+                                            )
                                         }
-                                        ctx.startActivity(android.content.Intent.createChooser(intent, "Share Playlist"))
                                     }
                                 }
                             )
@@ -505,7 +574,7 @@ fun LibraryScreen(
                                 leadingIcon = { Icon(Icons.Default.DeleteOutline, null, tint = MaterialTheme.colorScheme.error) },
                                 onClick = {
                                     showItemMenu = false
-                                    viewModel.deletePlaylist(pl.id)
+                                    playlistToDelete = pl
                                 }
                             )
                         }
@@ -513,6 +582,51 @@ fun LibraryScreen(
                 }
             }
         }
+    }
+
+    playlistToRename?.let { targetPl ->
+        RenamePlaylistDialog(
+            initialName = targetPl.title,
+            initialDescription = targetPl.description,
+            onConfirm = { newTitle, newDesc ->
+                viewModel.renamePlaylist(targetPl.id, newTitle, newDesc)
+                playlistToRename = null
+            },
+            onDismiss = { playlistToRename = null }
+        )
+    }
+
+    playlistToDelete?.let { targetPl ->
+        DeletePlaylistConfirmDialog(
+            playlistTitle = targetPl.title,
+            onConfirmDelete = {
+                viewModel.deletePlaylist(targetPl.id)
+                playlistToDelete = null
+            },
+            onDismiss = { playlistToDelete = null }
+        )
+    }
+
+    if (showImportPlaylistDialog) {
+        ImportPlaylistDialog(
+            isImporting = isImportingPlaylist,
+            onConfirmImport = { urlOrCode, customName ->
+                viewModel.importPlaylistFromUrlOrShare(
+                    rawInput = urlOrCode,
+                    customName = customName
+                ) { importedId ->
+                    showImportPlaylistDialog = false
+                    if (importedId != null) {
+                        onNavigateToPlaylist(importedId)
+                    }
+                }
+            },
+            onDismiss = {
+                if (!isImportingPlaylist) {
+                    showImportPlaylistDialog = false
+                }
+            }
+        )
     }
 }
 }
@@ -700,7 +814,7 @@ fun HistoryScreen(
         ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 120.dp)
+            contentPadding = PaddingValues(bottom = 215.dp)
         ) {
             if (filteredTracks.isEmpty()) {
                 item {
@@ -841,7 +955,7 @@ fun DownloadsScreen(
         ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 120.dp)
+            contentPadding = PaddingValues(bottom = 215.dp)
         ) {
             if (inProgressQueueItems.isNotEmpty() || showDiscoverCardSeparately) {
                 item {
@@ -1118,7 +1232,7 @@ fun LikedSongsScreen(
         ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 120.dp)
+            contentPadding = PaddingValues(bottom = 215.dp)
         ) {
             if (filteredTracks.isEmpty()) {
                 item {

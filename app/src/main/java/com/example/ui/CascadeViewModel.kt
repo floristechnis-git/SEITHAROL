@@ -193,8 +193,25 @@ class CascadeViewModel(
     val artistNavigationEvent: SharedFlow<String> = _artistNavigationEvent.asSharedFlow()
     val isArtistNavigationChannel = MutableStateFlow(false)
 
+    private val _playlistNavigationEvent = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val playlistNavigationEvent: SharedFlow<String> = _playlistNavigationEvent.asSharedFlow()
+
+    private val _notFoundNavigationEvent = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val notFoundNavigationEvent: SharedFlow<String> = _notFoundNavigationEvent.asSharedFlow()
+
+    val isImportingPlaylist = MutableStateFlow(false)
+
     private val _playerExpandEvent = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val playerExpandEvent: SharedFlow<Unit> = _playerExpandEvent.asSharedFlow()
+
+    fun navigateToPlaylist(playlistId: String) {
+        if (playlistId.isBlank()) return
+        viewModelScope.launch(vmExceptionHandler) { _playlistNavigationEvent.emit(playlistId.trim()) }
+    }
+
+    fun navigateToNotFound(rawUrlOrQuery: String) {
+        viewModelScope.launch(vmExceptionHandler) { _notFoundNavigationEvent.emit(rawUrlOrQuery.trim()) }
+    }
 
     private val nonNavigableArtists = setOf(
         "unknown artist",
@@ -439,6 +456,16 @@ class CascadeViewModel(
                     navigateToArtist(target.artistName)
                     return
                 }
+                is SeitharolDeepLinkHelper.DeepLinkTarget.PlaylistTarget -> {
+                    searchQuery.value = ""
+                    importPlaylistFromUrlOrShare(clean)
+                    return
+                }
+                is SeitharolDeepLinkHelper.DeepLinkTarget.NotFoundTarget -> {
+                    searchQuery.value = ""
+                    navigateToNotFound(target.rawUrl)
+                    return
+                }
                 else -> Unit
             }
         }
@@ -559,7 +586,9 @@ class CascadeViewModel(
                         artUrl = c.thumbnailUrl,
                         genre = if (isYtVideo) "YouTube Video" else "Music",
                         itag = if (isYtVideo) 18 else 251,
-                        codec = if (isYtVideo) "MP4" else "Opus"
+                        codec = if (isYtVideo) "MP4" else "Opus",
+                        viewCount = c.viewCount,
+                        isOfficial = c.isVerifiedArtist || c.videoType == "MUSIC_VIDEO_TYPE_ATV"
                     )
                 }
                 val verifiedArtists = runCatching { verifiedArtistsDeferred.await() }.getOrDefault(emptyList())
@@ -1140,7 +1169,9 @@ class CascadeViewModel(
             artUrl = this.thumbnailUrl,
             genre = if (isVideo) "YouTube Video" else "Music",
             itag = if (isVideo) 18 else 251,
-            codec = if (isVideo) "MP4" else "Opus"
+            codec = if (isVideo) "MP4" else "Opus",
+            viewCount = this.viewCount,
+            isOfficial = this.isVerifiedArtist || this.videoType == "MUSIC_VIDEO_TYPE_ATV"
         )
     }
 
@@ -1580,6 +1611,16 @@ class CascadeViewModel(
         }
     }
 
+    fun renamePlaylist(playlistId: String, newTitle: String, newDescription: String = "") {
+        val cleanTitle = newTitle.trim()
+        if (cleanTitle.isBlank()) return
+        viewModelScope.launch(vmExceptionHandler) {
+            runCatching {
+                musicRepository.renamePlaylist(playlistId, cleanTitle, newDescription)
+            }
+        }
+    }
+
     fun deletePlaylist(playlistId: String) {
         viewModelScope.launch(vmExceptionHandler) {
             runCatching {
@@ -1587,6 +1628,247 @@ class CascadeViewModel(
                 _userPlaylists.value = _userPlaylists.value - playlistId
             }
         }
+    }
+
+    /**
+     * Imports a playlist from:
+     * - Seitharol serverless device-to-device shared playlist link (`ids=...` / `data=...`)
+     * - YouTube / YouTube Music playlist URL or ID (`PL...`, `VL...`, `OLAK5uy_...`)
+     * - Spotify playlist URL or URI (`open.spotify.com/playlist/...`)
+     * - Apple Music playlist URL (`music.apple.com/.../playlist/...`)
+     */
+    fun importPlaylistFromUrlOrShare(
+        rawInput: String,
+        customName: String? = null,
+        onComplete: ((String?) -> Unit)? = null
+    ) {
+        val trimmed = rawInput.trim()
+        if (trimmed.isBlank()) {
+            onComplete?.invoke(null)
+            return
+        }
+        viewModelScope.launch(vmExceptionHandler) {
+            isImportingPlaylist.value = true
+            try {
+                val parsedTarget = SeitharolDeepLinkHelper.parseSharedTextOrUrl(trimmed)
+                if (parsedTarget is SeitharolDeepLinkHelper.DeepLinkTarget.NotFoundTarget) {
+                    _skipEventMessage("404: Playlist or page could not be found.")
+                    _notFoundNavigationEvent.emit(trimmed)
+                    onComplete?.invoke(null)
+                    return@launch
+                }
+
+                val playlistTarget = when (parsedTarget) {
+                    is SeitharolDeepLinkHelper.DeepLinkTarget.PlaylistTarget -> parsedTarget
+                    else -> {
+                        // Treat raw ID as YouTube playlist if it looks like PL/VL/OLAK5uy_
+                        if (trimmed.startsWith("PL") || trimmed.startsWith("VL") || trimmed.startsWith("OLAK5uy_") || trimmed.startsWith("MPREb_")) {
+                            SeitharolDeepLinkHelper.DeepLinkTarget.PlaylistTarget(
+                                playlistId = trimmed,
+                                title = customName?.takeIf { it.isNotBlank() } ?: "Imported Playlist",
+                                sourcePlatform = "YOUTUBE"
+                            )
+                        } else {
+                            _notFoundNavigationEvent.emit(trimmed)
+                            onComplete?.invoke(null)
+                            return@launch
+                        }
+                    }
+                }
+
+                val resolvedTracks = mutableListOf<Track>()
+                var resolvedTitle = customName?.takeIf { it.isNotBlank() } ?: playlistTarget.title
+                var resolvedCover: String? = null
+                val sem = kotlinx.coroutines.sync.Semaphore(4)
+
+                when (playlistTarget.sourcePlatform.uppercase()) {
+                    "SEITHAROL_PERSONAL" -> {
+                        // Serverless device-to-device shared personal playlist (strictly online tracks only)
+                        val onlineCandidates = playlistTarget.onlineTracks.filterNot {
+                            it.id.startsWith("local_") || it.id.startsWith("file_") || it.id.startsWith("vidfile_") ||
+                                it.id.startsWith("content://") || it.id.startsWith("file://") || it.id.startsWith("/")
+                        }
+                        val jobs = onlineCandidates.map { item ->
+                            async(Dispatchers.IO) {
+                                sem.acquire()
+                                try {
+                                    if (item.title.isNotBlank() && !item.title.equals("Shared Track", true)) {
+                                        Track(
+                                            id = item.id,
+                                            title = item.title,
+                                            artist = item.artist.ifBlank { "Unknown Artist" },
+                                            album = item.album,
+                                            durationMs = item.durationMs.takeIf { it > 0L } ?: 210_000L,
+                                            artUrl = item.artUrl.ifBlank {
+                                                val ytId = InnerTubeStreamExtractor.extractVideoId(item.id)
+                                                if (ytId != null) "https://i.ytimg.com/vi/$ytId/hqdefault.jpg" else ""
+                                            }
+                                        )
+                                    } else {
+                                        // Resolve metadata from online ID (YouTube or JioSaavn)
+                                        if (item.id.startsWith("saavn_")) {
+                                            val saavnTracks = runCatching {
+                                                resolverEngine.jioSaavnProvider.searchTracks(item.id.removePrefix("saavn_"), limit = 1)
+                                            }.getOrDefault(emptyList())
+                                            val st = saavnTracks.firstOrNull()
+                                            if (st != null) {
+                                                Track(
+                                                    id = "saavn_${st.sourceId.removePrefix("saavn_")}",
+                                                    title = st.title,
+                                                    artist = st.primaryArtist,
+                                                    album = st.album.orEmpty(),
+                                                    durationMs = st.durationMs.takeIf { it > 0L } ?: 210_000L,
+                                                    artUrl = st.artUrl
+                                                )
+                                            } else null
+                                        } else {
+                                            val ytId = InnerTubeStreamExtractor.extractVideoId(item.id) ?: item.id
+                                            val meta = runCatching {
+                                                resolverEngine.youtubeInnerTubeProvider.fetchMetadataById(ytId)
+                                            }.getOrNull()
+                                            Track(
+                                                id = ytId,
+                                                title = meta?.first?.takeIf { it.isNotBlank() } ?: "Track $ytId",
+                                                artist = meta?.second?.takeIf { it.isNotBlank() } ?: "Artist",
+                                                album = "",
+                                                durationMs = 210_000L,
+                                                artUrl = "https://i.ytimg.com/vi/$ytId/hqdefault.jpg"
+                                            )
+                                        }
+                                    }
+                                } finally {
+                                    sem.release()
+                                }
+                            }
+                        }
+                        resolvedTracks.addAll(jobs.mapNotNull { runCatching { it.await() }.getOrNull() })
+                    }
+
+                    "YOUTUBE" -> {
+                        val details = withContext(Dispatchers.IO) {
+                            InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(playlistTarget.playlistId)
+                        }
+                        if (customName.isNullOrBlank() && details.title.isNotBlank() && !details.title.equals("Music Collection", true)) {
+                            resolvedTitle = details.title
+                        }
+                        if (details.thumbnailUrl.isNotBlank()) {
+                            resolvedCover = details.thumbnailUrl
+                        }
+                        resolvedTracks.addAll(details.tracks.map { it.toTrack() }.filterNot { it.isLocalOnlyTrack })
+                    }
+
+                    "SPOTIFY" -> {
+                        val spTracks = withContext(Dispatchers.IO) {
+                            runCatching { spotifyProviderInstance.getPlaylistTracks(playlistTarget.playlistId) }.getOrDefault(emptyList())
+                        }
+                        val pairsToResolve = if (spTracks.isNotEmpty()) {
+                            spTracks.map { it.title to (it.artists.firstOrNull() ?: "") }
+                        } else {
+                            val scraped = NetworkClients.fetchExternalPlaylistTracks("SPOTIFY", playlistTarget.playlistId, trimmed)
+                            if (customName.isNullOrBlank() && scraped.title.isNotBlank()) resolvedTitle = scraped.title
+                            if (!scraped.coverUrl.isNullOrBlank()) resolvedCover = scraped.coverUrl
+                            scraped.tracks
+                        }
+                        val jobs = pairsToResolve.take(60).map { (tTitle, tArtist) ->
+                            async(Dispatchers.IO) {
+                                sem.acquire()
+                                try {
+                                    resolveExternalSongToOnlineTrack(tTitle, tArtist)
+                                } finally {
+                                    sem.release()
+                                }
+                            }
+                        }
+                        resolvedTracks.addAll(jobs.mapNotNull { runCatching { it.await() }.getOrNull() })
+                    }
+
+                    "APPLE_MUSIC" -> {
+                        val scraped = NetworkClients.fetchExternalPlaylistTracks("APPLE_MUSIC", playlistTarget.playlistId, trimmed)
+                        if (customName.isNullOrBlank() && scraped.title.isNotBlank()) resolvedTitle = scraped.title
+                        if (!scraped.coverUrl.isNullOrBlank()) resolvedCover = scraped.coverUrl
+                        val jobs = scraped.tracks.take(60).map { (tTitle, tArtist) ->
+                            async(Dispatchers.IO) {
+                                sem.acquire()
+                                try {
+                                    resolveExternalSongToOnlineTrack(tTitle, tArtist)
+                                } finally {
+                                    sem.release()
+                                }
+                            }
+                        }
+                        resolvedTracks.addAll(jobs.mapNotNull { runCatching { it.await() }.getOrNull() })
+                    }
+                }
+
+                val cleanOnlineTracks = resolvedTracks
+                    .filterNot { it.isLocalOnlyTrack }
+                    .distinctBy { it.id }
+
+                if (cleanOnlineTracks.isEmpty()) {
+                    _notFoundNavigationEvent.emit(trimmed)
+                    onComplete?.invoke(null)
+                    return@launch
+                }
+
+                val finalTitle = resolvedTitle.ifBlank { "Imported Playlist" }
+                val finalCover = resolvedCover ?: cleanOnlineTracks.firstOrNull()?.artUrl
+                val sourceLabel = when (playlistTarget.sourcePlatform.uppercase()) {
+                    "SPOTIFY" -> "Imported from Spotify"
+                    "APPLE_MUSIC" -> "Imported from Apple Music"
+                    "YOUTUBE" -> "Imported from YouTube Music"
+                    else -> "Shared Seitharol Playlist"
+                }
+
+                val newPlaylistId = musicRepository.createPlaylist(
+                    title = finalTitle,
+                    description = "$sourceLabel • ${cleanOnlineTracks.size} online songs",
+                    coverUrl = finalCover
+                )
+                cleanOnlineTracks.forEachIndexed { idx, track ->
+                    musicRepository.insertTrack(track)
+                    musicRepository.addTrackToPlaylist(newPlaylistId, track.id, position = idx)
+                }
+                _userPlaylists.value = _userPlaylists.value + (newPlaylistId to cleanOnlineTracks)
+                _playlistNavigationEvent.emit(newPlaylistId)
+                onComplete?.invoke(newPlaylistId)
+            } catch (e: Exception) {
+                Log.w("CascadeViewModel", "Playlist import failed: ${e.message}", e)
+                _notFoundNavigationEvent.emit(trimmed)
+                onComplete?.invoke(null)
+            } finally {
+                isImportingPlaylist.value = false
+            }
+        }
+    }
+
+    private suspend fun resolveExternalSongToOnlineTrack(title: String, artist: String): Track? {
+        val q = "$title $artist".trim()
+        if (q.isBlank()) return null
+        val ytmCand = runCatching {
+            InnerTubeStreamExtractor.searchOfficialYtmSongs(q, limit = 2).firstOrNull()
+        }.getOrNull()
+        if (ytmCand != null) {
+            return ytmCand.toTrack()
+        }
+        val saavnCand = runCatching {
+            resolverEngine.jioSaavnProvider.searchTracks(q, limit = 1).firstOrNull()
+        }.getOrNull()
+        if (saavnCand != null) {
+            return Track(
+                id = "saavn_${saavnCand.sourceId.removePrefix("saavn_")}",
+                title = saavnCand.title,
+                artist = saavnCand.primaryArtist,
+                album = saavnCand.album.orEmpty(),
+                durationMs = saavnCand.durationMs.takeIf { it > 0L } ?: 210_000L,
+                artUrl = saavnCand.artUrl
+            )
+        }
+        return null
+    }
+
+    private fun _skipEventMessage(msg: String) {
+        // Optional helper log
+        Log.i("CascadeViewModel", msg)
     }
 
     fun removeTrackFromPlaylist(playlistId: String, trackId: String) {

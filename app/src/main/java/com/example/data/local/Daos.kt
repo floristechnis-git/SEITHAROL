@@ -69,6 +69,9 @@ interface PlaylistDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPlaylist(playlist: PlaylistEntity)
 
+    @Query("UPDATE playlists SET title = :title, description = :description WHERE id = :id")
+    suspend fun renamePlaylist(id: String, title: String, description: String)
+
     @Query("UPDATE playlists SET isLiked = :isLiked WHERE id = :id")
     suspend fun setPlaylistLiked(id: String, isLiked: Boolean)
 

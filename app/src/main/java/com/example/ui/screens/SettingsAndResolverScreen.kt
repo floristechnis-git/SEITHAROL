@@ -38,7 +38,7 @@ fun SettingsAndResolverScreen(
         modifier = modifier
             .fillMaxSize()
             .background(SeitharolBg),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 140.dp)
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 225.dp)
     ) {
         item {
             Row(

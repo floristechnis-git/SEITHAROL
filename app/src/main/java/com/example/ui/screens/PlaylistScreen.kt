@@ -1,13 +1,12 @@
 package com.example.ui.screens
 
-import android.content.Intent
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -32,6 +31,8 @@ import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
 import com.example.ui.components.AddToPlaylistModal
 import com.example.ui.components.CreatePlaylistModal
+import com.example.ui.components.DeletePlaylistConfirmDialog
+import com.example.ui.components.RenamePlaylistDialog
 import com.example.ui.components.SeitharolDeepLinkHelper
 import com.example.ui.components.SeitharolPullToRefreshBox
 import com.example.ui.components.TrackCard
@@ -55,12 +56,14 @@ fun PlaylistScreen(
     val savedPlaylist = remember(playlistId, playlists) {
         playlists.firstOrNull { it.id == playlistId }
     }
+    val isPersonalPlaylist = savedPlaylist != null || playlistId.startsWith("pl_", ignoreCase = true)
 
     var remotePlaylistTracks by remember { mutableStateOf<List<Track>>(emptyList()) }
     var remoteCollectionMeta by remember(playlistId) { mutableStateOf<com.seitharol.data.resolver.YtmCollectionPageData?>(null) }
-    var isLoadingPlaylist by remember { mutableStateOf(false) }
+    var isLoadingPlaylist by remember { mutableStateOf(true) }
+    var hasFinishedLoadAttempt by remember(playlistId) { mutableStateOf(false) }
 
-    LaunchedEffect(playlistId) {
+    val triggerReload = {
         isLoadingPlaylist = true
         viewModel.loadPlaylistTracks(
             playlistId = playlistId,
@@ -68,7 +71,24 @@ fun PlaylistScreen(
         ) { tracks ->
             remotePlaylistTracks = tracks
             isLoadingPlaylist = false
+            hasFinishedLoadAttempt = true
         }
+    }
+
+    LaunchedEffect(playlistId, playlists) {
+        triggerReload()
+    }
+
+    // Show 404 screen when a non-personal playlist ID doesn't exist or returns 0 tracks after loading
+    if (!isPersonalPlaylist && hasFinishedLoadAttempt && !isLoadingPlaylist && remotePlaylistTracks.isEmpty()) {
+        NotFound404Screen(
+            title = "404 — Playlist Not Found",
+            message = "We couldn't find the playlist \"$playlistId\". It may have been deleted, made private, or the link is invalid.",
+            onBack = onBack,
+            onRetry = triggerReload,
+            modifier = modifier
+        )
+        return
     }
 
     val displayTitle = remember(savedPlaylist, remoteCollectionMeta, remotePlaylistTracks, playlistId) {
@@ -100,7 +120,7 @@ fun PlaylistScreen(
             ?: remoteCollectionMeta?.description?.takeIf { it.isNotBlank() && !it.contains("YouTube Video", ignoreCase = true) }
             ?: if (isLoadingPlaylist) "Loading tracks..."
             else if (remotePlaylistTracks.isNotEmpty()) "${remotePlaylistTracks.size} tracks"
-            else "Playlist"
+            else "Personal playlist"
     }
 
     val currentPlaylist = remember(savedPlaylist, remoteCollectionMeta, playlistId, displayTitle, displayDescription, remotePlaylistTracks) {
@@ -122,22 +142,36 @@ fun PlaylistScreen(
         }
     }
 
+    val shareableOnlineTracks = remember(remotePlaylistTracks) {
+        remotePlaylistTracks.filter { SeitharolDeepLinkHelper.isOnlineShareableTrack(it) }
+    }
+
     var showMoreSheet by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var trackToAddToPlaylist by remember { mutableStateOf<Track?>(null) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
 
+    val handleSharePlaylist = {
+        if (isPersonalPlaylist && shareableOnlineTracks.isEmpty()) {
+            Toast.makeText(
+                context,
+                "Add at least one online song (YouTube / JioSaavn) to share this playlist.",
+                Toast.LENGTH_SHORT
+            ).show()
+        } else {
+            SeitharolDeepLinkHelper.sharePlaylistSystemChooser(
+                context = context,
+                playlistTitle = currentPlaylist.title,
+                playlistId = currentPlaylist.id,
+                tracks = if (isPersonalPlaylist) shareableOnlineTracks else remotePlaylistTracks
+            )
+        }
+    }
+
     SeitharolPullToRefreshBox(
         isRefreshing = isLoadingPlaylist,
-        onRefresh = {
-            isLoadingPlaylist = true
-            viewModel.loadPlaylistTracks(
-                playlistId = playlistId,
-                onMetadata = { meta -> remoteCollectionMeta = meta }
-            ) { tracks ->
-                remotePlaylistTracks = tracks
-                isLoadingPlaylist = false
-            }
-        },
+        onRefresh = triggerReload,
         modifier = modifier
             .fillMaxSize()
             .background(SeitharolBg)
@@ -145,7 +179,7 @@ fun PlaylistScreen(
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 140.dp)
+            contentPadding = PaddingValues(bottom = 200.dp)
         ) {
             item {
                 Box(
@@ -185,19 +219,56 @@ fun PlaylistScreen(
                             }
                         }
 
-                        Surface(
-                            modifier = Modifier.size(44.dp),
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            onClick = { showMoreSheet = true }
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.MoreHoriz,
-                                    contentDescription = "More",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp)
-                                )
+                            if (isPersonalPlaylist) {
+                                Surface(
+                                    modifier = Modifier.size(44.dp),
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    onClick = { showRenameDialog = true }
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Edit,
+                                            contentDescription = "Rename Playlist",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(19.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Surface(
+                                modifier = Modifier.size(44.dp),
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                onClick = handleSharePlaylist
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Share,
+                                        contentDescription = "Share Playlist",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(19.dp)
+                                    )
+                                }
+                            }
+                            Surface(
+                                modifier = Modifier.size(44.dp),
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                onClick = { showMoreSheet = true }
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.MoreHoriz,
+                                        contentDescription = "More",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -210,8 +281,9 @@ fun PlaylistScreen(
                             .padding(start = 28.dp, end = 28.dp, top = 56.dp, bottom = 20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        val badgeTag = remember(playlistId, displayTitle, displayDescription) {
+                        val badgeTag = remember(playlistId, displayTitle, displayDescription, isPersonalPlaylist) {
                             when {
+                                isPersonalPlaylist -> "PERSONAL PLAYLIST"
                                 playlistId.startsWith("RD") || displayTitle.contains("Mix", ignoreCase = true) -> "MIX"
                                 playlistId.startsWith("MPREb_") || playlistId.startsWith("OLAK5uy_") || displayTitle.contains("Album", ignoreCase = true) -> "ALBUM"
                                 displayDescription.contains("Single", ignoreCase = true) -> "SINGLE"
@@ -219,9 +291,10 @@ fun PlaylistScreen(
                             }
                         }
                         val badgeColor = when (badgeTag) {
-                            "MIX" -> Color(0xFFE50914)
+                            "MIX" -> Color(0xFFB71C1C)
                             "ALBUM" -> Color(0xFF8E24AA)
                             "SINGLE" -> Color(0xFF00897B)
+                            "PERSONAL PLAYLIST" -> MaterialTheme.colorScheme.primary
                             else -> Color(0xFF2E66FF)
                         }
 
@@ -253,7 +326,7 @@ fun PlaylistScreen(
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp)
+                                .padding(horizontal = 16.dp, vertical = 2.dp)
                         )
 
                         Spacer(modifier = Modifier.height(6.dp))
@@ -269,14 +342,15 @@ fun PlaylistScreen(
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp)
+                                .padding(horizontal = 20.dp, vertical = 2.dp)
                         )
 
                         Spacer(modifier = Modifier.height(20.dp))
 
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(28.dp)
+                            horizontalArrangement = Arrangement.spacedBy(24.dp),
+                            modifier = Modifier.padding(horizontal = 12.dp)
                         ) {
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -303,7 +377,8 @@ fun PlaylistScreen(
                                     text = "Download",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 11.sp,
-                                    fontFamily = OutfitFontFamily
+                                    fontFamily = OutfitFontFamily,
+                                    modifier = Modifier.padding(horizontal = 4.dp)
                                 )
                             }
 
@@ -338,7 +413,8 @@ fun PlaylistScreen(
                                     text = "Play",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 11.sp,
-                                    fontFamily = OutfitFontFamily
+                                    fontFamily = OutfitFontFamily,
+                                    modifier = Modifier.padding(horizontal = 4.dp)
                                 )
                             }
 
@@ -369,14 +445,19 @@ fun PlaylistScreen(
                                     text = "Shuffle",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 11.sp,
-                                    fontFamily = OutfitFontFamily
+                                    fontFamily = OutfitFontFamily,
+                                    modifier = Modifier.padding(horizontal = 4.dp)
                                 )
                             }
 
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier.clickable {
-                                    viewModel.togglePlaylistLike(currentPlaylist)
+                                    if (isPersonalPlaylist) {
+                                        handleSharePlaylist()
+                                    } else {
+                                        viewModel.togglePlaylistLike(currentPlaylist)
+                                    }
                                 }
                             ) {
                                 Surface(
@@ -386,19 +467,26 @@ fun PlaylistScreen(
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         Icon(
-                                            imageVector = if (currentPlaylist.isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
-                                            contentDescription = "Like",
-                                            tint = if (currentPlaylist.isLiked) SeitharolRedHeart else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            imageVector = if (isPersonalPlaylist) {
+                                                Icons.Default.Share
+                                            } else if (currentPlaylist.isLiked) {
+                                                Icons.Default.Favorite
+                                            } else {
+                                                Icons.Outlined.FavoriteBorder
+                                            },
+                                            contentDescription = if (isPersonalPlaylist) "Share" else "Like",
+                                            tint = if (!isPersonalPlaylist && currentPlaylist.isLiked) SeitharolRedHeart else MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.size(20.dp)
                                         )
                                     }
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = if (currentPlaylist.isLiked) "Liked" else "Like",
+                                    text = if (isPersonalPlaylist) "Share" else if (currentPlaylist.isLiked) "Liked" else "Like",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 11.sp,
-                                    fontFamily = OutfitFontFamily
+                                    fontFamily = OutfitFontFamily,
+                                    modifier = Modifier.padding(horizontal = 4.dp)
                                 )
                             }
                         }
@@ -410,7 +498,14 @@ fun PlaylistScreen(
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search in ${currentPlaylist.title}...", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    placeholder = {
+                        Text(
+                            text = "Search in ${currentPlaylist.title}...",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                    },
                     singleLine = true,
                     shape = RoundedCornerShape(24.dp),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -440,7 +535,7 @@ fun PlaylistScreen(
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 18.sp,
                     color = SeitharolDark,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
                 )
             }
 
@@ -449,7 +544,7 @@ fun PlaylistScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 40.dp),
+                            .padding(horizontal = 24.dp, vertical = 40.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         if (isLoadingPlaylist) {
@@ -459,11 +554,17 @@ fun PlaylistScreen(
                             )
                         } else {
                             Text(
-                                text = if (searchQuery.isNotEmpty()) "No tracks matched '$searchQuery'" else "This playlist is empty.\nAdd tracks from Search, Home, or Player to build your playlist.",
+                                text = if (searchQuery.isNotEmpty()) {
+                                    "No tracks matched '$searchQuery'"
+                                } else {
+                                    "This playlist is empty.\nAdd tracks from Search, Home, or Player to build your playlist."
+                                },
                                 color = SeitharolTextSecondary,
                                 fontFamily = OutfitFontFamily,
                                 fontSize = 14.sp,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                lineHeight = 20.sp,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                             )
                         }
                     }
@@ -491,8 +592,11 @@ fun PlaylistScreen(
                             onGoToArtistClick = { creator ->
                                 viewModel.navigateToArtist(creator, isChannel = track.isVideoTrack)
                             },
-                            onRemoveFromPlaylistClick = if (savedPlaylist != null) {
-                                { viewModel.removeTrackFromPlaylist(currentPlaylist.id, track.id) }
+                            onRemoveFromPlaylistClick = if (isPersonalPlaylist) {
+                                {
+                                    viewModel.removeTrackFromPlaylist(currentPlaylist.id, track.id)
+                                    remotePlaylistTracks = remotePlaylistTracks.filterNot { it.id == track.id }
+                                }
                             } else null,
                             onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
@@ -513,21 +617,24 @@ fun PlaylistScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 24.dp, vertical = 16.dp)
+                        .navigationBarsPadding()
                 ) {
                     Text(
                         text = currentPlaylist.title,
                         fontFamily = SyneFontFamily,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = SeitharolDark
+                        color = SeitharolDark,
+                        modifier = Modifier.padding(horizontal = 4.dp)
                     )
                     Text(
-                        text = "${remotePlaylistTracks.size} tracks",
+                        text = "${remotePlaylistTracks.size} tracks" + if (isPersonalPlaylist) " • ${shareableOnlineTracks.size} online shareable" else "",
                         fontFamily = OutfitFontFamily,
                         fontSize = 12.sp,
-                        color = SeitharolTextSecondary
+                        color = SeitharolTextSecondary,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                     )
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
                     HorizontalDivider(color = SeitharolBorder)
                     Spacer(modifier = Modifier.height(8.dp))
 
@@ -539,7 +646,7 @@ fun PlaylistScreen(
                                 showMoreSheet = false
                                 remotePlaylistTracks.reversed().forEach { viewModel.playNext(it) }
                             }
-                            .padding(vertical = 12.dp),
+                            .padding(horizontal = 12.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(Icons.Default.PlaylistPlay, contentDescription = null, tint = SeitharolDark)
@@ -555,7 +662,7 @@ fun PlaylistScreen(
                                 showMoreSheet = false
                                 remotePlaylistTracks.forEach { viewModel.addToQueue(it) }
                             }
-                            .padding(vertical = 12.dp),
+                            .padding(horizontal = 12.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(Icons.Default.QueueMusic, contentDescription = null, tint = SeitharolDark)
@@ -571,7 +678,7 @@ fun PlaylistScreen(
                                 showMoreSheet = false
                                 viewModel.downloadAllTracks(remotePlaylistTracks, DownloadTier.STANDARD)
                             }
-                            .padding(vertical = 12.dp),
+                            .padding(horizontal = 12.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(Icons.Default.Download, contentDescription = null, tint = SeitharolDark)
@@ -585,28 +692,90 @@ fun PlaylistScreen(
                             .clip(RoundedCornerShape(12.dp))
                             .clickable {
                                 showMoreSheet = false
-                                runCatching {
-                                    val shareMsg = SeitharolDeepLinkHelper.buildPlaylistShareMessage(
-                                        currentPlaylist.title,
-                                        currentPlaylist.id
-                                    )
-                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "text/plain"
-                                        putExtra(Intent.EXTRA_SUBJECT, currentPlaylist.title)
-                                        putExtra(Intent.EXTRA_TEXT, shareMsg)
-                                    }
-                                    context.startActivity(Intent.createChooser(shareIntent, "Share Playlist"))
-                                }
+                                handleSharePlaylist()
                             }
-                            .padding(vertical = 12.dp),
+                            .padding(horizontal = 12.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Share, contentDescription = null, tint = SeitharolDark)
+                        Icon(Icons.Default.Share, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(16.dp))
-                        Text("Share Playlist", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
+                        Column {
+                            Text(
+                                text = if (isPersonalPlaylist) "Share Playlist (Online Songs Only)" else "Share Playlist",
+                                fontFamily = OutfitFontFamily,
+                                fontSize = 15.sp,
+                                color = SeitharolDark
+                            )
+                            if (isPersonalPlaylist) {
+                                Text(
+                                    text = "Shares ${shareableOnlineTracks.size} YouTube / JioSaavn tracks (excludes offline files)",
+                                    fontFamily = OutfitFontFamily,
+                                    fontSize = 11.5.sp,
+                                    color = SeitharolTextSecondary
+                                )
+                            }
+                        }
                     }
+
+                    if (isPersonalPlaylist) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    showMoreSheet = false
+                                    showRenameDialog = true
+                                }
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Edit, contentDescription = null, tint = SeitharolDark)
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Rename Playlist", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = SeitharolDark)
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    showMoreSheet = false
+                                    showDeleteConfirmDialog = true
+                                }
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Delete Playlist", fontFamily = OutfitFontFamily, fontSize = 15.sp, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
+        }
+
+        if (showRenameDialog) {
+            RenamePlaylistDialog(
+                initialTitle = currentPlaylist.title,
+                initialDescription = currentPlaylist.description,
+                onConfirm = { newTitle, newDesc ->
+                    viewModel.renamePlaylist(currentPlaylist.id, newTitle, newDesc)
+                },
+                onDismiss = { showRenameDialog = false }
+            )
+        }
+
+        if (showDeleteConfirmDialog) {
+            DeletePlaylistConfirmDialog(
+                playlistTitle = currentPlaylist.title,
+                onConfirmDelete = {
+                    viewModel.deletePlaylist(currentPlaylist.id)
+                    onBack()
+                },
+                onDismiss = { showDeleteConfirmDialog = false }
+            )
         }
 
         trackToAddToPlaylist?.let { track ->

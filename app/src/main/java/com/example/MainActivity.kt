@@ -233,6 +233,22 @@ class MainActivity : ComponentActivity() {
                                     isVideo = target.isVideo
                                 )
                             }
+                            is SeitharolDeepLinkHelper.DeepLinkTarget.PlaylistTarget -> {
+                                pendingDeepLink = null
+                                if (target.sourcePlatform == "SEITHAROL_PERSONAL" ||
+                                    target.sourcePlatform == "SPOTIFY" ||
+                                    target.sourcePlatform == "APPLE_MUSIC"
+                                ) {
+                                    val reconstructedInput = intent?.dataString ?: target.playlistId
+                                    viewModel.importPlaylistFromUrlOrShare(reconstructedInput, target.title)
+                                } else {
+                                    viewModel.navigateToPlaylist(target.playlistId)
+                                }
+                            }
+                            is SeitharolDeepLinkHelper.DeepLinkTarget.NotFoundTarget -> {
+                                pendingDeepLink = null
+                                viewModel.navigateToNotFound(target.rawUrl)
+                            }
                             null -> Unit
                         }
                     }

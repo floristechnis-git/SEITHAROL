@@ -47,8 +47,8 @@ jobs:
       run: |
         APK_PATH=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
         echo "Built APK: $APK_PATH"
-        if [ "$APK_PATH" != "app/build/outputs/apk/debug/in.floristechnis.seitharol-v2.0.3.apk" ]; then
-          cp "$APK_PATH" app/build/outputs/apk/debug/in.floristechnis.seitharol-v2.0.3.apk
+        if [ "$APK_PATH" != "app/build/outputs/apk/debug/in.floristechnis.seitharol-v3.2.4.apk" ]; then
+          cp "$APK_PATH" app/build/outputs/apk/debug/in.floristechnis.seitharol-v3.2.4.apk
         fi
         ls -la app/build/outputs/apk/debug/
 
@@ -93,8 +93,8 @@ jobs:
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: in.floristechnis.seitharol-v2.0.3.apk
-        path: app/build/outputs/apk/debug/in.floristechnis.seitharol-v2.0.3.apk
+        name: in.floristechnis.seitharol-v3.2.4.apk
+        path: app/build/outputs/apk/debug/in.floristechnis.seitharol-v3.2.4.apk
         if-no-files-found: error
         overwrite: true
         retention-days: 2

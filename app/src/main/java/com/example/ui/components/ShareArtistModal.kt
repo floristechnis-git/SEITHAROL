@@ -198,6 +198,21 @@ object SeitharolDeepLinkHelper {
         return "Listen to \"$playlistTitle\" on SEITHAROL:\n$launcherUrl"
     }
 
+    fun sharePersonalPlaylistSystemChooser(
+        context: Context,
+        playlistTitle: String,
+        playlistId: String,
+        tracks: List<Track> = emptyList(),
+        excludedOfflineCount: Int = 0
+    ) {
+        sharePlaylistSystemChooser(
+            context = context,
+            playlistTitle = playlistTitle,
+            playlistId = playlistId,
+            tracks = tracks.filter { isOnlineShareableTrack(it) }
+        )
+    }
+
     fun sharePlaylistSystemChooser(
         context: Context,
         playlistTitle: String,
@@ -251,7 +266,27 @@ object SeitharolDeepLinkHelper {
             val title: String,
             val trackIds: List<String> = emptyList(),
             val sharedTracks: List<Track> = emptyList(),
-            val externalUrl: String? = null
+            val externalUrl: String? = null,
+            val sourcePlatform: String = when {
+                playlistId.startsWith("spotify:", ignoreCase = true) || externalUrl?.contains("spotify", ignoreCase = true) == true -> "SPOTIFY"
+                playlistId.startsWith("apple:", ignoreCase = true) || externalUrl?.contains("apple.com", ignoreCase = true) == true -> "APPLE_MUSIC"
+                sharedTracks.isNotEmpty() || trackIds.isNotEmpty() || playlistId.equals("shared", ignoreCase = true) -> "SEITHAROL_PERSONAL"
+                else -> "YOUTUBE"
+            },
+            val onlineTracks: List<Track> = if (sharedTracks.isNotEmpty()) {
+                sharedTracks
+            } else {
+                trackIds.map { rawId ->
+                    Track(
+                        id = rawId,
+                        title = "Shared Track",
+                        artist = "",
+                        album = "",
+                        durationMs = 210_000L,
+                        artUrl = ""
+                    )
+                }
+            }
         ) : DeepLinkTarget
 
         data class AudioFileTarget(
@@ -264,7 +299,8 @@ object SeitharolDeepLinkHelper {
         ) : DeepLinkTarget
 
         data class NotFoundTarget(
-            val message: String
+            val message: String,
+            val rawUrl: String = message
         ) : DeepLinkTarget
     }
 

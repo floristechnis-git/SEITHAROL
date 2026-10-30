@@ -999,8 +999,8 @@ fun HomeScreen(
                     item {
                         Column(modifier = Modifier.fillMaxWidth()) {
                             SectionHeader(
-                                title = "Listen Again",
-                                subtitle = "Your speed dial & quick favorites"
+                                title = "Quick Picks",
+                                subtitle = "Suggested tracks & favorites tuned to your taste"
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             QuickDialBentoSection(
@@ -1020,7 +1020,7 @@ fun HomeScreen(
 
                 if (trendingItems.isNotEmpty()) {
                     item {
-                        val shelfTitle = if (isOfflineMode) "Offline Library Tracks" else "Quick Picks"
+                        val shelfTitle = if (isOfflineMode) "Offline Library Tracks" else "Trending & Top Songs"
                         val shelfSubtitle = if (isOfflineMode) "Ready for zero-data playback" else "Start a radio or swipe through top tracks"
                         TrendingSongsHorizontalShelf(
                             tracks = trendingItems,

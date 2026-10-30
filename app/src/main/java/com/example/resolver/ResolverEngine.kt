@@ -97,7 +97,7 @@ class ResolverEngine {
     private val _circuitBreakerState = MutableStateFlow(CircuitBreakerState.CLOSED)
     val circuitBreakerState: StateFlow<CircuitBreakerState> = _circuitBreakerState.asStateFlow()
 
-    private val _currentPackVersion = MutableStateFlow("v2.0.1-standalone-vr")
+    private val _currentPackVersion = MutableStateFlow("v3.2.4-standalone-vr")
     val currentPackVersion: StateFlow<String> = _currentPackVersion.asStateFlow()
 
     private fun loadPersistedOfflineMode(): Boolean {

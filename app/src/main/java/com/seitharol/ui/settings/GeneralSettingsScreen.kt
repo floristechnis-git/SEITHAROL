@@ -140,6 +140,13 @@ fun GeneralSettingsScreen(
         item {
             SettingsGroupCard(title = "Playback & Sound Effects") {
                 SettingsToggleRow(
+                    title = "Always Play",
+                    subtitle = "Keep playing during phone calls, voice chats, and games — only pauses when another video or media player starts (Default: Off)",
+                    checked = state.alwaysPlay,
+                    onCheckedChange = { settingsManager.setAlwaysPlay(it) }
+                )
+                SettingsDivider()
+                SettingsToggleRow(
                     title = "Stop audio immediately on new selection",
                     subtitle = if (state.stopImmediatelyOnNewTrack)
                         "Stops currently playing audio immediately when a new song is picked (Default)"
@@ -537,7 +544,7 @@ fun InfoDetailScreen(
                     )
 
                     Text(
-                        text = "Developed by Yumkhaibam Johnson Singh • Version 2.0.1 Public Release",
+                        text = "Developed by Yumkhaibam Johnson Singh • Version 3.2.4 Public Release",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         lineHeight = 18.sp

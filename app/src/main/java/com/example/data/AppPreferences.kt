@@ -26,6 +26,7 @@ data class UserSettings(
     val stopImmediatelyOnNewTrack: Boolean = true,
     val alwaysOnScreenVideo: Boolean = true,
     val alwaysOnScreenMusic: Boolean = false,
+    val alwaysPlay: Boolean = false,
     val hasSeenDeveloperWelcomePopup: Boolean = false
 )
 
@@ -86,6 +87,7 @@ class AppPreferences private constructor(context: Context) {
             stopImmediatelyOnNewTrack = prefs.getBoolean("stop_immediately_on_new_track", true),
             alwaysOnScreenVideo = prefs.getBoolean("always_on_screen_video", true),
             alwaysOnScreenMusic = prefs.getBoolean("always_on_screen_music", false),
+            alwaysPlay = prefs.getBoolean("always_play_mode", false),
             hasSeenDeveloperWelcomePopup = prefs.getBoolean("seen_dev_welcome_popup_v1", false)
         )
     }
@@ -108,6 +110,14 @@ class AppPreferences private constructor(context: Context) {
         _settings.value = loadSettings()
         runCatching {
             com.seitharol.data.preferences.AppSettingsManager.getInstance(appContext).setAlwaysOnScreenMusic(enabled)
+        }
+    }
+
+    fun setAlwaysPlay(enabled: Boolean) {
+        prefs.edit().putBoolean("always_play_mode", enabled).apply()
+        _settings.value = loadSettings()
+        runCatching {
+            com.seitharol.data.preferences.AppSettingsManager.getInstance(appContext).setAlwaysPlay(enabled)
         }
     }
 

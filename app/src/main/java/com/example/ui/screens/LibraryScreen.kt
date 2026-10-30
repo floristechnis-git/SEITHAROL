@@ -586,7 +586,7 @@ fun LibraryScreen(
 
     playlistToRename?.let { targetPl ->
         RenamePlaylistDialog(
-            initialName = targetPl.title,
+            initialTitle = targetPl.title,
             initialDescription = targetPl.description,
             onConfirm = { newTitle, newDesc ->
                 viewModel.renamePlaylist(targetPl.id, newTitle, newDesc)
@@ -610,7 +610,7 @@ fun LibraryScreen(
     if (showImportPlaylistDialog) {
         ImportPlaylistDialog(
             isImporting = isImportingPlaylist,
-            onConfirmImport = { urlOrCode, customName ->
+            onImport = { urlOrCode: String, customName: String? ->
                 viewModel.importPlaylistFromUrlOrShare(
                     rawInput = urlOrCode,
                     customName = customName

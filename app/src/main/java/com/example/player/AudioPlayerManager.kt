@@ -218,19 +218,38 @@ class AudioPlayerManager(
     private var wasPlayingBeforeCall: Boolean = false
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
 
+    private fun isAlwaysPlayEnabled(): Boolean {
+        return runCatching {
+            settingsManager.state.value.alwaysPlay || appPreferences.settings.value.alwaysPlay
+        }.getOrDefault(false)
+    }
+
+    private fun pauseForInterruption(resumeWhenEnded: Boolean) {
+        if (exoPlayer?.isPlaying == true || _state.value.isPlaying || _state.value.isBuffering) {
+            wasPlayingBeforeCall = resumeWhenEnded
+            userRequestedPlay = false
+            runCatching {
+                exoPlayer?.playWhenReady = false
+                exoPlayer?.pause()
+                videoExoPlayer?.playWhenReady = false
+                videoExoPlayer?.pause()
+            }
+            _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+            persistCurrentPlaybackState()
+        } else if (!resumeWhenEnded) {
+            wasPlayingBeforeCall = false
+        }
+    }
+
     private val telephonyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val state = intent?.getStringExtra(TelephonyManager.EXTRA_STATE)
             if (state == TelephonyManager.EXTRA_STATE_RINGING || state == TelephonyManager.EXTRA_STATE_OFFHOOK) {
-                if (exoPlayer?.isPlaying == true || _state.value.isPlaying) {
-                    wasPlayingBeforeCall = true
-                    userRequestedPlay = false
-                    exoPlayer?.pause()
-                    _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
-                    persistCurrentPlaybackState()
+                if (!isAlwaysPlayEnabled()) {
+                    pauseForInterruption(resumeWhenEnded = true)
                 }
             } else if (state == TelephonyManager.EXTRA_STATE_IDLE) {
-                if (wasPlayingBeforeCall) {
+                if (wasPlayingBeforeCall && !isPhoneCallActive()) {
                     wasPlayingBeforeCall = false
                     userRequestedPlay = true
                     exoPlayer?.playWhenReady = true
@@ -241,33 +260,48 @@ class AudioPlayerManager(
     }
 
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+        val alwaysPlay = isAlwaysPlayEnabled()
         when (focusChange) {
             AudioManager.AUDIOFOCUS_GAIN -> {
                 exoPlayer?.volume = if (_state.value.isMuted) 0f else 1.0f
-                if (wasPlayingBeforeCall) {
+                if (wasPlayingBeforeCall && !isPhoneCallActive()) {
                     wasPlayingBeforeCall = false
                     userRequestedPlay = true
                     exoPlayer?.playWhenReady = true
                     exoPlayer?.play()
                 }
             }
-            AudioManager.AUDIOFOCUS_LOSS,
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                if (isPhoneCallActive()) {
-                    if (exoPlayer?.isPlaying == true || _state.value.isPlaying) {
-                        wasPlayingBeforeCall = true
-                        userRequestedPlay = false
-                        exoPlayer?.pause()
-                        _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
-                        persistCurrentPlaybackState()
-                    }
+                // Fired by normal phone calls, WhatsApp/Zoom/Meet/Telegram conference calls, voice notes, and alarms.
+                // When Always Play is OFF (default), pause immediately and resume when the call/interruption ends.
+                // When Always Play is ON, keep playing through calls, voice chats, and games.
+                if (!alwaysPlay) {
+                    pauseForInterruption(resumeWhenEnded = true)
                 } else {
-                    // Never pause playback on screen lock/unlock chimes or transient system sounds
+                    exoPlayer?.volume = if (_state.value.isMuted) 0f else 1.0f
+                }
+            }
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                // Fired when another media/video player starts OR when a long call takes audio focus.
+                // When Always Play is OFF (default), always pause immediately.
+                // When Always Play is ON, keep playing if it's a phone/VoIP call, and ONLY pause when another video/media player starts!
+                val inCall = isPhoneCallActive()
+                if (!alwaysPlay) {
+                    pauseForInterruption(resumeWhenEnded = inCall)
+                } else if (!inCall) {
+                    pauseForInterruption(resumeWhenEnded = false)
+                } else {
                     exoPlayer?.volume = if (_state.value.isMuted) 0f else 1.0f
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                exoPlayer?.volume = if (_state.value.isMuted) 0f else 0.6f
+                if (!alwaysPlay && isPhoneCallActive()) {
+                    pauseForInterruption(resumeWhenEnded = true)
+                } else if (alwaysPlay) {
+                    exoPlayer?.volume = if (_state.value.isMuted) 0f else 1.0f
+                } else {
+                    exoPlayer?.volume = if (_state.value.isMuted) 0f else 0.3f
+                }
             }
         }
     }
@@ -275,9 +309,12 @@ class AudioPlayerManager(
     private fun isPhoneCallActive(): Boolean {
         return runCatching {
             val am = audioManager ?: return false
-            am.mode == AudioManager.MODE_IN_CALL ||
-                am.mode == AudioManager.MODE_IN_COMMUNICATION ||
-                am.mode == AudioManager.MODE_RINGTONE
+            val mode = am.mode
+            mode == AudioManager.MODE_IN_CALL ||
+                mode == AudioManager.MODE_IN_COMMUNICATION ||
+                mode == AudioManager.MODE_RINGTONE ||
+                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && mode == AudioManager.MODE_CALL_SCREENING) ||
+                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && mode == AudioManager.MODE_CALL_REDIRECT)
         }.getOrDefault(false)
     }
 
@@ -1473,6 +1510,10 @@ class AudioPlayerManager(
         positionJob = coroutineScope.launch {
             while (isActive) {
                 val player = exoPlayer ?: break
+                if (!isAlwaysPlayEnabled() && isPhoneCallActive() && (player.isPlaying || _state.value.isPlaying)) {
+                    pauseForInterruption(resumeWhenEnded = true)
+                    break
+                }
                 val isSeekingOrBuffering = userRequestedPlay && (player.playbackState == Player.STATE_BUFFERING || (System.currentTimeMillis() - lastUserSeekTimestamp) < 2500L)
                 if (!player.isPlaying && !_state.value.isPlaying && !isSeekingOrBuffering) {
                     break

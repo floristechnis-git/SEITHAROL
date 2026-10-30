@@ -543,8 +543,7 @@ object NetworkClients {
         val cleanedArtist = cleanArtistName(rawArtist)
         val cleanedTitle = cleanTrackTitle(rawTitle)
 
-        // If title contains "Artist - Song Title" (common on YouTube uploads)
-        val dashSplit = rawTitle.split(Regex("""\s+[-–—]\s+"""), limit = 2)
+        val dashSplit = rawTitle.split(Regex("\\s+[-–—]\\s+"), limit = 2)
         if (dashSplit.size == 2) {
             val left = cleanArtistName(dashSplit[0])
             val right = cleanTrackTitle(dashSplit[1])
@@ -590,7 +589,7 @@ object NetworkClients {
             try {
                 val request = Request.Builder()
                     .url(url)
-                    .header("User-Agent", "Seitharol-Client/2.2.0 (Android)")
+                    .header("User-Agent", "Seitharol-Client/3.2.4 (Android)")
                     .build()
                 okHttpClient.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
@@ -638,7 +637,7 @@ object NetworkClients {
             try {
                 val request = Request.Builder()
                     .url(url)
-                    .header("User-Agent", "Seitharol-Client/2.2.0 (Android)")
+                    .header("User-Agent", "Seitharol-Client/3.2.4 (Android)")
                     .build()
                 val foundSynced = okHttpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) return@use emptyList<LyricsLine>()
@@ -702,7 +701,7 @@ object NetworkClients {
                 if (!resp.isSuccessful) return@use emptyList<Long>()
                 val body = resp.body?.string() ?: return@use emptyList<Long>()
                 val songs = JSONObject(body).optJSONObject("result")?.optJSONArray("songs") ?: return@use emptyList<Long>()
-                val candidates = mutableListOf<Pair<Long, Long>>() // (songId, penalty)
+                val candidates = mutableListOf<Pair<Long, Long>>()
                 for (i in 0 until songs.length()) {
                     val s = songs.optJSONObject(i) ?: continue
                     val id = s.optLong("id", 0L)
@@ -730,16 +729,20 @@ object NetworkClients {
                     if (lrc.isNotBlank()) {
                         val primaryLines = parseLrc(lrc)
                         if (tlyric.isNotBlank() && primaryLines.isNotEmpty()) {
-                            val transLines = parseLrc(tlyric).filter { !it.isInstrumental && it.text.isNotBlank() }
-                            primaryLines.map { line ->
-                                if (line.isInstrumental || line.text.isBlank()) line
-                                else {
-                                    val matchingTrans = transLines.minByOrNull { abs(it.timestampMs - line.timestampMs) }
-                                        ?.takeIf { abs(it.timestampMs - line.timestampMs) <= 1500L }
+                            val transLines = parseLrc(tlyric).filter { lineItem: LyricsLine -> !lineItem.isInstrumental && lineItem.text.isNotBlank() }
+                            primaryLines.map { line: LyricsLine ->
+                                if (line.isInstrumental || line.text.isBlank()) {
+                                    line
+                                } else {
+                                    val matchingTrans = transLines
+                                        .minByOrNull { trItem: LyricsLine -> abs(trItem.timestampMs - line.timestampMs) }
+                                        ?.takeIf { trItem: LyricsLine -> abs(trItem.timestampMs - line.timestampMs) <= 1500L }
                                         ?.text
-                                    if (!matchingTrans.isNullOrBlank() && !matchingTrans.equals(line.text, true)) {
+                                    if (!matchingTrans.isNullOrBlank() && !matchingTrans.equals(line.text, ignoreCase = true)) {
                                         line.copy(translation = matchingTrans)
-                                    } else line
+                                    } else {
+                                        line
+                                    }
                                 }
                             }
                         } else primaryLines
@@ -802,7 +805,6 @@ object NetworkClients {
             val cleanVid = videoId.removePrefix("yt_").trim()
             if (cleanVid.length != 11) return emptyList()
 
-            // 1. Check YouTube player captionTracks (json3 timed subtitles)
             val playerBody = JSONObject().apply {
                 put("videoId", cleanVid)
                 put("context", JSONObject().apply {
@@ -833,7 +835,6 @@ object NetworkClients {
                     val baseUrl = tr.optString("baseUrl", "")
                     val kind = tr.optString("kind", "")
                     if (baseUrl.isNotBlank()) {
-                        // Prefer human-synced lyrics captions over ASR auto-captions
                         if (kind != "asr") {
                             chosenUrl = baseUrl
                             break
@@ -867,8 +868,8 @@ object NetworkClients {
                             sb.append(segs.optJSONObject(j)?.optString("utf8", "").orEmpty())
                         }
                         val lineText = sb.toString()
-                            .replace("
-", " ")
+                            .replace("\n", " ")
+                            .replace("\r", " ")
                             .replace("♪", "")
                             .replace("♫", "")
                             .trim()
@@ -881,7 +882,6 @@ object NetworkClients {
                 if (capLines.size >= 4) return capLines
             }
 
-            // 2. Check YouTube Music next -> MPLYt_ lyrics browse endpoint
             val nextBody = JSONObject().apply {
                 put("videoId", cleanVid)
                 put("context", INNER_TUBE_CONTEXT)
@@ -893,7 +893,7 @@ object NetworkClients {
             val lyricsBrowseId = okHttpClient.newCall(nextReq).execute().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 val str = resp.body?.string() ?: return@use null
-                Regex(""""browseId"\s*:\s*"(MPLYt_[^"]+)"""").find(str)?.groupValues?.getOrNull(1)
+                Regex("\"browseId\"\\s*:\\s*\"(MPLYt_[^\"]+)\"").find(str)?.groupValues?.getOrNull(1)
             }
             if (!lyricsBrowseId.isNullOrBlank()) {
                 val browseBody = JSONObject().apply {
@@ -907,12 +907,11 @@ object NetworkClients {
                 okHttpClient.newCall(browseReq).execute().use { resp ->
                     if (!resp.isSuccessful) return emptyList()
                     val str = resp.body?.string() ?: return emptyList()
-                    val descMatch = Regex(""""description"\s*:\s*\{\s*"runs"\s*:\s*\[\s*\{\s*"text"\s*:\s*"((?:\.|[^"\])*)"""").find(str)
+                    val descMatch = Regex("\"description\"\\s*:\\s*\\{\\s*\"runs\"\\s*:\\s*\\[\\s*\\{\\s*\"text\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"").find(str)
                     val rawLyrics = descMatch?.groupValues?.getOrNull(1)
-                        ?.replace("\n", "
-")
-                        ?.replace("\r", "")
-                        ?.replace("\"", """)
+                        ?.replace("\\n", "\n")
+                        ?.replace("\\r", "")
+                        ?.replace("\\\"", "\"")
                         .orEmpty()
                     if (rawLyrics.isNotBlank()) {
                         return buildProportionalLyrics(rawLyrics, durationSec)
@@ -956,16 +955,17 @@ object NetworkClients {
         var title = "Spotify Playlist"
         var coverUrl: String? = null
         val tracks = mutableListOf<Pair<String, String>>()
+        val cleanId = playlistId.removePrefix("spotify:").substringBefore("?").trim()
 
         runCatching {
-            val embedUrl = "https://open.spotify.com/embed/playlist/$playlistId"
+            val embedUrl = "https://open.spotify.com/embed/playlist/$cleanId"
             val req = Request.Builder()
                 .url(embedUrl)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
                 .build()
             okHttpClient.newCall(req).execute().use { resp ->
                 val html = resp.body?.string().orEmpty()
-                val nextData = Regex("""<script id="__NEXT_DATA__"[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL)
+                val nextData = Regex("<script id=\"__NEXT_DATA__\"[^>]*>(.*?)</script>", RegexOption.DOT_MATCHES_ALL)
                     .find(html)?.groupValues?.getOrNull(1)
                 if (!nextData.isNullOrBlank()) {
                     val entity = JSONObject(nextData)
@@ -985,7 +985,7 @@ object NetworkClients {
                             for (i in 0 until trackList.length()) {
                                 val item = trackList.optJSONObject(i) ?: continue
                                 val tName = item.optString("title", "").trim()
-                                val tSub = item.optString("subtitle", "").replace(" ", " ").trim()
+                                val tSub = item.optString("subtitle", "").replace("\u00a0", " ").trim()
                                 if (tName.isNotBlank()) {
                                     tracks.add(Pair(tName, tSub))
                                 }
@@ -998,18 +998,18 @@ object NetworkClients {
 
         if (tracks.isEmpty()) {
             runCatching {
-                val pageUrl = "https://open.spotify.com/playlist/$playlistId"
+                val pageUrl = "https://open.spotify.com/playlist/$cleanId"
                 val req = Request.Builder()
                     .url(pageUrl)
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                     .build()
                 okHttpClient.newCall(req).execute().use { resp ->
                     val html = resp.body?.string().orEmpty()
-                    val ogTitle = Regex("""<meta property="og:title" content="([^"]+)"""").find(html)?.groupValues?.getOrNull(1)
+                    val ogTitle = Regex("<meta property=\"og:title\" content=\"([^\"]+)\"").find(html)?.groupValues?.getOrNull(1)
                     if (!ogTitle.isNullOrBlank()) title = ogTitle
-                    val ogImage = Regex("""<meta property="og:image" content="([^"]+)"""").find(html)?.groupValues?.getOrNull(1)
+                    val ogImage = Regex("<meta property=\"og:image\" content=\"([^\"]+)\"").find(html)?.groupValues?.getOrNull(1)
                     if (!ogImage.isNullOrBlank()) coverUrl = ogImage
-                    Regex("""<meta name="music:song" content="([^"]+)"""").findAll(html).take(40).forEach { m ->
+                    Regex("<meta name=\"music:song\" content=\"([^\"]+)\"").findAll(html).take(40).forEach { m ->
                         val trackUrl = m.groupValues[1]
                         val tid = trackUrl.substringAfterLast("/").substringBefore("?")
                         if (tid.isNotBlank()) {
@@ -1035,7 +1035,8 @@ object NetworkClients {
         var title = "Apple Music Playlist"
         var coverUrl: String? = null
         val tracks = mutableListOf<Pair<String, String>>()
-        val targetUrl = if (rawUrl.startsWith("http")) rawUrl else "https://music.apple.com/us/playlist/$playlistId"
+        val cleanId = playlistId.removePrefix("apple:").trim()
+        val targetUrl = if (rawUrl.startsWith("http")) rawUrl else "https://music.apple.com/us/playlist/$cleanId"
 
         runCatching {
             val req = Request.Builder()
@@ -1044,14 +1045,13 @@ object NetworkClients {
                 .build()
             okHttpClient.newCall(req).execute().use { resp ->
                 val html = resp.body?.string().orEmpty()
-                val ogTitle = Regex("""<meta property="og:title" content="([^"]+)"""").find(html)?.groupValues?.getOrNull(1)
+                val ogTitle = Regex("<meta property=\"og:title\" content=\"([^\"]+)\"").find(html)?.groupValues?.getOrNull(1)
                     ?.removeSuffix(" on Apple Music")?.trim()
                 if (!ogTitle.isNullOrBlank()) title = ogTitle
-                val ogImg = Regex("""<meta property="og:image" content="([^"]+)"""").find(html)?.groupValues?.getOrNull(1)
+                val ogImg = Regex("<meta property=\"og:image\" content=\"([^\"]+)\"").find(html)?.groupValues?.getOrNull(1)
                 if (!ogImg.isNullOrBlank()) coverUrl = ogImg
 
-                // 1. Parse JSON-LD schema:music-playlist or MusicPlaylist
-                Regex("""<script type="application/ld\+json"[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL)
+                Regex("<script type=\"application/ld\\+json\"[^>]*>(.*?)</script>", RegexOption.DOT_MATCHES_ALL)
                     .findAll(html)
                     .forEach { match ->
                         runCatching {
@@ -1076,12 +1076,11 @@ object NetworkClients {
                         }
                     }
 
-                // 2. Parse serialized-server-data JSON from Apple Music web app
                 if (tracks.isEmpty()) {
-                    val serverJson = Regex("""<script type="application/json" id="serialized-server-data">(.*?)</script>""", RegexOption.DOT_MATCHES_ALL)
+                    val serverJson = Regex("<script type=\"application/json\" id=\"serialized-server-data\">(.*?)</script>", RegexOption.DOT_MATCHES_ALL)
                         .find(html)?.groupValues?.getOrNull(1)
                     if (!serverJson.isNullOrBlank()) {
-                        val titleArtistRegex = Regex(""""title"\s*:\s*"([^"]+)"\s*,\s*"artistName"\s*:\s*"([^"]+)"""")
+                        val titleArtistRegex = Regex("\"title\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"artistName\"\\s*:\\s*\"([^\"]+)\"")
                         titleArtistRegex.findAll(serverJson).forEach { m ->
                             val t = m.groupValues[1].trim()
                             val a = m.groupValues[2].trim()
@@ -1090,7 +1089,7 @@ object NetworkClients {
                             }
                         }
                         if (tracks.isEmpty()) {
-                            val nameArtistRegex = Regex(""""name"\s*:\s*"([^"]+)"[^{}]*?"artistName"\s*:\s*"([^"]+)"""")
+                            val nameArtistRegex = Regex("\"name\"\\s*:\\s*\"([^\"]+)\"[^{}]*?\"artistName\"\\s*:\\s*\"([^\"]+)\"")
                             nameArtistRegex.findAll(serverJson).forEach { m ->
                                 val t = m.groupValues[1].trim()
                                 val a = m.groupValues[2].trim()
@@ -1111,7 +1110,7 @@ object NetworkClients {
      */
     fun parseLrc(lrcText: String): List<LyricsLine> {
         val rawEntries = mutableListOf<Triple<Long, String, String?>>()
-        val regex = Regex("""\[(\d{1,2}):(\d{2})(?:[:.](\d{1,3}))?](.*)""")
+        val regex = Regex("\\[(\\d{1,2}):(\\d{2})(?:[:.](\\d{1,3}))?](.*)")
 
         for (rawLine in lrcText.lines()) {
             val match = regex.find(rawLine.trim())
@@ -1161,17 +1160,17 @@ object NetworkClients {
         return raw
             .removeSuffix(" - Topic")
             .removeSuffix("- Topic")
-            .replace(Regex("""(?i)(?:official|vevo|music|channel)"""), "")
+            .replace(Regex("(?i)\\b(?:official|vevo|music|channel)\\b"), "")
             .trim()
             .ifBlank { raw.trim() }
     }
 
     private fun cleanTrackTitle(raw: String): String {
         return raw
-            .replace(Regex("""(?i)\((?:official|music|lyric|lyrics|audio|video|full|hd|4k|visualizer|live|remaster|from\s+).*?\)"""), "")
-            .replace(Regex("""(?i)\[(?:official|music|lyric|lyrics|audio|video|full|hd|4k|visualizer|live|remaster|from\s+).*?]"""), "")
-            .replace(Regex("""(?i)(?:official\s+music\s+video|official\s+video|official\s+audio|lyric\s+video|lyrics\s+video|full\s+video|music\s+video|full\s+song)"""), "")
-            .replace(Regex("""(?i)(?:feat\.|ft\.|prod\.).*"""), "")
+            .replace(Regex("(?i)\\((?:official|music|lyric|lyrics|audio|video|full|hd|4k|visualizer|live|remaster|from\\s+).*?\\)"), "")
+            .replace(Regex("(?i)\\[(?:official|music|lyric|lyrics|audio|video|full|hd|4k|visualizer|live|remaster|from\\s+).*?]"), "")
+            .replace(Regex("(?i)\\b(?:official\\s+music\\s+video|official\\s+video|official\\s+audio|lyric\\s+video|lyrics\\s+video|full\\s+video|music\\s+video|full\\s+song)\\b"), "")
+            .replace(Regex("(?i)\\b(?:feat\\.|ft\\.|prod\\.).*"), "")
             .substringBefore("|")
             .trim()
             .ifBlank { raw.trim() }

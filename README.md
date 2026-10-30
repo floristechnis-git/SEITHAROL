@@ -7,7 +7,7 @@
   **A modern, privacy-first Material 3 Music Player for Android with native YouTube Music streaming, on-device audio resolution, and local library playback.**
 
   [![Android Platform](https://img.shields.io/badge/Platform-Android%207.0%2B%20(API%2024%2B)-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://developer.android.com)
-  [![Version](https://img.shields.io/badge/Version-v2.0.3-blue?style=for-the-badge)](https://github.com/floristechnis-git/SEITHAROL/releases)
+  [![Version](https://img.shields.io/badge/Version-v3.2.4-blue?style=for-the-badge)](https://github.com/floristechnis-git/SEITHAROL/releases)
   [![Kotlin](https://img.shields.io/badge/Kotlin-2.2.10-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](https://kotlinlang.org)
   [![Jetpack Compose](https://img.shields.io/badge/UI-Jetpack%20Compose%20M3-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
   [![ExoPlayer Media3](https://img.shields.io/badge/Audio-AndroidX%20Media3%201.5.1-FF6F00?style=for-the-badge)](https://developer.android.com/guide/topics/media/media3)
@@ -97,7 +97,7 @@ Seitharol follows official Modern Android Architecture principles, combining a s
 
 ### Pre-built APK
 1. Navigate to the **[Releases](https://github.com/floristechnis-git/SEITHAROL/releases)** section.
-2. Download the latest `in.floristechnis.seitharol-v2.0.3.apk`.
+2. Download the latest `in.floristechnis.seitharol-v3.2.4.apk`.
 3. Open the file on your device and confirm installation (grant *Install from Unknown Sources* if prompted).
 4. Launch **Seitharol**.
 
@@ -143,7 +143,7 @@ Seitharol compiles cleanly without requiring external secrets, companion servers
 
 The compiled output will be generated at:
 ```
-app/build/outputs/apk/debug/in.floristechnis.seitharol-v2.0.3.apk
+app/build/outputs/apk/debug/in.floristechnis.seitharol-v3.2.4.apk
 ```
 
 ---

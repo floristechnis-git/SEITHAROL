@@ -238,6 +238,42 @@ fun SoundSettingsScreen(
                             colors = switchColors
                         )
                     }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(color = SeitharolDivider, thickness = 0.8.dp)
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                            Text(
+                                text = "Always Play",
+                                fontSize = 14.sp,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.Medium,
+                                color = SeitharolDark
+                            )
+                            Text(
+                                text = "Keep playing during phone calls, voice chats, and games — only pauses when another video or media player starts (Default: Off)",
+                                fontSize = 11.sp,
+                                fontFamily = OutfitFontFamily,
+                                color = SeitharolTextSecondary
+                            )
+                        }
+                        Switch(
+                            checked = persistedSettings.alwaysPlay,
+                            onCheckedChange = {
+                                appPreferences.setAlwaysPlay(it)
+                                settingsManager.setAlwaysPlay(it)
+                            },
+                            colors = switchColors
+                        )
+                    }
                 }
             }
         }

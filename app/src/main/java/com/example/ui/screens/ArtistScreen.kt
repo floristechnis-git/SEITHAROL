@@ -214,7 +214,7 @@ fun ArtistScreen(
                 } else {
                     NotFound404Screen(
                         title = "404 — Artist Not Found",
-                        message = "We couldn't find an official artist or channel page for "$artistName".",
+                        message = "We couldn't find an official artist or channel page for '$artistName'.",
                         attemptedPathOrQuery = artistName,
                         onBack = onBack,
                         onGoHome = onBack

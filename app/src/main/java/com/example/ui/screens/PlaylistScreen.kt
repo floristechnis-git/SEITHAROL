@@ -2,7 +2,11 @@ package com.example.ui.screens
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -806,6 +810,233 @@ fun PlaylistScreen(
                     showCreatePlaylistDialog = false
                 }
             )
+        }
+    }
+}
+
+
+/**
+ * Dedicated 404 Not Found Screen for missing playlists, unavailable tracks, artists, or broken deep-link routes.
+ * Includes generous bottom padding so the MiniPlayer and navigation bar never cover its action buttons.
+ */
+@Composable
+fun NotFound404Screen(
+    title: String = "404 — Page Not Found",
+    message: String = "The requested playlist, track, artist, or link doesn't exist or is no longer available.",
+    attemptedPathOrQuery: String = "",
+    onBack: () -> Unit,
+    onNavigateHome: (() -> Unit)? = null,
+    onGoHome: (() -> Unit)? = null,
+    onRetry: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    val homeAction = onNavigateHome ?: onGoHome
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(SeitharolBg)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(bottom = 210.dp)
+            .testTag("not_found_404_screen")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                modifier = Modifier.size(44.dp),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                onClick = onBack
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = "404 Not Found",
+                fontFamily = SyneFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.Center)
+                .padding(horizontal = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Box(
+                modifier = Modifier.size(136.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                Color(0xFFB71C1C).copy(alpha = 0.25f),
+                                Color.Transparent
+                            )
+                        )
+                    )
+                    drawCircle(
+                        color = Color(0xFFB71C1C).copy(alpha = 0.35f),
+                        radius = size.minDimension * 0.42f,
+                        style = Stroke(width = 3.dp.toPx())
+                    )
+                    drawCircle(
+                        color = Color(0xFFB71C1C).copy(alpha = 0.18f),
+                        radius = size.minDimension * 0.28f,
+                        style = Stroke(width = 2.dp.toPx())
+                    )
+                }
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier.size(68.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.MusicOff,
+                            contentDescription = "404 Not Found",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                }
+            }
+
+            Text(
+                text = "404",
+                fontFamily = SyneFontFamily,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 68.sp,
+                letterSpacing = (-2).sp,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = title,
+                fontFamily = SyneFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 22.sp,
+                color = MaterialTheme.colorScheme.onBackground,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 12.dp)
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = message,
+                fontFamily = OutfitFontFamily,
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+
+            if (attemptedPathOrQuery.isNotBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                ) {
+                    Text(
+                        text = attemptedPathOrQuery,
+                        fontFamily = OutfitFontFamily,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(26.dp))
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .height(46.dp)
+                        .clip(RoundedCornerShape(23.dp))
+                        .clickable { (homeAction ?: onBack).invoke() },
+                    shape = RoundedCornerShape(23.dp),
+                    color = MaterialTheme.colorScheme.primary
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 22.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (homeAction != null) Icons.Default.Home else Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = if (homeAction != null) "Back to Home" else "Go Back",
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+
+                if (onRetry != null) {
+                    Surface(
+                        modifier = Modifier
+                            .height(46.dp)
+                            .clip(RoundedCornerShape(23.dp))
+                            .clickable { onRetry() },
+                        shape = RoundedCornerShape(23.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(17.dp)
+                            )
+                            Text(
+                                text = "Retry",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

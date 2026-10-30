@@ -33,7 +33,8 @@ data class PersistedSettingsState(
     val audioNormalization: Boolean = false,
     val stopImmediatelyOnNewTrack: Boolean = true,
     val alwaysOnScreenVideo: Boolean = true,
-    val alwaysOnScreenMusic: Boolean = false
+    val alwaysOnScreenMusic: Boolean = false,
+    val alwaysPlay: Boolean = false
 )
 
 class AppSettingsManager(context: Context) {
@@ -74,7 +75,8 @@ class AppSettingsManager(context: Context) {
             audioNormalization = prefs.getBoolean(KEY_NORMALIZATION, false),
             stopImmediatelyOnNewTrack = prefs.getBoolean(KEY_STOP_IMMEDIATELY, true),
             alwaysOnScreenVideo = prefs.getBoolean(KEY_ALWAYS_ON_VIDEO, true),
-            alwaysOnScreenMusic = prefs.getBoolean(KEY_ALWAYS_ON_MUSIC, false)
+            alwaysOnScreenMusic = prefs.getBoolean(KEY_ALWAYS_ON_MUSIC, false),
+            alwaysPlay = prefs.getBoolean(KEY_ALWAYS_PLAY, false)
         )
     }
 
@@ -91,6 +93,11 @@ class AppSettingsManager(context: Context) {
     fun setAlwaysOnScreenMusic(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_ALWAYS_ON_MUSIC, enabled).apply()
         _state.value = _state.value.copy(alwaysOnScreenMusic = enabled)
+    }
+
+    fun setAlwaysPlay(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_ALWAYS_PLAY, enabled).apply()
+        _state.value = _state.value.copy(alwaysPlay = enabled)
     }
 
     fun setThemeMode(mode: ThemeMode) {
@@ -178,6 +185,7 @@ class AppSettingsManager(context: Context) {
         private const val KEY_STOP_IMMEDIATELY = "stop_immediately_on_new_track"
         private const val KEY_ALWAYS_ON_VIDEO = "always_on_screen_video"
         private const val KEY_ALWAYS_ON_MUSIC = "always_on_screen_music"
+        private const val KEY_ALWAYS_PLAY = "always_play_mode"
 
         @Volatile
         private var INSTANCE: AppSettingsManager? = null

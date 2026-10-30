@@ -816,21 +816,7 @@ fun PlayerScreen(
             .navigationBarsPadding()
             .testTag("full_player_screen")
     ) {
-        // Google Pixel Bottom-Sheet Style Top Drag Handle Pill
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp, bottom = 2.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(36.dp)
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.36f))
-            )
-        }
+        Spacer(modifier = Modifier.height(6.dp))
 
         // ────────────────────────────────────────────────────────────
         // Top Header with Collapse, Centered Status/Album Header, and Connected Like + 3-Dot Split Pill
@@ -1217,15 +1203,16 @@ fun PlayerScreen(
                 )
             }
         } else {
-            Box(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .padding(horizontal = 24.dp, vertical = 12.dp),
+                    .padding(horizontal = 20.dp, vertical = 10.dp),
                 contentAlignment = Alignment.Center
             ) {
+                var artworkAspectRatio by remember(track.id, track.artUrl) { mutableStateOf<Float?>(null) }
                 val scale by animateFloatAsState(
-                    targetValue = if (playerState.isPlaying) 1f else 0.84f,
+                    targetValue = if (playerState.isPlaying) 1f else 0.92f,
                     animationSpec = spring(
                         dampingRatio = Spring.DampingRatioMediumBouncy,
                         stiffness = Spring.StiffnessLow
@@ -1233,12 +1220,28 @@ fun PlayerScreen(
                     label = "artwork_scale"
                 )
 
-                val artworkElevation = if (playerState.isPlaying) 24.dp else 8.dp
-                val artworkCorner = if (playerState.isPlaying) 24.dp else 30.dp
+                val artworkElevation = if (playerState.isPlaying) 20.dp else 8.dp
+                val artworkCorner = if (playerState.isPlaying) 20.dp else 24.dp
+                val resolvedRatio = artworkAspectRatio?.coerceIn(0.5f, 2.4f) ?: 1f
+                val containerRatio = if (maxHeight > 0.dp) maxWidth / maxHeight else 1f
+                val matchHeightFirst = containerRatio > resolvedRatio
+
+                val aspectModifier = if (artworkAspectRatio != null) {
+                    if (matchHeightFirst) {
+                        Modifier
+                            .fillMaxHeight()
+                            .aspectRatio(resolvedRatio, matchHeightConstraintsFirst = true)
+                    } else {
+                        Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(resolvedRatio, matchHeightConstraintsFirst = false)
+                    }
+                } else {
+                    Modifier.fillMaxWidth()
+                }
 
                 Surface(
-                    modifier = Modifier
-                        .size(290.dp)
+                    modifier = aspectModifier
                         .scale(scale)
                         .shadow(
                             elevation = artworkElevation,
@@ -1257,14 +1260,14 @@ fun PlayerScreen(
                     shape = RoundedCornerShape(artworkCorner),
                     color = MaterialTheme.colorScheme.surfaceVariant
                 ) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                         val upgradedArt = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
                         if (upgradedArt.isBlank()) {
                             Image(
                                 painter = appLogoPainter,
                                 contentDescription = track.title,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.fillMaxWidth()
                             )
                         } else {
                             AsyncImage(
@@ -1273,8 +1276,14 @@ fun PlayerScreen(
                                 placeholder = appLogoPainter,
                                 error = appLogoPainter,
                                 fallback = appLogoPainter,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
+                                contentScale = ContentScale.Fit,
+                                onSuccess = { state ->
+                                    val d = state.result.drawable
+                                    if (d.intrinsicWidth > 0 && d.intrinsicHeight > 0) {
+                                        artworkAspectRatio = d.intrinsicWidth.toFloat() / d.intrinsicHeight.toFloat()
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
                             )
                         }
                     }
@@ -1504,11 +1513,11 @@ fun PlayerScreen(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            IconButton(onClick = { showLyrics = !showLyrics }) {
+            IconButton(onClick = { showExpandedLyrics = true }) {
                 Icon(
                     imageVector = Icons.Outlined.Subtitles,
                     contentDescription = "Lyrics",
-                    tint = if (showLyrics) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    tint = if (showExpandedLyrics) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             IconButton(
@@ -1753,219 +1762,7 @@ fun PlayerScreen(
             }
         }
 
-        // ────────────────────────────────────────────────────────────
-        // YouTube Music + Google Pixel Connected Bottom Bar:
-        // [ Up Next ] | [ Lyrics ] | [ Related ] (with 0.dp center border-radius)
-        // + Optional Next Track Preview Row above when in multi-track queue
-        // ────────────────────────────────────────────────────────────
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 4.dp)
-                .clip(RoundedCornerShape(22.dp))
-                .pointerInput(Unit) {
-                    detectVerticalDragGestures { _, dragAmount ->
-                        if (dragAmount < -16f) {
-                            showQueue = true
-                        }
-                    }
-                }
-                .testTag("player_upnext_button"),
-            shape = RoundedCornerShape(22.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            border = androidx.compose.foundation.BorderStroke(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
-            ),
-            tonalElevation = 3.dp
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                if (isUpNextVisible && hasClickedQueueButton && !isSingleSongLooping && nextTrack != null && !(showNextCountdown && !showFullscreenVideo)) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .clickable { showQueue = true }
-                            .padding(horizontal = 6.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(RoundedCornerShape(9.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            AsyncImage(
-                                model = InnerTubeResolver.upgradeThumbnailUrl(nextTrack.artUrl).ifBlank { R.drawable.ic_splash_logo },
-                                contentDescription = nextTrack.title,
-                                placeholder = appLogoPainter,
-                                error = appLogoPainter,
-                                fallback = appLogoPainter,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Up next • ${nextTrack.title}",
-                                fontSize = 12.sp,
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = nextTrack.artist,
-                                fontSize = 10.5.sp,
-                                fontFamily = OutfitFontFamily,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowUp,
-                            contentDescription = "Expand Queue",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                }
-
-                // Connected 3-Segment Google Pixel Pill: [ UP NEXT | LYRICS | RELATED ] (0.dp center border-radius)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(0.dp)
-                ) {
-                    // 1. UP NEXT segment
-                    Surface(
-                        onClick = {
-                            hasClickedQueueButton = true
-                            isUpNextVisible = true
-                            showQueue = true
-                        },
-                        shape = RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp, topEnd = 0.dp, bottomEnd = 0.dp),
-                        color = if (showQueue) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(38.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.QueueMusic,
-                                contentDescription = "Up Next",
-                                tint = if (showQueue) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Up Next",
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.5.sp,
-                                color = if (showQueue) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .height(22.dp)
-                            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
-                    )
-
-                    // 2. LYRICS segment (0.dp border radius on both left and right center edges!)
-                    Surface(
-                        onClick = { showLyrics = !showLyrics },
-                        shape = RoundedCornerShape(0.dp),
-                        color = if (showLyrics) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(38.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Subtitles,
-                                contentDescription = "Lyrics",
-                                tint = if (showLyrics) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Lyrics",
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.5.sp,
-                                color = if (showLyrics) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .height(22.dp)
-                            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
-                    )
-
-                    // 3. RELATED segment (opens YouTube Music-style Related sheet without affecting Up Next!)
-                    Surface(
-                        onClick = {
-                            viewModel.loadRelatedForTrack(track)
-                            showRelated = true
-                        },
-                        shape = RoundedCornerShape(topStart = 0.dp, bottomStart = 0.dp, topEnd = 14.dp, bottomEnd = 14.dp),
-                        color = if (showRelated) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(38.dp)
-                            .testTag("player_related_button")
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Explore,
-                                contentDescription = "Related",
-                                tint = if (showRelated) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Related",
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.5.sp,
-                                color = if (showRelated) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(10.dp))
     }
 
     if (showQueue) {

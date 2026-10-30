@@ -243,31 +243,26 @@ fun PlaybackQueueModal(
         }
     }
 
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
+    androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        dragHandle = {
-            Box(
-                modifier = Modifier
-                    .padding(top = 12.dp, bottom = 6.dp)
-                    .width(36.dp)
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
-            )
-        }
+        properties = androidx.compose.ui.window.DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
-        Column(
-            modifier = modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.90f)
-                .navigationBarsPadding()
-                .testTag("playback_queue_modal")
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background,
+            contentColor = MaterialTheme.colorScheme.onBackground
         ) {
+            Column(
+                modifier = modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+                    .padding(top = 8.dp)
+                    .testTag("playback_queue_modal")
+            ) {
             // Google Pixel Sheet Header Bar
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -856,6 +851,7 @@ fun PlaybackQueueModal(
                     }
                 }
             }
+        }
         }
     }
 }

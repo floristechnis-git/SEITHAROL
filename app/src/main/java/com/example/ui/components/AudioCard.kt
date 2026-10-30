@@ -207,9 +207,7 @@ fun TrackCard(
         isHighlightedOfficial -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.62f)
         else -> Color.Transparent
     }
-    val cardBorder = if (isHighlightedOfficial && !isPlaying) {
-        BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f))
-    } else null
+    val cardBorder: BorderStroke? = null
 
     Surface(
         modifier = modifier

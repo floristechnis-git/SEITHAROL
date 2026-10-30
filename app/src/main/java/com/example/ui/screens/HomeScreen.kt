@@ -519,16 +519,65 @@ fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(26.dp)
         ) {
             // ────────────────────────────────────────────────────────────
-            // Top Navigation Bar: "SEITHAROL"
+            // Top Brand Bar + Greeting & Search Bar with Position-Absolute "Johnson" Watermark
             // ────────────────────────────────────────────────────────────
             item {
-                Row(
+                BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                        .clipToBounds()
                 ) {
+                    // Position-absolute background watermark ("Johnson"):
+                    // Takes zero vertical flow space, starts at horizontal center (maxWidth / 2f),
+                    // scaled so "Jo" fits on mobile and "John" fits on tablet in neutral grey for light & dark themes.
+                    val density = androidx.compose.ui.platform.LocalDensity.current
+                    val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
+                    val isTabletExpanded = maxWidth >= 600.dp
+                    val visiblePrefix = if (isTabletExpanded) "John" else "Jo"
+                    val halfScreenPx = with(density) { (maxWidth / 2f).toPx() }
+                    val baseStyle = androidx.compose.ui.text.TextStyle(
+                        fontFamily = SyneFontFamily,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 100.sp
+                    )
+                    val measuredPrefixWidthPx = remember(visiblePrefix, textMeasurer) {
+                        textMeasurer.measure(
+                            text = androidx.compose.ui.text.AnnotatedString(visiblePrefix),
+                            style = baseStyle,
+                            softWrap = false,
+                            maxLines = 1
+                        ).size.width.coerceAtLeast(1)
+                    }
+                    val computedFontSizeSp = with(density) {
+                        val rawSp = 100f * (halfScreenPx / measuredPrefixWidthPx.toFloat())
+                        rawSp.coerceIn(48f, 260f).sp
+                    }
+
+                    Text(
+                        text = "Johnson",
+                        fontFamily = SyneFontFamily,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = computedFontSizeSp,
+                        lineHeight = computedFontSizeSp,
+                        color = Color(0xFF888888).copy(alpha = 0.16f),
+                        softWrap = false,
+                        maxLines = 1,
+                        overflow = TextOverflow.Visible,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .fillMaxWidth()
+                            .padding(start = maxWidth / 2f, top = 2.dp)
+                            .testTag("home_hero_johnson_text")
+                    )
+
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
                     Text(
                         text = "SEITHAROL",
                         color = MaterialTheme.colorScheme.onBackground,
@@ -595,108 +644,53 @@ fun HomeScreen(
                                 )
                             }
                         }
-                    }
-                }
-            }
-
-            // ────────────────────────────────────────────────────────────
-            // Top Section Hero Name ("Johnson") + Time-of-day Greeting & Search Bar
-            // ────────────────────────────────────────────────────────────
-            item {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    // Oversized "Johnson" hero display typography:
-                    // Starts at horizontal center of the display (maxWidth / 2).
-                    // Scaled dynamically so on mobile only "Jo" fits from center to right edge,
-                    // and on tablet "John" fits from center to right edge in the most expanded view.
-                    BoxWithConstraints(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clipToBounds()
-                            .padding(top = 4.dp, bottom = 2.dp)
-                    ) {
-                        val density = androidx.compose.ui.platform.LocalDensity.current
-                        val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
-                        val isTabletExpanded = maxWidth >= 600.dp
-                        val visiblePrefix = if (isTabletExpanded) "John" else "Jo"
-                        val halfScreenPx = with(density) { (maxWidth / 2f).toPx() }
-                        val baseStyle = androidx.compose.ui.text.TextStyle(
-                            fontFamily = SyneFontFamily,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 100.sp
-                        )
-                        val measuredPrefixWidthPx = remember(visiblePrefix, textMeasurer) {
-                            textMeasurer.measure(
-                                text = androidx.compose.ui.text.AnnotatedString(visiblePrefix),
-                                style = baseStyle,
-                                softWrap = false,
-                                maxLines = 1
-                            ).size.width.coerceAtLeast(1)
                         }
-                        val computedFontSizeSp = with(density) {
-                            val rawSp = 100f * (halfScreenPx / measuredPrefixWidthPx.toFloat())
-                            rawSp.coerceIn(48f, 260f).sp
                         }
 
-                        Text(
-                            text = "Johnson",
-                            fontFamily = SyneFontFamily,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = computedFontSizeSp,
-                            lineHeight = computedFontSizeSp,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.92f),
-                            softWrap = false,
-                            maxLines = 1,
-                            overflow = TextOverflow.Visible,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = maxWidth / 2f)
-                                .testTag("home_hero_johnson_text")
-                        )
-                    }
-
-                    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                        Text(
-                            text = greeting,
-                            fontFamily = SyneFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 22.sp,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
-                        )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .clip(RoundedCornerShape(24.dp))
-                            .clickable(onClick = onNavigateToSearch)
-                            .testTag("home_search_bar"),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = RoundedCornerShape(24.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = "Search",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                             Text(
-                                text = if (isOfflineMode) "Search your downloaded offline songs..." else "Search songs, artists, albums, or mixes...",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                                fontSize = 14.sp,
-                                fontFamily = OutfitFontFamily,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                text = greeting,
+                                fontFamily = SyneFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 22.sp,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
                             )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .clip(RoundedCornerShape(24.dp))
+                                    .clickable(onClick = onNavigateToSearch)
+                                    .testTag("home_search_bar"),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(24.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 16.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Search,
+                                        contentDescription = "Search",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = if (isOfflineMode) "Search your downloaded offline songs..." else "Search songs, artists, albums, or mixes...",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                                        fontSize = 14.sp,
+                                        fontFamily = OutfitFontFamily,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         }
-                    }
                     }
                 }
             }

@@ -1239,7 +1239,7 @@ fun ArtistScreen(
                             TrackCard(
                                 track = track,
                                 isPlaying = playerState.currentTrack?.id == track.id,
-                                rankNumber = index + 1,
+                                rankNumber = null,
                                 onTrackClick = {
                                     viewModel.playQueue(filteredDomainTracks, index, isPlaylist = true)
                                 },

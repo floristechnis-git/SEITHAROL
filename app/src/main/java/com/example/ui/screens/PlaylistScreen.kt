@@ -79,7 +79,7 @@ fun PlaylistScreen(
         }
     }
 
-    LaunchedEffect(playlistId, playlists) {
+    LaunchedEffect(playlistId) {
         triggerReload()
     }
 
@@ -96,7 +96,7 @@ fun PlaylistScreen(
     }
 
     val displayTitle = remember(savedPlaylist, remoteCollectionMeta, remotePlaylistTracks, playlistId) {
-        savedPlaylist?.title
+        val raw = savedPlaylist?.title?.takeIf { it.isNotBlank() }
             ?: remoteCollectionMeta?.title?.takeIf {
                 it.isNotBlank() &&
                     !it.equals("Music Collection", ignoreCase = true) &&
@@ -113,10 +113,16 @@ fun PlaylistScreen(
                     !it.equals("Local Storage", ignoreCase = true)
             }
             ?: when {
-                playlistId.startsWith("RD") -> "YouTube Mix"
+                playlistId.startsWith("RD") ->
+                    remotePlaylistTracks.firstOrNull()?.title?.takeIf { it.isNotBlank() }?.let { "$it Mix" }
+                        ?: "Personalized Mix"
                 playlistId.startsWith("MPREb_") || playlistId.startsWith("OLAK5uy_") -> "Album"
                 else -> "Playlist"
             }
+        raw.replace("YouTube Personalized Mix", "Personalized Mix", ignoreCase = true)
+            .replace("YouTube Mix", "Mix", ignoreCase = true)
+            .trim()
+            .ifBlank { if (playlistId.startsWith("RD")) "Personalized Mix" else "Playlist" }
     }
 
     val displayDescription = remember(savedPlaylist, remoteCollectionMeta, remotePlaylistTracks, isLoadingPlaylist) {
@@ -353,145 +359,104 @@ fun PlaylistScreen(
 
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(24.dp),
-                            modifier = Modifier.padding(horizontal = 12.dp)
+                            horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp)
                         ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.clickable {
+                            Surface(
+                                onClick = {
                                     viewModel.downloadAllTracks(filteredTracks, DownloadTier.STANDARD)
-                                }
+                                },
+                                modifier = Modifier.size(50.dp),
+                                shape = RoundedCornerShape(16.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant
                             ) {
-                                Surface(
-                                    modifier = Modifier.size(48.dp),
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.Download,
-                                            contentDescription = "Download",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Download,
+                                        contentDescription = "Download",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(22.dp)
+                                    )
                                 }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Download",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 11.sp,
-                                    fontFamily = OutfitFontFamily,
-                                    modifier = Modifier.padding(horizontal = 4.dp)
-                                )
                             }
 
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.clickable {
+                            Surface(
+                                onClick = {
                                     if (filteredTracks.isNotEmpty()) {
                                         if (filteredTracks.size == 1 && (playlistId.startsWith("RD") || playlistId.startsWith("RDAMVM"))) {
                                             viewModel.startRadioMix(filteredTracks.first())
                                         } else {
-                                            viewModel.playQueue(filteredTracks, 0)
+                                            viewModel.playQueue(filteredTracks, 0, isPlaylist = true)
                                         }
                                     }
-                                }
+                                },
+                                modifier = Modifier.size(62.dp),
+                                shape = RoundedCornerShape(18.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                shadowElevation = 6.dp
                             ) {
-                                Surface(
-                                    modifier = Modifier.size(64.dp),
-                                    shape = RoundedCornerShape(18.dp),
-                                    color = MaterialTheme.colorScheme.primary
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.PlayArrow,
-                                            contentDescription = "Play Playlist",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(32.dp)
-                                        )
-                                    }
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.PlayArrow,
+                                        contentDescription = "Play Playlist",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(32.dp)
+                                    )
                                 }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Play",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 11.sp,
-                                    fontFamily = OutfitFontFamily,
-                                    modifier = Modifier.padding(horizontal = 4.dp)
-                                )
                             }
 
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.clickable {
+                            Surface(
+                                onClick = {
                                     if (filteredTracks.isNotEmpty()) {
-                                        viewModel.playQueue(filteredTracks.shuffled(), 0)
+                                        viewModel.playQueue(filteredTracks.shuffled(), 0, isPlaylist = true)
                                     }
-                                }
+                                },
+                                modifier = Modifier.size(50.dp),
+                                shape = RoundedCornerShape(16.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant
                             ) {
-                                Surface(
-                                    modifier = Modifier.size(48.dp),
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.Shuffle,
-                                            contentDescription = "Shuffle",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Shuffle,
+                                        contentDescription = "Shuffle",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(22.dp)
+                                    )
                                 }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Shuffle",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 11.sp,
-                                    fontFamily = OutfitFontFamily,
-                                    modifier = Modifier.padding(horizontal = 4.dp)
-                                )
                             }
 
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.clickable {
+                            Surface(
+                                onClick = {
                                     if (isPersonalPlaylist) {
                                         handleSharePlaylist()
                                     } else {
                                         viewModel.togglePlaylistLike(currentPlaylist)
                                     }
+                                },
+                                modifier = Modifier.size(50.dp),
+                                shape = RoundedCornerShape(16.dp),
+                                color = if (!isPersonalPlaylist && currentPlaylist.isLiked) {
+                                    SeitharolRedHeart.copy(alpha = 0.15f)
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant
                                 }
                             ) {
-                                Surface(
-                                    modifier = Modifier.size(48.dp),
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = if (isPersonalPlaylist) {
-                                                Icons.Default.Share
-                                            } else if (currentPlaylist.isLiked) {
-                                                Icons.Default.Favorite
-                                            } else {
-                                                Icons.Outlined.FavoriteBorder
-                                            },
-                                            contentDescription = if (isPersonalPlaylist) "Share" else "Like",
-                                            tint = if (!isPersonalPlaylist && currentPlaylist.isLiked) SeitharolRedHeart else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = if (isPersonalPlaylist) {
+                                            Icons.Default.Share
+                                        } else if (currentPlaylist.isLiked) {
+                                            Icons.Default.Favorite
+                                        } else {
+                                            Icons.Outlined.FavoriteBorder
+                                        },
+                                        contentDescription = if (isPersonalPlaylist) "Share" else "Like",
+                                        tint = if (!isPersonalPlaylist && currentPlaylist.isLiked) SeitharolRedHeart else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(22.dp)
+                                    )
                                 }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = if (isPersonalPlaylist) "Share" else if (currentPlaylist.isLiked) "Liked" else "Like",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 11.sp,
-                                    fontFamily = OutfitFontFamily,
-                                    modifier = Modifier.padding(horizontal = 4.dp)
-                                )
                             }
                         }
                     }
@@ -579,7 +544,7 @@ fun PlaylistScreen(
                         TrackCard(
                             track = track,
                             isPlaying = playerState.currentTrack?.id == track.id,
-                            rankNumber = index + 1,
+                            rankNumber = null,
                             onTrackClick = {
                                 if (filteredTracks.isNotEmpty()) {
                                     viewModel.playQueue(filteredTracks, index)

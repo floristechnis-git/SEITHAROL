@@ -567,11 +567,7 @@ class CascadeViewModel(
                     ProviderFilter.LOCAL -> emptyList()
                 }
 
-                val ranked = if (filter == ProviderFilter.YOUTUBE) {
-                    rawCandidates.distinctBy { it.videoId }
-                } else {
-                    CanonicalAudioResolver.rankSearchResultsByRelevance(clean, rawCandidates)
-                }
+                val ranked = rawCandidates.distinctBy { it.videoId }
 
                 onlineSearchResults.value = ranked.map { c ->
                     val isYtVideo = filter == ProviderFilter.YOUTUBE || c.videoType == "MUSIC_VIDEO_TYPE_OMV"
@@ -684,7 +680,7 @@ class CascadeViewModel(
                             title = "${seedTrack.title.take(24)} Radio Mix",
                             thumbnailUrl = seedTrack.artUrl,
                             tracks = emptyList(),
-                            subtitle = "YouTube Mix • Continuous radio",
+                            subtitle = "Personalized Mix • Continuous radio",
                             artUrl = seedTrack.artUrl,
                             trackCount = 35
                         )
@@ -1406,23 +1402,69 @@ class CascadeViewModel(
                     return@launch
                 }
                 if (isOfflineMode.value) return@launch
-                val details = InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(playlistId)
                 val likedIds = likedTrackIds.value
                 val dlMap = downloadedTracksById.value
+                val cached = cachedRemoteCollections[playlistId]
+                if (cached != null && cached.second.isNotEmpty()) {
+                    playQueue(cached.second.map { enrichTrackStatus(it, likedIds, dlMap) }, 0, isPlaylist = true)
+                    return@launch
+                }
+                val (knownTitle, knownThumb) = findKnownCollectionTitleAndCover(playlistId)
+                val details = InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(
+                    collectionId = playlistId,
+                    fallbackTitle = knownTitle ?: "Music Collection",
+                    fallbackThumb = knownThumb.orEmpty()
+                )
                 val tracks = details.tracks.map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
                 if (tracks.isNotEmpty()) {
+                    cachedRemoteCollections[playlistId] = details to tracks
                     playQueue(tracks, 0, isPlaylist = true)
                 } else {
                     val seed = playlistId.removePrefix("VL").removePrefix("RDAMVM")
                     if (seed.length == 11) {
                         val automix = InnerTubeStreamExtractor.fetchAutomixQueue(seed, limit = 35)
                         if (automix.isNotEmpty()) {
-                            playQueue(automix.map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }, 0, isPlaylist = true)
+                            val mapped = automix.map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
+                            cachedRemoteCollections[playlistId] = details to mapped
+                            playQueue(mapped, 0, isPlaylist = true)
                         }
                     }
                 }
             }
         }
+    }
+
+    private val cachedRemoteCollections = java.util.concurrent.ConcurrentHashMap<String, Pair<com.seitharol.data.resolver.YtmCollectionPageData, List<Track>>>()
+
+    private fun findKnownCollectionTitleAndCover(playlistId: String): Pair<String?, String?> {
+        val cleanId = playlistId.trim()
+        val withoutVl = cleanId.removePrefix("VL")
+        val saved = playlists.value.firstOrNull { it.id == cleanId || it.id == withoutVl }
+        if (saved != null && saved.title.isNotBlank()) {
+            return saved.title to saved.coverUrl
+        }
+        val allKnownCols = suggestedYoutubeMixes.value +
+            suggestedYoutubePlaylists.value +
+            searchedOnlinePlaylists.value +
+            searchedOnlineAlbums.value +
+            _playerRelatedData.value.relatedPlaylistsAndMixes +
+            _playerRelatedData.value.artistAlbumsAndSingles
+        val matchedCol = allKnownCols.firstOrNull {
+            it.browseId == cleanId ||
+                it.browseId.removePrefix("VL") == withoutVl ||
+                it.playlistId == cleanId ||
+                it.playlistId == withoutVl
+        }
+        if (matchedCol != null && matchedCol.title.isNotBlank()) {
+            return matchedCol.title to matchedCol.thumbnailUrl
+        }
+        val matchedSuggested = suggestedPlaylists.value.firstOrNull {
+            it.id == cleanId || it.id.removePrefix("VL") == withoutVl
+        }
+        if (matchedSuggested != null && matchedSuggested.title.isNotBlank()) {
+            return matchedSuggested.title to matchedSuggested.artUrl
+        }
+        return null to null
     }
 
     fun playSingleRelease(collection: com.seitharol.data.resolver.YtmCollectionSummary, artistName: String) {
@@ -1498,14 +1540,44 @@ class CascadeViewModel(
                     onResult(localTracks.map { enrichTrackStatus(it, likedIds, dlMap) })
                     return@launch
                 }
+                cachedRemoteCollections[playlistId]?.let { (cachedMeta, cachedTracks) ->
+                    if (cachedTracks.isNotEmpty()) {
+                        onMetadata?.invoke(cachedMeta)
+                        onResult(cachedTracks.map { enrichTrackStatus(it, likedIds, dlMap) })
+                        return@launch
+                    }
+                }
                 if (isOfflineMode.value) {
                     onResult(emptyList())
                     return@launch
                 }
-                val remoteDetails = InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(playlistId)
+                val (knownTitle, knownThumb) = findKnownCollectionTitleAndCover(playlistId)
+                val rawRemoteDetails = InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(
+                    collectionId = playlistId,
+                    fallbackTitle = knownTitle ?: "Music Collection",
+                    fallbackThumb = knownThumb.orEmpty()
+                )
+                val resolvedTitle = when {
+                    !knownTitle.isNullOrBlank() && (
+                        rawRemoteDetails.title.isBlank() ||
+                            rawRemoteDetails.title.equals("Music Collection", ignoreCase = true) ||
+                            rawRemoteDetails.title.equals("Personalized Mix", ignoreCase = true) ||
+                            rawRemoteDetails.title.equals("YouTube Personalized Mix", ignoreCase = true) ||
+                            rawRemoteDetails.title.equals("YouTube Mix", ignoreCase = true)
+                        ) -> knownTitle
+                    else -> rawRemoteDetails.title
+                        .replace("YouTube Personalized Mix", "Personalized Mix", ignoreCase = true)
+                        .replace("YouTube Mix", "Mix", ignoreCase = true)
+                        .trim()
+                }
+                val remoteDetails = rawRemoteDetails.copy(
+                    title = resolvedTitle,
+                    thumbnailUrl = rawRemoteDetails.thumbnailUrl.ifBlank { knownThumb.orEmpty() }
+                )
                 onMetadata?.invoke(remoteDetails)
                 val cleanAlbumTitle = remoteDetails.title.takeUnless {
                     it.equals("Music Collection", ignoreCase = true) ||
+                        it.equals("Personalized Mix", ignoreCase = true) ||
                         it.equals("YouTube Personalized Mix", ignoreCase = true) ||
                         it.contains("YouTube Video", ignoreCase = true)
                 }.orEmpty()
@@ -1517,12 +1589,17 @@ class CascadeViewModel(
                     enrichTrackStatus(withAlbum, likedIds, dlMap)
                 }
                 if (tracks.isNotEmpty()) {
+                    cachedRemoteCollections[playlistId] = remoteDetails to tracks
                     onResult(tracks)
                 } else {
                     val cleanId = playlistId.removePrefix("VL").removePrefix("RDAMVM")
                     if (cleanId.length == 11) {
                         val automix = InnerTubeStreamExtractor.fetchAutomixQueue(cleanId, limit = 35)
-                        onResult(automix.map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) })
+                        val mapped = automix.map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
+                        if (mapped.isNotEmpty()) {
+                            cachedRemoteCollections[playlistId] = remoteDetails to mapped
+                        }
+                        onResult(mapped)
                     } else {
                         onResult(emptyList())
                     }

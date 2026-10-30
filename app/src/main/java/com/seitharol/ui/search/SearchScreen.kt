@@ -102,14 +102,14 @@ fun SearchScreen(
         }
     }
 
-    val rankedResults = remember(query, searchResults) {
-        CanonicalAudioResolver.rankSearchResultsByRelevance(query, searchResults)
+    val rankedResults = remember(searchResults) {
+        searchResults.distinctBy { it.videoId }
     }
 
     val mostViewedOfficialId = remember(rankedResults, query) {
-        val official = rankedResults.filter { it.isVerifiedArtist || it.videoType == "MUSIC_VIDEO_TYPE_ATV" }
+        val official = rankedResults.filter { it.isVerifiedArtist || it.videoType == "MUSIC_VIDEO_TYPE_ATV" }.ifEmpty { rankedResults }
         val withViews = official.filter { it.viewCount > 0L }
-        (withViews.maxByOrNull { it.viewCount } ?: official.firstOrNull())?.videoId
+        (withViews.maxByOrNull { it.viewCount } ?: official.firstOrNull() ?: rankedResults.firstOrNull())?.videoId
     }
 
     Column(modifier = Modifier.fillMaxSize()) {

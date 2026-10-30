@@ -274,12 +274,12 @@ fun SearchScreen(
     val appPreferences = remember { com.example.data.AppPreferences(context) }
     val recentSearches by appPreferences.recentSearches.collectAsState()
 
-    // Ensure the most relevant song is ALWAYS placed at the top of the Songs section
+    // Preserve natural provider search order without manual song reordering
     val displayedTracks = remember(searchResults, query, currentProvider, personalizedTracks, trendingHits, historyTracks, downloadedTracks) {
         when {
-            currentProvider == com.example.ui.ProviderFilter.LOCAL -> rankDomainTracksByQueryRelevance(query, searchResults)
-            currentProvider == com.example.ui.ProviderFilter.YOUTUBE -> searchResults
-            query.isNotBlank() -> rankDomainTracksByQueryRelevance(query, searchResults.filterNot { it.isVideoTrack })
+            currentProvider == com.example.ui.ProviderFilter.LOCAL -> searchResults.distinctBy { it.id }
+            currentProvider == com.example.ui.ProviderFilter.YOUTUBE -> searchResults.distinctBy { it.id }
+            query.isNotBlank() -> searchResults.filterNot { it.isVideoTrack }.distinctBy { it.id }
             else -> {
                 (personalizedTracks + trendingHits + historyTracks)
                     .filterNot {
@@ -291,20 +291,24 @@ fun SearchScreen(
         }
     }
 
-    // Identify the most-viewed official song card so it receives a slightly different highlight color
+    // Identify the most-viewed official/top recommended song card so it always receives the subtle highlight color (no border)
     val mostViewedOfficialTrackId = remember(displayedTracks, query) {
-        if (query.trim().isBlank() || displayedTracks.isEmpty()) {
+        if (displayedTracks.isEmpty()) {
             null
         } else {
             val officialTracks = displayedTracks.filter {
                 !it.isLocalOnlyTrack &&
                     it.isOfficial &&
-                    !CanonicalAudioResolver.containsBannedModifier(query, it.title)
+                    (query.isBlank() || !CanonicalAudioResolver.containsBannedModifier(query, it.title))
             }.ifEmpty {
                 displayedTracks.filter { !it.isLocalOnlyTrack && it.isOfficial }
+            }.ifEmpty {
+                displayedTracks.filter { !it.isLocalOnlyTrack }
+            }.ifEmpty {
+                displayedTracks
             }
             val withViews = officialTracks.filter { it.viewCount > 0L }
-            (withViews.maxByOrNull { it.viewCount } ?: officialTracks.firstOrNull())?.id
+            (withViews.maxByOrNull { it.viewCount } ?: officialTracks.firstOrNull() ?: displayedTracks.firstOrNull())?.id
         }
     }
 

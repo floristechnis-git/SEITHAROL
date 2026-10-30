@@ -2821,10 +2821,20 @@ object InnerTubeStreamExtractor {
             val seedVid = cleanId.removePrefix("RDAMVM").takeIf { it.length == 11 }.orEmpty()
             val tracks = fetchAutomixQueue(seedVideoId = seedVid, playlistIdOverride = cleanId, limit = 35)
             val heroThumb = fallbackThumb.ifBlank { tracks.firstOrNull()?.thumbnailUrl.orEmpty() }
+            val seedTitle = tracks.firstOrNull()?.title?.takeIf { it.isNotBlank() }
+            val resolvedMixTitle = when {
+                fallbackTitle.isNotBlank() && fallbackTitle != "Music Collection" ->
+                    fallbackTitle
+                        .replace("YouTube Personalized Mix", "Personalized Mix", ignoreCase = true)
+                        .replace("Personalized Mix", "Mix", ignoreCase = true)
+                        .trim()
+                !seedTitle.isNullOrBlank() -> "$seedTitle Mix"
+                else -> "Personalized Mix"
+            }
             return@withContext YtmCollectionPageData(
                 id = cleanId,
-                title = if (fallbackTitle != "Music Collection") fallbackTitle else "YouTube Personalized Mix",
-                author = "YouTube Music Automix",
+                title = resolvedMixTitle,
+                author = "Personalized Automix",
                 subtitle = "${tracks.size} songs • Continuous personalized radio",
                 description = "Updated dynamically based on your listening taste.",
                 thumbnailUrl = heroThumb,
@@ -2876,15 +2886,35 @@ object InnerTubeStreamExtractor {
             ?.optJSONArray("contents")
             ?.optJSONObject(0)
 
+        val rootHeader = root.optJSONObject("header")
         val responsiveHeader = twoColPrimary?.optJSONObject("musicResponsiveHeaderRenderer")
             ?: twoColPrimary?.optJSONObject("musicEditablePlaylistDetailHeaderRenderer")
                 ?.optJSONObject("header")?.optJSONObject("musicResponsiveHeaderRenderer")
-            ?: root.optJSONObject("header")?.optJSONObject("musicDetailHeaderRenderer")
-            ?: root.optJSONObject("header")?.optJSONObject("musicResponsiveHeaderRenderer")
+            ?: rootHeader?.optJSONObject("musicDetailHeaderRenderer")
+            ?: rootHeader?.optJSONObject("musicResponsiveHeaderRenderer")
+            ?: rootHeader?.optJSONObject("musicImmersiveHeaderRenderer")
+            ?: rootHeader?.optJSONObject("musicVisualHeaderRenderer")
+            ?: rootHeader?.optJSONObject("musicEditablePlaylistDetailHeaderRenderer")
+                ?.optJSONObject("header")?.optJSONObject("musicResponsiveHeaderRenderer")
 
-        val title = responsiveHeader?.optJSONObject("title")
+        val microformatTitle = root.optJSONObject("microformat")
+            ?.optJSONObject("microformatDataRenderer")
+            ?.optString("title", "")
+            ?.removeSuffix(" - YouTube Music")
+            ?.removeSuffix(" - YouTube")
+            ?.trim()
+            .orEmpty()
+
+        val rawTitle = responsiveHeader?.optJSONObject("title")
             ?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+            ?.takeIf { it.isNotBlank() }
+            ?: microformatTitle.takeIf { it.isNotBlank() }
             ?: fallbackTitle
+        val title = rawTitle
+            .replace("YouTube Personalized Mix", "Personalized Mix", ignoreCase = true)
+            .replace("Personalized Mix", "Mix", ignoreCase = true)
+            .trim()
+            .ifBlank { "Mix" }
 
         val author = responsiveHeader?.optJSONObject("straplineTextOne")
             ?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")

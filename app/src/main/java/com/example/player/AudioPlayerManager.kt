@@ -1919,20 +1919,25 @@ class AudioPlayerManager(
     fun onAppClearedFromRecents() {
         persistCurrentPlaybackState()
         userRequestedPlay = false
-        try {
-            MediaPlaybackService.stopService(context)
-        } catch (_: Throwable) {}
+        hasUserInitiatedPlaybackThisSession = false
+        isRetryingOrLoading = false
         seekBufferingDebounceJob?.cancel()
         bufferingWatchdogJob?.cancel()
-        isRetryingOrLoading = false
+        seekRecoveryJob?.cancel()
         positionJob?.cancel()
         loadTrackJob?.cancel()
         retryJob?.cancel()
         abandonAudioFocus()
+        runCatching { com.seitharol.player.AudioPlayerManager.stopActivePreviewIfAny() }
         try {
-            exoPlayer?.playWhenReady = false
-            exoPlayer?.pause()
-            exoPlayer?.stop()
+            exoPlayer?.let { player ->
+                player.playWhenReady = false
+                player.pause()
+                player.stop()
+                player.clearMediaItems()
+                player.release()
+            }
+            exoPlayer = null
             stopVideoPlayer()
         } catch (_: Throwable) {}
         _state.value = _state.value.copy(

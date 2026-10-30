@@ -1473,14 +1473,17 @@ fun DeveloperWelcomePopupModal(
     userName: String,
     onDismiss: () -> Unit
 ) {
-    var countdownSeconds by remember { mutableIntStateOf(5) }
+    val loadProgress = remember { androidx.compose.animation.core.Animatable(0f) }
     LaunchedEffect(Unit) {
-        while (countdownSeconds > 0) {
-            kotlinx.coroutines.delay(1000L)
-            countdownSeconds--
-        }
+        loadProgress.animateTo(
+            targetValue = 1f,
+            animationSpec = androidx.compose.animation.core.tween(
+                durationMillis = 5000,
+                easing = androidx.compose.animation.core.LinearEasing
+            )
+        )
     }
-    val canDismissWithCross = countdownSeconds <= 0
+    val canDismissWithCross = loadProgress.value >= 0.999f
 
     androidx.compose.ui.window.Dialog(
         onDismissRequest = {
@@ -1502,17 +1505,21 @@ fun DeveloperWelcomePopupModal(
         ) {
             Surface(
                 modifier = Modifier
-                    .widthIn(max = 430.dp)
+                    .widthIn(max = 420.dp)
                     .fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(28.dp),
                 color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 8.dp,
-                shadowElevation = 18.dp
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+                ),
+                tonalElevation = 6.dp,
+                shadowElevation = 20.dp
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 22.dp, vertical = 20.dp)
+                        .padding(horizontal = 24.dp, vertical = 22.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1521,31 +1528,49 @@ fun DeveloperWelcomePopupModal(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Image(
-                                painter = painterResource(id = R.drawable.ic_splash_logo),
-                                contentDescription = "Seitharol Logo",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                            )
-                            Text(
-                                text = "SEITHAROL",
-                                fontFamily = SyneFontFamily,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 15.sp,
-                                letterSpacing = 1.sp,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                ),
+                                modifier = Modifier.size(38.dp)
+                            ) {
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_splash_logo),
+                                    contentDescription = "Seitharol Logo",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                            Column {
+                                Text(
+                                    text = "SEITHAROL",
+                                    fontFamily = SyneFontFamily,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 14.sp,
+                                    letterSpacing = 1.2.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "Creator's Note",
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 11.5.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
 
+                        // Top-right button: smooth 0% -> 100% circular loader (no numbers) that becomes the X close button
                         Surface(
                             shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f),
                             modifier = Modifier
-                                .size(34.dp)
+                                .size(36.dp)
                                 .clip(CircleShape)
                                 .then(
                                     if (canDismissWithCross) {
@@ -1564,68 +1589,64 @@ fun DeveloperWelcomePopupModal(
                                         modifier = Modifier.size(18.dp)
                                     )
                                 } else {
-                                    Text(
-                                        text = "${countdownSeconds}s",
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    CircularProgressIndicator(
+                                        progress = { loadProgress.value.coerceIn(0f, 1f) },
+                                        modifier = Modifier.size(20.dp),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        trackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f),
+                                        strokeWidth = 2.2.dp
                                     )
                                 }
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(18.dp))
 
-                    Text(
-                        text = "Welcome $userName, I'm Yumkhaibam Johnson Singh. I dedicated 71 days to developing this app for you. My hope is to provide an ad-free and limitless experience, serving as a supportive background companion for your work and an emotional stabilizer for those with broken hearts.",
-                        fontFamily = OutfitFontFamily,
-                        fontWeight = FontWeight.Normal,
-                        fontSize = 15.sp,
-                        lineHeight = 22.sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "Welcome $userName, I'm Yumkhaibam Johnson Singh. I dedicated 71 days to developing this app for you. My hope is to provide an ad-free and limitless experience, serving as a supportive background companion for your work and an emotional stabilizer for those with broken hearts.",
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.Normal,
+                            fontSize = 14.5.sp,
+                            lineHeight = 22.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+                        )
+                    }
 
-                    Spacer(modifier = Modifier.height(22.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
 
-                    if (canDismissWithCross) {
-                        Button(
-                            onClick = onDismiss,
-                            shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                        ) {
-                            Text(
-                                text = "Get Started",
-                                fontFamily = SyneFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp
-                            )
-                        }
-                    } else {
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = "Please wait ${countdownSeconds}s...",
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 14.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
+                    // Single "Get Started" button with no overlay — disabled & desaturated until ready
+                    Button(
+                        onClick = onDismiss,
+                        enabled = canDismissWithCross,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                        ),
+                        elevation = ButtonDefaults.buttonElevation(
+                            defaultElevation = 0.dp,
+                            pressedElevation = 0.dp,
+                            disabledElevation = 0.dp
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                    ) {
+                        Text(
+                            text = "Get Started",
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        )
                     }
                 }
             }

@@ -281,7 +281,7 @@ class MediaPlaybackService : Service() {
         if (!isInForeground && !isTerminating) {
             startForegroundSynchronously()
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun promoteOrNotifySafely(notification: Notification, forceStartForeground: Boolean = false) {
@@ -588,7 +588,9 @@ class MediaPlaybackService : Service() {
         watchdogJob?.cancel()
         serviceScope.cancel()
         runCatching {
-            playerManager?.onAppClearedFromRecents()
+            val mgr = playerManager ?: (application as? com.example.CascadeApplication)?.audioPlayerManager
+            mgr?.onAppClearedFromRecents()
+            com.seitharol.player.AudioPlayerManager.stopActivePreviewIfAny()
         }
         stopAndRemoveNotification()
         super.onTaskRemoved(rootIntent)
@@ -602,6 +604,11 @@ class MediaPlaybackService : Service() {
         artLoadJob?.cancel()
         watchdogJob?.cancel()
         serviceScope.cancel()
+        runCatching {
+            val mgr = playerManager ?: (application as? com.example.CascadeApplication)?.audioPlayerManager
+            mgr?.onAppClearedFromRecents()
+            com.seitharol.player.AudioPlayerManager.stopActivePreviewIfAny()
+        }
         stopAndRemoveNotification()
         super.onDestroy()
     }

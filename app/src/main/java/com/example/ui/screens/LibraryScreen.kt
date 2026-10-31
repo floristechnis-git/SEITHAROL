@@ -823,13 +823,15 @@ fun HistoryScreen(
                     }
                 }
             } else {
-                items(filteredTracks.distinctBy { it.id }, key = { "hist_sc_${it.id}" }) { track ->
+                val orderedHistory = filteredTracks.distinctBy { it.id }
+                items(orderedHistory, key = { "hist_sc_${it.id}" }) { track ->
+                    val trackIdx = orderedHistory.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
                     ClampedSwipeToDeleteRow(onDelete = { viewModel.deleteTrackFromHistory(track.id) }) {
                         TrackCard(
                             track = track,
                             isPlaying = playerState.currentTrack?.id == track.id,
                             subtitleText = if (track.isVideoTrack) "${track.artist} • MP4 Video • ${track.durationFormatted}" else null,
-                            onTrackClick = { viewModel.playTrack(track) },
+                            onTrackClick = { viewModel.playQueue(orderedHistory, trackIdx, isPlaylist = true) },
                             onLikeClick = { viewModel.toggleLike(track) },
                             onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
                             onPlayNextClick = { viewModel.playNext(track) },
@@ -1005,12 +1007,14 @@ fun DownloadsScreen(
                     }
                 }
             } else {
-                items(filteredTracks.distinctBy { it.id }, key = { "dl_sc_${it.id}" }) { track ->
+                val orderedDownloads = filteredTracks.distinctBy { it.id }
+                items(orderedDownloads, key = { "dl_sc_${it.id}" }) { track ->
+                    val trackIdx = orderedDownloads.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
                     ClampedSwipeToDeleteRow(onDelete = { viewModel.removeDownload(track.id) }) {
                         TrackCard(
                             track = track,
                             isPlaying = playerState.currentTrack?.id == track.id,
-                            onTrackClick = { viewModel.playTrack(track) },
+                            onTrackClick = { viewModel.playQueue(orderedDownloads, trackIdx, isPlaylist = true) },
                             onLikeClick = { viewModel.toggleLike(track) },
                             onDownloadClick = { tier -> viewModel.startDownload(track, tier) },
                             onPlayNextClick = { viewModel.playNext(track) },

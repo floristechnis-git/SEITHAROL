@@ -210,12 +210,7 @@ fun PlaybackQueueModal(
 
     androidx.activity.compose.BackHandler(onBack = onDismiss)
 
-    val itemHeightPx = with(density) { 72.dp.toPx() }
-    val targetDropIndex = remember(draggingFromIndex, dragOffsetY, queue.size) {
-        val from = draggingFromIndex ?: return@remember null
-        val offsetSlots = (dragOffsetY / itemHeightPx).roundToInt()
-        (from + offsetSlots).coerceIn(0, queue.lastIndex)
-    }
+    val targetDropIndex = draggingFromIndex
 
     LaunchedEffect(draggingFromIndex) {
         if (draggingFromIndex != null) {
@@ -491,13 +486,11 @@ fun PlaybackQueueModal(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    itemsIndexed(queue, key = { index, track -> "${track.id}_$index" }) { index, track ->
+                    itemsIndexed(queue, key = { _, track -> track.id }) { index, track ->
                         val isPlaying = index == currentIndex
                         val isDragging = draggingFromIndex == index
-
-                        if ((draggingFromIndex?.let { targetDropIndex == index && targetDropIndex <= it } == true)) {
-                            LandingDropIndicatorLine()
-                        }
+                        val currentIndexState by rememberUpdatedState(index)
+                        val currentQueueSizeState by rememberUpdatedState(queue.size)
 
                         Surface(
                             modifier = Modifier
@@ -505,10 +498,10 @@ fun PlaybackQueueModal(
                                 .zIndex(if (isDragging) 10f else 0f)
                                 .graphicsLayer {
                                     if (isDragging) {
-                                        scaleX = 1.03f
-                                        scaleY = 1.03f
+                                        scaleX = 1.02f
+                                        scaleY = 1.02f
                                         translationY = dragOffsetY
-                                        shadowElevation = 24f
+                                        shadowElevation = 20f
                                     } else {
                                         scaleX = 1.0f
                                         scaleY = 1.0f
@@ -520,12 +513,15 @@ fun PlaybackQueueModal(
                                 .clickable { viewModel.playQueueIndex(index) }
                                 .testTag("queue_item_$index"),
                             color = when {
-                                isDragging -> MaterialTheme.colorScheme.surfaceVariant
-                                isPlaying -> MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                isDragging -> MaterialTheme.colorScheme.surfaceContainerHighest
+                                isPlaying -> MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
                                 else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
                             },
+                            border = if (isDragging) {
+                                androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
+                            } else null,
                             shape = RoundedCornerShape(12.dp),
-                            shadowElevation = if (isDragging) 16.dp else 0.dp
+                            shadowElevation = if (isDragging) 14.dp else 0.dp
                         ) {
                             Row(
                                 modifier = Modifier
@@ -535,13 +531,13 @@ fun PlaybackQueueModal(
                             ) {
                                 IconButton(
                                     onClick = { viewModel.removeFromQueue(index) },
-                                    modifier = Modifier.size(34.dp)
+                                    modifier = Modifier.size(32.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Outlined.DeleteOutline,
                                         contentDescription = "Remove from Queue",
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(19.dp)
                                     )
                                 }
 
@@ -549,7 +545,7 @@ fun PlaybackQueueModal(
 
                                 Box(
                                     modifier = Modifier
-                                        .size(48.dp)
+                                        .size(46.dp)
                                         .clip(RoundedCornerShape(8.dp))
                                         .background(MaterialTheme.colorScheme.surfaceVariant)
                                 ) {
@@ -574,7 +570,7 @@ fun PlaybackQueueModal(
                                     }
                                 }
 
-                                Spacer(modifier = Modifier.width(12.dp))
+                                Spacer(modifier = Modifier.width(10.dp))
 
                                 Column(modifier = Modifier.weight(1f)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -618,29 +614,84 @@ fun PlaybackQueueModal(
                                     )
                                 }
 
-                                Spacer(modifier = Modifier.width(8.dp))
+                                if (queue.size > 1) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(0.dp)
+                                    ) {
+                                        IconButton(
+                                            onClick = {
+                                                if (index > 0) viewModel.moveTrack(index, index - 1)
+                                            },
+                                            enabled = index > 0,
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.KeyboardArrowUp,
+                                                contentDescription = "Move Up",
+                                                tint = if (index > 0) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                        IconButton(
+                                            onClick = {
+                                                if (index < queue.lastIndex) viewModel.moveTrack(index, index + 1)
+                                            },
+                                            enabled = index < queue.lastIndex,
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.KeyboardArrowDown,
+                                                contentDescription = "Move Down",
+                                                tint = if (index < queue.lastIndex) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                }
 
+                                // Instant Drag Handle ('='): drags immediately on touch without long-press delay and live-swaps items!
                                 Box(
                                     modifier = Modifier
-                                        .size(44.dp)
-                                        .pointerInput(index) {
-                                            detectDragGesturesAfterLongPress(
+                                        .size(40.dp)
+                                        .pointerInput(track.id) {
+                                            androidx.compose.foundation.gestures.detectVerticalDragGestures(
                                                 onDragStart = { offset ->
-                                                    draggingFromIndex = index
+                                                    draggingFromIndex = currentIndexState
                                                     dragOffsetY = 0f
                                                     pointerWindowY = listTopWindowY + offset.y
                                                 },
-                                                onDrag = { change, dragAmount ->
+                                                onVerticalDrag = { change, dragAmount ->
                                                     change.consume()
-                                                    dragOffsetY += dragAmount.y
-                                                    pointerWindowY += dragAmount.y
+                                                    dragOffsetY += dragAmount
+                                                    pointerWindowY += dragAmount
+
+                                                    val fromIdx = draggingFromIndex ?: return@detectVerticalDragGestures
+                                                    val visibleItems = listState.layoutInfo.visibleItemsInfo
+                                                    val currentItemInfo = visibleItems.firstOrNull { it.index == fromIdx }
+                                                        ?: return@detectVerticalDragGestures
+                                                    val draggedCenterY = currentItemInfo.offset + (currentItemInfo.size / 2f) + dragOffsetY
+
+                                                    val targetItem = visibleItems.firstOrNull { item ->
+                                                        item.index in 0 until currentQueueSizeState &&
+                                                            item.index != fromIdx &&
+                                                            if (dragOffsetY > 0f && item.index > fromIdx) {
+                                                                draggedCenterY > item.offset + (item.size / 2f)
+                                                            } else if (dragOffsetY < 0f && item.index < fromIdx) {
+                                                                draggedCenterY < item.offset + (item.size / 2f)
+                                                            } else {
+                                                                false
+                                                            }
+                                                    }
+
+                                                    if (targetItem != null) {
+                                                        val offsetAdjustment = currentItemInfo.offset - targetItem.offset
+                                                        viewModel.moveTrack(fromIdx, targetItem.index)
+                                                        draggingFromIndex = targetItem.index
+                                                        dragOffsetY += offsetAdjustment
+                                                    }
                                                 },
                                                 onDragEnd = {
-                                                    val from = draggingFromIndex
-                                                    val to = targetDropIndex
-                                                    if (from != null && to != null && from != to) {
-                                                        viewModel.moveTrack(from, to)
-                                                    }
                                                     draggingFromIndex = null
                                                     dragOffsetY = 0f
                                                     pointerWindowY = -1f
@@ -663,7 +714,7 @@ fun PlaybackQueueModal(
                                                 .width(18.dp)
                                                 .height(2.dp)
                                                 .background(
-                                                    if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                                    if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
                                                     RoundedCornerShape(1.dp)
                                                 )
                                         )
@@ -672,17 +723,13 @@ fun PlaybackQueueModal(
                                                 .width(18.dp)
                                                 .height(2.dp)
                                                 .background(
-                                                    if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                                    if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
                                                     RoundedCornerShape(1.dp)
                                                 )
                                         )
                                     }
                                 }
                             }
-                        }
-
-                        if ((draggingFromIndex?.let { targetDropIndex == index && targetDropIndex > it } == true)) {
-                            LandingDropIndicatorLine()
                         }
                     }
 

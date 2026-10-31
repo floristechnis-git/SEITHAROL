@@ -1681,6 +1681,7 @@ class AudioPlayerManager(
             activeStream = null,
             isPlaying = false,
             isBuffering = true,
+            isShuffle = false,
             isSingleTrackPlayback = !isPlaylist,
             isPartOfPlaylist = isPlaylist,
             isVideoMode = targetTrack.isVideoTrack,
@@ -2119,12 +2120,67 @@ class AudioPlayerManager(
                     }
                 }
 
+                // Instant Fast-Path for On-Device & Downloaded Songs/Videos with an already known localPath:
+                // Starts ExoPlayer immediately without waiting for database/network calls!
+                val directLocalPath = current.localPath?.trim().orEmpty()
+                val isDirectLocalReady = when {
+                    directLocalPath.isBlank() -> false
+                    directLocalPath.startsWith("content://") -> true
+                    else -> {
+                        val rawP = if (directLocalPath.startsWith("file://")) {
+                            Uri.parse(directLocalPath).path ?: directLocalPath.removePrefix("file://")
+                        } else directLocalPath
+                        val f = File(rawP)
+                        f.exists() && f.length() > 0L
+                    }
+                }
+                if (isDirectLocalReady && !forceRefresh) {
+                    val fastStreamUrl = when {
+                        directLocalPath.startsWith("content://") || directLocalPath.startsWith("file://") -> directLocalPath
+                        else -> Uri.fromFile(File(directLocalPath)).toString()
+                    }
+                    val fastStream = ResolvedStream(
+                        videoId = current.id.ifBlank { "local_track" },
+                        streamUrl = fastStreamUrl,
+                        itag = current.itag,
+                        codec = current.codec,
+                        bitrate = "Local Direct",
+                        expiresAtMs = Long.MAX_VALUE,
+                        isLocal = true,
+                        resolvedBy = "Instant Local Storage",
+                        latencyMs = 0
+                    )
+                    val readyTrack = current.copy(isDownloaded = true, localPath = directLocalPath)
+                    _state.value = _state.value.copy(
+                        currentTrack = readyTrack,
+                        activeStream = fastStream,
+                        isStreamCachedOnDisk = true,
+                        bufferedFraction = 1f,
+                        isBuffering = false
+                    )
+                    setupAndPlaySource(fastStreamUrl, readyTrack, startPositionMs = initialPos)
+                    coroutineScope.launch(Dispatchers.IO) {
+                        runCatching {
+                            musicRepository.saveCheckpoint(
+                                trackId = readyTrack.id,
+                                index = _state.value.currentIndex,
+                                posMs = initialPos,
+                                queueIds = _state.value.queue.map { it.id },
+                                shuffle = _state.value.isShuffle,
+                                repeat = _state.value.repeatMode.ordinal
+                            )
+                            if (!readyTrack.isLocalOnlyTrack) {
+                                musicRepository.recordPlayHistory(readyTrack)
+                            }
+                        }
+                    }
+                    return@launch
+                }
+
                 val preferredQuality = getPreferredAudioQuality()
                 val (safeTrack, stream, initialLocalAspectRatio) = withContext(Dispatchers.IO) {
                     val resolvedLocalTrack = resolveLocalTrackIfAvailable(current)
-                    val localRatio = if (isVideoTrack) {
-                        extractLocalVideoAspectRatio(resolvedLocalTrack.localPath ?: current.localPath)
-                    } else null
+                    val localRatio: Float? = null
 
                     // Launch DB checkpoint & history recording on independent scope so withContext returns immediately!
                     coroutineScope.launch(Dispatchers.IO) {

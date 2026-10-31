@@ -3,7 +3,9 @@ package com.example.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,7 +25,7 @@ fun SleepTimerModal(
     onSetTimer: (Int) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val modalSheetState = rememberModalBottomSheetState()
+    val modalSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var selectedMinutes by remember { mutableIntStateOf(if (currentMinutesLeft > 0) currentMinutesLeft else 25) }
 
     val options = listOf(0, 10, 15, 20, 25, 30, 45, 60)
@@ -37,7 +39,7 @@ fun SleepTimerModal(
         dragHandle = {
             Box(
                 modifier = Modifier
-                    .padding(top = 12.dp, bottom = 14.dp)
+                    .padding(top = 12.dp, bottom = 10.dp)
                     .width(40.dp)
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp))
@@ -48,6 +50,8 @@ fun SleepTimerModal(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .navigationBarsPadding()
                 .padding(horizontal = 24.dp, vertical = 8.dp)
                 .testTag("sleep_timer_modal"),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -60,7 +64,7 @@ fun SleepTimerModal(
                 color = MaterialTheme.colorScheme.onSurface
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -71,7 +75,7 @@ fun SleepTimerModal(
                     val isSelected = selectedMinutes == mins
                     Surface(
                         modifier = Modifier
-                            .fillMaxWidth(0.75f)
+                            .fillMaxWidth(0.78f)
                             .height(40.dp)
                             .clip(RoundedCornerShape(20.dp))
                             .clickable { selectedMinutes = mins },
@@ -95,20 +99,19 @@ fun SleepTimerModal(
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
-            // Start / Turn Off Button (uses primary accent so text is never white-on-white in Light or Dark Mode)
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
-                    .clip(RoundedCornerShape(24.dp))
+                    .height(50.dp)
+                    .clip(RoundedCornerShape(25.dp))
                     .clickable {
                         onSetTimer(selectedMinutes)
                         onDismiss()
                     }
                     .testTag("sleep_timer_start_btn"),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(25.dp),
                 color = MaterialTheme.colorScheme.primary
             ) {
                 Box(contentAlignment = Alignment.Center) {
@@ -122,7 +125,7 @@ fun SleepTimerModal(
                 }
             }
 
-            Spacer(modifier = Modifier.height(28.dp))
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }

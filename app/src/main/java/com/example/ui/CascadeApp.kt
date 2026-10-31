@@ -459,8 +459,35 @@ fun CascadeApp(
                                         itag = if (isVideo) 18 else 251,
                                         codec = if (isVideo) "MP4" else "Opus"
                                     )
-                                    viewModel.playTrack(localTrack)
+                                    viewModel.playQueue(listOf(localTrack), 0, isPlaylist = true)
                                     isPlayerExpanded = true
+                                },
+                                onPlayLocalQueue = { candidates, startIndex ->
+                                    val mappedQueue = candidates.map { candidate ->
+                                        val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
+                                            candidate.videoId.lowercase().endsWith(".mp4") ||
+                                            candidate.videoId.lowercase().contains("/video/")
+                                        val cleanAlbum = candidate.albumName?.takeUnless {
+                                            it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Storage", ignoreCase = true)
+                                        }.orEmpty()
+                                        Track(
+                                            id = if (isVideo) "vidfile_${candidate.videoId.hashCode()}" else "local_${candidate.videoId.hashCode()}",
+                                            title = candidate.title,
+                                            artist = candidate.artist,
+                                            album = if (isVideo) "MP4 Video" else cleanAlbum,
+                                            durationMs = candidate.durationSeconds * 1000L,
+                                            artUrl = candidate.thumbnailUrl,
+                                            genre = if (isVideo) "Local Video" else "Local Audio",
+                                            isDownloaded = true,
+                                            localPath = candidate.videoId,
+                                            itag = if (isVideo) 18 else 251,
+                                            codec = if (isVideo) "MP4" else "Opus"
+                                        )
+                                    }
+                                    if (mappedQueue.isNotEmpty()) {
+                                        viewModel.playQueue(mappedQueue, startIndex.coerceIn(0, mappedQueue.lastIndex), isPlaylist = true)
+                                        isPlayerExpanded = true
+                                    }
                                 },
                                 onAddLocalTrackToPlaylist = { plId, candidate ->
                                     val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
@@ -743,8 +770,35 @@ fun CascadeApp(
                                     itag = if (isVideo) 18 else 251,
                                     codec = if (isVideo) "MP4" else "Opus"
                                 )
-                                viewModel.playTrack(localTrack)
+                                viewModel.playQueue(listOf(localTrack), 0, isPlaylist = true)
                                 isPlayerExpanded = true
+                            },
+                            onPlayLocalQueue = { candidates, startIndex ->
+                                val mappedQueue = candidates.map { candidate ->
+                                    val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
+                                        candidate.videoId.lowercase().endsWith(".mp4") ||
+                                        candidate.videoId.lowercase().contains("/video/")
+                                    val cleanAlbum = candidate.albumName?.takeUnless {
+                                        it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Storage", ignoreCase = true)
+                                    }.orEmpty()
+                                    Track(
+                                        id = if (isVideo) "vidfile_${candidate.videoId.hashCode()}" else "local_${candidate.videoId.hashCode()}",
+                                        title = candidate.title,
+                                        artist = candidate.artist,
+                                        album = if (isVideo) "MP4 Video" else cleanAlbum,
+                                        durationMs = candidate.durationSeconds * 1000L,
+                                        artUrl = candidate.thumbnailUrl,
+                                        genre = if (isVideo) "Local Video" else "Local Audio",
+                                        isDownloaded = true,
+                                        localPath = candidate.videoId,
+                                        itag = if (isVideo) 18 else 251,
+                                        codec = if (isVideo) "MP4" else "Opus"
+                                    )
+                                }
+                                if (mappedQueue.isNotEmpty()) {
+                                    viewModel.playQueue(mappedQueue, startIndex.coerceIn(0, mappedQueue.lastIndex), isPlaylist = true)
+                                    isPlayerExpanded = true
+                                }
                             },
                             onAddLocalTrackToPlaylist = { plId, candidate ->
                                 val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||

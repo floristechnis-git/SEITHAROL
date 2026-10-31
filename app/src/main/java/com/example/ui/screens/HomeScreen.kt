@@ -516,10 +516,10 @@ fun HomeScreen(
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 0.dp),
-            verticalArrangement = Arrangement.spacedBy(26.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // ────────────────────────────────────────────────────────────
-            // Top Brand Bar + Greeting & Search Bar with Position-Absolute "Johnson" Watermark
+            // Top Brand Bar + Greeting & Search Bar with Left-Aligned Position-Absolute "Johnson" Watermark
             // ────────────────────────────────────────────────────────────
             item {
                 BoxWithConstraints(
@@ -528,13 +528,13 @@ fun HomeScreen(
                         .clipToBounds()
                 ) {
                     // Position-absolute background watermark ("Johnson"):
-                    // Takes zero vertical flow space, starts at horizontal center (maxWidth / 2f),
-                    // scaled so "Jo" fits on mobile and "John" fits on tablet in neutral grey for light & dark themes.
+                    // Starts from left edge so at least "John" fits on mobile (and "Johnson" on tablet),
+                    // using matchParentSize + wrapContentHeight(unbounded = true) so it takes 0 vertical layout space.
                     val density = androidx.compose.ui.platform.LocalDensity.current
                     val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
                     val isTabletExpanded = maxWidth >= 600.dp
-                    val visiblePrefix = if (isTabletExpanded) "John" else "Jo"
-                    val halfScreenPx = with(density) { (maxWidth / 2f).toPx() }
+                    val visiblePrefix = if (isTabletExpanded) "Johnson" else "John"
+                    val availableWidthPx = with(density) { (maxWidth - 16.dp).coerceAtLeast(120.dp).toPx() }
                     val baseStyle = androidx.compose.ui.text.TextStyle(
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.ExtraBold,
@@ -549,102 +549,108 @@ fun HomeScreen(
                         ).size.width.coerceAtLeast(1)
                     }
                     val computedFontSizeSp = with(density) {
-                        val rawSp = 100f * (halfScreenPx / measuredPrefixWidthPx.toFloat())
-                        rawSp.coerceIn(48f, 260f).sp
+                        val rawSp = 100f * (availableWidthPx / measuredPrefixWidthPx.toFloat())
+                        rawSp.coerceIn(48f, 220f).sp
                     }
 
-                    Text(
-                        text = "Johnson",
-                        fontFamily = SyneFontFamily,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = computedFontSizeSp,
-                        lineHeight = computedFontSizeSp,
-                        color = Color(0xFF888888).copy(alpha = 0.16f),
-                        softWrap = false,
-                        maxLines = 1,
-                        overflow = TextOverflow.Visible,
+                    Box(
                         modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .fillMaxWidth()
-                            .padding(start = maxWidth / 2f, top = 2.dp)
-                            .testTag("home_hero_johnson_text")
-                    )
+                            .matchParentSize()
+                            .clipToBounds()
+                    ) {
+                        Text(
+                            text = "Johnson",
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = computedFontSizeSp,
+                            lineHeight = computedFontSizeSp,
+                            color = Color(0xFF888888).copy(alpha = 0.16f),
+                            softWrap = false,
+                            maxLines = 1,
+                            overflow = TextOverflow.Visible,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .wrapContentHeight(align = Alignment.Top, unbounded = true)
+                                .padding(start = 16.dp, top = 0.dp)
+                                .testTag("home_hero_johnson_text")
+                        )
+                    }
 
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 6.dp),
+                                .padding(horizontal = 20.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                    Text(
-                        text = "SEITHAROL",
-                        color = MaterialTheme.colorScheme.onBackground,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 1.5.sp,
-                        fontFamily = SyneFontFamily
-                    )
+                            Text(
+                                text = "SEITHAROL",
+                                color = MaterialTheme.colorScheme.onBackground,
+                                fontSize = 22.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 1.5.sp,
+                                fontFamily = SyneFontFamily
+                            )
 
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Surface(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .testTag("home_search_btn"),
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            onClick = onNavigateToSearch
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.Search,
-                                    contentDescription = "Search",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Surface(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .testTag("home_search_btn"),
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    onClick = onNavigateToSearch
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Search,
+                                            contentDescription = "Search",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
 
-                        Surface(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .testTag("home_notification_btn"),
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            onClick = onOpenNotifications
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                NotificationBellAlertSvgIcon(
-                                    tint = if (hasUnreadNotifications) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    hasUnreadAlert = hasUnreadNotifications,
-                                    alertDotColor = Color(0xFFE53935),
-                                    modifier = Modifier.size(21.dp)
-                                )
-                            }
-                        }
+                                Surface(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .testTag("home_notification_btn"),
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    onClick = onOpenNotifications
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        NotificationBellAlertSvgIcon(
+                                            tint = if (hasUnreadNotifications) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            hasUnreadAlert = hasUnreadNotifications,
+                                            alertDotColor = Color(0xFFE53935),
+                                            modifier = Modifier.size(21.dp)
+                                        )
+                                    }
+                                }
 
-                        Surface(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .testTag("home_profile_avatar_btn"),
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            onClick = onNavigateToProfile
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.Person,
-                                    contentDescription = "Profile",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp)
-                                )
+                                Surface(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .testTag("home_profile_avatar_btn"),
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    onClick = onNavigateToProfile
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Person,
+                                            contentDescription = "Profile",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
                             }
-                        }
-                        }
                         }
 
                         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
@@ -654,18 +660,17 @@ fun HomeScreen(
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 22.sp,
                                 color = MaterialTheme.colorScheme.onBackground,
-                                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                                modifier = Modifier.padding(top = 2.dp, bottom = 6.dp)
                             )
-                            Spacer(modifier = Modifier.height(6.dp))
                             Surface(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(48.dp)
-                                    .clip(RoundedCornerShape(24.dp))
+                                    .height(46.dp)
+                                    .clip(RoundedCornerShape(23.dp))
                                     .clickable(onClick = onNavigateToSearch)
                                     .testTag("home_search_bar"),
                                 color = MaterialTheme.colorScheme.surfaceVariant,
-                                shape = RoundedCornerShape(24.dp)
+                                shape = RoundedCornerShape(23.dp)
                             ) {
                                 Row(
                                     modifier = Modifier
@@ -996,7 +1001,7 @@ fun HomeScreen(
                                 title = "Quick Picks",
                                 subtitle = "Suggested tracks & favorites tuned to your taste"
                             )
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
                             QuickDialBentoSection(
                                 items = quickDialItems,
                                 onItemClick = { item ->

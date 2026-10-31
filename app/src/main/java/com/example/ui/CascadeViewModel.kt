@@ -135,7 +135,7 @@ class CascadeViewModel(
                 }
             }
         }
-        trackMap.values.distinctBy { it.title.lowercase().trim() }
+        trackMap.values.distinctBy { it.id }
     }.flowOn(Dispatchers.IO).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val downloadedTracksById: StateFlow<Map<String, Track>> = downloadedTracks
@@ -721,9 +721,8 @@ class CascadeViewModel(
         playerManager.isAutoplayEnabled = autoSuggestManager.isAutoSuggestEnabled.value && !isOfflineMode.value
         loadHomeScreenMusic()
         viewModelScope.launch(vmExceptionHandler) {
-            delay(1500L)
             downloadRepository.rescanLocalDownloads()
-            delay(1500L)
+            delay(800L)
             loadTrendingSearches()
         }
 

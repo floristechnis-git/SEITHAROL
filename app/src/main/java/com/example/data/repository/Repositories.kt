@@ -973,20 +973,36 @@ class DownloadRepository(
                             if (!existingTrack.isDownloaded || existingTrack.localPath.isNullOrBlank()) {
                                 trackDao.setDownloaded(trackId, true, file.absolutePath)
                             }
-                            val existingDl = downloadDao.getDownload(trackId)
-                            if (existingDl == null || existingDl.state != "COMPLETED") {
-                                downloadDao.insertDownload(
-                                    DownloadEntity(
-                                        trackId = trackId,
-                                        tier = tierLabel,
-                                        state = "COMPLETED",
-                                        localPath = file.absolutePath,
-                                        progress = 1.0f,
-                                        bytesDownloaded = file.length(),
-                                        totalBytes = file.length()
-                                    )
+                        } else {
+                            val isVid = file.extension.equals("mp4", ignoreCase = true)
+                            trackDao.insertTrack(
+                                TrackEntity(
+                                    id = trackId,
+                                    title = trackId,
+                                    artist = "Downloaded Track",
+                                    album = if (isVid) "MP4 Video" else "Downloaded",
+                                    durationMs = 210_000L,
+                                    artUrl = if (trackId.length == 11) "https://i.ytimg.com/vi/$trackId/hqdefault.jpg" else "",
+                                    genre = if (isVid) "YouTube Video" else "Music",
+                                    codec = if (isVid) "MP4" else "Opus",
+                                    isDownloaded = true,
+                                    localPath = file.absolutePath
                                 )
-                            }
+                            )
+                        }
+                        val existingDl = downloadDao.getDownload(trackId)
+                        if (existingDl == null || existingDl.state != "COMPLETED") {
+                            downloadDao.insertDownload(
+                                DownloadEntity(
+                                    trackId = trackId,
+                                    tier = tierLabel,
+                                    state = "COMPLETED",
+                                    localPath = file.absolutePath,
+                                    progress = 1.0f,
+                                    bytesDownloaded = file.length(),
+                                    totalBytes = file.length()
+                                )
+                            )
                         }
                     }
                 }

@@ -835,7 +835,7 @@ fun NotificationsModal(
                                             .size(10.dp)
                                             .align(Alignment.TopEnd)
                                             .clip(CircleShape)
-                                            .background(Color(0xFFE53935))
+                                            .background(Color(0xFF850101))
                                     )
                                 }
                             }
@@ -862,7 +862,7 @@ fun NotificationsModal(
                                             modifier = Modifier
                                                 .size(8.dp)
                                                 .clip(CircleShape)
-                                                .background(Color(0xFFE53935))
+                                                .background(Color(0xFF850101))
                                     )
                                     }
                                 }

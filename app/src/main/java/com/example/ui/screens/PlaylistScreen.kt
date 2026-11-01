@@ -301,7 +301,7 @@ fun PlaylistScreen(
                             }
                         }
                         val badgeColor = when (badgeTag) {
-                            "MIX" -> Color(0xFFB71C1C)
+                            "MIX" -> Color(0xFF850101)
                             "ALBUM" -> Color(0xFF8E24AA)
                             "SINGLE" -> Color(0xFF00897B)
                             "PERSONAL PLAYLIST" -> MaterialTheme.colorScheme.primary
@@ -539,8 +539,25 @@ fun PlaylistScreen(
                     }
                 }
             } else {
-                itemsIndexed(filteredTracks, key = { index, track -> "pl_tr_${track.id}_$index" }) { index, track ->
-                    ClampedSwipeToDeleteRow(onDelete = { viewModel.removeTrackFromPlaylist(currentPlaylist.id, track.id) }) {
+                itemsIndexed(
+                    items = filteredTracks,
+                    key = { index, track ->
+                        val dupOccurrence = filteredTracks.subList(0, index).count { it.id == track.id }
+                        "pl_tr_${track.id}_$dupOccurrence"
+                    }
+                ) { index, track ->
+                    val removeThisTrack = {
+                        val updated = remotePlaylistTracks.toMutableList().apply {
+                            val targetIdx = indexOfFirst { it.id == track.id }
+                            if (targetIdx >= 0) removeAt(targetIdx)
+                        }
+                        remotePlaylistTracks = updated
+                        viewModel.removeTrackFromPlaylist(currentPlaylist.id, track.id)
+                    }
+                    ClampedSwipeToDeleteRow(
+                        onDelete = removeThisTrack,
+                        actionLabel = "Remove"
+                    ) {
                         TrackCard(
                             track = track,
                             isPlaying = playerState.currentTrack?.id == track.id,
@@ -561,12 +578,7 @@ fun PlaylistScreen(
                             onGoToArtistClick = { creator ->
                                 viewModel.navigateToArtist(creator, isChannel = track.isVideoTrack)
                             },
-                            onRemoveFromPlaylistClick = if (isPersonalPlaylist) {
-                                {
-                                    viewModel.removeTrackFromPlaylist(currentPlaylist.id, track.id)
-                                    remotePlaylistTracks = remotePlaylistTracks.filterNot { it.id == track.id }
-                                }
-                            } else null,
+                            onRemoveFromPlaylistClick = removeThisTrack,
                             onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)
                         )
@@ -853,18 +865,18 @@ fun NotFound404Screen(
                     drawCircle(
                         brush = Brush.radialGradient(
                             colors = listOf(
-                                Color(0xFFB71C1C).copy(alpha = 0.25f),
+                                Color(0xFF850101).copy(alpha = 0.25f),
                                 Color.Transparent
                             )
                         )
                     )
                     drawCircle(
-                        color = Color(0xFFB71C1C).copy(alpha = 0.35f),
+                        color = Color(0xFF850101).copy(alpha = 0.35f),
                         radius = size.minDimension * 0.42f,
                         style = Stroke(width = 3.dp.toPx())
                     )
                     drawCircle(
-                        color = Color(0xFFB71C1C).copy(alpha = 0.18f),
+                        color = Color(0xFF850101).copy(alpha = 0.18f),
                         radius = size.minDimension * 0.28f,
                         style = Stroke(width = 2.dp.toPx())
                     )

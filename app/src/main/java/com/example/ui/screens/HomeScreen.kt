@@ -513,13 +513,63 @@ fun HomeScreen(
             .statusBarsPadding()
             .testTag("home_screen")
     ) {
+        // Position-fixed / absolute page-level background watermark ("Johnson") on the HomeScreen page:
+        // Starts from left edge so at least "John" fits on mobile (and "Johnson" on tablet),
+        // anchored at TopStart behind the LazyColumn so it stays fixed on the HomeScreen page and takes 0 layout space.
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopStart)
+                .clipToBounds()
+        ) {
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
+            val isTabletExpanded = maxWidth >= 600.dp
+            val visiblePrefix = if (isTabletExpanded) "Johnson" else "John"
+            val availableWidthPx = with(density) { (maxWidth - 16.dp).coerceAtLeast(120.dp).toPx() }
+            val baseStyle = androidx.compose.ui.text.TextStyle(
+                fontFamily = SyneFontFamily,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 100.sp
+            )
+            val measuredPrefixWidthPx = remember(visiblePrefix, textMeasurer) {
+                textMeasurer.measure(
+                    text = androidx.compose.ui.text.AnnotatedString(visiblePrefix),
+                    style = baseStyle,
+                    softWrap = false,
+                    maxLines = 1
+                ).size.width.coerceAtLeast(1)
+            }
+            val computedFontSizeSp = with(density) {
+                val rawSp = 100f * (availableWidthPx / measuredPrefixWidthPx.toFloat())
+                rawSp.coerceIn(48f, 220f).sp
+            }
+
+            Text(
+                text = "Johnson",
+                fontFamily = SyneFontFamily,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = computedFontSizeSp,
+                lineHeight = computedFontSizeSp,
+                color = Color(0xFF888888).copy(alpha = 0.16f),
+                softWrap = false,
+                maxLines = 1,
+                overflow = TextOverflow.Visible,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .wrapContentHeight(align = Alignment.Top, unbounded = true)
+                    .padding(start = 16.dp, top = 0.dp)
+                    .testTag("home_hero_johnson_text")
+            )
+        }
+
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 0.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // ────────────────────────────────────────────────────────────
-            // Top Brand Bar + Greeting & Search Bar with Left-Aligned Position-Absolute "Johnson" Watermark
+            // Top Brand Bar + Greeting & Search Bar
             // ────────────────────────────────────────────────────────────
             item {
                 BoxWithConstraints(
@@ -527,55 +577,6 @@ fun HomeScreen(
                         .fillMaxWidth()
                         .clipToBounds()
                 ) {
-                    // Position-absolute background watermark ("Johnson"):
-                    // Starts from left edge so at least "John" fits on mobile (and "Johnson" on tablet),
-                    // using matchParentSize + wrapContentHeight(unbounded = true) so it takes 0 vertical layout space.
-                    val density = androidx.compose.ui.platform.LocalDensity.current
-                    val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
-                    val isTabletExpanded = maxWidth >= 600.dp
-                    val visiblePrefix = if (isTabletExpanded) "Johnson" else "John"
-                    val availableWidthPx = with(density) { (maxWidth - 16.dp).coerceAtLeast(120.dp).toPx() }
-                    val baseStyle = androidx.compose.ui.text.TextStyle(
-                        fontFamily = SyneFontFamily,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 100.sp
-                    )
-                    val measuredPrefixWidthPx = remember(visiblePrefix, textMeasurer) {
-                        textMeasurer.measure(
-                            text = androidx.compose.ui.text.AnnotatedString(visiblePrefix),
-                            style = baseStyle,
-                            softWrap = false,
-                            maxLines = 1
-                        ).size.width.coerceAtLeast(1)
-                    }
-                    val computedFontSizeSp = with(density) {
-                        val rawSp = 100f * (availableWidthPx / measuredPrefixWidthPx.toFloat())
-                        rawSp.coerceIn(48f, 220f).sp
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .matchParentSize()
-                            .clipToBounds()
-                    ) {
-                        Text(
-                            text = "Johnson",
-                            fontFamily = SyneFontFamily,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = computedFontSizeSp,
-                            lineHeight = computedFontSizeSp,
-                            color = Color(0xFF888888).copy(alpha = 0.16f),
-                            softWrap = false,
-                            maxLines = 1,
-                            overflow = TextOverflow.Visible,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .wrapContentHeight(align = Alignment.Top, unbounded = true)
-                                .padding(start = 16.dp, top = 0.dp)
-                                .testTag("home_hero_johnson_text")
-                        )
-                    }
-
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier
@@ -627,7 +628,7 @@ fun HomeScreen(
                                         NotificationBellAlertSvgIcon(
                                             tint = if (hasUnreadNotifications) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                                             hasUnreadAlert = hasUnreadNotifications,
-                                            alertDotColor = Color(0xFFE53935),
+                                            alertDotColor = Color(0xFF850101),
                                             modifier = Modifier.size(21.dp)
                                         )
                                     }
@@ -807,10 +808,11 @@ fun HomeScreen(
                             },
                             shape = RoundedCornerShape(12.dp),
                             color = if (isSelected) {
-                                MaterialTheme.colorScheme.onSurface
+                                MaterialTheme.colorScheme.primary
                             } else {
                                 MaterialTheme.colorScheme.surfaceContainerHigh
                             },
+                            contentColor = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface,
                             border = if (isSelected) null else androidx.compose.foundation.BorderStroke(
                                 width = 1.dp,
                                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
@@ -827,13 +829,13 @@ fun HomeScreen(
                                         modifier = Modifier
                                             .size(6.dp)
                                             .clip(RoundedCornerShape(3.dp))
-                                            .background(MaterialTheme.colorScheme.primary)
+                                            .background(Color.White)
                                     )
                                 }
                                 Text(
                                     text = mood,
                                     color = if (isSelected) {
-                                        MaterialTheme.colorScheme.surface
+                                        Color.White
                                     } else {
                                         MaterialTheme.colorScheme.onSurface
                                     },
@@ -2527,10 +2529,11 @@ fun OuterTuneMoodsAndGenresSection(
                             },
                             shape = RoundedCornerShape(16.dp),
                             color = if (isSelected) {
-                                MaterialTheme.colorScheme.primaryContainer
+                                MaterialTheme.colorScheme.primary
                             } else {
                                 MaterialTheme.colorScheme.surfaceContainerHigh
                             },
+                            contentColor = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface,
                             border = androidx.compose.foundation.BorderStroke(
                                 width = 1.dp,
                                 color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
@@ -2547,13 +2550,13 @@ fun OuterTuneMoodsAndGenresSection(
                                     modifier = Modifier
                                         .width(6.dp)
                                         .fillMaxHeight()
-                                        .background(stripeColor)
+                                        .background(if (isSelected) Color.White else stripeColor)
                                 )
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Text(
                                     text = category,
                                     color = if (isSelected) {
-                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                        Color.White
                                     } else {
                                         MaterialTheme.colorScheme.onSurface
                                     },

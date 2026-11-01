@@ -291,25 +291,9 @@ fun SearchScreen(
         }
     }
 
-    // Identify the most-viewed official/top recommended song card so it always receives the subtle highlight color (no border)
-    val mostViewedOfficialTrackId = remember(displayedTracks, query) {
-        if (displayedTracks.isEmpty()) {
-            null
-        } else {
-            val officialTracks = displayedTracks.filter {
-                !it.isLocalOnlyTrack &&
-                    it.isOfficial &&
-                    (query.isBlank() || !CanonicalAudioResolver.containsBannedModifier(query, it.title))
-            }.ifEmpty {
-                displayedTracks.filter { !it.isLocalOnlyTrack && it.isOfficial }
-            }.ifEmpty {
-                displayedTracks.filter { !it.isLocalOnlyTrack }
-            }.ifEmpty {
-                displayedTracks
-            }
-            val withViews = officialTracks.filter { it.viewCount > 0L }
-            (withViews.maxByOrNull { it.viewCount } ?: officialTracks.firstOrNull() ?: displayedTracks.firstOrNull())?.id
-        }
+    // Always highlight the very top item (first item) in the Songs section so the #1 song card gets the subtle highlight color
+    val mostViewedOfficialTrackId = remember(displayedTracks) {
+        displayedTracks.firstOrNull()?.id
     }
 
     val filteredPlaylists = remember(query, playlists) {

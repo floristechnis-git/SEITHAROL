@@ -211,27 +211,31 @@ object QueueRecommendationEngine {
             .take(3)
 
         coroutineScope {
-            // 1. Primary: Real YouTube Music RDAMVM Automix Queue for current seed + secondary queue seed
+            // 1. Primary: Real YouTube Music RDAMVM Automix Queue + Player Related Tracks for current seed
             val automixDeferred = async {
-                val rawAutomix = if (currentTrack.id.length == 11) {
-                    InnerTubeStreamExtractor.fetchAutomixQueue(currentTrack.id, limit = limit + 10)
+                val seedVid = if (currentTrack.id.length == 11) {
+                    currentTrack.id
                 } else {
-                    val resolvedSeed = InnerTubeStreamExtractor.searchOfficialYtmSongs(
+                    InnerTubeStreamExtractor.searchOfficialYtmSongs(
                         "${currentTrack.title} $primaryArtist".trim(),
                         limit = 2
-                    ).firstOrNull()
-                    if (resolvedSeed != null) {
-                        InnerTubeStreamExtractor.fetchAutomixQueue(resolvedSeed.videoId, limit = limit + 10)
-                    } else emptyList()
+                    ).firstOrNull()?.videoId
                 }
+                val rawAutomix = if (seedVid != null) {
+                    val radio = InnerTubeStreamExtractor.fetchAutomixQueue(seedVid, limit = limit + 12)
+                    val related = runCatching {
+                        InnerTubeStreamExtractor.fetchPlayerRelatedContent(
+                            videoId = seedVid,
+                            title = currentTrack.title,
+                            artist = primaryArtist
+                        ).relatedTracks
+                    }.getOrDefault(emptyList())
+                    radio + related
+                } else emptyList()
+
                 rawAutomix.filter { cand ->
                     val candLower = "${cand.title} ${cand.artist} ${cand.channelName}".lowercase()
-                    val isVideoItem = cand.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
-                        cand.videoType == "MUSIC_VIDEO_TYPE_UGC" ||
-                        cand.albumName.equals("YouTube Video", ignoreCase = true)
-                    if (isVideoItem) {
-                        false
-                    } else if (!isSeedHindiOrBollywood && GENERIC_BOLLYWOOD_LABELS.any { candLower.contains(it) }) {
+                    if (!isSeedHindiOrBollywood && GENERIC_BOLLYWOOD_LABELS.any { candLower.contains(it) }) {
                         false
                     } else {
                         true
@@ -242,12 +246,7 @@ object QueueRecommendationEngine {
             // 2. Same-Artist Official Songs (high relevance to currently playing track)
             val primaryArtistDeferred = async {
                 if (primaryArtist.isNotBlank() && !primaryArtist.equals("Unknown Artist", true)) {
-                    InnerTubeStreamExtractor.searchOfficialYtmSongs("$primaryArtist official songs", limit = 12)
-                        .filterNot {
-                            it.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
-                                it.videoType == "MUSIC_VIDEO_TYPE_UGC" ||
-                                it.albumName.equals("YouTube Video", ignoreCase = true)
-                        }
+                    InnerTubeStreamExtractor.searchOfficialYtmSongs("$primaryArtist songs", limit = 12)
                 } else emptyList()
             }
 
@@ -257,31 +256,21 @@ object QueueRecommendationEngine {
                     isSeedManipuri && primaryArtist.isNotBlank() -> "$primaryArtist Manipuri song"
                     isSeedManipuri -> "$cleanTitleWords Manipuri song"
                     primaryArtist.isNotBlank() && cleanTitleWords.isNotBlank() -> "$cleanTitleWords $primaryArtist"
-                    cleanTitleWords.isNotBlank() -> "$cleanTitleWords official audio"
-                    else -> "${currentTrack.title} official audio"
+                    cleanTitleWords.isNotBlank() -> "$cleanTitleWords song"
+                    else -> "${currentTrack.title} song"
                 }
                 InnerTubeStreamExtractor.searchOfficialYtmSongs(contextQuery, limit = 12)
-                    .filterNot {
-                        it.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
-                            it.videoType == "MUSIC_VIDEO_TYPE_UGC" ||
-                            it.albumName.equals("YouTube Video", ignoreCase = true)
-                    }
             }
 
             // 4. Queue & Personalization Artist Affinity Search (based on what's in the list or history)
             val secondaryDeferred = async {
                 val queries = buildList {
-                    if (isSeedManipuri) add("Manipuri official hit songs")
-                    dominantQueueArtists.forEach { add("$it official songs") }
+                    if (isSeedManipuri) add("Manipuri hit songs")
+                    dominantQueueArtists.forEach { add("$it songs") }
                 }
                 val jobs = queries.map { q ->
                     async {
                         InnerTubeStreamExtractor.searchOfficialYtmSongs(q, limit = 8)
-                            .filterNot {
-                                it.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
-                                    it.videoType == "MUSIC_VIDEO_TYPE_UGC" ||
-                                    it.albumName.equals("YouTube Video", ignoreCase = true)
-                            }
                     }
                 }
                 jobs.awaitAll().flatten()
@@ -302,21 +291,13 @@ object QueueRecommendationEngine {
             val secondaryTracks = secondaryDeferred.await()
             val saavnTracks = saavnDeferred.await()
 
-            // Interleave Automix, Same-Artist, Contextual, Queue-Affinity, and JioSaavn tracks
+            // Interleave Automix/Related, Same-Artist, Contextual, Queue/History-Affinity, and JioSaavn tracks
             val orderedCandidates = interleaveBatches(
                 listOf(automixTracks, artistTracks, contextualTracks, secondaryTracks, saavnTracks)
             )
 
             for (cand in orderedCandidates) {
                 if (results.size >= limit) break
-                // Never include video tracks when suggesting songs
-                if (cand.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
-                    cand.videoType == "MUSIC_VIDEO_TYPE_UGC" ||
-                    cand.albumName.equals("YouTube Video", ignoreCase = true) ||
-                    cand.albumName.equals("YouTube Videos", ignoreCase = true)
-                ) {
-                    continue
-                }
                 val normTitle = normalizeTitle(cand.title)
                 val sig = signature(cand.title, cand.artist)
                 if (cand.videoId in excludedIds || normTitle in excludedTitles || sig in excludedSigs) continue

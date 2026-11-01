@@ -18,6 +18,10 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import android.util.LruCache
+import android.os.SystemClock
+import android.support.v4.media.MediaMetadataCompat
+import android.support.v4.media.session.MediaSessionCompat
+import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -53,6 +57,7 @@ class MediaPlaybackService : Service() {
     private var lockReleaseJob: Job? = null
     private var artLoadJob: Job? = null
     private var watchdogJob: Job? = null
+    private var mediaSession: MediaSessionCompat? = null
     private val artBitmapCache = LruCache<String, Bitmap>(6)
     private var currentArtBitmap: Bitmap? = null
     private var fallbackLogoBitmap: Bitmap? = null
@@ -153,6 +158,7 @@ class MediaPlaybackService : Service() {
         isRunning = true
         isTerminating = false
         createNotificationChannel()
+        ensureMediaSessionInitialized()
 
         if (playerManager == null) {
             playerManager = (application as? com.example.CascadeApplication)?.audioPlayerManager
@@ -186,16 +192,12 @@ class MediaPlaybackService : Service() {
 
         serviceScope.launch {
             val manager = playerManager ?: (application as? com.example.CascadeApplication)?.audioPlayerManager
+            var lastNotifiedTrackId: String? = null
+            var lastNotifiedPlaying: Boolean? = null
+            var lastNotifiedBuffering: Boolean? = null
+            var lastNotifiedDurationBucket: Long = -1L
+            var lastNotifiedPositionSec: Long = -1L
             manager?.state
-                ?.distinctUntilChanged { old, new ->
-                    old.currentTrack?.id == new.currentTrack?.id &&
-                        old.currentTrack?.title == new.currentTrack?.title &&
-                        old.currentTrack?.artist == new.currentTrack?.artist &&
-                        old.currentTrack?.artUrl == new.currentTrack?.artUrl &&
-                        old.currentTrack?.isDownloaded == new.currentTrack?.isDownloaded &&
-                        old.isPlaying == new.isPlaying &&
-                        old.isBuffering == new.isBuffering
-                }
                 ?.collect { state ->
                     if (isTerminating) return@collect
                     val track = state.currentTrack
@@ -213,7 +215,24 @@ class MediaPlaybackService : Service() {
                                 }
                             }
                         }
-                        loadArtAndNotify(track, state.isPlaying, state.isBuffering)
+                        // Always keep MediaSessionCompat position & duration synced so the notification progress bar is live & scrubbable
+                        syncMediaSessionState(track, state.isPlaying, state.isBuffering)
+                        val durBucket = (state.durationMs.takeIf { it > 0L } ?: track.durationMs) / 1000L
+                        val posSec = state.currentPositionMs.coerceAtLeast(0L) / 1000L
+                        val posJumped = kotlin.math.abs(posSec - lastNotifiedPositionSec) >= 2L
+                        val stateChanged = lastNotifiedTrackId != track.id ||
+                            lastNotifiedPlaying != state.isPlaying ||
+                            lastNotifiedBuffering != state.isBuffering ||
+                            lastNotifiedDurationBucket != durBucket ||
+                            posJumped
+                        if (stateChanged) {
+                            lastNotifiedTrackId = track.id
+                            lastNotifiedPlaying = state.isPlaying
+                            lastNotifiedBuffering = state.isBuffering
+                            lastNotifiedDurationBucket = durBucket
+                            lastNotifiedPositionSec = posSec
+                            loadArtAndNotify(track, state.isPlaying, state.isBuffering)
+                        }
                     } else {
                         lockReleaseJob?.cancel()
                         stopAndRemoveNotification()
@@ -475,6 +494,26 @@ class MediaPlaybackService : Service() {
         val playPauseIcon = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
         val playPauseTitle = if (isPlaying) "Pause" else "Play"
 
+        val art = (if (track.id.isNotBlank()) artBitmapCache.get(track.id) else null)
+            ?: (if (track.artUrl.isNotBlank()) artBitmapCache.get(track.artUrl) else null)
+            ?: (if (currentTrackIdForArt == track.id) currentArtBitmap else null)
+            ?: getOrDecodeAppLogoBitmap()
+
+        ensureMediaSessionInitialized()
+        syncMediaSessionState(track, isPlaying, isBuffering, art)
+
+        val pState = playerManager?.state?.value
+        val durationMs = (pState?.durationMs?.takeIf { it > 0L } ?: track.durationMs.takeIf { it > 0L } ?: 210_000L).coerceAtLeast(1000L)
+        val positionMs = (pState?.currentPositionMs ?: 0L).coerceIn(0L, durationMs)
+        val maxSec = (durationMs / 1000L).toInt().coerceAtLeast(1)
+        val curSec = (positionMs / 1000L).toInt().coerceIn(0, maxSec)
+
+        val mediaStyle = androidx.media.app.NotificationCompat.MediaStyle()
+            .setShowActionsInCompactView(0, 1, 2)
+        mediaSession?.sessionToken?.let { token ->
+            mediaStyle.setMediaSession(token)
+        }
+
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(resolveConsistentSmallIcon())
             .setContentTitle(track.title)
@@ -488,6 +527,9 @@ class MediaPlaybackService : Service() {
                     else -> "Paused"
                 }
             )
+            .setColor(0xFF850101.toInt())
+            .setColorized(true)
+            .setProgress(maxSec, curSec, isBuffering && curSec == 0)
             .setContentIntent(openPendingIntent)
             .setDeleteIntent(stopPending)
             .setOngoing(isPlaying)
@@ -499,15 +541,7 @@ class MediaPlaybackService : Service() {
             .addAction(R.drawable.ic_skip_previous, "Previous", prevPending)
             .addAction(playPauseIcon, playPauseTitle, playPausePending)
             .addAction(R.drawable.ic_skip_next, "Next", nextPending)
-            .setStyle(
-                androidx.media.app.NotificationCompat.MediaStyle()
-                    .setShowActionsInCompactView(0, 1, 2)
-            )
-
-        val art = (if (track.id.isNotBlank()) artBitmapCache.get(track.id) else null)
-            ?: (if (track.artUrl.isNotBlank()) artBitmapCache.get(track.artUrl) else null)
-            ?: (if (currentTrackIdForArt == track.id) currentArtBitmap else null)
-            ?: getOrDecodeAppLogoBitmap()
+            .setStyle(mediaStyle)
 
         if (art != null) {
             builder.setLargeIcon(art)
@@ -542,6 +576,133 @@ class MediaPlaybackService : Service() {
         }
     }
 
+    private fun ensureMediaSessionInitialized() {
+        if (mediaSession != null) return
+        runCatching {
+            val openAppIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("FROM_NOTIFICATION", true)
+            }
+            val sessionActivityPending = PendingIntent.getActivity(
+                this, 0, openAppIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            mediaSession = MediaSessionCompat(this, "SeitharolMediaSession").apply {
+                setSessionActivity(sessionActivityPending)
+                setCallback(object : MediaSessionCompat.Callback() {
+                    override fun onPlay() {
+                        acquireWakeAndWifiLocks()
+                        val mgr = playerManager ?: (application as? com.example.CascadeApplication)?.audioPlayerManager
+                        if (mgr?.state?.value?.isPlaying != true) {
+                            mgr?.togglePlayPause()
+                        }
+                    }
+
+                    override fun onPause() {
+                        val mgr = playerManager ?: (application as? com.example.CascadeApplication)?.audioPlayerManager
+                        mgr?.pause()
+                    }
+
+                    override fun onSkipToNext() {
+                        acquireWakeAndWifiLocks()
+                        val mgr = playerManager ?: (application as? com.example.CascadeApplication)?.audioPlayerManager
+                        mgr?.next()
+                    }
+
+                    override fun onSkipToPrevious() {
+                        acquireWakeAndWifiLocks()
+                        val mgr = playerManager ?: (application as? com.example.CascadeApplication)?.audioPlayerManager
+                        mgr?.previous()
+                    }
+
+                    override fun onSeekTo(pos: Long) {
+                        val mgr = playerManager ?: (application as? com.example.CascadeApplication)?.audioPlayerManager
+                        val targetMs = pos.coerceAtLeast(0L)
+                        mgr?.seekTo(targetMs)
+                        val latestState = mgr?.state?.value
+                        val latestTrack = latestState?.currentTrack
+                        if (latestTrack != null) {
+                            syncMediaSessionState(
+                                track = latestTrack,
+                                isPlaying = latestState.isPlaying,
+                                isBuffering = false,
+                                overridePositionMs = targetMs
+                            )
+                            updateNotification(latestTrack, latestState.isPlaying, false)
+                        }
+                    }
+
+                    override fun onStop() {
+                        val mgr = playerManager ?: (application as? com.example.CascadeApplication)?.audioPlayerManager
+                        mgr?.pause()
+                        stopAndRemoveNotification()
+                    }
+                })
+                isActive = true
+            }
+        }.onFailure { e ->
+            Log.w(TAG, "Failed to initialize MediaSessionCompat: ${e.message}")
+        }
+    }
+
+    private fun syncMediaSessionState(
+        track: Track,
+        isPlaying: Boolean,
+        isBuffering: Boolean,
+        artBitmap: Bitmap? = null,
+        overridePositionMs: Long? = null
+    ) {
+        val session = mediaSession ?: return
+        runCatching {
+            val pState = playerManager?.state?.value
+            val durationMs = (pState?.durationMs?.takeIf { it > 0L } ?: track.durationMs.takeIf { it > 0L } ?: 210_000L).coerceAtLeast(1000L)
+            val positionMs = (overridePositionMs ?: pState?.currentPositionMs ?: 0L).coerceIn(0L, durationMs)
+            val speed = if (isPlaying && !isBuffering) (pState?.playbackSpeed ?: 1f).coerceIn(0.25f, 3f) else 0f
+
+            val art = artBitmap
+                ?: (if (track.id.isNotBlank()) artBitmapCache.get(track.id) else null)
+                ?: (if (track.artUrl.isNotBlank()) artBitmapCache.get(track.artUrl) else null)
+                ?: (if (currentTrackIdForArt == track.id) currentArtBitmap else null)
+                ?: getOrDecodeAppLogoBitmap()
+
+            val metaBuilder = MediaMetadataCompat.Builder()
+                .putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, track.id)
+                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, track.title)
+                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, track.artist)
+                .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, track.album.ifBlank { "Seitharol" })
+                .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, durationMs)
+            if (art != null) {
+                metaBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, art)
+                metaBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON, art)
+            }
+            session.setMetadata(metaBuilder.build())
+
+            val pbStateCode = when {
+                isBuffering && !isPlaying -> PlaybackStateCompat.STATE_BUFFERING
+                isPlaying -> PlaybackStateCompat.STATE_PLAYING
+                else -> PlaybackStateCompat.STATE_PAUSED
+            }
+            val actions = PlaybackStateCompat.ACTION_PLAY or
+                PlaybackStateCompat.ACTION_PAUSE or
+                PlaybackStateCompat.ACTION_PLAY_PAUSE or
+                PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
+                PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+                PlaybackStateCompat.ACTION_SEEK_TO or
+                PlaybackStateCompat.ACTION_STOP
+
+            val playbackState = PlaybackStateCompat.Builder()
+                .setActions(actions)
+                .setState(pbStateCode, positionMs, speed, SystemClock.elapsedRealtime())
+                .build()
+            session.setPlaybackState(playbackState)
+            if (!session.isActive) {
+                session.isActive = true
+            }
+        }.onFailure { e ->
+            Log.w(TAG, "syncMediaSessionState error: ${e.message}")
+        }
+    }
+
     private fun releaseWakeAndWifiLocks() {
         runCatching {
             if (wakeLock?.isHeld == true) wakeLock?.release()
@@ -559,6 +720,11 @@ class MediaPlaybackService : Service() {
         artLoadJob?.cancel()
         watchdogJob?.cancel()
         releaseWakeAndWifiLocks()
+        runCatching {
+            mediaSession?.isActive = false
+            mediaSession?.release()
+            mediaSession = null
+        }
         runCatching {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         }

@@ -1957,6 +1957,9 @@ class CascadeViewModel(
                 musicRepository.removeTrackFromPlaylist(playlistId, trackId)
                 val currentList = _userPlaylists.value[playlistId].orEmpty()
                 _userPlaylists.value = _userPlaylists.value + (playlistId to currentList.filterNot { it.id == trackId })
+                cachedRemoteCollections[playlistId]?.let { (meta, tracks) ->
+                    cachedRemoteCollections[playlistId] = meta to tracks.filterNot { it.id == trackId }
+                }
             }
         }
     }

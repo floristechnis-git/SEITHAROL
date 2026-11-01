@@ -1,6 +1,9 @@
 package com.example.ui.screens
 
 import android.app.DatePickerDialog
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -85,21 +88,82 @@ fun ProfileScreen(
                             .statusBarsPadding()
                             .padding(horizontal = 20.dp, vertical = 12.dp)
                     ) {
-                        Surface(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .size(44.dp),
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surface,
-                            onClick = onOpenNotifications
+                        // Top-right Social & Notification Action Row (GitHub -> LinkedIn -> Notifications)
+                        Row(
+                            modifier = Modifier.align(Alignment.TopEnd),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                NotificationBellAlertSvgIcon(
-                                    tint = MaterialTheme.colorScheme.onSurface,
-                                    hasUnreadAlert = hasUnreadNotifications,
-                                    alertDotColor = Color(0xFFE53935),
-                                    modifier = Modifier.size(21.dp)
-                                )
+                            // 1. GitHub Icon (Left of LinkedIn)
+                            Surface(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .testTag("profile_github_btn"),
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.surface,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                onClick = {
+                                    runCatching {
+                                        val intent = Intent(
+                                            Intent.ACTION_VIEW,
+                                            Uri.parse("https://github.com/floristechnis-git")
+                                        )
+                                        context.startActivity(intent)
+                                    }
+                                }
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    ProfileGitHubSvgIcon(
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.size(21.dp)
+                                    )
+                                }
+                            }
+
+                            // 2. LinkedIn Icon (Left of Notification Icon)
+                            Surface(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .testTag("profile_linkedin_btn"),
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.surface,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                onClick = {
+                                    runCatching {
+                                        val intent = Intent(
+                                            Intent.ACTION_VIEW,
+                                            Uri.parse("https://www.linkedin.com/in/yumkhaibam-johnson-singh-52118a336/")
+                                        )
+                                        context.startActivity(intent)
+                                    }
+                                }
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    ProfileLinkedInSvgIcon(
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+
+                            // 3. Notification Button
+                            Surface(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .testTag("profile_notification_btn"),
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.surface,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                onClick = onOpenNotifications
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    NotificationBellAlertSvgIcon(
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                        hasUnreadAlert = hasUnreadNotifications,
+                                        alertDotColor = Color(0xFF850101),
+                                        modifier = Modifier.size(21.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -827,4 +891,53 @@ fun EditProfileDialog(
             }
         }
     )
+}
+
+
+@Composable
+private fun ProfileGitHubSvgIcon(
+    tint: Color,
+    modifier: Modifier = Modifier
+) {
+    val vector = remember(tint) {
+        androidx.compose.ui.graphics.vector.ImageVector.Builder(
+            name = "ProfileGitHubSvg",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        ).apply {
+            addPath(
+                pathData = androidx.compose.ui.graphics.vector.PathParser().parsePathString(
+                    "M12,2C6.477,2 2,6.484 2,12.017c0,4.425 2.865,8.18 6.839,9.504c0.5,0.092 0.682,-0.217 0.682,-0.483c0,-0.237 -0.008,-0.868 -0.013,-1.703c-2.782,0.605 -3.369,-1.343 -3.369,-1.343c-0.454,-1.158 -1.11,-1.466 -1.11,-1.466c-0.908,-0.62 0.069,-0.608 0.069,-0.608c1.003,0.07 1.53,1.032 1.53,1.032c0.892,1.53 2.341,1.088 2.91,0.832c0.092,-0.647 0.35,-1.088 0.636,-1.338c-2.22,-0.253 -4.555,-1.113 -4.555,-4.951c0,-1.093 0.39,-1.988 1.029,-2.688c-0.103,-0.253 -0.446,-1.272 0.098,-2.65c0,0 0.84,-0.27 2.75,1.026A9.564,9.564 0 0,1 12,6.844c0.85,0.004 1.705,0.115 2.504,0.337c1.909,-1.296 2.747,-1.027 2.747,-1.027c0.546,1.379 0.202,2.398 0.1,2.651c0.64,0.7 1.028,1.595 1.028,2.688c0,3.848 -2.339,4.695 -4.566,4.943c0.359,0.309 0.678,0.92 0.678,1.855c0,1.338 -0.012,2.419 -0.012,2.747c0,0.268 0.18,0.58 0.688,0.482A10.019,10.019 0 0,0 22,12.017C22,6.484 17.522,2 12,2Z"
+                ).toNodes(),
+                fill = androidx.compose.ui.graphics.SolidColor(tint)
+            )
+        }.build()
+    }
+    Icon(imageVector = vector, contentDescription = "GitHub", tint = tint, modifier = modifier)
+}
+
+@Composable
+private fun ProfileLinkedInSvgIcon(
+    tint: Color,
+    modifier: Modifier = Modifier
+) {
+    val vector = remember(tint) {
+        androidx.compose.ui.graphics.vector.ImageVector.Builder(
+            name = "ProfileLinkedInSvg",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        ).apply {
+            addPath(
+                pathData = androidx.compose.ui.graphics.vector.PathParser().parsePathString(
+                    "M19,3a2,2 0 0,1 2,2v14a2,2 0 0,1 -2,2H5a2,2 0 0,1 -2,-2V5a2,2 0 0,1 2,-2h14m-0.5,15.5v-5.3a3.26,3.26 0 0,0 -3.26,-3.26c-0.85,0 -1.84,0.52 -2.28,1.3v-1.11h-2.79v8.37h2.79v-4.93c0,-0.77 0.62,-1.4 1.39,-1.4a1.4,1.4 0 0,1 1.4,1.4v4.93h2.75M6.88,8.56a1.68,1.68 0 0,0 1.68,-1.68c0,-0.93 -0.75,-1.69 -1.68,-1.69a1.69,1.69 0 0,0 -1.69,1.69c0,0.93 0.76,1.68 1.69,1.68m1.39,9.94v-8.37H5.5v8.37h2.77Z"
+                ).toNodes(),
+                fill = androidx.compose.ui.graphics.SolidColor(tint)
+            )
+        }.build()
+    }
+    Icon(imageVector = vector, contentDescription = "LinkedIn", tint = tint, modifier = modifier)
 }

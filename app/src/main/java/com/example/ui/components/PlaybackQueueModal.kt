@@ -1,5 +1,8 @@
 package com.example.ui.components
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -52,6 +55,7 @@ import com.example.ui.theme.*
 import com.seitharol.data.resolver.TrackMetadata
 import com.seitharol.player.QueueRecommendationEngine
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
@@ -93,6 +97,8 @@ fun PlaybackQueueModal(
     val isAutoSuggest by viewModel.isAutoSuggestEnabled.collectAsState()
     val isOffline by viewModel.isOfflineMode.collectAsState()
     val personalizedTracks by viewModel.personalizedTracks.collectAsState()
+    val activeHistory by viewModel.activeHistory.collectAsState()
+    val likedTracks by viewModel.likedTracks.collectAsState()
     val trendingHits by viewModel.trendingHits.collectAsState()
     val videoSuggestions by viewModel.queueVideoSuggestions.collectAsState()
 
@@ -106,20 +112,28 @@ fun PlaybackQueueModal(
         currentTrack == null ||
         (currentTrack.isLocalOnlyTrack && queue.all { it.isLocalOnlyTrack })
 
-    var liveEngineSuggestions by remember { mutableStateOf<List<Track>>(emptyList()) }
+    var liveEngineSuggestions by remember(currentTrack?.id) { mutableStateOf<List<Track>>(emptyList()) }
+    var isFetchingSuggestions by remember(currentTrack?.id) { mutableStateOf(false) }
 
     LaunchedEffect(currentTrack?.id, isCurrentVideo, queue.size, shouldSuppressSuggestions) {
         if (shouldSuppressSuggestions || currentTrack == null) {
             liveEngineSuggestions = emptyList()
+            isFetchingSuggestions = false
             return@LaunchedEffect
         }
+        isFetchingSuggestions = true
         viewModel.refreshQueueSuggestions(currentTrack)
         val seedOnline = if (!currentTrack.isLocalOnlyTrack) {
             currentTrack
         } else {
-            queue.firstOrNull { !it.isLocalOnlyTrack } ?: return@LaunchedEffect
+            queue.firstOrNull { !it.isLocalOnlyTrack } ?: run {
+                isFetchingSuggestions = false
+                return@LaunchedEffect
+            }
         }
-        val queueMeta = queue.filterNot { it.isLocalOnlyTrack }.map {
+        // Combine active queue with recent listening history & liked tracks so recommendations are both song-related and personalized
+        val affinitySourceTracks = (queue + activeHistory.take(10) + likedTracks.take(10)).filterNot { it.isLocalOnlyTrack }
+        val queueMeta = affinitySourceTracks.map {
             TrackMetadata(
                 id = it.id,
                 title = it.title,
@@ -160,6 +174,7 @@ fun PlaybackQueueModal(
                 codec = if (recIsVideo) "MP4" else "Opus"
             )
         }
+        isFetchingSuggestions = false
     }
 
     // Notice: isAutoSuggest is NOT a gate for suggestedTracks!
@@ -170,16 +185,24 @@ fun PlaybackQueueModal(
         liveEngineSuggestions,
         videoSuggestions,
         personalizedTracks,
+        activeHistory,
+        likedTracks,
         trendingHits,
         currentTrack,
         isCurrentVideo,
-        shouldSuppressSuggestions
+        shouldSuppressSuggestions,
+        isFetchingSuggestions
     ) {
         if (shouldSuppressSuggestions) {
             return@remember emptyList<Track>()
         }
         val queueIds = queue.map { it.id }.toSet()
         val queueTitles = queue.map { it.title.lowercase().trim() }.toSet()
+        val seedPrimaryArtist = currentTrack?.artist
+            ?.split(",", "&", "feat.", "ft.")
+            ?.firstOrNull()
+            ?.trim()
+            .orEmpty()
 
         val combinedSpecific = (liveEngineSuggestions + videoSuggestions)
             .filter { cand ->
@@ -191,13 +214,11 @@ fun PlaybackQueueModal(
             .distinctBy { it.id }
 
         if (combinedSpecific.isNotEmpty()) {
-            combinedSpecific.take(14)
+            combinedSpecific.take(16)
         } else if (isCurrentVideo) {
-            // In video mode, NEVER fall back to audio songs
             emptyList()
         } else {
-            // In song mode, fall back to personalized / trending audio songs (strictly excluding videos and local files)
-            (personalizedTracks + trendingHits)
+            val rankedFallback = (activeHistory + likedTracks + personalizedTracks + trendingHits)
                 .filterNot {
                     it.isLocalOnlyTrack ||
                         it.isVideoTrack ||
@@ -207,13 +228,31 @@ fun PlaybackQueueModal(
                 }
                 .filter { it.id !in queueIds && it.title.lowercase().trim() !in queueTitles }
                 .distinctBy { it.id }
-                .take(14)
+                .sortedByDescending { cand ->
+                    val sameArtist = seedPrimaryArtist.isNotBlank() && cand.artist.contains(seedPrimaryArtist, ignoreCase = true)
+                    val inUserLibrary = activeHistory.any { h -> h.id == cand.id } || likedTracks.any { l -> l.id == cand.id }
+                    when {
+                        sameArtist && inUserLibrary -> 3
+                        sameArtist -> 2
+                        inUserLibrary -> 1
+                        else -> 0
+                    }
+                }
+            if (isFetchingSuggestions) {
+                rankedFallback.filter {
+                    seedPrimaryArtist.isNotBlank() && it.artist.contains(seedPrimaryArtist, ignoreCase = true)
+                }.take(14)
+            } else {
+                rankedFallback.take(14)
+            }
         }
     }
 
     androidx.activity.compose.BackHandler(onBack = onDismiss)
 
     val targetDropIndex = draggingFromIndex
+    val sheetScope = rememberCoroutineScope()
+    val sheetDragOffsetY = remember { Animatable(0f) }
 
     LaunchedEffect(draggingFromIndex) {
         if (draggingFromIndex != null) {
@@ -249,7 +288,9 @@ fun PlaybackQueueModal(
         )
     ) {
         Surface(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { translationY = sheetDragOffsetY.value },
             color = MaterialTheme.colorScheme.background,
             contentColor = MaterialTheme.colorScheme.onBackground
         ) {
@@ -261,11 +302,44 @@ fun PlaybackQueueModal(
                     .padding(top = 8.dp)
                     .testTag("playback_queue_modal")
             ) {
-            // Google Pixel Sheet Header Bar
+            // Google Pixel Sheet Header Bar (supports vertical swipe-down to dismiss)
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            onDragEnd = {
+                                sheetScope.launch {
+                                    if (sheetDragOffsetY.value > 150f) {
+                                        onDismiss()
+                                    } else {
+                                        sheetDragOffsetY.animateTo(
+                                            0f,
+                                            spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
+                                        )
+                                    }
+                                }
+                            },
+                            onDragCancel = {
+                                sheetScope.launch { sheetDragOffsetY.animateTo(0f) }
+                            },
+                            onVerticalDrag = { change, dragAmount ->
+                                change.consume()
+                                val next = (sheetDragOffsetY.value + dragAmount).coerceAtLeast(0f)
+                                sheetScope.launch { sheetDragOffsetY.snapTo(next) }
+                            }
+                        )
+                    },
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                Box(
+                    modifier = Modifier
+                        .padding(top = 2.dp, bottom = 6.dp)
+                        .width(40.dp)
+                        .height(4.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                )
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -396,7 +470,7 @@ fun PlaybackQueueModal(
                         ) {
                             Text(
                                 text = "Clear",
-                                color = Color(0xFFFF5252),
+                                color = Color(0xFF850101),
                                 fontFamily = OutfitFontFamily,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
@@ -479,6 +553,7 @@ fun PlaybackQueueModal(
             } else {
                 LazyColumn(
                     state = listState,
+                    userScrollEnabled = draggingFromIndex == null,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
@@ -486,10 +561,10 @@ fun PlaybackQueueModal(
                             listTopWindowY = coordinates.positionInWindow().y
                             listHeightPx = coordinates.size.height.toFloat()
                         },
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    itemsIndexed(queue, key = { _, track -> track.id }) { index, track ->
+                    itemsIndexed(queue, key = { index, track -> "q_${track.id}_$index" }) { index, track ->
                         val isPlaying = index == currentIndex
                         val isDragging = draggingFromIndex == index
                         val currentIndexState by rememberUpdatedState(index)

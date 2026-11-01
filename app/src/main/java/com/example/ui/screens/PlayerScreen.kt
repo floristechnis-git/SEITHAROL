@@ -873,34 +873,7 @@ fun PlayerScreen(
                 SvgChevronIcon(isExpanded = true, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
-            // Small minimal top-row pill showing 1 to 2 words only ("Local", "Downloaded", "Cached", or "Online")
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 8.dp)
-            ) {
-                val minimalStatusWord = when {
-                    track.isLocalOnlyTrack -> "Local"
-                    isDownloaded -> "Downloaded"
-                    playerState.isStreamCachedOnDisk -> "Cached"
-                    else -> "Online"
-                }
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
-                ) {
-                    Text(
-                        text = minimalStatusWord,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp,
-                        fontFamily = OutfitFontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                    )
-                }
-            }
+            Spacer(modifier = Modifier.weight(1f))
 
             // Top-Right Action Cluster: Like + 3-Dot More + Right-Most Share (unavailable for offline/local)
             val canShareOrExploreOnline = !isOfflineMode && !track.isLocalOnlyTrack
@@ -981,6 +954,33 @@ fun PlayerScreen(
                         }
                     }
                 }
+            }
+        }
+
+        // ────────────────────────────────────────────────────────────
+        // Minimal borderless/backgroundless status text centered directly above the thumbnail/frame
+        // ────────────────────────────────────────────────────────────
+        if (!showLyrics) {
+            val minimalStatusWord = when {
+                track.isLocalOnlyTrack -> "Local"
+                isDownloaded -> "Downloaded"
+                playerState.isStreamCachedOnDisk -> "Cached"
+                else -> "Online"
+            }
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 2.dp, bottom = 4.dp)
+            ) {
+                Text(
+                    text = minimalStatusWord,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.5.sp,
+                    fontFamily = OutfitFontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1
+                )
             }
         }
 
@@ -1725,66 +1725,6 @@ fun PlayerScreen(
                     contentDescription = "Repeat",
                     tint = if (playerState.repeatMode != RepeatMode.OFF) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                     modifier = Modifier.size(20.dp)
-                )
-            }
-        }
-
-        // ────────────────────────────────────────────────────────────
-        // Google Pixel Material 3 Countdown Banner & Up Next Pill Sheet
-        // (Strictly suppressed when RepeatMode.ONE is active or single song is looping)
-        // ────────────────────────────────────────────────────────────
-        val isSingleSongLooping = playerState.repeatMode == RepeatMode.ONE
-        val nextTrack = when {
-            isSingleSongLooping -> null
-            playerState.currentIndex in 0 until playerState.queue.size - 1 ->
-                playerState.queue[playerState.currentIndex + 1]
-            playerState.repeatMode == RepeatMode.ALL && playerState.queue.size > 1 ->
-                playerState.queue.firstOrNull()
-            else -> null
-        }
-        val remainingMs = (totalDuration - displayPosition).coerceAtLeast(0L)
-        var dismissedCountdownForTrackId by remember(track.id, playerState.repeatMode) { mutableStateOf(false) }
-        val showNextCountdown = playerState.isPlaying &&
-            !playerState.isBuffering &&
-            !isSingleSongLooping &&
-            playerState.durationMs >= 15_000L &&
-            totalDuration >= 15_000L &&
-            remainingMs in 1L..10_000L &&
-            nextTrack != null &&
-            nextTrack.id != track.id &&
-            !dismissedCountdownForTrackId
-        val countdownSeconds = ((remainingMs + 999L) / 1000L).toInt().coerceIn(1, 10)
-        // Elapsed fraction from 0f -> 1f over the 10-second countdown window (pure animation, no numbers)
-        val countdownProgress = ((10_000f - remainingMs.toFloat()) / 10_000f).coerceIn(0f, 1f)
-        val showUpNextBar = !showFullscreenVideo &&
-            !isSingleSongLooping &&
-            nextTrack != null &&
-            (isUpNextVisible || playerState.isPartOfPlaylist || playerState.queue.size > 1 || showNextCountdown)
-
-        AnimatedVisibility(
-            visible = showUpNextBar,
-            enter = fadeIn(tween(220)) + slideInVertically(initialOffsetY = { it / 2 }),
-            exit = fadeOut(tween(180)) + slideOutVertically(targetOffsetY = { it / 2 })
-        ) {
-            if (nextTrack != null && !isSingleSongLooping) {
-                SeitharolNextTrackCountdownBanner(
-                    nextTrack = nextTrack,
-                    countdownSeconds = countdownSeconds,
-                    countdownProgress = if (showNextCountdown) countdownProgress else 0f,
-                    isCountingDown = showNextCountdown,
-                    onPlayNow = { viewModel.next() },
-                    onOpenQueue = { showQueue = true },
-                    onDismiss = {
-                        if (showNextCountdown) {
-                            dismissedCountdownForTrackId = true
-                        } else {
-                            isUpNextVisible = false
-                        }
-                    },
-                    isDarkOverlay = false,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 4.dp)
                 )
             }
         }
@@ -3691,27 +3631,7 @@ fun SeitharolFullscreenVideoModal(
                     }
                 }
 
-                AnimatedVisibility(
-                    visible = showNextCountdown && playerState.repeatMode != RepeatMode.ONE && nextTrack != null && !showSuggestionsDrawer && !isControlsLocked,
-                    enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
-                    exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .navigationBarsPadding()
-                        .padding(horizontal = 24.dp, vertical = if (showControls) 110.dp else 32.dp)
-                ) {
-                    if (nextTrack != null && playerState.repeatMode != RepeatMode.ONE) {
-                        SeitharolNextTrackCountdownBanner(
-                            nextTrack = nextTrack,
-                            countdownSeconds = countdownSeconds,
-                            countdownProgress = countdownProgress,
-                            onPlayNow = { viewModel.next() },
-                            onDismiss = onDismissCountdown,
-                            isDarkOverlay = true,
-                            modifier = Modifier.widthIn(max = 390.dp)
-                        )
-                    }
-                }
+
             }
         }
 

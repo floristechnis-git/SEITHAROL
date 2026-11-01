@@ -353,20 +353,28 @@ fun LibraryScreen(
 @Composable
 fun ClampedSwipeToDeleteRow(
     onDelete: () -> Unit,
+    actionLabel: String = "Remove",
     content: @Composable () -> Unit
 ) {
+    val currentOnDelete by rememberUpdatedState(onDelete)
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
-    val maxRevealPx = with(density) { -88.dp.toPx() }
+    val maxRevealPx = with(density) { -104.dp.toPx() }
+    val fullSwipeTriggerPx = with(density) { -210.dp.toPx() }
     val offsetX = remember { Animatable(0f) }
 
     Box(modifier = Modifier.fillMaxWidth()) {
-        // Only paint red delete background when actively swiped left (prevents red bleed-through)
         if (offsetX.value < -2f) {
             Box(
                 modifier = Modifier
                     .matchParentSize()
-                    .background(MaterialTheme.colorScheme.errorContainer)
+                    .background(Color(0xFF850101))
+                    .clickable {
+                        scope.launch {
+                            offsetX.snapTo(0f)
+                            currentOnDelete()
+                        }
+                    }
                     .padding(end = 16.dp),
                 contentAlignment = Alignment.CenterEnd
             ) {
@@ -374,13 +382,13 @@ fun ClampedSwipeToDeleteRow(
                     onClick = {
                         scope.launch {
                             offsetX.snapTo(0f)
-                            onDelete()
+                            currentOnDelete()
                         }
                     }
                 ) {
                     Text(
-                        text = "Delete",
-                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        text = actionLabel,
+                        color = Color.White,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -394,13 +402,21 @@ fun ClampedSwipeToDeleteRow(
                     detectHorizontalDragGestures(
                         onDragEnd = {
                             scope.launch {
-                                val target = if (offsetX.value < maxRevealPx * 0.45f) maxRevealPx else 0f
-                                offsetX.animateTo(target)
+                                if (offsetX.value <= fullSwipeTriggerPx * 0.9f) {
+                                    offsetX.snapTo(0f)
+                                    currentOnDelete()
+                                } else {
+                                    val target = if (offsetX.value < maxRevealPx * 0.40f) maxRevealPx else 0f
+                                    offsetX.animateTo(target)
+                                }
                             }
+                        },
+                        onDragCancel = {
+                            scope.launch { offsetX.animateTo(0f) }
                         },
                         onHorizontalDrag = { change, dragAmount ->
                             change.consume()
-                            val clamped = (offsetX.value + dragAmount).coerceIn(maxRevealPx, 0f)
+                            val clamped = (offsetX.value + dragAmount).coerceIn(fullSwipeTriggerPx, 0f)
                             scope.launch { offsetX.snapTo(clamped) }
                         }
                     )

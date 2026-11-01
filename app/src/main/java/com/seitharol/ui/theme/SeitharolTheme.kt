@@ -17,7 +17,7 @@ import com.example.ui.theme.LocalIsDarkTheme
 import com.seitharol.data.preferences.ThemeMode
 
 private val DarkColorPalette = darkColorScheme(
-    primary = Color(0xFFB71C1C),
+    primary = Color(0xFF850101),
     onPrimary = Color.White,
     primaryContainer = Color(0xFF4A0E0E),
     onPrimaryContainer = Color(0xFFFFDAD6),
@@ -25,11 +25,11 @@ private val DarkColorPalette = darkColorScheme(
     onSecondary = Color.White,
     secondaryContainer = Color(0xFF262727),
     onSecondaryContainer = Color.White,
-    tertiary = Color(0xFFC62828),
+    tertiary = Color(0xFF850101),
     onTertiary = Color.White,
     tertiaryContainer = Color(0xFF3B1010),
     onTertiaryContainer = Color(0xFFFFDAD6),
-    error = Color(0xFFB71C1C),
+    error = Color(0xFF850101),
     onError = Color.White,
     errorContainer = Color(0xFF4A0E0E),
     onErrorContainer = Color(0xFFFFDAD6),
@@ -54,7 +54,7 @@ private val DarkColorPalette = darkColorScheme(
 )
 
 private val LightColorPalette = lightColorScheme(
-    primary = Color(0xFF9B0000),
+    primary = Color(0xFF850101),
     onPrimary = Color.White,
     primaryContainer = Color(0xFFFFDAD6),
     onPrimaryContainer = Color(0xFF410002),
@@ -62,11 +62,11 @@ private val LightColorPalette = lightColorScheme(
     onSecondary = Color(0xFF111315),
     secondaryContainer = Color(0xFFE8EAED),
     onSecondaryContainer = Color(0xFF111315),
-    tertiary = Color(0xFF8E0000),
+    tertiary = Color(0xFF850101),
     onTertiary = Color.White,
     tertiaryContainer = Color(0xFFFFDAD6),
     onTertiaryContainer = Color(0xFF410002),
-    error = Color(0xFF9B0000),
+    error = Color(0xFF850101),
     onError = Color.White,
     errorContainer = Color(0xFFFFDAD6),
     onErrorContainer = Color(0xFF410002),

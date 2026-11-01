@@ -953,7 +953,7 @@ object NetworkClients {
                 runCatching {
                     val ytmSongs = InnerTubeStreamExtractor.searchOfficialYtmSongs("$title $artist".trim(), limit = 2)
                     ytmSongs.forEach { song ->
-                        InnerTubeStreamExtractor.extractVideoId(song.id)?.let { candidateVideoIds.add(it) }
+                        InnerTubeStreamExtractor.extractVideoId(song.videoId)?.let { candidateVideoIds.add(it) }
                     }
                 }
             }

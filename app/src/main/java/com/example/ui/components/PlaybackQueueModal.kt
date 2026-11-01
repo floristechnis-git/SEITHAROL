@@ -14,10 +14,13 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerInputChange
 import com.example.player.RepeatMode
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -655,13 +658,13 @@ fun PlaybackQueueModal(
                                     modifier = Modifier
                                         .size(40.dp)
                                         .pointerInput(track.id) {
-                                            androidx.compose.foundation.gestures.detectVerticalDragGestures(
-                                                onDragStart = { offset ->
+                                            detectVerticalDragGestures(
+                                                onDragStart = { offset: Offset ->
                                                     draggingFromIndex = currentIndexState
                                                     dragOffsetY = 0f
                                                     pointerWindowY = listTopWindowY + offset.y
                                                 },
-                                                onVerticalDrag = { change, dragAmount ->
+                                                onVerticalDrag = { change: PointerInputChange, dragAmount: Float ->
                                                     change.consume()
                                                     dragOffsetY += dragAmount
                                                     pointerWindowY += dragAmount

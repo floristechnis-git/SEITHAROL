@@ -2172,18 +2172,7 @@ object InnerTubeStreamExtractor {
             }
         }
 
-        // Supplement channel playlists via YouTube playlist search (`params = "EgIQAw=="`) if needed
-        if (channelPlaylists.size < 4 && resolvedTitle.isNotBlank()) {
-            runCatching {
-                val ytmPlaylists = searchYtmCollections(
-                    query = resolvedTitle,
-                    filterParams = "EgWKAQIoAWoKEAkQChADEAUQBA==",
-                    type = "PLAYLIST",
-                    limit = 10
-                ).filter { belongsToArtist(resolvedTitle, it.title, it.subtitle) }
-                channelPlaylists.addAll(ytmPlaylists)
-            }
-        }
+
 
         if (resolvedBanner.isBlank()) resolvedBanner = resolvedAvatar
 
@@ -2811,11 +2800,11 @@ object InnerTubeStreamExtractor {
                             }
                         }
 
-                        (shelfTitle.contains("playlist") || shelfTitle.contains("mix") || shelfTitle.contains("artist")) &&
-                            (navBrowseId.startsWith("VL") || navBrowseId.startsWith("PL") || navBrowseId.startsWith("RD")) -> {
-                            if (belongsToArtist(name, itemTitle, itemSubtitle)) {
-                                val effectiveType = if (itemTitle.contains("Mix", true) || itemTitle.contains("Radio", true) || navBrowseId.startsWith("RD")) "MIX" else "PLAYLIST"
-                                albumsOrSinglesAdd(playlists, navBrowseId, watchPlaylistId, itemTitle, itemSubtitle, itemThumb, effectiveType)
+                        (shelfTitle.contains("playlist") || shelfTitle.contains("artist")) &&
+                            !shelfTitle.contains("featured") &&
+                            (navBrowseId.startsWith("VL") || navBrowseId.startsWith("PL")) -> {
+                            if (belongsToArtist(name, itemTitle, itemSubtitle, itemSubtitle)) {
+                                albumsOrSinglesAdd(playlists, navBrowseId, watchPlaylistId, itemTitle, itemSubtitle, itemThumb, "PLAYLIST")
                             }
                         }
                     }
@@ -2826,27 +2815,27 @@ object InnerTubeStreamExtractor {
         // Always expand the artist's full song catalog across official YTM songs, channel uploads, and top albums/singles
         val searchedPrimary = runCatching { searchOfficialYtmSongs(name, limit = 40) }.getOrDefault(emptyList())
         val searchedSecondary = runCatching { searchOfficialYtmSongs("$name songs", limit = 40) }.getOrDefault(emptyList())
-        val channelUploads = runCatching {
+        val channelMeta = runCatching {
             fetchYouTubeChannelMeta(
                 channelName = name,
                 knownBrowseId = browseId.takeIf { it.startsWith("UC") },
                 treatUploadsAsVideo = false
-            )?.videos.orEmpty()
-        }.getOrDefault(emptyList())
+            )
+        }.getOrNull()
+        val channelUploads = channelMeta?.videos.orEmpty()
 
         channelUploads.forEach { upload ->
             topSongs.add(upload.copy(artist = name))
+        }
+        channelMeta?.playlists?.forEach { chPl ->
+            if (belongsToArtist(name, chPl.title, chPl.subtitle)) {
+                playlists.add(chPl)
+            }
         }
         (searchedPrimary + searchedSecondary).forEach { song ->
             if (belongsToArtist(name, song.title, itemArtist = song.artist)) {
                 topSongs.add(song)
             }
-        }
-        if (playlists.size < 4) {
-            val searchedPlaylists = runCatching {
-                searchYtmCollections("$name Mix Playlist", filterParams = "EgWKAQIoAWoKEAkQChADEAUQBA==", type = "PLAYLIST", limit = 8)
-            }.getOrDefault(emptyList())
-            playlists.addAll(searchedPlaylists)
         }
 
         val cleanedAlbums = albums.filterNot {

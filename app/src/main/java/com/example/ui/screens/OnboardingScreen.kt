@@ -665,27 +665,15 @@ fun OnboardingScreen(
 
                             Spacer(modifier = Modifier.height(22.dp))
 
-                            Surface(
-                                shape = RoundedCornerShape(22.dp),
-                                color = surfaceColor.copy(alpha = 0.45f),
-                                border = BorderStroke(1.dp, borderColor.copy(alpha = 0.5f)),
+                            Text(
+                                text = "Welcome $displayName, I'm Yumkhaibam Johnson Singh. I dedicated 71 days to developing this app for you. My hope is to provide an ad-free and limitless experience, serving as a supportive background companion for your work and an emotional stabilizer for those with broken hearts.",
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.Normal,
+                                fontSize = 15.5.sp,
+                                lineHeight = 24.sp,
+                                color = primaryText,
                                 modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 20.dp, vertical = 20.dp)
-                                ) {
-                                    Text(
-                                        text = "Welcome $displayName, I'm Yumkhaibam Johnson Singh. I dedicated 71 days to developing this app for you. My hope is to provide an ad-free and limitless experience, serving as a supportive background companion for your work and an emotional stabilizer for those with broken hearts.",
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = FontWeight.Normal,
-                                        fontSize = 15.sp,
-                                        lineHeight = 23.sp,
-                                        color = primaryText
-                                    )
-                                }
-                            }
+                            )
                         }
 
                         Column(

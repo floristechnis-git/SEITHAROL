@@ -411,11 +411,23 @@ fun ArtistScreen(
                 }.distinctBy { it.browseId }
             }
 
-            val availableTabs = remember(effectiveIsChannel, page.playlists, pureAlbums, cleanSingles) {
+            val verifiedArtistPlaylists = remember(page.playlists, page.name) {
+                page.playlists
+                    .filter { pl ->
+                        InnerTubeStreamExtractor.belongsToArtist(
+                            targetArtist = page.name,
+                            itemTitle = pl.title,
+                            itemSubtitle = pl.subtitle
+                        )
+                    }
+                    .distinctBy { it.browseId }
+            }
+
+            val availableTabs = remember(effectiveIsChannel, verifiedArtistPlaylists, pureAlbums, cleanSingles) {
                 buildList {
                     add(ArtistChannelTab.ALL)
                     add(ArtistChannelTab.VIDEOS_OR_TRACKS)
-                    if (page.playlists.isNotEmpty()) add(ArtistChannelTab.PLAYLISTS)
+                    if (verifiedArtistPlaylists.isNotEmpty()) add(ArtistChannelTab.PLAYLISTS)
                     if (!effectiveIsChannel && (pureAlbums.isNotEmpty() || cleanSingles.isNotEmpty())) {
                         add(ArtistChannelTab.RELEASES)
                     }
@@ -1078,127 +1090,12 @@ fun ArtistScreen(
                     }
                 }
 
-                // ────────────────────────────────────────────────────────────
-                // 4. Featured Spotlight Card (Most Recent / Top Release) on Overview
-                // ────────────────────────────────────────────────────────────
-                if (selectedTab == ArtistChannelTab.ALL && filteredCandidates.isNotEmpty() && searchQuery.isBlank()) {
-                    val spotlight = filteredCandidates.first()
-                    val spotlightTrack = filteredDomainTracks.first()
-                    val spotlightDur = formatDurationSeconds(spotlight.durationSeconds)
-                    item {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp)
-                                .clip(RoundedCornerShape(20.dp))
-                                .clickable {
-                                    viewModel.playQueue(filteredDomainTracks, 0, isPlaylist = true)
-                                },
-                            shape = RoundedCornerShape(20.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .width(136.dp)
-                                        .height(78.dp)
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(MaterialTheme.colorScheme.surface)
-                                ) {
-                                    AsyncImage(
-                                        model = spotlight.thumbnailUrl,
-                                        contentDescription = spotlight.title,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                    Surface(
-                                        shape = RoundedCornerShape(6.dp),
-                                        color = Color.Black.copy(alpha = 0.78f),
-                                        modifier = Modifier
-                                            .align(Alignment.BottomEnd)
-                                            .padding(5.dp)
-                                    ) {
-                                        Text(
-                                            text = spotlightDur,
-                                            color = Color.White,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                }
 
-                                Spacer(modifier = Modifier.width(14.dp))
-
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = if (effectiveIsChannel) "FEATURED UPLOAD" else "TOP RELEASE",
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontSize = 10.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        letterSpacing = 0.7.sp
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = spotlight.title,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        fontFamily = SyneFontFamily,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.5.sp,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Spacer(modifier = Modifier.height(3.dp))
-                                    val metaInfo = listOfNotNull(
-                                        spotlight.viewCountText.takeIf { it.isNotBlank() },
-                                        spotlight.publishedTimeText.takeIf { it.isNotBlank() }
-                                    ).joinToString(" • ").ifBlank { "${page.name} • $spotlightDur" }
-                                    Text(
-                                        text = metaInfo,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontFamily = OutfitFontFamily,
-                                        fontSize = 11.5.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.width(8.dp))
-
-                                Surface(
-                                    onClick = {
-                                        viewModel.playQueue(filteredDomainTracks, 0, isPlaylist = true)
-                                    },
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(40.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.PlayArrow,
-                                            contentDescription = "Play Spotlight",
-                                            tint = MaterialTheme.colorScheme.onPrimary,
-                                            modifier = Modifier.size(22.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
 
                 // ────────────────────────────────────────────────────────────
                 // 5. Playlists & Mixes Shelf (shown on Overview & Playlists tab)
                 // ────────────────────────────────────────────────────────────
-                if ((selectedTab == ArtistChannelTab.ALL || selectedTab == ArtistChannelTab.PLAYLISTS) && page.playlists.isNotEmpty()) {
+                if ((selectedTab == ArtistChannelTab.ALL || selectedTab == ArtistChannelTab.PLAYLISTS) && verifiedArtistPlaylists.isNotEmpty()) {
                     item {
                         Spacer(modifier = Modifier.height(16.dp))
                         Row(
@@ -1209,7 +1106,7 @@ fun ArtistScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = if (effectiveIsChannel) "Channel Playlists (${page.playlists.size})" else "Artist Playlists & Mixes (${page.playlists.size})",
+                                text = if (effectiveIsChannel) "Channel Playlists (${verifiedArtistPlaylists.size})" else "Artist Playlists (${verifiedArtistPlaylists.size})",
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.onBackground
                             )
@@ -1218,7 +1115,7 @@ fun ArtistScreen(
                             contentPadding = PaddingValues(horizontal = 16.dp),
                             horizontalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
-                            items(page.playlists.distinctBy { it.browseId }, key = { "pl_card_${it.browseId}" }) { pl ->
+                            items(verifiedArtistPlaylists, key = { "pl_card_${it.browseId}" }) { pl ->
                                 val targetId = pl.browseId.ifBlank { pl.playlistId.orEmpty() }
                                 val isMix = pl.type.equals("MIX", true) || pl.title.contains("Mix", true) || targetId.startsWith("RD")
                                 Column(

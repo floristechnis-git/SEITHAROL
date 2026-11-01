@@ -1371,25 +1371,7 @@ fun PlayerScreen(
                             .padding(vertical = 2.dp, horizontal = 2.dp)
                             .testTag("player_artist_name")
                     )
-                    val showChannelButton = isVideoTrack &&
-                        !track.isLocalOnlyTrack &&
-                        !track.isDownloaded &&
-                        track.localPath.isNullOrBlank() &&
-                        canNavigateArtist
-                    if (showChannelButton) {
-                        Text(
-                            text = "• Channel",
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f),
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp,
-                            maxLines = 1,
-                            modifier = Modifier.clickable {
-                                onDismiss()
-                                viewModel.navigateToArtist(track.artist, isChannel = true)
-                            }
-                        )
-                    } else if (!isVideoTrack && track.album.isNotBlank() && track.album != track.title && track.album != "Single" && !track.album.equals("YouTube Video", ignoreCase = true)) {
+                    if (!isVideoTrack && track.album.isNotBlank() && track.album != track.title && track.album != "Single" && !track.album.equals("YouTube Video", ignoreCase = true)) {
                         Text(
                             text = "• ${track.album}",
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),

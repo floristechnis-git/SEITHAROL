@@ -166,6 +166,21 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            val activity = context as? androidx.activity.ComponentActivity
+            androidx.compose.runtime.DisposableEffect(effectiveDark) {
+                activity?.enableEdgeToEdge(
+                    statusBarStyle = androidx.activity.SystemBarStyle.auto(
+                        android.graphics.Color.TRANSPARENT,
+                        android.graphics.Color.TRANSPARENT
+                    ) { effectiveDark },
+                    navigationBarStyle = androidx.activity.SystemBarStyle.auto(
+                        android.graphics.Color.TRANSPARENT,
+                        android.graphics.Color.TRANSPARENT
+                    ) { effectiveDark }
+                )
+                onDispose { }
+            }
+
             // Always On Screen control for Video (default ON) and Music (default OFF)
             val isVideoActive = playerState.isVideoMode || playerState.currentTrack?.isVideoTrack == true
             val isPlaybackActive = playerState.currentTrack != null && (playerState.isPlaying || playerState.isBuffering)

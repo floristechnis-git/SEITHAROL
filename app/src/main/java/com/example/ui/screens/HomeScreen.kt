@@ -206,7 +206,8 @@ fun HomeScreen(
     // Prepare Spotify-Style 2-Column "Speed Dial / Quick Picks" Bento Items (2x3 grid = 6 items)
     // Dynamically blends the user's most recent online plays, liked tracks, and personalized recommendations
     // so Quick Dial updates immediately as the user plays or likes music!
-    val quickDialItems = remember(personalizedTracks, activeHistory, likedTracks, deduplicatedTrendingHits, downloadedTracks, isOfflineMode, recentSearches, excludedHeroIds) {
+    // Build Quick Picks from the user's whole-history personalizedTracks (without re-triggering on every activeHistory play)
+    val quickDialItems = remember(personalizedTracks, likedTracks, deduplicatedTrendingHits, downloadedTracks, isOfflineMode, excludedHeroIds) {
         if (isOfflineMode) {
             return@remember downloadedTracks
                 .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
@@ -230,45 +231,44 @@ fun HomeScreen(
         }
 
         val items = mutableListOf<HomeMediaItem>()
-        fun addUniqueItem(cand: HomeMediaItem) {
+        val artistSlotCounts = mutableMapOf<String, Int>()
+        fun addUniqueItem(cand: HomeMediaItem, enforceArtistDiversity: Boolean = true) {
             if (items.size >= 6) return
             val exists = items.any {
                 it.id == cand.id || (it.title.equals(cand.title, ignoreCase = true) && it.subtitle.equals(cand.subtitle, ignoreCase = true))
             }
-            if (!exists) items.add(cand)
+            if (exists) return
+            val primaryArt = cand.subtitle.split(",", "&", "•").firstOrNull()?.trim()?.lowercase().orEmpty()
+            if (enforceArtistDiversity && primaryArt.isNotBlank() && (artistSlotCounts[primaryArt] ?: 0) >= 1) {
+                return
+            }
+            if (primaryArt.isNotBlank()) {
+                artistSlotCounts[primaryArt] = (artistSlotCounts[primaryArt] ?: 0) + 1
+            }
+            items.add(cand)
         }
 
-        // 1. Most recently played online track (1 slot) + history-based personalized recommendations
-        //    so Quick Picks isn't just repeating the last two played songs verbatim while all 6 slots
-        //    stay 100% related to the user's listening history!
-        activeHistory
-            .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
-            .map { it.toHomeMediaItem() }
-            .filter(::isAuthenticCleanSong)
-            .take(1)
-            .forEach(::addUniqueItem)
-
-        // 2. History-driven personalized recommendations (from YTM RDAMVM Automix of played tracks & history artists)
+        // 1. First pass: pick 6 diverse tracks across different artists from whole-history personalizedTracks
         personalizedTracks
             .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
             .map { it.toHomeMediaItem() }
             .filter(::isAuthenticCleanSong)
-            .forEach(::addUniqueItem)
+            .forEach { addUniqueItem(it, enforceArtistDiversity = true) }
 
-        // 3. Additional history & liked tracks if personalizedTracks is still loading
+        // 2. Second pass: allow additional whole-history personalized tracks or liked tracks if needed
         if (items.size < 6) {
-            (activeHistory + likedTracks)
+            (personalizedTracks + likedTracks + activeHistory.drop(1))
                 .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
                 .map { it.toHomeMediaItem() }
                 .filter(::isAuthenticCleanSong)
-                .forEach(::addUniqueItem)
+                .forEach { addUniqueItem(it, enforceArtistDiversity = false) }
         }
         if (items.size < 6) {
             deduplicatedTrendingHits
                 .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
                 .map { it.toHomeMediaItem() }
                 .filter(::isAuthenticCleanSong)
-                .forEach(::addUniqueItem)
+                .forEach { addUniqueItem(it, enforceArtistDiversity = false) }
         }
 
         items.take(6)
@@ -505,10 +505,10 @@ fun HomeScreen(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
             .testTag("home_screen")
     ) {
-        // Stacked top-position atmospheric layer:
+        // Stacked top-position atmospheric layer starting at y = 0 (covering the status bar & top header seamlessly
+        // so the top header is never a separate black bar):
         // 1) Cloudy dim deep-red (#850101) beam glowing from behind-top of "Johnson"
         // 2) Position-fixed / absolute "Johnson" watermark in front of the beam
         BoxWithConstraints(
@@ -540,38 +540,46 @@ fun HomeScreen(
                 rawSp.coerceIn(48f, 220f).sp
             }
 
-            // Cloudy dim deep-red (#850101) beam stacked at the top behind "Johnson"
+            val isDark = com.example.ui.theme.LocalIsDarkTheme.current
+
+            // Cloudy dim deep-red (#850101) beam stacked at the very top (including behind the status bar / top header)
             androidx.compose.foundation.Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(260.dp)
+                    .height(310.dp)
                     .align(Alignment.TopCenter)
             ) {
                 val beamWidth = size.width
                 val beamHeight = size.height
-                // Soft vertical atmospheric wash from the very top edge
+                val topAlpha = if (isDark) 0.42f else 0.16f
+                val midAlpha = if (isDark) 0.24f else 0.08f
+                val lowAlpha = if (isDark) 0.09f else 0.03f
+                // Soft vertical atmospheric wash from y = 0 (top status bar edge) downward
                 drawRect(
                     brush = Brush.verticalGradient(
-                        0.0f to Color(0xFF850101).copy(alpha = 0.34f),
-                        0.38f to Color(0xFF850101).copy(alpha = 0.18f),
-                        0.72f to Color(0xFF850101).copy(alpha = 0.06f),
+                        0.0f to Color(0xFF850101).copy(alpha = topAlpha),
+                        0.28f to Color(0xFF850101).copy(alpha = midAlpha),
+                        0.62f to Color(0xFF850101).copy(alpha = lowAlpha),
                         1.0f to Color.Transparent,
                         startY = 0f,
                         endY = beamHeight
                     )
                 )
                 // Cloudy radial red beam centered behind-top of "Johnson"
+                val radialCenterAlpha = if (isDark) 0.45f else 0.18f
+                val radialMidAlpha = if (isDark) 0.22f else 0.08f
+                val radialLowAlpha = if (isDark) 0.06f else 0.02f
                 drawCircle(
                     brush = Brush.radialGradient(
-                        0.0f to Color(0xFF850101).copy(alpha = 0.38f),
-                        0.45f to Color(0xFF850101).copy(alpha = 0.18f),
-                        0.78f to Color(0xFF850101).copy(alpha = 0.05f),
+                        0.0f to Color(0xFF850101).copy(alpha = radialCenterAlpha),
+                        0.45f to Color(0xFF850101).copy(alpha = radialMidAlpha),
+                        0.78f to Color(0xFF850101).copy(alpha = radialLowAlpha),
                         1.0f to Color.Transparent,
-                        center = androidx.compose.ui.geometry.Offset(beamWidth * 0.38f, -beamHeight * 0.08f),
-                        radius = beamWidth * 0.78f
+                        center = androidx.compose.ui.geometry.Offset(beamWidth * 0.38f, beamHeight * 0.05f),
+                        radius = beamWidth * 0.85f
                     ),
-                    radius = beamWidth * 0.78f,
-                    center = androidx.compose.ui.geometry.Offset(beamWidth * 0.38f, -beamHeight * 0.08f)
+                    radius = beamWidth * 0.85f,
+                    center = androidx.compose.ui.geometry.Offset(beamWidth * 0.38f, beamHeight * 0.05f)
                 )
             }
 
@@ -587,6 +595,7 @@ fun HomeScreen(
                 overflow = TextOverflow.Visible,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .statusBarsPadding()
                     .wrapContentHeight(align = Alignment.Top, unbounded = true)
                     .padding(start = 16.dp, top = 0.dp)
                     .testTag("home_hero_johnson_text")
@@ -594,7 +603,9 @@ fun HomeScreen(
         }
 
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding(),
             contentPadding = PaddingValues(bottom = 0.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {

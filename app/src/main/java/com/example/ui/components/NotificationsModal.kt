@@ -268,16 +268,7 @@ object ManipurCalendarNotificationEngine {
                 isToday = isToday,
                 timestampMs = eventTimestampMs
             )
-            "11-01" -> return CalendarEventNotification(
-                id = "solar_chavang_kut_$year",
-                title = "Happy Chavang Kut!",
-                body = "Warm wishes on the autumn post-harvest festival of Kuki-Chin-Mizo communities in Manipur.",
-                dateLabel = relativeLabel,
-                iconName = "CELEBRATION",
-                icon = Icons.Outlined.Celebration,
-                isToday = isToday,
-                timestampMs = eventTimestampMs
-            )
+
             "12-12" -> return CalendarEventNotification(
                 id = "solar_nupi_lal_$year",
                 title = "Nupi Lal Numit (Dec 12)",
@@ -387,6 +378,20 @@ object ManipurCalendarNotificationEngine {
     fun checkAndDispatchDailyNotification(context: Context): List<CalendarEventNotification> {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val storedMap = loadStoredNotifications(prefs).toMutableMap()
+        // Purge any stored Chavang Kut / Kuki festival notifications from persistent store & status bar
+        val removedIds = storedMap.keys.filter { key ->
+            val ev = storedMap[key]
+            key.contains("chavang_kut", ignoreCase = true) ||
+                ev?.title?.contains("Chavang Kut", ignoreCase = true) == true ||
+                ev?.body?.contains("Kuki", ignoreCase = true) == true
+        }
+        if (removedIds.isNotEmpty()) {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            removedIds.forEach { id ->
+                storedMap.remove(id)
+                runCatching { nm?.cancel(id.hashCode()) }
+            }
+        }
 
         val nowCal = Calendar.getInstance()
         val todayYear = nowCal.get(Calendar.YEAR)

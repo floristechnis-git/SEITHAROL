@@ -103,28 +103,32 @@ fun PlaybackQueueModal(
     val videoSuggestions by viewModel.queueVideoSuggestions.collectAsState()
 
     val currentTrack = playerState.currentTrack ?: queue.getOrNull(currentIndex) ?: queue.firstOrNull()
+    // Always anchor Up Next recommendations on the FIRST song in the queue (not the last playing song)
+    val firstAnchorTrack = remember(queue, currentTrack?.id) {
+        queue.firstOrNull { !it.isLocalOnlyTrack } ?: currentTrack
+    }
     val isCurrentVideo = playerState.isVideoMode ||
-        currentTrack?.isVideoTrack == true ||
+        firstAnchorTrack?.isVideoTrack == true ||
         (queue.isNotEmpty() && queue.all { it.isVideoTrack })
 
     // Suppress suggestions ONLY when offline or when playing a local single file (no online tracks in queue)
     val shouldSuppressSuggestions = isOffline ||
-        currentTrack == null ||
-        (currentTrack.isLocalOnlyTrack && queue.all { it.isLocalOnlyTrack })
+        firstAnchorTrack == null ||
+        (firstAnchorTrack.isLocalOnlyTrack && queue.all { it.isLocalOnlyTrack })
 
-    // Fetch YouTube Music RDAMVM Up Next sequence ONLY when the playing song changes (never on queue.size changes),
-    // preventing the Up Next list from jumping or re-mixing!
-    LaunchedEffect(currentTrack?.id, isCurrentVideo, shouldSuppressSuggestions) {
-        if (shouldSuppressSuggestions || currentTrack == null) {
+    // Fetch YouTube Music RDAMVM Up Next sequence ONLY for the FIRST song (`firstAnchorTrack.id`),
+    // so the Up Next sequence stays locked to the first song and never switches as subsequent songs play!
+    LaunchedEffect(firstAnchorTrack?.id, isCurrentVideo, shouldSuppressSuggestions) {
+        if (shouldSuppressSuggestions || firstAnchorTrack == null) {
             return@LaunchedEffect
         }
-        viewModel.refreshQueueSuggestions(currentTrack)
+        viewModel.refreshQueueSuggestions(firstAnchorTrack)
     }
 
     val suggestedTracks = remember(
         queue,
         videoSuggestions,
-        currentTrack?.id,
+        firstAnchorTrack?.id,
         isCurrentVideo,
         shouldSuppressSuggestions
     ) {
@@ -765,7 +769,7 @@ fun PlaybackQueueModal(
                             item(key = "queue_suggestions_header") {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "Suggested for ${currentTrack?.title ?: if (isCurrentVideo) "this video" else "this queue"}",
+                                    text = "Suggested for ${firstAnchorTrack?.title ?: currentTrack?.title ?: if (isCurrentVideo) "this video" else "this queue"}",
                                     color = MaterialTheme.colorScheme.onBackground,
                                     fontFamily = SyneFontFamily,
                                     fontSize = 14.sp,

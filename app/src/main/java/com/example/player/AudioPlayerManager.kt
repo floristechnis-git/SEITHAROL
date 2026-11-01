@@ -69,6 +69,7 @@ data class PlayerState(
     val activeStream: ResolvedStream? = null,
     val activeLyricIndex: Int = -1,
     val lyricLines: List<LyricsLine> = emptyList(),
+    val isLyricsLoading: Boolean = false,
     val lyricOffsetMs: Long = 0L,
     val bassBoostPercent: Float = 25f,
     val loudnessGainDb: Float = 0f,
@@ -535,6 +536,9 @@ class AudioPlayerManager(
                 isVideoMode = restoredTrack.genre.equals("YouTube Video", ignoreCase = true) ||
                     restoredTrack.album.equals("YouTube Video", ignoreCase = true)
             )
+            if (localLyrics.isEmpty()) {
+                ensureLyricsLoaded(forceRetry = false)
+            }
         }
     }
 
@@ -569,6 +573,7 @@ class AudioPlayerManager(
                             isPlaying = false,
                             isBuffering = false
                         )
+                        ensureLyricsLoaded(forceRetry = false)
                     }
                 }
             }
@@ -910,21 +915,8 @@ class AudioPlayerManager(
                                 lastFailedTrackId = null
                                 initEqualizer(audioSessionId)
                                 persistCurrentPlaybackState()
-                                val readyTrack = _state.value.currentTrack
-                                if (readyTrack != null && _state.value.lyricLines.isEmpty() && safeDur > 0L && !resolverEngine.isOfflineMode.value) {
-                                    coroutineScope.launch(Dispatchers.IO) {
-                                        val synced = com.example.network.NetworkClients.fetchLrclibLyrics(
-                                            artist = readyTrack.artist,
-                                            title = readyTrack.title,
-                                            durationSec = safeDur / 1000L,
-                                            videoId = readyTrack.id
-                                        )
-                                        if (synced.isNotEmpty() && _state.value.currentTrack?.id == readyTrack.id && _state.value.lyricLines.isEmpty()) {
-                                            val livePos = (exoPlayer?.currentPosition?.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
-                                            val idx = synced.indexOfLast { it.timestampMs <= livePos + _state.value.lyricOffsetMs + LYRIC_SYNC_LEAD_MS }
-                                            _state.value = _state.value.copy(lyricLines = synced, activeLyricIndex = idx)
-                                        }
-                                    }
+                                if (_state.value.lyricLines.isEmpty()) {
+                                    ensureLyricsLoaded(forceRetry = false)
                                 }
                                 if (activelyPlaying) {
                                     startPositionTracker()
@@ -2092,32 +2084,14 @@ class AudioPlayerManager(
                     durationMs = expectedDuration,
                     currentPositionMs = initialPos,
                     lyricLines = localLyrics,
+                    isLyricsLoading = localLyrics.isEmpty() && !resolverEngine.isOfflineMode.value,
                     activeLyricIndex = initialLyricIdx,
                     isVideoMode = isVideoTrack,
                     isVideoFrameRendered = if (isSameTrack) _state.value.isVideoFrameRendered else false
                 )
 
-                // Fetch synchronized lyrics asynchronously when online (multi-source LRCLIB + NetEase + KuGou + YT Timed Captions)
-                if (localLyrics.isEmpty() && !resolverEngine.isOfflineMode.value && com.example.util.ErrorFormatter.isOnline(context)) {
-                    coroutineScope.launch(Dispatchers.IO) {
-                        val realDurSec = if (current.durationMs > 0L && current.durationMs != 210_000L) current.durationMs / 1000L else 0L
-                        val lrclibLines = com.example.network.NetworkClients.fetchLrclibLyrics(
-                            artist = current.artist,
-                            title = current.title,
-                            durationSec = realDurSec,
-                            videoId = current.id
-                        )
-                        if (lrclibLines.isNotEmpty() && _state.value.currentTrack?.id == current.id) {
-                            val livePos = (exoPlayer?.currentPosition?.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
-                            val updatedIdx = lrclibLines.indexOfLast {
-                                it.timestampMs <= livePos + _state.value.lyricOffsetMs + LYRIC_SYNC_LEAD_MS
-                            }
-                            _state.value = _state.value.copy(
-                                lyricLines = lrclibLines,
-                                activeLyricIndex = updatedIdx
-                            )
-                        }
-                    }
+                if (localLyrics.isEmpty()) {
+                    ensureLyricsLoaded(forceRetry = true)
                 }
 
                 // Instant Fast-Path for On-Device & Downloaded Songs/Videos with an already known localPath:
@@ -3061,7 +3035,10 @@ class AudioPlayerManager(
         val current = _state.value.currentTrack ?: return
         val isLocalSingle = current.isLocalOnlyTrack && _state.value.queue.all { it.isLocalOnlyTrack }
         if (isLocalSingle) return
-        val seedOnline = if (!current.isLocalOnlyTrack) current else _state.value.queue.firstOrNull { !it.isLocalOnlyTrack } ?: return
+        // Always anchor autoplay recommendations on the FIRST online song of the queue, never the last playing song!
+        val seedOnline = _state.value.queue.firstOrNull { !it.isLocalOnlyTrack }
+            ?: current.takeIf { !it.isLocalOnlyTrack }
+            ?: return
         isFetchingAutoplay = true
         coroutineScope.launch(Dispatchers.IO) {
             try {
@@ -3141,7 +3118,9 @@ class AudioPlayerManager(
             markTrackEndedForReplay()
             return
         }
-        val seedOnline = if (!current.isLocalOnlyTrack) current else _state.value.queue.firstOrNull { !it.isLocalOnlyTrack }
+        // Always anchor autoplay recommendations on the FIRST online song of the queue, never the last playing song!
+        val seedOnline = _state.value.queue.firstOrNull { !it.isLocalOnlyTrack }
+            ?: current.takeIf { !it.isLocalOnlyTrack }
         if (seedOnline == null) {
             markTrackEndedForReplay()
             return
@@ -3221,7 +3200,83 @@ class AudioPlayerManager(
         }
     }
 
+    private var lyricsFetchJob: Job? = null
+    private var lastLyricsFetchTrackId: String? = null
+
+    fun ensureLyricsLoaded(forceRetry: Boolean = false) {
+        val track = _state.value.currentTrack ?: return
+        if (!forceRetry && _state.value.lyricLines.isNotEmpty()) return
+        if (!forceRetry && lyricsFetchJob?.isActive == true && lastLyricsFetchTrackId == track.id) return
+
+        val localLyrics = parseLrc(track.lyrics)
+        if (localLyrics.isNotEmpty()) {
+            val livePos = (exoPlayer?.currentPosition?.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
+            val idx = localLyrics.indexOfLast { it.timestampMs <= livePos + _state.value.lyricOffsetMs + LYRIC_SYNC_LEAD_MS }
+            _state.value = _state.value.copy(
+                lyricLines = localLyrics,
+                activeLyricIndex = idx,
+                isLyricsLoading = false
+            )
+            return
+        }
+
+        if (resolverEngine.isOfflineMode.value) {
+            _state.value = _state.value.copy(isLyricsLoading = false)
+            return
+        }
+
+        lyricsFetchJob?.cancel()
+        lastLyricsFetchTrackId = track.id
+        _state.value = _state.value.copy(isLyricsLoading = true)
+        lyricsFetchJob = coroutineScope.launch(Dispatchers.IO) {
+            try {
+                val durMs = _state.value.durationMs.takeIf { it > 0L && it != 210_000L }
+                    ?: track.durationMs.takeIf { it > 0L && it != 210_000L }
+                    ?: 0L
+                val realDurSec = durMs / 1000L
+                val fetchedLines = com.example.network.NetworkClients.fetchLrclibLyrics(
+                    artist = track.artist,
+                    title = track.title,
+                    durationSec = realDurSec,
+                    videoId = track.id,
+                    forceRefresh = forceRetry
+                )
+                withContext(Dispatchers.Main) {
+                    if (_state.value.currentTrack?.id == track.id) {
+                        if (fetchedLines.isNotEmpty()) {
+                            val livePos = (exoPlayer?.currentPosition?.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
+                            val updatedIdx = fetchedLines.indexOfLast {
+                                it.timestampMs <= livePos + _state.value.lyricOffsetMs + LYRIC_SYNC_LEAD_MS
+                            }
+                            _state.value = _state.value.copy(
+                                lyricLines = fetchedLines,
+                                activeLyricIndex = updatedIdx,
+                                isLyricsLoading = false
+                            )
+                        } else {
+                            _state.value = _state.value.copy(isLyricsLoading = false)
+                        }
+                    }
+                }
+            } catch (_: Throwable) {
+                withContext(Dispatchers.Main) {
+                    if (_state.value.currentTrack?.id == track.id) {
+                        _state.value = _state.value.copy(isLyricsLoading = false)
+                    }
+                }
+            }
+        }
+    }
+
     private fun parseLrc(lrcText: String): List<LyricsLine> {
+        if (lrcText.isBlank()) return emptyList()
+        val synced = com.example.network.NetworkClients.parseLrc(lrcText)
+        if (synced.isNotEmpty()) return synced
+        val durSec = (_state.value.durationMs / 1000L).takeIf { it > 0L } ?: 210L
+        return com.example.network.NetworkClients.buildProportionalLyrics(lrcText, durSec)
+    }
+
+    private fun parseLrcLegacyUnused(lrcText: String): List<LyricsLine> {
         if (lrcText.isBlank()) return emptyList()
         val rawEntries = mutableListOf<Triple<Long, String, String?>>()
         val regex = Regex("""\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?](.*)""")

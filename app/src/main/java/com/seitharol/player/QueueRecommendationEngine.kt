@@ -211,7 +211,7 @@ object QueueRecommendationEngine {
             .take(3)
 
         coroutineScope {
-            // 1. Primary: Real YouTube Music RDAMVM Automix Queue for current seed + secondary queue/history seed
+            // 1. Primary: Real YouTube Music RDAMVM Automix Queue strictly for the FIRST anchor song (`currentTrack`)
             val automixDeferred = async {
                 val seedVid: String? = if (currentTrack.id.length == 11) {
                     currentTrack.id
@@ -222,21 +222,12 @@ object QueueRecommendationEngine {
                     ).firstOrNull()?.videoId
                 }
                 val primaryRadio: List<CandidateStream> = if (seedVid != null) {
-                    InnerTubeStreamExtractor.fetchAutomixQueue(seedVid, limit = limit + 14)
+                    InnerTubeStreamExtractor.fetchAutomixQueue(seedVid, limit = limit + 16)
                 } else {
                     emptyList()
                 }
-                val secondarySeedId: String? = queueTracks
-                    .firstOrNull { it.id != currentTrack.id && it.id.length == 11 }
-                    ?.id
-                val secondaryRadio: List<CandidateStream> = if (secondarySeedId != null) {
-                    InnerTubeStreamExtractor.fetchAutomixQueue(secondarySeedId, limit = 8)
-                } else {
-                    emptyList()
-                }
-                val rawAutomix: List<CandidateStream> = primaryRadio + secondaryRadio
 
-                rawAutomix.filter { cand: CandidateStream ->
+                primaryRadio.filter { cand: CandidateStream ->
                     val candLower = "${cand.title} ${cand.artist} ${cand.channelName}".lowercase()
                     if (!isSeedHindiOrBollywood && GENERIC_BOLLYWOOD_LABELS.any { candLower.contains(it) }) {
                         false
@@ -246,57 +237,52 @@ object QueueRecommendationEngine {
                 }
             }
 
-            // 2. Same-Artist Official Songs (high relevance to currently playing track)
+            // 2. A few songs (up to 4) from the FIRST song's artist (verified belongsToArtist)
             val primaryArtistDeferred = async {
                 if (primaryArtist.isNotBlank() && !primaryArtist.equals("Unknown Artist", true)) {
                     InnerTubeStreamExtractor.searchOfficialYtmSongs("$primaryArtist songs", limit = 12)
+                        .filter { cand ->
+                            InnerTubeStreamExtractor.belongsToArtist(
+                                targetArtist = primaryArtist,
+                                itemTitle = cand.title,
+                                itemArtist = cand.artist
+                            )
+                        }
+                        .take(4)
                 } else emptyList()
             }
 
-            // 3. Contextual Song / Scene Affinity Search
+            // 3. Fallback only if RDAMVM radio is empty
             val contextualDeferred = async {
-                val contextQuery = when {
-                    isSeedManipuri && primaryArtist.isNotBlank() -> "$primaryArtist Manipuri song"
-                    isSeedManipuri -> "$cleanTitleWords Manipuri song"
-                    primaryArtist.isNotBlank() && cleanTitleWords.isNotBlank() -> "$cleanTitleWords $primaryArtist"
-                    cleanTitleWords.isNotBlank() -> "$cleanTitleWords song"
-                    else -> "${currentTrack.title} song"
-                }
-                InnerTubeStreamExtractor.searchOfficialYtmSongs(contextQuery, limit = 12)
-            }
-
-            // 4. Queue & Personalization Artist Affinity Search (based on what's in the list or history)
-            val secondaryDeferred = async {
-                val queries = buildList {
-                    if (isSeedManipuri) add("Manipuri hit songs")
-                    dominantQueueArtists.forEach { add("$it songs") }
-                }
-                val jobs = queries.map { q ->
-                    async {
-                        InnerTubeStreamExtractor.searchOfficialYtmSongs(q, limit = 8)
-                    }
-                }
-                jobs.awaitAll().flatten()
-            }
-
-            // 5. JioSaavn Station Similarity Fallback for numeric/Saavn IDs or regional tracks
-            val saavnDeferred = async {
-                if (currentTrack.id.length != 11 || currentTrack.source.equals("JIOSAAVN", ignoreCase = true)) {
-                    fetchJioSaavnSimilarSongs("${currentTrack.title} $primaryArtist".trim(), limit = 8)
+                val contextQuery = if (primaryArtist.isNotBlank()) {
+                    "${currentTrack.title} $primaryArtist"
                 } else {
-                    emptyList()
+                    "${currentTrack.title} song"
                 }
+                InnerTubeStreamExtractor.searchOfficialYtmSongs(contextQuery, limit = 10)
             }
 
             val automixTracks = automixDeferred.await()
-            val artistTracks = primaryArtistDeferred.await()
+            val fewArtistTracks = primaryArtistDeferred.await()
             val contextualTracks = contextualDeferred.await()
-            val secondaryTracks = secondaryDeferred.await()
-            val saavnTracks = saavnDeferred.await()
 
-            // Follow YouTube Music's exact RDAMVM Automix sequence first so Up Next matches what's playing
-            // without random jumping/mixing; only append same-artist / contextual tracks after Automix if needed.
-            val orderedCandidates = automixTracks + artistTracks + contextualTracks + secondaryTracks + saavnTracks
+            // Blend the first song's RDAMVM Automix sequence with a few songs from the first song's artist
+            // (inserting 1 same-artist song every 3 RDAMVM tracks, just like YouTube Music)
+            val blendedFirstSongAndArtist = mutableListOf<CandidateStream>()
+            var artIdx = 0
+            for ((idx, autoTrack) in automixTracks.withIndex()) {
+                blendedFirstSongAndArtist.add(autoTrack)
+                if ((idx + 1) % 3 == 0 && artIdx < fewArtistTracks.size) {
+                    blendedFirstSongAndArtist.add(fewArtistTracks[artIdx])
+                    artIdx++
+                }
+            }
+            while (artIdx < fewArtistTracks.size) {
+                blendedFirstSongAndArtist.add(fewArtistTracks[artIdx])
+                artIdx++
+            }
+
+            val orderedCandidates = blendedFirstSongAndArtist + contextualTracks
 
             for (cand in orderedCandidates) {
                 if (results.size >= limit) break

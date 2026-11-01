@@ -682,6 +682,15 @@ fun PlayerScreen(
     // Pre-warm Related data in background without affecting Up Next queue
     LaunchedEffect(track.id) {
         viewModel.loadRelatedForTrack(track)
+        if (playerState.lyricLines.isEmpty()) {
+            viewModel.ensureLyricsLoaded(forceRetry = false)
+        }
+    }
+
+    LaunchedEffect(showLyrics, showExpandedLyrics) {
+        if ((showLyrics || showExpandedLyrics) && playerState.lyricLines.isEmpty()) {
+            viewModel.ensureLyricsLoaded(forceRetry = true)
+        }
     }
 
     var lastUserInlineTouchMs by remember { mutableLongStateOf(0L) }
@@ -1061,12 +1070,52 @@ fun PlayerScreen(
 
                 if (playerState.lyricLines.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "No lyrics available for this track",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontFamily = OutfitFontFamily,
-                            fontSize = 15.sp
-                        )
+                        if (playerState.isLyricsLoading) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(26.dp),
+                                    strokeWidth = 2.5.dp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "Loading lyrics...",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontFamily = OutfitFontFamily,
+                                    fontSize = 14.sp
+                                )
+                            }
+                        } else {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text(
+                                    text = "No lyrics available for this track",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontFamily = OutfitFontFamily,
+                                    fontSize = 15.sp
+                                )
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .clickable { viewModel.ensureLyricsLoaded(forceRetry = true) }
+                                ) {
+                                    Text(
+                                        text = "Retry",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 13.sp,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
                 } else {
                     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -3867,12 +3916,52 @@ fun ExpandedLyricsModal(
                     val verticalPad = (maxHeight / 2 - 32.dp).coerceAtLeast(110.dp)
                     if (playerState.lyricLines.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "No lyrics found for this track.",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontFamily = OutfitFontFamily,
-                                fontSize = 16.sp
-                            )
+                            if (playerState.isLyricsLoading) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(30.dp),
+                                        strokeWidth = 2.5.dp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = "Loading lyrics...",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontFamily = OutfitFontFamily,
+                                        fontSize = 15.sp
+                                    )
+                                }
+                            } else {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Text(
+                                        text = "No lyrics found for this track.",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontFamily = OutfitFontFamily,
+                                        fontSize = 16.sp
+                                    )
+                                    Surface(
+                                        shape = RoundedCornerShape(16.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .clickable { viewModel.ensureLyricsLoaded(forceRetry = true) }
+                                    ) {
+                                        Text(
+                                            text = "Retry",
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontFamily = OutfitFontFamily,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 14.sp,
+                                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     } else {
                         LazyColumn(

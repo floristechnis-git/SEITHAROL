@@ -114,9 +114,18 @@ fun CascadeTheme(
             }
             val window = (view.context as? Activity)?.window
             if (window != null) {
+                WindowCompat.setDecorFitsSystemWindows(window, false)
+                window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS)
+                window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     window.decorView.isForceDarkAllowed = false
+                    window.isStatusBarContrastEnforced = false
+                    window.isNavigationBarContrastEnforced = false
                 }
+                @Suppress("DEPRECATION")
+                window.statusBarColor = android.graphics.Color.TRANSPARENT
+                @Suppress("DEPRECATION")
+                window.navigationBarColor = android.graphics.Color.TRANSPARENT
                 val insetsController = WindowCompat.getInsetsController(window, view)
                 insetsController.isAppearanceLightStatusBars = !darkTheme
                 insetsController.isAppearanceLightNavigationBars = !darkTheme

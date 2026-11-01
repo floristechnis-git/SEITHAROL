@@ -290,23 +290,23 @@ class CascadeViewModel(
 
     fun refreshQueueSuggestions(seedTrack: Track?, forceReload: Boolean = false) {
         val state = playerState.value
-        val seed = seedTrack ?: state.currentTrack
-        val isLocalSingle = seed != null && seed.isLocalOnlyTrack && state.queue.all { it.isLocalOnlyTrack }
+        // Always anchor Up Next suggestions on the FIRST online song of the queue so advancing to next songs never switches Up Next!
+        val anchorSeed = state.queue.firstOrNull { !it.isLocalOnlyTrack } ?: seedTrack ?: state.currentTrack
+        val isLocalSingle = anchorSeed != null && anchorSeed.isLocalOnlyTrack && state.queue.all { it.isLocalOnlyTrack }
         // Suppress suggestions ONLY when offline or when playing a local single file (no online tracks in queue)
-        if (seed == null || isOfflineMode.value || isLocalSingle) {
+        if (anchorSeed == null || isOfflineMode.value || isLocalSingle) {
             lastSuggestionsSeedId = null
             _queueVideoSuggestions.value = emptyList()
             return
         }
-        // Keep the Up Next suggestion sequence stable for the currently playing song unless the song changes
-        if (!forceReload && seed.id == lastSuggestionsSeedId && _queueVideoSuggestions.value.isNotEmpty()) {
+        if (!forceReload && anchorSeed.id == lastSuggestionsSeedId && _queueVideoSuggestions.value.isNotEmpty()) {
             return
         }
-        lastSuggestionsSeedId = seed.id
+        lastSuggestionsSeedId = anchorSeed.id
         suggestionsFetchJob?.cancel()
         suggestionsFetchJob = viewModelScope.launch(vmExceptionHandler) {
             runCatching {
-                val effectiveSeed = if (!seed.isLocalOnlyTrack) seed else state.queue.firstOrNull { !it.isLocalOnlyTrack } ?: return@launch
+                val effectiveSeed = anchorSeed
                 val isVideo = state.isVideoMode || effectiveSeed.isVideoTrack || (state.queue.isNotEmpty() && state.queue.all { it.isVideoTrack })
                 val historyArtistNames = activeHistory.value
                     .filterNot { it.isLocalOnlyTrack }
@@ -792,23 +792,23 @@ class CascadeViewModel(
             }
         }
 
-        // Reactive Homefeed Personalization Observer:
+        // Whole-History Personalization Observer:
+        // Updates HomeScreen personalization when a new song is played or liked, but ALWAYS computes
+        // recommendations across the user's ENTIRE listening history (never just the last played song!)
         @OptIn(kotlinx.coroutines.FlowPreview::class)
-        // Automatically updates Home recommendations whenever the user plays an online song,
-        // likes/unlikes a track, or performs a new search!
         viewModelScope.launch(vmExceptionHandler) {
             val prefs = com.example.data.AppPreferences.getInstance(com.example.CascadeApplication.instance)
             combine(
-                activeHistory.map { list -> list.take(6).joinToString(",") { it.id } }.distinctUntilChanged(),
-                likedTracks.map { list -> list.take(6).joinToString(",") { it.id } }.distinctUntilChanged(),
-                prefs.recentSearches.map { list -> list.take(4).joinToString(",") }.distinctUntilChanged()
+                activeHistory.map { list -> list.firstOrNull()?.id.orEmpty() + ":" + list.size }.distinctUntilChanged(),
+                likedTracks.map { list -> list.firstOrNull()?.id.orEmpty() + ":" + list.size }.distinctUntilChanged(),
+                prefs.recentSearches.map { list -> list.firstOrNull().orEmpty() }.distinctUntilChanged()
             ) { histSig, likedSig, searchSig ->
                 "$histSig|$likedSig|$searchSig"
             }
                 .drop(1)
                 .debounce(1200L)
                 .collectLatest { sig ->
-                    if (sig.isNotBlank() && sig != "||" && !isOfflineMode.value) {
+                    if (sig.isNotBlank() && !isOfflineMode.value) {
                         loadHomeScreenMusic(isBackgroundUpdate = true)
                     }
                 }
@@ -835,12 +835,14 @@ class CascadeViewModel(
                 isLoadingHome.value = true
             }
             try {
-                // Strictly exclude local tracks (`isLocalOnlyTrack`) from history & liked seeds
-                // so Home feed never generates suggestions from local song names or artists!
+                // Use the user's WHOLE listening history (all active + archived history & liked tracks),
+                // never just the single last played song!
                 val dbHistory = musicRepository.getActiveHistory().firstOrNull().orEmpty()
-                val realHistory = (activeHistory.value + dbHistory)
+                val dbArchived = runCatching { musicRepository.getArchivedHistory().firstOrNull().orEmpty() }.getOrDefault(emptyList())
+                val rawFullHistory = (activeHistory.value + dbHistory + dbArchived)
                     .filterNot { it.isLocalOnlyTrack }
-                    .distinctBy { it.id }
+                val realHistory = rawFullHistory.distinctBy { it.id }
+
                 val dbLiked = musicRepository.getLikedTracks().firstOrNull().orEmpty()
                 val realLiked = (likedTracks.value + dbLiked)
                     .filterNot { it.isLocalOnlyTrack }
@@ -860,20 +862,20 @@ class CascadeViewModel(
                     "various", "download", "seitharol"
                 )
 
-                val seedIds = (realHistory.take(8).map { it.id } + realLiked.take(5).map { it.id })
-                    .mapNotNull { InnerTubeStreamExtractor.extractVideoId(it) }
-                    .distinct()
-
-                // Recency-weighted + frequency-weighted artist ranking from listening history & liked tracks
-                val artistWeights = LinkedHashMap<String, Int>()
-                fun addArtistWeight(rawArtist: String, weight: Int) {
-                    val clean = rawArtist
+                fun cleanPrimaryArtist(rawArtist: String): String {
+                    return rawArtist
                         .removeSuffix(" - Topic")
                         .removeSuffix("- Topic")
                         .split(",", "&", "feat.", "ft.", "/")
                         .firstOrNull()
                         ?.trim()
                         .orEmpty()
+                }
+
+                // Whole-history frequency + liked weighting across ALL tracks in history (no recency bias toward the last played song!)
+                val artistWeights = LinkedHashMap<String, Int>()
+                fun addArtistWeight(rawArtist: String, weight: Int) {
+                    val clean = cleanPrimaryArtist(rawArtist)
                     if (clean.length < 2) return
                     val lower = clean.lowercase()
                     if (bannedKeywords.contains(lower) || bannedKeywords.any { b -> lower.contains(b) }) return
@@ -881,29 +883,58 @@ class CascadeViewModel(
                     artistWeights[existingKey] = (artistWeights[existingKey] ?: 0) + weight
                 }
 
-                realHistory.take(15).forEachIndexed { idx, track ->
-                    val recencyBonus = (15 - idx).coerceAtLeast(3)
-                    addArtistWeight(track.artist, recencyBonus * 3)
+                rawFullHistory.forEach { track ->
+                    addArtistWeight(track.artist, 10)
                 }
-                realLiked.take(10).forEachIndexed { idx, track ->
-                    val recencyBonus = (10 - idx).coerceAtLeast(2)
-                    addArtistWeight(track.artist, recencyBonus * 2)
+                realLiked.forEach { track ->
+                    addArtistWeight(track.artist, 12)
                 }
                 val cleanSearchQueries = recentSearches
                     .map { it.trim() }
                     .filter { it.isNotBlank() && !bannedKeywords.contains(it.lowercase()) && !bannedKeywords.any { b -> it.lowercase().contains(b) } }
 
-                val historyTrackQueries = realHistory.take(6).mapNotNull { tr ->
-                    val cleanArt = tr.artist.removeSuffix(" - Topic").removeSuffix("- Topic").trim()
-                    val q = "${tr.title} $cleanArt".trim()
-                    q.takeIf { it.length >= 3 }
-                }
-                val combinedHistoryAndSearchQueries = (historyTrackQueries + cleanSearchQueries).distinct().take(6)
-
                 val topArtists = artistWeights.entries
                     .sortedByDescending { it.value }
                     .map { it.key }
                     .take(8)
+
+                // Select diverse seed tracks spanning the user's WHOLE history (1 seed per distinct top artist across the entire history),
+                // rather than taking the last played song first!
+                val diverseWholeHistoryTracks = mutableListOf<Track>()
+                val seenSeedArtists = mutableSetOf<String>()
+                val historyPoolForSeeding = if (realHistory.size > 2) {
+                    // Place historical favorites & middle/older history ahead of the single last-played track
+                    (realLiked + realHistory.drop(1) + listOf(realHistory.first())).distinctBy { it.id }
+                } else {
+                    (realLiked + realHistory).distinctBy { it.id }
+                }
+                for (tr in historyPoolForSeeding) {
+                    val artKey = cleanPrimaryArtist(tr.artist).lowercase()
+                    if (artKey.isNotBlank() && seenSeedArtists.add(artKey)) {
+                        diverseWholeHistoryTracks.add(tr)
+                        if (diverseWholeHistoryTracks.size >= 8) break
+                    }
+                }
+                if (diverseWholeHistoryTracks.size < 8) {
+                    for (tr in historyPoolForSeeding) {
+                        if (diverseWholeHistoryTracks.none { it.id == tr.id }) {
+                            diverseWholeHistoryTracks.add(tr)
+                            if (diverseWholeHistoryTracks.size >= 8) break
+                        }
+                    }
+                }
+
+                val seedIds = diverseWholeHistoryTracks
+                    .mapNotNull { InnerTubeStreamExtractor.extractVideoId(it.id) }
+                    .distinct()
+                    .take(6)
+
+                val historyTrackQueries = diverseWholeHistoryTracks.take(6).mapNotNull { tr ->
+                    val cleanArt = cleanPrimaryArtist(tr.artist)
+                    val q = "${tr.title} $cleanArt".trim()
+                    q.takeIf { it.length >= 3 }
+                }
+                val combinedHistoryAndSearchQueries = (historyTrackQueries + cleanSearchQueries).distinct().take(6)
 
                 val personalizedDeferred = async {
                     InnerTubeStreamExtractor.buildPersonalizedHomeFeed(
@@ -1368,9 +1399,10 @@ class CascadeViewModel(
             playerManager.isAutoplayEnabled = autoSuggestManager.isAutoSuggestEnabled.value
         }
         automixFetchJob?.cancel()
+        lastSuggestionsSeedId = null
         playerManager.playTrack(effectiveTrack)
         if (!effectiveTrack.isLocalOnlyTrack && !isOfflineMode.value) {
-            refreshQueueSuggestions(effectiveTrack)
+            refreshQueueSuggestions(effectiveTrack, forceReload = true)
         }
         automixFetchJob = viewModelScope.launch(vmExceptionHandler) {
             runCatching {
@@ -1378,6 +1410,49 @@ class CascadeViewModel(
                     musicRepository.insertTrack(effectiveTrack)
                 }
                 musicRepository.recordPlayHistory(effectiveTrack)
+                // Build the YouTube Music Up Next queue anchored on this FIRST song + a few songs from its artist
+                if (!effectiveTrack.isLocalOnlyTrack && !isOfflineMode.value && isAutoSuggestEnabled.value) {
+                    val isVideo = effectiveTrack.isVideoTrack
+                    val seedMeta = com.seitharol.data.resolver.TrackMetadata(
+                        id = effectiveTrack.id,
+                        title = effectiveTrack.title,
+                        artist = effectiveTrack.artist,
+                        album = if (isVideo) "YouTube Video" else effectiveTrack.album,
+                        durationSeconds = (effectiveTrack.durationMs / 1000L).toInt(),
+                        thumbnailUrl = effectiveTrack.artUrl,
+                        source = if (isVideo) "YOUTUBE_VIDEO" else "YOUTUBE"
+                    )
+                    val recs = com.seitharol.player.QueueRecommendationEngine.fetchRelevantRecommendations(
+                        currentTrack = seedMeta,
+                        queueTracks = listOf(seedMeta),
+                        limit = 18
+                    )
+                    val likedIds = likedTrackIds.value
+                    val dlMap = downloadedTracksById.value
+                    val mappedRecs = recs.map { r ->
+                        val recIsVideo = isVideo || r.source.equals("YOUTUBE_VIDEO", ignoreCase = true)
+                        enrichTrackStatus(
+                            Track(
+                                id = r.id,
+                                title = r.title,
+                                artist = r.artist,
+                                album = if (recIsVideo) "YouTube Video" else r.album.takeUnless {
+                                    it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
+                                }.orEmpty(),
+                                durationMs = r.durationSeconds * 1000L,
+                                artUrl = r.thumbnailUrl,
+                                genre = if (recIsVideo) "YouTube Video" else "Music",
+                                itag = if (recIsVideo) 18 else 251,
+                                codec = if (recIsVideo) "MP4" else "Opus"
+                            ),
+                            likedIds,
+                            dlMap
+                        )
+                    }
+                    if (mappedRecs.isNotEmpty() && playerState.value.queue.firstOrNull()?.id == effectiveTrack.id && playerState.value.queue.size == 1) {
+                        playerManager.updateQueuePreservingPlayback(listOf(effectiveTrack) + mappedRecs)
+                    }
+                }
             }
         }
     }
@@ -2066,6 +2141,8 @@ class CascadeViewModel(
     fun playQueueIndex(index: Int) = playerManager.playQueueIndex(index)
     fun removeFromQueue(index: Int) = playerManager.removeFromQueue(index)
     fun moveTrack(fromIndex: Int, toIndex: Int) = playerManager.moveTrack(fromIndex, toIndex)
+
+    fun ensureLyricsLoaded(forceRetry: Boolean = false) = playerManager.ensureLyricsLoaded(forceRetry)
     fun clearQueue() = playerManager.clearQueue()
     fun addToQueue(track: Track) = playerManager.addToQueue(track)
     fun playNext(track: Track) = playerManager.playNext(track)

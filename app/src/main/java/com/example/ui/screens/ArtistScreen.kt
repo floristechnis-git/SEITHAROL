@@ -236,8 +236,77 @@ fun ArtistScreen(
             val effectiveIsChannel = isChannel || page.isChannel
             val downloadedIds = remember(downloadedTracks) { downloadedTracks.map { it.id }.toSet() }
 
-            val allCandidates = remember(page.topSongs) {
-                page.topSongs.distinctBy { it.videoId }
+            var expandedCollectionSongs by remember(page.browseId, page.name) {
+                mutableStateOf<List<CandidateStream>>(emptyList())
+            }
+            var isExpandingAllSongs by remember(page.browseId, page.name) {
+                mutableStateOf(false)
+            }
+
+            // Expand all songs from artist albums, singles, playlists, and channel uploads so "See all" shows every track
+            LaunchedEffect(page.browseId, page.name, effectiveIsChannel) {
+                if (isOfflineMode) return@LaunchedEffect
+                isExpandingAllSongs = true
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val collected = LinkedHashMap<String, CandidateStream>()
+                    page.topSongs.forEach { collected[it.videoId] = it }
+
+                    if (effectiveIsChannel) {
+                        val moreVideos = runCatching {
+                            InnerTubeStreamExtractor.searchAllYoutubeVideos("${page.name} videos", limit = 60)
+                        }.getOrDefault(emptyList())
+                        moreVideos.forEach { cand ->
+                            if (InnerTubeStreamExtractor.belongsToArtist(page.name, cand.title, cand.artist)) {
+                                collected.putIfAbsent(cand.videoId, cand)
+                            }
+                        }
+                        page.playlists.take(6).forEach { pl ->
+                            val colId = pl.browseId.ifBlank { pl.playlistId.orEmpty() }
+                            if (colId.isNotBlank()) {
+                                val details = runCatching {
+                                    InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(colId, pl.title, pl.thumbnailUrl)
+                                }.getOrNull()
+                                details?.tracks?.forEach { tr ->
+                                    collected.putIfAbsent(tr.videoId, tr.copy(videoType = "MUSIC_VIDEO_TYPE_OMV"))
+                                }
+                                expandedCollectionSongs = collected.values.toList()
+                            }
+                        }
+                    } else {
+                        val extraSongSearches = runCatching {
+                            InnerTubeStreamExtractor.searchOfficialYtmSongs("${page.name} all songs", limit = 40) +
+                                InnerTubeStreamExtractor.searchAllYoutubeVideos("${page.name} official song", limit = 40)
+                        }.getOrDefault(emptyList())
+                        extraSongSearches.forEach { cand ->
+                            if (InnerTubeStreamExtractor.belongsToArtist(page.name, cand.title, cand.artist)) {
+                                collected.putIfAbsent(cand.videoId, cand.copy(videoType = "MUSIC_VIDEO_TYPE_ATV"))
+                            }
+                        }
+                        expandedCollectionSongs = collected.values.toList()
+
+                        // Also include all songs inside the artist's albums, singles, and playlists
+                        val collectionsToExpand = (page.albums + page.singles + page.playlists)
+                            .distinctBy { it.browseId.ifBlank { it.playlistId.orEmpty() } }
+                            .take(14)
+                        for (col in collectionsToExpand) {
+                            val colId = col.browseId.ifBlank { col.playlistId.orEmpty() }
+                            if (colId.isBlank()) continue
+                            val details = runCatching {
+                                InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(colId, col.title, col.thumbnailUrl)
+                            }.getOrNull()
+                            details?.tracks?.forEach { tr ->
+                                val withAlbum = if (tr.albumName.isNullOrBlank()) tr.copy(albumName = col.title) else tr
+                                collected.putIfAbsent(withAlbum.videoId, withAlbum.copy(videoType = "MUSIC_VIDEO_TYPE_ATV"))
+                            }
+                            expandedCollectionSongs = collected.values.toList()
+                        }
+                    }
+                }
+                isExpandingAllSongs = false
+            }
+
+            val allCandidates = remember(page.topSongs, expandedCollectionSongs) {
+                (page.topSongs + expandedCollectionSongs).distinctBy { it.videoId }
             }
 
             val filteredCandidates = remember(allCandidates, searchQuery, sortFilter, effectiveIsChannel) {
@@ -373,7 +442,7 @@ fun ArtistScreen(
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            text = if (effectiveIsChannel) "All Channel Videos (${filteredCandidates.size})" else "All Songs & Releases (${filteredCandidates.size})",
+                                            text = if (effectiveIsChannel) "All Channel Videos" else "All Songs & Releases",
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             fontFamily = OutfitFontFamily,
                                             fontSize = 12.sp,
@@ -940,9 +1009,9 @@ fun ArtistScreen(
                                 val isSelected = selectedTab == tab
                                 val tabTitle = when (tab) {
                                     ArtistChannelTab.ALL -> "Overview"
-                                    ArtistChannelTab.VIDEOS_OR_TRACKS -> if (effectiveIsChannel) "Videos (${allCandidates.size})" else "Songs (${allCandidates.size})"
-                                    ArtistChannelTab.PLAYLISTS -> "Playlists (${page.playlists.size})"
-                                    ArtistChannelTab.RELEASES -> "Albums & Singles (${pureAlbums.size + cleanSingles.size})"
+                                    ArtistChannelTab.VIDEOS_OR_TRACKS -> if (effectiveIsChannel) "Videos" else "Songs"
+                                    ArtistChannelTab.PLAYLISTS -> "Playlists"
+                                    ArtistChannelTab.RELEASES -> "Albums & Singles"
                                 }
                                 Surface(
                                     onClick = { selectedTab = tab },
@@ -1194,7 +1263,7 @@ fun ArtistScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = if (effectiveIsChannel) "Channel Videos (${filteredCandidates.size})" else "Songs & Releases (${filteredCandidates.size})",
+                                text = if (effectiveIsChannel) "Channel Videos" else "Songs & Releases",
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.onBackground,
                                 maxLines = 1,
@@ -1605,7 +1674,7 @@ fun ArtistScreen(
                         item {
                             Spacer(modifier = Modifier.height(18.dp))
                             Text(
-                                text = "Albums (${pureAlbums.size})",
+                                text = "Albums",
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.onBackground,
                                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
@@ -1693,7 +1762,7 @@ fun ArtistScreen(
                         item {
                             Spacer(modifier = Modifier.height(18.dp))
                             Text(
-                                text = "Singles & EPs (${cleanSingles.size})",
+                                text = "Singles & EPs",
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.onBackground,
                                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)

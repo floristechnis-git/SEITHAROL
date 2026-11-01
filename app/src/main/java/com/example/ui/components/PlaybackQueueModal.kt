@@ -112,99 +112,29 @@ fun PlaybackQueueModal(
         currentTrack == null ||
         (currentTrack.isLocalOnlyTrack && queue.all { it.isLocalOnlyTrack })
 
-    var liveEngineSuggestions by remember(currentTrack?.id) { mutableStateOf<List<Track>>(emptyList()) }
-    var isFetchingSuggestions by remember(currentTrack?.id) { mutableStateOf(false) }
-
-    LaunchedEffect(currentTrack?.id, isCurrentVideo, queue.size, shouldSuppressSuggestions) {
+    // Fetch YouTube Music RDAMVM Up Next sequence ONLY when the playing song changes (never on queue.size changes),
+    // preventing the Up Next list from jumping or re-mixing!
+    LaunchedEffect(currentTrack?.id, isCurrentVideo, shouldSuppressSuggestions) {
         if (shouldSuppressSuggestions || currentTrack == null) {
-            liveEngineSuggestions = emptyList()
-            isFetchingSuggestions = false
             return@LaunchedEffect
         }
-        isFetchingSuggestions = true
         viewModel.refreshQueueSuggestions(currentTrack)
-        val seedOnline = if (!currentTrack.isLocalOnlyTrack) {
-            currentTrack
-        } else {
-            queue.firstOrNull { !it.isLocalOnlyTrack } ?: run {
-                isFetchingSuggestions = false
-                return@LaunchedEffect
-            }
-        }
-        // Combine active queue with recent listening history & liked tracks so recommendations are both song-related and personalized
-        val affinitySourceTracks = (queue + activeHistory.take(10) + likedTracks.take(10)).filterNot { it.isLocalOnlyTrack }
-        val queueMeta = affinitySourceTracks.map {
-            TrackMetadata(
-                id = it.id,
-                title = it.title,
-                artist = it.artist,
-                album = if (it.isVideoTrack) "YouTube Video" else it.album,
-                durationSeconds = (it.durationMs / 1000L).toInt(),
-                thumbnailUrl = it.artUrl,
-                source = if (it.isVideoTrack) "YOUTUBE_VIDEO" else "YOUTUBE"
-            )
-        }
-        val seedMeta = TrackMetadata(
-            id = seedOnline.id,
-            title = seedOnline.title,
-            artist = seedOnline.artist,
-            album = if (isCurrentVideo) "YouTube Video" else seedOnline.album,
-            durationSeconds = (seedOnline.durationMs / 1000L).toInt(),
-            thumbnailUrl = seedOnline.artUrl,
-            source = if (isCurrentVideo) "YOUTUBE_VIDEO" else "YOUTUBE"
-        )
-        val recs = QueueRecommendationEngine.fetchRelevantRecommendations(
-            currentTrack = seedMeta,
-            queueTracks = queueMeta,
-            limit = 14
-        )
-        liveEngineSuggestions = recs.map { r ->
-            val recIsVideo = isCurrentVideo || r.source.equals("YOUTUBE_VIDEO", ignoreCase = true)
-            Track(
-                id = r.id,
-                title = r.title,
-                artist = r.artist,
-                album = if (recIsVideo) "YouTube Video" else r.album.takeUnless {
-                    it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
-                }.orEmpty(),
-                durationMs = r.durationSeconds * 1000L,
-                artUrl = r.thumbnailUrl,
-                genre = if (recIsVideo) "YouTube Video" else "Music",
-                itag = if (recIsVideo) 18 else 251,
-                codec = if (recIsVideo) "MP4" else "Opus"
-            )
-        }
-        isFetchingSuggestions = false
     }
 
-    // Notice: isAutoSuggest is NOT a gate for suggestedTracks!
-    // Suggestions remain visible in the UI div even when Autoplay/Autosuggest is OFF,
-    // and only control whether songs/videos auto-append when the last track finishes.
     val suggestedTracks = remember(
         queue,
-        liveEngineSuggestions,
         videoSuggestions,
-        personalizedTracks,
-        activeHistory,
-        likedTracks,
-        trendingHits,
-        currentTrack,
+        currentTrack?.id,
         isCurrentVideo,
-        shouldSuppressSuggestions,
-        isFetchingSuggestions
+        shouldSuppressSuggestions
     ) {
         if (shouldSuppressSuggestions) {
             return@remember emptyList<Track>()
         }
         val queueIds = queue.map { it.id }.toSet()
         val queueTitles = queue.map { it.title.lowercase().trim() }.toSet()
-        val seedPrimaryArtist = currentTrack?.artist
-            ?.split(",", "&", "feat.", "ft.")
-            ?.firstOrNull()
-            ?.trim()
-            .orEmpty()
 
-        val combinedSpecific = (liveEngineSuggestions + videoSuggestions)
+        videoSuggestions
             .filter { cand ->
                 cand.id !in queueIds &&
                     cand.title.lowercase().trim() !in queueTitles &&
@@ -212,40 +142,7 @@ fun PlaybackQueueModal(
                     if (isCurrentVideo) cand.isVideoTrack else !cand.isVideoTrack
             }
             .distinctBy { it.id }
-
-        if (combinedSpecific.isNotEmpty()) {
-            combinedSpecific.take(16)
-        } else if (isCurrentVideo) {
-            emptyList()
-        } else {
-            val rankedFallback = (activeHistory + likedTracks + personalizedTracks + trendingHits)
-                .filterNot {
-                    it.isLocalOnlyTrack ||
-                        it.isVideoTrack ||
-                        it.album.equals("YouTube Video", ignoreCase = true) ||
-                        it.genre.equals("YouTube Video", ignoreCase = true) ||
-                        it.codec.equals("MP4", ignoreCase = true)
-                }
-                .filter { it.id !in queueIds && it.title.lowercase().trim() !in queueTitles }
-                .distinctBy { it.id }
-                .sortedByDescending { cand ->
-                    val sameArtist = seedPrimaryArtist.isNotBlank() && cand.artist.contains(seedPrimaryArtist, ignoreCase = true)
-                    val inUserLibrary = activeHistory.any { h -> h.id == cand.id } || likedTracks.any { l -> l.id == cand.id }
-                    when {
-                        sameArtist && inUserLibrary -> 3
-                        sameArtist -> 2
-                        inUserLibrary -> 1
-                        else -> 0
-                    }
-                }
-            if (isFetchingSuggestions) {
-                rankedFallback.filter {
-                    seedPrimaryArtist.isNotBlank() && it.artist.contains(seedPrimaryArtist, ignoreCase = true)
-                }.take(14)
-            } else {
-                rankedFallback.take(14)
-            }
-        }
+            .take(18)
     }
 
     androidx.activity.compose.BackHandler(onBack = onDismiss)
@@ -954,7 +851,7 @@ fun PlaybackQueueModal(
                                         IconButton(
                                             onClick = {
                                                 viewModel.addToQueue(track)
-                                                liveEngineSuggestions = liveEngineSuggestions.filterNot { it.id == track.id }
+                                                
                                             },
                                             modifier = Modifier.size(32.dp)
                                         ) {

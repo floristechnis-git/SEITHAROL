@@ -978,79 +978,51 @@ object InnerTubeStreamExtractor {
         moodCategory: String,
         recentSearchQueries: List<String> = emptyList()
     ): List<CandidateStream> = coroutineScope {
-        val validSeeds = seedVideoIds.filter { it.length == 11 }.distinct().take(5)
+        val validSeeds = seedVideoIds.mapNotNull { extractVideoId(it) }.distinct().take(6)
         val cleanArtists = favoriteArtists
-            .map { it.removeSuffix("- Topic").trim() }
+            .map { it.removeSuffix(" - Topic").removeSuffix("- Topic").trim() }
             .filter { it.isNotBlank() && !it.equals("Unknown Artist", true) }
             .distinct()
+            .take(6)
         val cleanSearches = recentSearchQueries
             .map { it.trim() }
             .filter { it.length >= 2 }
             .distinct()
-            .take(3)
+            .take(5)
 
         val isGeneralFeed = moodCategory.equals("All", true) || moodCategory.equals("For You", true)
-        val hourOfDay = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val hasUserHistory = isGeneralFeed && (validSeeds.isNotEmpty() || cleanArtists.isNotEmpty() || cleanSearches.isNotEmpty())
 
-        // 1. Automix radio continuations ONLY for general "All" / "For You" feeds (categories like Energize & Trending are 100% pure OuterTune-style YT feeds!)
+        // 1. Primary History Signal: YouTube Music RDAMVM Automix radio queues for the user's played/liked songs
         val automixSeeds: List<String> = if (isGeneralFeed) validSeeds else emptyList()
         val automixJobs = automixSeeds.map { seedId ->
             async {
-                fetchAutomixQueue(seedId, limit = 12).shuffled()
+                fetchAutomixQueue(seedId, limit = 16)
+                    .filter { it.videoId != seedId }
             }
         }
 
-        // 2. Manipuri Playlist / Collection shelf for default general feed OR Mood Category Playlist
+        // 2. If validSeeds is empty but user has history song queries in cleanSearches, resolve their top song & fetch its RDAMVM radio
+        val fallbackHistoryRadioJob = async {
+            if (isGeneralFeed && validSeeds.isEmpty() && cleanSearches.isNotEmpty()) {
+                val resolvedSeed = searchOfficialYtmSongs(cleanSearches.first(), limit = 2).firstOrNull()
+                if (resolvedSeed != null) {
+                    fetchAutomixQueue(resolvedSeed.videoId, limit = 16)
+                } else emptyList()
+            } else emptyList()
+        }
+
+        // 3. Mood Category Playlist ONLY when a specific category chip (Energize, Relax, etc.) is active,
+        //    or when the user has zero history at all.
         val liveBrowseOrCategoryJob = async {
             if (!isGeneralFeed) {
                 fetchMoodCategoryPlaylistTracks(moodCategory).shuffled()
-            } else {
+            } else if (!hasUserHistory) {
                 fetchMoodCategoryPlaylistTracks("Manipuri Song").shuffled()
+            } else {
+                emptyList()
             }
         }
-
-        // 3. Dynamic Time-of-Day + Manipuri Song Focused Discovery Pool
-        val timeOfDayQueries = when (hourOfDay) {
-            in 5..10 -> listOf(
-                "Manipuri morning melody official songs",
-                "Fresh morning Manipuri melodies official",
-                "Imphal Manipuri acoustic & folk songs",
-                "Manipuri classic & modern feel good songs"
-            )
-            in 11..16 -> listOf(
-                "Manipuri modern hit songs official",
-                "Imphal Manipuri trending hit songs",
-                "Manipuri upbeat pop & indie official songs",
-                "Manipuri latest official music releases"
-            )
-            in 17..21 -> listOf(
-                "Manipuri evening romantic & soulful songs",
-                "Sunset acoustic & Manipuri soulful songs",
-                "Manipuri love songs & duets official",
-                "Imphal Manipuri indie & melodic hits"
-            )
-            else -> listOf(
-                "Manipuri late night love & emotional songs",
-                "Midnight acoustic & Manipuri love songs",
-                "Manipuri romantic ballad hit songs",
-                "Imphal Manipuri slow melodic songs"
-            )
-        }
-
-        val dynamicDiscoveryPool = listOf(
-            "Manipuri new official music releases",
-            "Imphal trending Manipuri songs official",
-            "Manipuri modern folk & indie pop songs",
-            "Manipuri romantic melodies official audio",
-            "Manipuri latest official hit songs",
-            "Manipuri love songs & acoustic duets",
-            "Manipuri top viral songs Imphal",
-            "Manipuri film & ost hit songs",
-            "Manipuri classic & evergreen hit songs",
-            "Manipuri indie & band official songs"
-        )
-
-        val artistModifiers = listOf("official audio", "latest songs", "top hit songs", "best tracks")
 
         val searchQueries = when {
             moodCategory.equals("Manipuri Song", true) -> listOf(
@@ -1139,22 +1111,25 @@ object InnerTubeStreamExtractor {
                 "Cozy rain lofi & mellow beats"
             ).shuffled().take(3)
             isGeneralFeed -> {
-                // Regional-first (Manipuri & Northeast/India) + Time-of-Day discovery queries.
-                // Artist personalization is handled via verified belongsToArtist filtering and Automix
-                // seed continuations so artist words (like "Limbo" in "Life in Limbo") never pollute
-                // the feed with unrelated songs whose title happens to contain that word!
-                val userPersonalizedQueries = mutableListOf<String>()
-                cleanSearches.take(2).forEach { q ->
-                    userPersonalizedQueries.add("$q official audio")
+                if (hasUserHistory) {
+                    // Strictly history-driven queries: use the user's played song/artist context & recent searches
+                    val historyDrivenQueries = mutableListOf<String>()
+                    cleanArtists.take(4).forEach { artist ->
+                        historyDrivenQueries.add("$artist top songs")
+                    }
+                    cleanSearches.take(3).forEach { q ->
+                        historyDrivenQueries.add("$q songs")
+                    }
+                    historyDrivenQueries.distinct().take(5)
+                } else {
+                    // Cold-start fallback only when the user has zero listening history
+                    listOf(
+                        "Manipuri new official music releases",
+                        "Imphal trending Manipuri songs official",
+                        "Manipuri modern folk & indie pop songs",
+                        "Manipuri romantic melodies official audio"
+                    )
                 }
-                val regionalCore = listOf(
-                    "Manipuri new official music releases",
-                    "Imphal trending Manipuri songs official",
-                    "Manipuri modern folk & indie pop songs",
-                    "Manipuri romantic melodies official audio"
-                ).shuffled().take(2)
-                val sampledDiscovery = (regionalCore + timeOfDayQueries.shuffled().take(1) + dynamicDiscoveryPool.shuffled().take(1)).distinct()
-                (sampledDiscovery + userPersonalizedQueries.take(2)).distinct()
             }
             else -> listOf(
                 "$moodCategory official hit songs",
@@ -1165,35 +1140,40 @@ object InnerTubeStreamExtractor {
 
         val searchJobs = searchQueries.map { q ->
             async {
-                searchOfficialYtmSongs(q, limit = 12).shuffled()
+                searchOfficialYtmSongs(q, limit = 12)
             }
         }
-        // Fetch verified songs actually BY the user's favorite artists (strict belongsToArtist check
-        // on candidate.artist so "Life in Limbo" never matches unrelated songs titled "Limbo"!)
-        val verifiedArtistJobs = if (isGeneralFeed) {
-            cleanArtists.take(3).map { favArtist ->
+
+        // Fetch verified songs actually BY the user's history artists
+        val verifiedArtistJobs = if (isGeneralFeed && cleanArtists.isNotEmpty()) {
+            cleanArtists.take(5).map { favArtist ->
                 async {
-                    searchOfficialYtmSongs(favArtist, limit = 10)
+                    searchOfficialYtmSongs(favArtist, limit = 12)
                         .filter { cand -> belongsToArtist(targetArtist = favArtist, itemTitle = "", itemSubtitle = "", itemArtist = cand.artist) }
-                        .shuffled()
-                        .take(3)
+                        .take(6)
                 }
             }
         } else {
             emptyList()
         }
+
         val liveOrPlaylistBatch: List<CandidateStream> = liveBrowseOrCategoryJob.await()
         val automixBatches = automixJobs.awaitAll().filter { it.isNotEmpty() }
+        val fallbackHistoryRadio = fallbackHistoryRadioJob.await()
         val verifiedArtistBatch = verifiedArtistJobs.awaitAll().flatten()
         val searchBatches = searchJobs.awaitAll().filter { it.isNotEmpty() }
 
         val batches = mutableListOf<List<CandidateStream>>()
-        // Interleave regional-first discovery, verified favorite-artist tracks, and automix continuations
-        batches.addAll(searchBatches)
+        // Lead with YouTube Music RDAMVM Automix continuations from the user's history first,
+        // then songs by the user's history artists, then history-driven search matches!
+        batches.addAll(automixBatches)
+        if (fallbackHistoryRadio.isNotEmpty()) {
+            batches.add(fallbackHistoryRadio)
+        }
         if (verifiedArtistBatch.isNotEmpty()) {
             batches.add(verifiedArtistBatch)
         }
-        batches.addAll(automixBatches)
+        batches.addAll(searchBatches)
         if (liveOrPlaylistBatch.isNotEmpty()) {
             batches.add(liveOrPlaylistBatch)
         }
@@ -1227,16 +1207,17 @@ object InnerTubeStreamExtractor {
         favoriteArtists: List<String>,
         moodCategory: String = "All"
     ): List<CandidateStream> = coroutineScope {
-        val validSeeds = seedVideoIds.filter { it.length == 11 }.distinct().take(3)
+        val validSeeds = seedVideoIds.mapNotNull { extractVideoId(it) }.distinct().take(5)
         val cleanArtists = favoriteArtists
-            .map { it.removeSuffix("- Topic").trim() }
+            .map { it.removeSuffix(" - Topic").removeSuffix("- Topic").trim() }
             .filter { it.isNotBlank() && !it.equals("Unknown Artist", true) }
             .distinct()
-            .take(3)
+            .take(5)
 
-        // 1. Category-pure Fresh Releases when a category is selected; Regional-first when in "All"
         val isGeneralMood = moodCategory.equals("All", true) || moodCategory.equals("For You", true)
-        val regionalFreshQueries = when {
+        val hasUserHistory = isGeneralMood && (validSeeds.isNotEmpty() || cleanArtists.isNotEmpty())
+
+        val freshQueries = when {
             moodCategory.equals("Manipuri Song", true) -> listOf(
                 "Manipuri new official song releases",
                 "Latest Imphal Manipuri official audio",
@@ -1247,42 +1228,34 @@ object InnerTubeStreamExtractor {
                 "$moodCategory latest official audio releases",
                 "Top $moodCategory hits official audio"
             )
+            hasUserHistory -> {
+                cleanArtists.take(4).map { "$it latest songs" }
+            }
             else -> listOf(
                 "Manipuri latest official new songs",
                 "Imphal new Manipuri music official audio",
-                "Manipuri new official song releases",
-                "Manipuri modern folk & romantic new songs"
-            ).shuffled().take(3)
+                "Manipuri new official song releases"
+            )
         }
 
-        val regionalJobs = regionalFreshQueries.map { q ->
-            async { searchOfficialYtmSongs(q, limit = 10).shuffled() }
+        val queryJobs = freshQueries.map { q ->
+            async { searchOfficialYtmSongs(q, limit = 10) }
         }
 
-        // 2. Fresh New Releases shelf (pure category releases when a category is active)
-        val liveNewReleasesJob = async {
-            val query = if (isGeneralMood || moodCategory.equals("Manipuri Song", true)) {
-                "Manipuri new song release official"
-            } else {
-                "New $moodCategory music releases official"
-            }
-            searchOfficialYtmSongs(query, limit = 14).shuffled()
-        }
-
-        // 3. Personalization via Automix seed continuations ONLY for general "All" feed (never for Energize, Trending, etc.)
+        // Personalization via Automix seed continuations from the user's history
         val automixPersonalizedJob = async {
             if (!isGeneralMood) emptyList()
-            else validSeeds.take(2).flatMap { seed ->
-                runCatching { fetchAutomixQueue(seed, limit = 8) }.getOrDefault(emptyList())
-            }.shuffled().take(6)
+            else validSeeds.take(4).flatMap { seed ->
+                runCatching { fetchAutomixQueue(seed, limit = 10).filter { it.videoId != seed } }.getOrDefault(emptyList())
+            }
         }
 
-        // 4. Strictly verified releases actually BY the user's top artists (only when in "All" feed)
+        // Verified songs/releases by the user's history artists
         val verifiedArtistReleasesJob = async {
             if (!isGeneralMood) emptyList()
-            else cleanArtists.take(2).flatMap { artistName ->
+            else cleanArtists.take(4).flatMap { artistName ->
                 runCatching {
-                    searchOfficialYtmSongs(artistName, limit = 8)
+                    searchOfficialYtmSongs("$artistName new songs", limit = 10)
                         .filter { cand ->
                             belongsToArtist(
                                 targetArtist = artistName,
@@ -1291,22 +1264,20 @@ object InnerTubeStreamExtractor {
                                 itemArtist = cand.artist
                             )
                         }
-                        .take(2)
+                        .take(4)
                 }.getOrDefault(emptyList())
             }
         }
 
-        val regionalBatches = regionalJobs.awaitAll().filter { it.isNotEmpty() }
-        val liveBatch = liveNewReleasesJob.await()
+        val queryBatches = queryJobs.awaitAll().filter { it.isNotEmpty() }
         val automixBatch = automixPersonalizedJob.await()
         val verifiedArtistBatch = verifiedArtistReleasesJob.await()
 
         val allBatches = mutableListOf<List<CandidateStream>>()
-        // Lead with regional-first batches, then interleave personalized automix, live explore, and verified artist tracks
-        allBatches.addAll(regionalBatches)
+        // Lead with history-based automix & history artist releases first!
         if (automixBatch.isNotEmpty()) allBatches.add(automixBatch)
-        if (liveBatch.isNotEmpty()) allBatches.add(liveBatch)
         if (verifiedArtistBatch.isNotEmpty()) allBatches.add(verifiedArtistBatch)
+        allBatches.addAll(queryBatches)
 
         val interleaved = mutableListOf<CandidateStream>()
         val artistCounts = mutableMapOf<String, Int>()
@@ -1403,11 +1374,15 @@ object InnerTubeStreamExtractor {
             moodCategory.equals("Party", true) -> listOf("Ultimate Party Dance Hits Playlist", "Club Bangers & EDM Mix", "Weekend Party Anthems")
             moodCategory.equals("Sleep", true) -> listOf("Deep Sleep Piano & Rain Playlist", "Calm Night Ambient Mix", "Bedtime Acoustic & Lofi")
             moodCategory.equals("Lo-Fi", true) -> listOf("Lo-Fi Chill Study Beats Playlist", "Cozy Late Night Lofi Mix")
-            else -> listOf(
-                "Manipuri Hit Songs Playlist",
-                "Trending Hits Mix",
-                cleanArtists.firstOrNull()?.let { "$it Mix" } ?: "Top Global & Regional Hits"
-            )
+            else -> if (cleanArtists.isNotEmpty()) {
+                cleanArtists.take(3).map { "$it Mix Playlist" } + cleanArtists.take(2).map { "Best of $it" }
+            } else {
+                listOf(
+                    "Manipuri Hit Songs Playlist",
+                    "Trending Hits Mix",
+                    "Top Global & Regional Hits"
+                )
+            }
         }
 
         // 1. Live FEmusic_home / FEmusic_explore shelves (extracts authentic RDCLAK5uy_ mixes & VLPL playlists)
@@ -2594,7 +2569,16 @@ object InnerTubeStreamExtractor {
         for (s in 0 until sections.length()) {
             val secObj = sections.getJSONObject(s)
 
+            var artistSongsCollectionBrowseId = ""
             secObj.optJSONObject("musicShelfRenderer")?.let { shelf ->
+                artistSongsCollectionBrowseId = shelf.optJSONObject("bottomEndpoint")
+                    ?.optJSONObject("browseEndpoint")
+                    ?.optString("browseId").orEmpty()
+                    .ifBlank {
+                        shelf.optJSONObject("title")?.optJSONArray("runs")?.optJSONObject(0)
+                            ?.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")
+                            ?.optString("browseId").orEmpty()
+                    }
                 val contents = shelf.optJSONArray("contents") ?: JSONArray()
                 for (i in 0 until contents.length()) {
                     val item = contents.getJSONObject(i)
@@ -2602,6 +2586,20 @@ object InnerTubeStreamExtractor {
                     parseSingleResponsiveSongItem(item, defaultArtist = name, defaultArt = avatarUrl)?.let { song ->
                         if (belongsToArtist(name, song.title, itemArtist = song.artist)) {
                             topSongs.add(song)
+                        }
+                    }
+                }
+                if (artistSongsCollectionBrowseId.isNotBlank()) {
+                    runCatching {
+                        val fullShelf = fetchPlaylistAlbumOrMixDetails(
+                            collectionId = artistSongsCollectionBrowseId,
+                            fallbackTitle = "$name Songs",
+                            fallbackThumb = avatarUrl
+                        )
+                        fullShelf.tracks.forEach { song ->
+                            if (belongsToArtist(name, song.title, itemArtist = song.artist)) {
+                                topSongs.add(song)
+                            }
                         }
                     }
                 }
@@ -2739,14 +2737,21 @@ object InnerTubeStreamExtractor {
             }
         }
 
-        // YouTube Music artist browse only includes 5 preview songs in musicShelfRenderer;
-        // always fetch the full artist song catalog (up to 35+ songs) and playlists so the Artist / Channel page is rich and complete!
-        if (topSongs.size < 25) {
-            val searchedSongs = runCatching { searchOfficialYtmSongs(name, limit = 35) }.getOrDefault(emptyList())
-            val verified = searchedSongs.filter { song ->
-                belongsToArtist(name, song.title, itemArtist = song.artist)
+        // Always expand the artist's full song catalog across official YTM songs, channel uploads, and top albums/singles
+        val searchedPrimary = runCatching { searchOfficialYtmSongs(name, limit = 40) }.getOrDefault(emptyList())
+        val searchedSecondary = runCatching { searchOfficialYtmSongs("$name songs", limit = 40) }.getOrDefault(emptyList())
+        val channelUploads = runCatching {
+            fetchYouTubeChannelMeta(
+                channelName = name,
+                knownBrowseId = browseId.takeIf { it.startsWith("UC") },
+                treatUploadsAsVideo = false
+            )?.videos.orEmpty()
+        }.getOrDefault(emptyList())
+
+        (searchedPrimary + searchedSecondary + channelUploads).forEach { song ->
+            if (belongsToArtist(name, song.title, itemArtist = song.artist)) {
+                topSongs.add(song)
             }
-            topSongs.addAll(verified)
         }
         if (playlists.size < 4) {
             val searchedPlaylists = runCatching {

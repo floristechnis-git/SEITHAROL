@@ -157,14 +157,10 @@ object SeitharolDeepLinkHelper {
         val cleanTitle = playlistTitle.trim().ifBlank { "Shared Playlist" }
         val encTitle = encodeParam(cleanTitle)
         val idsParam = onlineTracks.take(100).joinToString(",") { normalizeOnlineTrackId(it.id) }
-        val payload = encodeServerlessPlaylistPayload(cleanTitle, onlineTracks)
         return buildString {
             append("$WEB_SHARE_HOST/share/playlist/shared?title=$encTitle")
             if (idsParam.isNotBlank()) {
                 append("&ids=${encodeParam(idsParam)}")
-            }
-            if (payload.isNotBlank()) {
-                append("&data=$payload")
             }
         }
     }
@@ -181,15 +177,7 @@ object SeitharolDeepLinkHelper {
 
         if (isPersonalPlaylist && onlineTracks.isNotEmpty()) {
             val shareUrl = buildPersonalPlaylistShareUrl(playlistTitle, onlineTracks)
-            val ytIds = onlineTracks.mapNotNull { InnerTubeStreamExtractor.extractVideoId(it.id) }
-            val ytQuickWatchLink = if (ytIds.isNotEmpty()) {
-                "\nYouTube Queue: https://www.youtube.com/watch_videos?video_ids=${ytIds.take(40).joinToString(",")}"
-            } else ""
-            val trackPreviewLines = onlineTracks.take(8).mapIndexed { i, t ->
-                "${i + 1}. ${t.title} — ${t.artist} [${normalizeOnlineTrackId(t.id)}]"
-            }.joinToString("\n")
-            val moreLine = if (onlineTracks.size > 8) "\n...and ${onlineTracks.size - 8} more online tracks" else ""
-            return "Listen to \"$playlistTitle\" (${onlineTracks.size} online songs) on SEITHAROL:\n$shareUrl$ytQuickWatchLink\n\nTracks:\n$trackPreviewLines$moreLine"
+            return "Listen to \"$playlistTitle\" on SEITHAROL:\n$shareUrl"
         }
 
         val encTitle = encodeParam(playlistTitle)

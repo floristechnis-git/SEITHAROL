@@ -238,32 +238,26 @@ fun HomeScreen(
             if (!exists) items.add(cand)
         }
 
-        // 1. Most recently played online tracks (up to 2 slots so playing a song immediately updates Quick Dial)
+        // 1. Most recently played online track (1 slot) + history-based personalized recommendations
+        //    so Quick Picks isn't just repeating the last two played songs verbatim while all 6 slots
+        //    stay 100% related to the user's listening history!
         activeHistory
-            .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
-            .map { it.toHomeMediaItem() }
-            .filter(::isAuthenticCleanSong)
-            .take(2)
-            .forEach(::addUniqueItem)
-
-        // 2. Most recently liked online track (up to 1 slot)
-        likedTracks
             .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
             .map { it.toHomeMediaItem() }
             .filter(::isAuthenticCleanSong)
             .take(1)
             .forEach(::addUniqueItem)
 
-        // 3. Personalized recommendations from live YTM + automix + artist/search seeds
+        // 2. History-driven personalized recommendations (from YTM RDAMVM Automix of played tracks & history artists)
         personalizedTracks
             .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
             .map { it.toHomeMediaItem() }
             .filter(::isAuthenticCleanSong)
             .forEach(::addUniqueItem)
 
-        // 4. Fallback to remaining active history or trending hits to guarantee 6 clean playable tracks
+        // 3. Additional history & liked tracks if personalizedTracks is still loading
         if (items.size < 6) {
-            activeHistory
+            (activeHistory + likedTracks)
                 .filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
                 .map { it.toHomeMediaItem() }
                 .filter(::isAuthenticCleanSong)
@@ -284,13 +278,14 @@ fun HomeScreen(
         quickDialItems.map { it.id }.toSet()
     }
 
-    // Prepare Trending Items (Deduplicated; when a category chip like Energize or Trending is selected, never mix personal history!)
+    // Prepare Recommended / Top Items (When in "All", prioritize history-based personalizedTracks first!)
     val trendingItems = remember(deduplicatedTrendingHits, personalizedTracks, deduplicatedAllTracks, excludedHeroIds, quickDialIdSet, selectedMood) {
         val isAll = selectedMood.equals("All", ignoreCase = true)
         val basePool = if (!isAll && deduplicatedTrendingHits.isNotEmpty()) {
             deduplicatedTrendingHits
-        } else if (deduplicatedTrendingHits.isNotEmpty()) {
-            (deduplicatedTrendingHits + personalizedTracks).distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
+        } else if (personalizedTracks.isNotEmpty() || deduplicatedTrendingHits.isNotEmpty()) {
+            (personalizedTracks.filterNot { it.isLocalOnlyTrack } + deduplicatedTrendingHits)
+                .distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
         } else {
             deduplicatedAllTracks
         }
@@ -513,9 +508,9 @@ fun HomeScreen(
             .statusBarsPadding()
             .testTag("home_screen")
     ) {
-        // Position-fixed / absolute page-level background watermark ("Johnson") on the HomeScreen page:
-        // Starts from left edge so at least "John" fits on mobile (and "Johnson" on tablet),
-        // anchored at TopStart behind the LazyColumn so it stays fixed on the HomeScreen page and takes 0 layout space.
+        // Stacked top-position atmospheric layer:
+        // 1) Cloudy dim deep-red (#850101) beam glowing from behind-top of "Johnson"
+        // 2) Position-fixed / absolute "Johnson" watermark in front of the beam
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
@@ -543,6 +538,41 @@ fun HomeScreen(
             val computedFontSizeSp = with(density) {
                 val rawSp = 100f * (availableWidthPx / measuredPrefixWidthPx.toFloat())
                 rawSp.coerceIn(48f, 220f).sp
+            }
+
+            // Cloudy dim deep-red (#850101) beam stacked at the top behind "Johnson"
+            androidx.compose.foundation.Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(260.dp)
+                    .align(Alignment.TopCenter)
+            ) {
+                val beamWidth = size.width
+                val beamHeight = size.height
+                // Soft vertical atmospheric wash from the very top edge
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        0.0f to Color(0xFF850101).copy(alpha = 0.34f),
+                        0.38f to Color(0xFF850101).copy(alpha = 0.18f),
+                        0.72f to Color(0xFF850101).copy(alpha = 0.06f),
+                        1.0f to Color.Transparent,
+                        startY = 0f,
+                        endY = beamHeight
+                    )
+                )
+                // Cloudy radial red beam centered behind-top of "Johnson"
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        0.0f to Color(0xFF850101).copy(alpha = 0.38f),
+                        0.45f to Color(0xFF850101).copy(alpha = 0.18f),
+                        0.78f to Color(0xFF850101).copy(alpha = 0.05f),
+                        1.0f to Color.Transparent,
+                        center = androidx.compose.ui.geometry.Offset(beamWidth * 0.38f, -beamHeight * 0.08f),
+                        radius = beamWidth * 0.78f
+                    ),
+                    radius = beamWidth * 0.78f,
+                    center = androidx.compose.ui.geometry.Offset(beamWidth * 0.38f, -beamHeight * 0.08f)
+                )
             }
 
             Text(

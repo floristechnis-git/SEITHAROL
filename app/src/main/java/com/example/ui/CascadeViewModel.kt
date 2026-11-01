@@ -282,20 +282,29 @@ class CascadeViewModel(
         }
     }
 
-    // Secondary Video Source: Dynamic Queue Suggestions (includes YouTube Video suggestions)
+    // Secondary Video Source: Dynamic Queue Suggestions (includes YouTube Video & YTM Automix Song suggestions)
     private val _queueVideoSuggestions = MutableStateFlow<List<Track>>(emptyList())
     val queueVideoSuggestions: StateFlow<List<Track>> = _queueVideoSuggestions.asStateFlow()
+    private var lastSuggestionsSeedId: String? = null
+    private var suggestionsFetchJob: Job? = null
 
-    fun refreshQueueSuggestions(seedTrack: Track?) {
+    fun refreshQueueSuggestions(seedTrack: Track?, forceReload: Boolean = false) {
         val state = playerState.value
         val seed = seedTrack ?: state.currentTrack
         val isLocalSingle = seed != null && seed.isLocalOnlyTrack && state.queue.all { it.isLocalOnlyTrack }
         // Suppress suggestions ONLY when offline or when playing a local single file (no online tracks in queue)
         if (seed == null || isOfflineMode.value || isLocalSingle) {
+            lastSuggestionsSeedId = null
             _queueVideoSuggestions.value = emptyList()
             return
         }
-        viewModelScope.launch(vmExceptionHandler) {
+        // Keep the Up Next suggestion sequence stable for the currently playing song unless the song changes
+        if (!forceReload && seed.id == lastSuggestionsSeedId && _queueVideoSuggestions.value.isNotEmpty()) {
+            return
+        }
+        lastSuggestionsSeedId = seed.id
+        suggestionsFetchJob?.cancel()
+        suggestionsFetchJob = viewModelScope.launch(vmExceptionHandler) {
             runCatching {
                 val effectiveSeed = if (!seed.isLocalOnlyTrack) seed else state.queue.firstOrNull { !it.isLocalOnlyTrack } ?: return@launch
                 val isVideo = state.isVideoMode || effectiveSeed.isVideoTrack || (state.queue.isNotEmpty() && state.queue.all { it.isVideoTrack })
@@ -828,10 +837,14 @@ class CascadeViewModel(
             try {
                 // Strictly exclude local tracks (`isLocalOnlyTrack`) from history & liked seeds
                 // so Home feed never generates suggestions from local song names or artists!
-                val realHistory = musicRepository.getActiveHistory().firstOrNull().orEmpty()
+                val dbHistory = musicRepository.getActiveHistory().firstOrNull().orEmpty()
+                val realHistory = (activeHistory.value + dbHistory)
                     .filterNot { it.isLocalOnlyTrack }
-                val realLiked = musicRepository.getLikedTracks().firstOrNull().orEmpty()
+                    .distinctBy { it.id }
+                val dbLiked = musicRepository.getLikedTracks().firstOrNull().orEmpty()
+                val realLiked = (likedTracks.value + dbLiked)
                     .filterNot { it.isLocalOnlyTrack }
+                    .distinctBy { it.id }
                 val likedIds = realLiked.map { it.id }.toSet()
                 val dlMap = downloadedTracksById.value
 
@@ -847,12 +860,11 @@ class CascadeViewModel(
                     "various", "download", "seitharol"
                 )
 
-                val seedIds = (realHistory.take(5).map { it.id } + realLiked.take(4).map { it.id })
+                val seedIds = (realHistory.take(8).map { it.id } + realLiked.take(5).map { it.id })
                     .mapNotNull { InnerTubeStreamExtractor.extractVideoId(it) }
                     .distinct()
 
-                // Recency-weighted + frequency-weighted artist ranking so newly played/liked/searched
-                // artists immediately shape the Home feed!
+                // Recency-weighted + frequency-weighted artist ranking from listening history & liked tracks
                 val artistWeights = LinkedHashMap<String, Int>()
                 fun addArtistWeight(rawArtist: String, weight: Int) {
                     val clean = rawArtist
@@ -869,9 +881,9 @@ class CascadeViewModel(
                     artistWeights[existingKey] = (artistWeights[existingKey] ?: 0) + weight
                 }
 
-                realHistory.take(12).forEachIndexed { idx, track ->
-                    val recencyBonus = (12 - idx).coerceAtLeast(2)
-                    addArtistWeight(track.artist, recencyBonus * 2)
+                realHistory.take(15).forEachIndexed { idx, track ->
+                    val recencyBonus = (15 - idx).coerceAtLeast(3)
+                    addArtistWeight(track.artist, recencyBonus * 3)
                 }
                 realLiked.take(10).forEachIndexed { idx, track ->
                     val recencyBonus = (10 - idx).coerceAtLeast(2)
@@ -881,32 +893,45 @@ class CascadeViewModel(
                     .map { it.trim() }
                     .filter { it.isNotBlank() && !bannedKeywords.contains(it.lowercase()) && !bannedKeywords.any { b -> it.lowercase().contains(b) } }
 
-                cleanSearchQueries.take(4).forEachIndexed { idx, q ->
-                    addArtistWeight(q, (6 - idx) * 3)
+                val historyTrackQueries = realHistory.take(6).mapNotNull { tr ->
+                    val cleanArt = tr.artist.removeSuffix(" - Topic").removeSuffix("- Topic").trim()
+                    val q = "${tr.title} $cleanArt".trim()
+                    q.takeIf { it.length >= 3 }
                 }
+                val combinedHistoryAndSearchQueries = (historyTrackQueries + cleanSearchQueries).distinct().take(6)
 
                 val topArtists = artistWeights.entries
                     .sortedByDescending { it.value }
                     .map { it.key }
-                    .take(6)
+                    .take(8)
 
                 val personalizedDeferred = async {
                     InnerTubeStreamExtractor.buildPersonalizedHomeFeed(
                         seedVideoIds = seedIds,
                         favoriteArtists = topArtists,
                         moodCategory = selectedMood.value,
-                        recentSearchQueries = cleanSearchQueries
+                        recentSearchQueries = combinedHistoryAndSearchQueries
                     )
                 }
 
                 val trendingDeferred = async {
                     if (selectedMood.value.equals("All", ignoreCase = true)) {
-                        InnerTubeStreamExtractor.buildPersonalizedHomeFeed(
-                            seedVideoIds = seedIds.take(2),
-                            favoriteArtists = topArtists.take(2),
-                            moodCategory = "Trending",
-                            recentSearchQueries = emptyList()
-                        )
+                        if (seedIds.isNotEmpty() || topArtists.isNotEmpty() || combinedHistoryAndSearchQueries.isNotEmpty()) {
+                            // Keep secondary shelf personalized from history as well rather than switching to unrelated generic charts
+                            InnerTubeStreamExtractor.buildPersonalizedHomeFeed(
+                                seedVideoIds = seedIds.drop(1).ifEmpty { seedIds },
+                                favoriteArtists = topArtists.drop(1).ifEmpty { topArtists },
+                                moodCategory = "All",
+                                recentSearchQueries = combinedHistoryAndSearchQueries
+                            )
+                        } else {
+                            InnerTubeStreamExtractor.buildPersonalizedHomeFeed(
+                                seedVideoIds = emptyList(),
+                                favoriteArtists = emptyList(),
+                                moodCategory = "Trending",
+                                recentSearchQueries = emptyList()
+                            )
+                        }
                     } else {
                         emptyList()
                     }

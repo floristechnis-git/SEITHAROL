@@ -294,10 +294,9 @@ object QueueRecommendationEngine {
             val secondaryTracks = secondaryDeferred.await()
             val saavnTracks = saavnDeferred.await()
 
-            // Interleave Automix/Related, Same-Artist, Contextual, Queue/History-Affinity, and JioSaavn tracks
-            val orderedCandidates = interleaveBatches(
-                listOf(automixTracks, artistTracks, contextualTracks, secondaryTracks, saavnTracks)
-            )
+            // Follow YouTube Music's exact RDAMVM Automix sequence first so Up Next matches what's playing
+            // without random jumping/mixing; only append same-artist / contextual tracks after Automix if needed.
+            val orderedCandidates = automixTracks + artistTracks + contextualTracks + secondaryTracks + saavnTracks
 
             for (cand in orderedCandidates) {
                 if (results.size >= limit) break

@@ -2051,7 +2051,7 @@ fun PlayerTrackOptionsSheet(
             PixelSheetOptionRow(
                 icon = Icons.Default.Explore,
                 title = "Related Songs, Mixes & Artists",
-                subtitle = "Explore similar tracks, playlists & albums without changing Up Next",
+                subtitle = "Explore similar tracks, playlists, mixes & artists",
                 onClick = onOpenRelated
             )
 
@@ -4335,6 +4335,9 @@ fun PlayerRelatedModalSheet(
         viewModel.loadRelatedForTrack(currentTrack)
     }
 
+    val relatedScope = rememberCoroutineScope()
+    val relatedDragOffsetY = remember { Animatable(0f) }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
@@ -4343,7 +4346,9 @@ fun PlayerRelatedModalSheet(
         )
     ) {
         Surface(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { translationY = relatedDragOffsetY.value },
             color = MaterialTheme.colorScheme.background,
             contentColor = MaterialTheme.colorScheme.onBackground
         ) {
@@ -4355,19 +4360,53 @@ fun PlayerRelatedModalSheet(
                     .padding(top = 8.dp)
                     .testTag("player_related_modal")
             ) {
-            // Top Sheet Header
-            Row(
+            // Top Sheet Header with vertical slide-down gesture to dismiss
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            onDragEnd = {
+                                relatedScope.launch {
+                                    if (relatedDragOffsetY.value > 140f) {
+                                        onDismiss()
+                                    } else {
+                                        relatedDragOffsetY.animateTo(
+                                            0f,
+                                            spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
+                                        )
+                                    }
+                                }
+                            },
+                            onDragCancel = {
+                                relatedScope.launch { relatedDragOffsetY.animateTo(0f) }
+                            },
+                            onVerticalDrag = { change, dragAmount ->
+                                change.consume()
+                                val next = (relatedDragOffsetY.value + dragAmount).coerceAtLeast(0f)
+                                relatedScope.launch { relatedDragOffsetY.snapTo(next) }
+                            }
+                        )
+                    },
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                Box(
+                    modifier = Modifier
+                        .padding(top = 2.dp, bottom = 6.dp)
+                        .width(40.dp)
+                        .height(4.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = MaterialTheme.colorScheme.primaryContainer
@@ -4382,55 +4421,49 @@ fun PlayerRelatedModalSheet(
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                             )
                         }
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Up Next queue stays untouched",
-                            fontSize = 11.5.sp,
-                            fontFamily = OutfitFontFamily,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = "Related to ${currentTrack.title}",
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Related to ${currentTrack.title}",
-                        fontFamily = SyneFontFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Surface(
-                        onClick = { viewModel.loadRelatedForTrack(currentTrack, forceReload = true) },
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier.size(38.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "Refresh Related",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(19.dp)
-                            )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Surface(
+                            onClick = { viewModel.loadRelatedForTrack(currentTrack, forceReload = true) },
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Refresh Related",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
                         }
-                    }
 
-                    Surface(
-                        onClick = onDismiss,
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier.size(38.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.KeyboardArrowDown,
-                                contentDescription = "Close Related",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(22.dp)
-                            )
+                        Surface(
+                            onClick = onDismiss,
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    contentDescription = "Close Related",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
                         }
                     }
                 }

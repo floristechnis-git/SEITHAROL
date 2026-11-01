@@ -520,23 +520,38 @@ fun HomeScreen(
             val density = androidx.compose.ui.platform.LocalDensity.current
             val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
             val isTabletExpanded = maxWidth >= 600.dp
-            val visiblePrefix = if (isTabletExpanded) "Johnson" else "John"
             val availableWidthPx = with(density) { (maxWidth - 16.dp).coerceAtLeast(120.dp).toPx() }
             val baseStyle = androidx.compose.ui.text.TextStyle(
                 fontFamily = SyneFontFamily,
                 fontWeight = FontWeight.ExtraBold,
                 fontSize = 100.sp
             )
-            val measuredPrefixWidthPx = remember(visiblePrefix, textMeasurer) {
-                textMeasurer.measure(
-                    text = androidx.compose.ui.text.AnnotatedString(visiblePrefix),
-                    style = baseStyle,
-                    softWrap = false,
-                    maxLines = 1
-                ).size.width.coerceAtLeast(1)
+            val measuredPrefixWidthPx = remember(isTabletExpanded, textMeasurer) {
+                if (isTabletExpanded) {
+                    textMeasurer.measure(
+                        text = androidx.compose.ui.text.AnnotatedString("Johnson"),
+                        style = baseStyle,
+                        softWrap = false,
+                        maxLines = 1
+                    ).size.width.coerceAtLeast(1).toFloat()
+                } else {
+                    val johnWidth = textMeasurer.measure(
+                        text = androidx.compose.ui.text.AnnotatedString("John"),
+                        style = baseStyle,
+                        softWrap = false,
+                        maxLines = 1
+                    ).size.width.coerceAtLeast(1)
+                    val johnsWidth = textMeasurer.measure(
+                        text = androidx.compose.ui.text.AnnotatedString("Johns"),
+                        style = baseStyle,
+                        softWrap = false,
+                        maxLines = 1
+                    ).size.width.coerceAtLeast(johnWidth + 1)
+                    johnWidth + (johnsWidth - johnWidth) * 0.5f
+                }
             }
             val computedFontSizeSp = with(density) {
-                val rawSp = 100f * (availableWidthPx / measuredPrefixWidthPx.toFloat())
+                val rawSp = 100f * (availableWidthPx / measuredPrefixWidthPx)
                 rawSp.coerceIn(48f, 220f).sp
             }
 
@@ -1502,18 +1517,7 @@ fun HomeScreen(
         )
     }
 
-    var showDeveloperWelcomePopup by remember(userSettings.hasSeenDeveloperWelcomePopup) {
-        mutableStateOf(!userSettings.hasSeenDeveloperWelcomePopup)
-    }
-    if (showDeveloperWelcomePopup) {
-        DeveloperWelcomePopupModal(
-            userName = userSettings.userName.trim().ifBlank { "Friend" },
-            onDismiss = {
-                showDeveloperWelcomePopup = false
-                appPreferences.markDeveloperWelcomePopupSeen()
-            }
-        )
-    }
+
 }
 
 @Composable

@@ -698,35 +698,33 @@ fun PlayerScreen(
     LaunchedEffect(playerState.activeLyricIndex, showLyrics, playerState.lyricLines.size) {
         runCatching {
             if (!showLyrics || playerState.activeLyricIndex !in 0 until playerState.lyricLines.size) return@LaunchedEffect
+            if (inlineLyricListState.isScrollInProgress) {
+                lastUserInlineTouchMs = System.currentTimeMillis()
+                return@LaunchedEffect
+            }
             val now = System.currentTimeMillis()
             if (now - lastUserInlineTouchMs < 2400L) {
                 delay((2400L - (now - lastUserInlineTouchMs)).coerceAtLeast(100L))
             }
             val activeIdx = playerState.activeLyricIndex
-            // Wait one frame so Compose measures the newly active line's expanded font size before centering
-            withFrameNanos { }
-            var layoutInfo = inlineLyricListState.layoutInfo
-            var visibleItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == activeIdx }
-            if (visibleItem == null) {
-                // Because top contentPadding is (maxHeight / 2 - 24.dp), scrollOffset = 0 places the item right at the vertical center
-                inlineLyricListState.animateScrollToItem(
-                    index = activeIdx,
-                    scrollOffset = 0
-                )
-                withFrameNanos { }
-                layoutInfo = inlineLyricListState.layoutInfo
-                visibleItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == activeIdx }
-            }
+            val layoutInfo = inlineLyricListState.layoutInfo
+            val visibleItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == activeIdx }
             if (visibleItem != null) {
                 val itemCenter = visibleItem.offset + (visibleItem.size / 2f)
-                // True visual center of the showing div in visibleItem.offset coordinates:
                 val viewportCenter = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2f
                 val delta = itemCenter - viewportCenter
-                if (kotlin.math.abs(delta) > 1f) {
+                if (kotlin.math.abs(delta) > 1.5f) {
                     inlineLyricListState.animateScrollBy(
                         value = delta,
-                        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
+                        animationSpec = tween(durationMillis = 280, easing = LinearOutSlowInEasing)
                     )
+                }
+            } else {
+                val distance = kotlin.math.abs(activeIdx - inlineLyricListState.firstVisibleItemIndex)
+                if (distance > 8) {
+                    inlineLyricListState.scrollToItem(index = activeIdx, scrollOffset = 0)
+                } else {
+                    inlineLyricListState.animateScrollToItem(index = activeIdx, scrollOffset = 0)
                 }
             }
         }
@@ -1120,91 +1118,15 @@ fun PlayerScreen(
                 } else {
                     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                         val verticalPad = (maxHeight / 2 - 24.dp).coerceAtLeast(80.dp)
-                        LazyColumn(
-                            state = inlineLyricListState,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .pointerInput(Unit) {
-                                    awaitPointerEventScope {
-                                        while (true) {
-                                            val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
-                                            if (event.changes.any { it.positionChanged() }) {
-                                                lastUserInlineTouchMs = System.currentTimeMillis()
-                                            }
-                                        }
-                                    }
-                                },
-                            contentPadding = PaddingValues(top = verticalPad, bottom = verticalPad)
-                        ) {
-                            itemsIndexed(playerState.lyricLines) { index, line ->
-                                val isCurrent = index == playerState.activeLyricIndex
-                                val lineScale by animateFloatAsState(
-                                    targetValue = if (isCurrent) 1.03f else 0.97f,
-                                    animationSpec = tween(durationMillis = 190, easing = FastOutSlowInEasing),
-                                    label = "inline_lyric_scale"
-                                )
-                                val lineAlpha by animateFloatAsState(
-                                    targetValue = if (isCurrent) 1f else 0.48f,
-                                    animationSpec = tween(durationMillis = 190, easing = FastOutSlowInEasing),
-                                    label = "inline_lyric_alpha"
-                                )
-                                if (line.isInstrumental) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .graphicsLayer {
-                                                scaleX = lineScale
-                                                scaleY = lineScale
-                                                alpha = lineAlpha
-                                            }
-                                            .padding(vertical = 10.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        InstrumentalGapMusicNoteIndicator(
-                                            tint = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier
-                                        )
-                                    }
-                                } else {
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .graphicsLayer {
-                                                scaleX = lineScale
-                                                scaleY = lineScale
-                                                alpha = lineAlpha
-                                            }
-                                            .padding(vertical = 9.dp, horizontal = 8.dp)
-                                            .clickable { viewModel.seekTo(line.timestampMs) }
-                                    ) {
-                                        Text(
-                                            text = line.text,
-                                            color = if (isCurrent) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontSize = if (isCurrent) 20.sp else 16.sp,
-                                            lineHeight = if (isCurrent) 27.sp else 22.sp,
-                                            fontFamily = OutfitFontFamily,
-                                            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
-                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                        if (!line.translation.isNullOrBlank()) {
-                                            Text(
-                                                text = line.translation,
-                                                color = if (isCurrent) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                                                fontSize = if (isCurrent) 14.sp else 12.sp,
-                                                fontFamily = OutfitFontFamily,
-                                                fontWeight = FontWeight.Normal,
-                                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(top = 3.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        SmoothSyncedLyricsList(
+                            lyricLines = playerState.lyricLines,
+                            activeLyricIndex = playerState.activeLyricIndex,
+                            listState = inlineLyricListState,
+                            verticalPad = verticalPad,
+                            isExpanded = false,
+                            onUserTouch = { lastUserInlineTouchMs = System.currentTimeMillis() },
+                            onSeekTo = { ts -> viewModel.seekTo(ts) }
+                        )
 
                         Box(
                             modifier = Modifier
@@ -3723,35 +3645,33 @@ fun ExpandedLyricsModal(
     LaunchedEffect(playerState.activeLyricIndex, playerState.lyricLines.size) {
         runCatching {
             if (playerState.activeLyricIndex !in 0 until playerState.lyricLines.size) return@LaunchedEffect
+            if (lyricListState.isScrollInProgress) {
+                lastUserExpandedTouchMs = System.currentTimeMillis()
+                return@LaunchedEffect
+            }
             val now = System.currentTimeMillis()
             if (now - lastUserExpandedTouchMs < 2400L) {
                 delay((2400L - (now - lastUserExpandedTouchMs)).coerceAtLeast(100L))
             }
             val activeIdx = playerState.activeLyricIndex
-            // Wait one frame so Compose measures the newly active line's expanded font size before centering
-            withFrameNanos { }
-            var layoutInfo = lyricListState.layoutInfo
-            var visibleItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == activeIdx }
-            if (visibleItem == null) {
-                // Because top contentPadding is (maxHeight / 2 - 32.dp), scrollOffset = 0 places the item right at the vertical center
-                lyricListState.animateScrollToItem(
-                    index = activeIdx,
-                    scrollOffset = 0
-                )
-                withFrameNanos { }
-                layoutInfo = lyricListState.layoutInfo
-                visibleItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == activeIdx }
-            }
+            val layoutInfo = lyricListState.layoutInfo
+            val visibleItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == activeIdx }
             if (visibleItem != null) {
                 val itemCenter = visibleItem.offset + (visibleItem.size / 2f)
-                // True visual center of the showing div in visibleItem.offset coordinates:
                 val viewportCenter = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2f
                 val delta = itemCenter - viewportCenter
-                if (kotlin.math.abs(delta) > 1f) {
+                if (kotlin.math.abs(delta) > 1.5f) {
                     lyricListState.animateScrollBy(
                         value = delta,
-                        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
+                        animationSpec = tween(durationMillis = 280, easing = LinearOutSlowInEasing)
                     )
+                }
+            } else {
+                val distance = kotlin.math.abs(activeIdx - lyricListState.firstVisibleItemIndex)
+                if (distance > 8) {
+                    lyricListState.scrollToItem(index = activeIdx, scrollOffset = 0)
+                } else {
+                    lyricListState.animateScrollToItem(index = activeIdx, scrollOffset = 0)
                 }
             }
         }
@@ -3964,92 +3884,15 @@ fun ExpandedLyricsModal(
                             }
                         }
                     } else {
-                        LazyColumn(
-                            state = lyricListState,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .pointerInput(Unit) {
-                                    awaitPointerEventScope {
-                                        while (true) {
-                                            val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
-                                            if (event.changes.any { it.positionChanged() }) {
-                                                lastUserExpandedTouchMs = System.currentTimeMillis()
-                                            }
-                                        }
-                                    }
-                                },
-                            contentPadding = PaddingValues(top = verticalPad, bottom = verticalPad)
-                        ) {
-                            itemsIndexed(playerState.lyricLines) { index, line ->
-                                val isCurrent = index == playerState.activeLyricIndex
-                                val activeScale by animateFloatAsState(
-                                    targetValue = if (isCurrent) 1.05f else 0.96f,
-                                    animationSpec = tween(durationMillis = 190, easing = FastOutSlowInEasing),
-                                    label = "lyric_scale"
-                                )
-                                val activeAlpha by animateFloatAsState(
-                                    targetValue = if (isCurrent) 1f else 0.45f,
-                                    animationSpec = tween(durationMillis = 190, easing = FastOutSlowInEasing),
-                                    label = "lyric_alpha"
-                                )
-
-                                if (line.isInstrumental) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .graphicsLayer {
-                                                scaleX = activeScale
-                                                scaleY = activeScale
-                                                alpha = activeAlpha
-                                            }
-                                            .padding(vertical = 14.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        InstrumentalGapMusicNoteIndicator(
-                                            tint = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier
-                                        )
-                                    }
-                                } else {
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .graphicsLayer {
-                                                scaleX = activeScale
-                                                scaleY = activeScale
-                                                alpha = activeAlpha
-                                            }
-                                            .padding(vertical = 12.dp, horizontal = 8.dp)
-                                            .clickable { viewModel.seekTo(line.timestampMs) }
-                                    ) {
-                                        Text(
-                                            text = line.text,
-                                            color = if (isCurrent) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontSize = if (isCurrent) 24.sp else 18.sp,
-                                            fontFamily = SyneFontFamily,
-                                            fontWeight = if (isCurrent) FontWeight.ExtraBold else FontWeight.Medium,
-                                            lineHeight = if (isCurrent) 32.sp else 26.sp,
-                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                        if (!line.translation.isNullOrBlank()) {
-                                            Text(
-                                                text = line.translation,
-                                                color = if (isCurrent) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                                                fontSize = if (isCurrent) 16.sp else 13.sp,
-                                                fontFamily = OutfitFontFamily,
-                                                fontWeight = FontWeight.Normal,
-                                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(top = 4.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        SmoothSyncedLyricsList(
+                            lyricLines = playerState.lyricLines,
+                            activeLyricIndex = playerState.activeLyricIndex,
+                            listState = lyricListState,
+                            verticalPad = verticalPad,
+                            isExpanded = true,
+                            onUserTouch = { lastUserExpandedTouchMs = System.currentTimeMillis() },
+                            onSeekTo = { ts -> viewModel.seekTo(ts) }
+                        )
 
                         Box(
                             modifier = Modifier
@@ -5228,5 +5071,112 @@ fun PlayerRelatedModalSheet(
                 trackForDownload = null
             }
         )
+    }
+}
+
+
+/**
+ * Recomposition-isolated, low-RAM optimized synchronized lyrics list:
+ * - Skips recomposition on slider progress ticks because it only observes [lyricLines] and [activeLyricIndex].
+ * - Uses stable item keys and contentTypes so Compose recycles item compositions without reallocating.
+ * - Keeps text fontSize and lineHeight constant across active/inactive transitions to eliminate expensive
+ *   main-thread StaticLayout text re-measurement and vertical layout jumps during scroll; applies active
+ *   line emphasis purely via GPU-accelerated graphicsLayer (scaleX, scaleY, alpha).
+ */
+@Composable
+private fun SmoothSyncedLyricsList(
+    lyricLines: List<com.example.data.model.LyricsLine>,
+    activeLyricIndex: Int,
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    verticalPad: androidx.compose.ui.unit.Dp,
+    isExpanded: Boolean,
+    onUserTouch: () -> Unit,
+    onSeekTo: (Long) -> Unit
+) {
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) {
+            onUserTouch()
+        }
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(top = verticalPad, bottom = verticalPad)
+    ) {
+        itemsIndexed(
+            items = lyricLines,
+            key = { index, line -> "${index}_${line.timestampMs}" },
+            contentType = { _, line -> if (line.isInstrumental) 0 else 1 }
+        ) { index, line ->
+            val isCurrent = index == activeLyricIndex
+            val lineScale by animateFloatAsState(
+                targetValue = if (isCurrent) (if (isExpanded) 1.07f else 1.05f) else 0.94f,
+                animationSpec = tween(durationMillis = 180, easing = LinearOutSlowInEasing),
+                label = "smooth_lyric_scale"
+            )
+            val lineAlpha by animateFloatAsState(
+                targetValue = if (isCurrent) 1f else 0.44f,
+                animationSpec = tween(durationMillis = 180, easing = LinearOutSlowInEasing),
+                label = "smooth_lyric_alpha"
+            )
+
+            if (line.isInstrumental) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .graphicsLayer {
+                            scaleX = lineScale
+                            scaleY = lineScale
+                            alpha = lineAlpha
+                        }
+                        .padding(vertical = if (isExpanded) 14.dp else 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    InstrumentalGapMusicNoteIndicator(
+                        tint = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                    )
+                }
+            } else {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .graphicsLayer {
+                            scaleX = lineScale
+                            scaleY = lineScale
+                            alpha = lineAlpha
+                        }
+                        .padding(vertical = if (isExpanded) 12.dp else 9.dp, horizontal = 12.dp)
+                        .clickable { onSeekTo(line.timestampMs) }
+                ) {
+                    Text(
+                        text = line.text,
+                        color = if (isCurrent) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = if (isExpanded) 21.sp else 18.sp,
+                        lineHeight = if (isExpanded) 29.sp else 25.sp,
+                        fontFamily = if (isExpanded) SyneFontFamily else OutfitFontFamily,
+                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (!line.translation.isNullOrBlank()) {
+                        Text(
+                            text = line.translation,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = if (isExpanded) 14.5.sp else 13.sp,
+                            lineHeight = if (isExpanded) 20.sp else 18.sp,
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.Normal,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 3.dp)
+                        )
+                    }
+                }
+            }
+        }
     }
 }

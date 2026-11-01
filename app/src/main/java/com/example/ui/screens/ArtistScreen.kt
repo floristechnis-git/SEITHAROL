@@ -243,7 +243,7 @@ fun ArtistScreen(
                 mutableStateOf(false)
             }
 
-            // Expand all songs from artist albums, singles, playlists, and channel uploads so "See all" shows every track
+            // Expand all songs & uploaded videos from the channel/artist, canonical uploads playlist (UU...), albums, singles, and playlists
             LaunchedEffect(page.browseId, page.name, effectiveIsChannel) {
                 if (isOfflineMode) return@LaunchedEffect
                 isExpandingAllSongs = true
@@ -251,16 +251,62 @@ fun ArtistScreen(
                     val collected = LinkedHashMap<String, CandidateStream>()
                     page.topSongs.forEach { collected[it.videoId] = it }
 
+                    // 1. Fetch full YouTube channel uploads (with multi-page continuation tokens)
+                    val channelMeta = runCatching {
+                        InnerTubeStreamExtractor.fetchYouTubeChannelMeta(
+                            channelName = page.name,
+                            knownBrowseId = page.browseId.takeIf { it.startsWith("UC") },
+                            treatUploadsAsVideo = effectiveIsChannel
+                        )
+                    }.getOrNull()
+                    channelMeta?.videos?.forEach { up ->
+                        collected.putIfAbsent(
+                            up.videoId,
+                            up.copy(
+                                artist = page.name,
+                                videoType = if (effectiveIsChannel) "MUSIC_VIDEO_TYPE_OMV" else up.videoType
+                            )
+                        )
+                    }
+                    expandedCollectionSongs = collected.values.toList()
+
+                    // 2. Also expand the canonical YouTube "Uploads" playlist (UU<channelSuffix>) if we have a UC... channel ID
+                    val resolvedChannelId = channelMeta?.channelId?.takeIf { it.startsWith("UC") }
+                        ?: page.browseId.takeIf { it.startsWith("UC") }
+                    if (!resolvedChannelId.isNullOrBlank() && resolvedChannelId.length > 2) {
+                        val uploadsPlaylistId = "VLUU" + resolvedChannelId.removePrefix("UC")
+                        val uploadsDetails = runCatching {
+                            InnerTubeStreamExtractor.fetchPlaylistAlbumOrMixDetails(
+                                collectionId = uploadsPlaylistId,
+                                fallbackTitle = "${page.name} Uploads",
+                                fallbackThumb = page.avatarUrl
+                            )
+                        }.getOrNull()
+                        uploadsDetails?.tracks?.forEach { tr ->
+                            collected.putIfAbsent(
+                                tr.videoId,
+                                tr.copy(
+                                    artist = page.name,
+                                    videoType = if (effectiveIsChannel) "MUSIC_VIDEO_TYPE_OMV" else tr.videoType
+                                )
+                            )
+                        }
+                        expandedCollectionSongs = collected.values.toList()
+                    }
+
                     if (effectiveIsChannel) {
                         val moreVideos = runCatching {
-                            InnerTubeStreamExtractor.searchAllYoutubeVideos("${page.name} videos", limit = 60)
+                            InnerTubeStreamExtractor.searchAllYoutubeVideos("${page.name} videos", limit = 60) +
+                                InnerTubeStreamExtractor.searchAllYoutubeVideos(page.name, limit = 60)
                         }.getOrDefault(emptyList())
                         moreVideos.forEach { cand ->
                             if (InnerTubeStreamExtractor.belongsToArtist(page.name, cand.title, cand.artist)) {
-                                collected.putIfAbsent(cand.videoId, cand)
+                                collected.putIfAbsent(cand.videoId, cand.copy(videoType = "MUSIC_VIDEO_TYPE_OMV"))
                             }
                         }
-                        page.playlists.take(6).forEach { pl ->
+                        expandedCollectionSongs = collected.values.toList()
+
+                        page.playlists.forEach { pl ->
                             val colId = pl.browseId.ifBlank { pl.playlistId.orEmpty() }
                             if (colId.isNotBlank()) {
                                 val details = runCatching {
@@ -274,8 +320,9 @@ fun ArtistScreen(
                         }
                     } else {
                         val extraSongSearches = runCatching {
-                            InnerTubeStreamExtractor.searchOfficialYtmSongs("${page.name} all songs", limit = 40) +
-                                InnerTubeStreamExtractor.searchAllYoutubeVideos("${page.name} official song", limit = 40)
+                            InnerTubeStreamExtractor.searchOfficialYtmSongs("${page.name} all songs", limit = 60) +
+                                InnerTubeStreamExtractor.searchAllYoutubeVideos("${page.name} official song", limit = 60) +
+                                InnerTubeStreamExtractor.searchAllYoutubeVideos("${page.name} videos", limit = 60)
                         }.getOrDefault(emptyList())
                         extraSongSearches.forEach { cand ->
                             if (InnerTubeStreamExtractor.belongsToArtist(page.name, cand.title, cand.artist)) {
@@ -284,10 +331,9 @@ fun ArtistScreen(
                         }
                         expandedCollectionSongs = collected.values.toList()
 
-                        // Also include all songs inside the artist's albums, singles, and playlists
+                        // Also include all songs inside ALL of the artist's albums, singles, and playlists
                         val collectionsToExpand = (page.albums + page.singles + page.playlists)
                             .distinctBy { it.browseId.ifBlank { it.playlistId.orEmpty() } }
-                            .take(14)
                         for (col in collectionsToExpand) {
                             val colId = col.browseId.ifBlank { col.playlistId.orEmpty() }
                             if (colId.isBlank()) continue

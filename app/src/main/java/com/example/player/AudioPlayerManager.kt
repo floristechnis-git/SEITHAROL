@@ -1497,20 +1497,54 @@ class AudioPlayerManager(
         }
     }
 
+    private fun findActiveLyricIndexFast(lines: List<LyricsLine>, targetTimestampMs: Long): Int {
+        if (lines.isEmpty()) return -1
+        var low = 0
+        var high = lines.lastIndex
+        var result = -1
+        while (low <= high) {
+            val mid = (low + high) ushr 1
+            if (lines[mid].timestampMs <= targetTimestampMs) {
+                result = mid
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+        return result
+    }
+
     private fun startPositionTracker() {
         positionJob?.cancel()
         positionJob = coroutineScope.launch {
+            val lowRam = isLowMemoryDevice()
+            val minPositionEmitIntervalMs = if (lowRam) 320L else 220L
+            var lastPositionStateEmitMs = 0L
+            var lastHeavyCheckMs = 0L
+            var cachedDiskStatus = false
+
             while (isActive) {
                 val player = exoPlayer ?: break
-                if (!isAlwaysPlayEnabled() && isPhoneCallActive() && (player.isPlaying || _state.value.isPlaying)) {
-                    pauseForInterruption(resumeWhenEnded = true)
-                    break
+                val nowMs = System.currentTimeMillis()
+                if (nowMs - lastHeavyCheckMs >= 1500L) {
+                    lastHeavyCheckMs = nowMs
+                    if (!isAlwaysPlayEnabled() && isPhoneCallActive() && (player.isPlaying || _state.value.isPlaying)) {
+                        pauseForInterruption(resumeWhenEnded = true)
+                        break
+                    }
+                    val curTrack = _state.value.currentTrack
+                    cachedDiskStatus = _state.value.activeStream?.isLocal == true ||
+                        curTrack?.isLocalOnlyTrack == true ||
+                        curTrack?.isDownloaded == true ||
+                        _state.value.isStreamCachedOnDisk ||
+                        (curTrack != null && com.seitharol.player.OuterTuneResolvingDataSource.getCompletedCacheFile(context, curTrack.id, curTrack.isVideoTrack || _state.value.isVideoMode) != null)
                 }
-                val isSeekingOrBuffering = userRequestedPlay && (player.playbackState == Player.STATE_BUFFERING || (System.currentTimeMillis() - lastUserSeekTimestamp) < 2500L)
+
+                val isSeekingOrBuffering = userRequestedPlay && (player.playbackState == Player.STATE_BUFFERING || (nowMs - lastUserSeekTimestamp) < 2500L)
                 if (!player.isPlaying && !_state.value.isPlaying && !isSeekingOrBuffering) {
                     break
                 }
-                val isPastGracePeriod = (System.currentTimeMillis() - lastUserSeekTimestamp) > 700L
+                val isPastGracePeriod = (nowMs - lastUserSeekTimestamp) > 700L
                 val loadedMediaId = player.currentMediaItem?.mediaId
                 val matchesActiveTrack = loadTrackJob?.isActive != true &&
                     !loadedMediaId.isNullOrBlank() &&
@@ -1528,7 +1562,7 @@ class AudioPlayerManager(
 
                     val currentLyrics = _state.value.lyricLines
                     val adjustedPos = pos + _state.value.lyricOffsetMs + LYRIC_SYNC_LEAD_MS
-                    val activeIdx = currentLyrics.indexOfLast { it.timestampMs <= adjustedPos }
+                    val activeIdx = findActiveLyricIndexFast(currentLyrics, adjustedPos)
 
                     val vp = videoExoPlayer
                     val detectedRatio = computeVideoAspectRatio(player.videoSize)
@@ -1545,35 +1579,44 @@ class AudioPlayerManager(
                             }
                         }
                     }
-                    val effectiveDur = if (safeDur > 0L) safeDur else _state.value.durationMs
-                    val rawBufPos = player.bufferedPosition.coerceAtLeast(pos)
-                    val curTrack = _state.value.currentTrack
-                    val isLocalOrCached = _state.value.activeStream?.isLocal == true ||
-                        curTrack?.isLocalOnlyTrack == true ||
-                        curTrack?.isDownloaded == true ||
-                        _state.value.isStreamCachedOnDisk ||
-                        (curTrack != null && com.seitharol.player.OuterTuneResolvingDataSource.getCompletedCacheFile(context, curTrack.id, curTrack.isVideoTrack || _state.value.isVideoMode) != null)
-                    val inlineFrac = curTrack?.let {
-                        com.seitharol.player.OuterTuneResolvingDataSource.getInlineBufferedFraction(it.id, it.isVideoTrack || _state.value.isVideoMode)
-                    } ?: 0f
-                    val exoFrac = if (effectiveDur > 0L) (rawBufPos.toFloat() / effectiveDur.toFloat()).coerceIn(0f, 1f) else 0f
-                    val realBufFrac = if (isLocalOrCached) 1f else maxOf(exoFrac, inlineFrac).coerceIn(0f, 1f)
-                    val realBufPos = if (isLocalOrCached) effectiveDur else maxOf(rawBufPos, (realBufFrac * effectiveDur).toLong())
 
-                    _state.value = _state.value.copy(
-                        currentPositionMs = pos,
-                        durationMs = effectiveDur,
-                        bufferedPositionMs = realBufPos,
-                        bufferedFraction = realBufFrac,
-                        isStreamCachedOnDisk = isLocalOrCached,
-                        activeLyricIndex = activeIdx,
-                        isVideoFrameRendered = _state.value.isVideoFrameRendered || hasVideoSize,
-                        videoAspectRatio = detectedRatio ?: _state.value.videoAspectRatio
-                    )
+                    val lyricChanged = activeIdx != _state.value.activeLyricIndex
+                    val videoFrameChanged = !_state.value.isVideoFrameRendered && hasVideoSize
+                    val shouldEmitPosition = (nowMs - lastPositionStateEmitMs) >= minPositionEmitIntervalMs
 
-                    val now = System.currentTimeMillis()
-                    if (now - lastCheckpointSaveMs > 60_000L) {
-                        lastCheckpointSaveMs = now
+                    if (lyricChanged || videoFrameChanged || shouldEmitPosition) {
+                        if (shouldEmitPosition) {
+                            lastPositionStateEmitMs = nowMs
+                        }
+                        val effectiveDur = if (safeDur > 0L) safeDur else _state.value.durationMs
+                        val rawBufPos = player.bufferedPosition.coerceAtLeast(pos)
+                        val curTrack = _state.value.currentTrack
+                        val isLocalOrCached = cachedDiskStatus ||
+                            _state.value.activeStream?.isLocal == true ||
+                            curTrack?.isLocalOnlyTrack == true ||
+                            curTrack?.isDownloaded == true ||
+                            _state.value.isStreamCachedOnDisk
+                        val inlineFrac = curTrack?.let {
+                            com.seitharol.player.OuterTuneResolvingDataSource.getInlineBufferedFraction(it.id, it.isVideoTrack || _state.value.isVideoMode)
+                        } ?: 0f
+                        val exoFrac = if (effectiveDur > 0L) (rawBufPos.toFloat() / effectiveDur.toFloat()).coerceIn(0f, 1f) else 0f
+                        val realBufFrac = if (isLocalOrCached) 1f else maxOf(exoFrac, inlineFrac).coerceIn(0f, 1f)
+                        val realBufPos = if (isLocalOrCached) effectiveDur else maxOf(rawBufPos, (realBufFrac * effectiveDur).toLong())
+
+                        _state.value = _state.value.copy(
+                            currentPositionMs = if (shouldEmitPosition) pos else _state.value.currentPositionMs,
+                            durationMs = effectiveDur,
+                            bufferedPositionMs = realBufPos,
+                            bufferedFraction = realBufFrac,
+                            isStreamCachedOnDisk = isLocalOrCached,
+                            activeLyricIndex = activeIdx,
+                            isVideoFrameRendered = _state.value.isVideoFrameRendered || hasVideoSize,
+                            videoAspectRatio = detectedRatio ?: _state.value.videoAspectRatio
+                        )
+                    }
+
+                    if (nowMs - lastCheckpointSaveMs > 60_000L) {
+                        lastCheckpointSaveMs = nowMs
                         persistCurrentPlaybackState()
                     }
 
@@ -1585,7 +1628,7 @@ class AudioPlayerManager(
                         prefetchNextTrack()
                     }
                 }
-                delay(75L)
+                delay(85L)
             }
         }
     }

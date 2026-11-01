@@ -46,6 +46,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun InDiscoverSearchSurface(
     audioPlayerManager: AudioPlayerManager,
+    personalizedRecommendations: List<NormalizedTrack> = emptyList(),
     onSearch: suspend (String) -> List<NormalizedTrack>,
     onOpenDownloadPicker: (NormalizedTrack) -> Unit,
     onOpenFullSong: (NormalizedTrack) -> Unit,
@@ -227,12 +228,30 @@ fun InDiscoverSearchSurface(
                 }
             }
 
+            val displayedItems = remember(query, results, personalizedRecommendations) {
+                if (query.trim().length < 2) {
+                    personalizedRecommendations.distinctBy { it.sourceId }
+                } else {
+                    results.distinctBy { it.sourceId }
+                }
+            }
+
+            if (query.trim().length < 2 && displayedItems.isNotEmpty()) {
+                Text(
+                    text = "Personalized for You • Based on Your Listening History",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp)
+                )
+            }
+
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(bottom = 210.dp)
             ) {
-                items(results.distinctBy { it.sourceId }, key = { "disc_sr_${it.sourceId}" }) { item ->
+                items(displayedItems, key = { "disc_sr_${it.sourceId}" }) { item ->
                     val isThisPlaying = activePreviewId == item.sourceId && isPreviewPlaying
                     val primaryArtist = item.artists.firstOrNull().orEmpty().ifBlank { "Unknown Artist" }
                     val itemThumb = remember(item.artUrl, settings.thumbnailQuality) {

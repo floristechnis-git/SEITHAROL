@@ -82,17 +82,22 @@ fun DiscoverScreen(
     val scope = rememberCoroutineScope()
 
     val activeFeed = remember { mutableStateListOf<NormalizedTrack>() }
+    val pagerState = rememberPagerState(pageCount = { activeFeed.size })
     LaunchedEffect(feedTracks) {
-        if (activeFeed.isEmpty() && feedTracks.isNotEmpty()) {
-            activeFeed.addAll(feedTracks)
-        } else {
-            feedTracks.forEach { t ->
-                if (activeFeed.none { it.sourceId == t.sourceId }) activeFeed.add(t)
+        if (feedTracks.isNotEmpty()) {
+            if (activeFeed.isEmpty()) {
+                activeFeed.addAll(feedTracks)
+            } else {
+                val keepCount = (pagerState.settledPage + 1).coerceIn(1, activeFeed.size)
+                val keptPrefix = activeFeed.take(keepCount)
+                val keptIds = keptPrefix.map { it.sourceId }.toSet()
+                val updatedTail = feedTracks.filterNot { it.sourceId in keptIds }
+                activeFeed.clear()
+                activeFeed.addAll(keptPrefix)
+                activeFeed.addAll(updatedTail)
             }
         }
     }
-
-    val pagerState = rememberPagerState(pageCount = { activeFeed.size })
     var isInDiscoverSearchOpen by remember { mutableStateOf(false) }
     var trackForDownloadSheet by remember { mutableStateOf<NormalizedTrack?>(null) }
     var showQualitySheet by remember { mutableStateOf(false) }
@@ -286,6 +291,7 @@ fun DiscoverScreen(
         if (isInDiscoverSearchOpen) {
             InDiscoverSearchSurface(
                 audioPlayerManager = audioPlayerManager,
+                personalizedRecommendations = activeFeed.toList(),
                 onSearch = onSearchPreviewTracks,
                 onOpenDownloadPicker = { selectedTrack ->
                     focusManager.clearFocus(force = true)

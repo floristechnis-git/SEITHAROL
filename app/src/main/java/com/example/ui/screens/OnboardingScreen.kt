@@ -1,8 +1,10 @@
 package com.example.ui.screens
 
 import android.app.DatePickerDialog
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -19,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Cake
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.GraphicEq
@@ -46,10 +49,10 @@ import java.util.Calendar
 import java.util.Locale
 
 /**
- * Refined 2-Step Studio Onboarding Screen:
- * - Clean tonal cards, balanced typography, and responsive layout that fits mobile & tablet viewports.
- * - Single-line DOB selector ("Select Date of Birth") with native DatePickerDialog.
- * - "Get Started" button has no overlay — simply disabled and desaturated until inputs are complete.
+ * 3-Step Studio Onboarding Screen:
+ * - Step 1: Welcome & Studio Feature Highlights.
+ * - Step 2: Registration (Name & Date of Birth).
+ * - Step 3: Creator's Note full-page onboarding step right after registration with the 5-second friction timer.
  */
 @Composable
 fun OnboardingScreen(
@@ -70,6 +73,14 @@ fun OnboardingScreen(
     val primaryColor = MaterialTheme.colorScheme.primary
     val onPrimaryColor = MaterialTheme.colorScheme.onPrimary
 
+    val completeOnboarding = {
+        onContinue(
+            name.trim().ifBlank { "Friend" },
+            birthdateIso,
+            calculatedAge.ifBlank { "18" }
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -78,7 +89,7 @@ fun OnboardingScreen(
             .navigationBarsPadding()
             .padding(horizontal = 24.dp, vertical = 16.dp)
     ) {
-        // Top Step Bar & Skip Action
+        // Top Step Bar & Skip / Step Counter
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -100,6 +111,11 @@ fun OnboardingScreen(
                     animationSpec = tween(220),
                     label = "step2_w"
                 )
+                val step3Width by animateDpAsState(
+                    targetValue = if (currentStep == 3) 28.dp else 10.dp,
+                    animationSpec = tween(220),
+                    label = "step3_w"
+                )
                 Box(
                     modifier = Modifier
                         .width(step1Width)
@@ -113,6 +129,13 @@ fun OnboardingScreen(
                         .height(5.dp)
                         .clip(CircleShape)
                         .background(if (currentStep == 2) primaryColor else borderColor.copy(alpha = 0.6f))
+                )
+                Box(
+                    modifier = Modifier
+                        .width(step3Width)
+                        .height(5.dp)
+                        .clip(CircleShape)
+                        .background(if (currentStep == 3) primaryColor else borderColor.copy(alpha = 0.6f))
                 )
             }
 
@@ -133,7 +156,7 @@ fun OnboardingScreen(
                 }
             } else {
                 Text(
-                    text = "Step 2 of 2",
+                    text = "Step $currentStep of 3",
                     color = secondaryText,
                     fontSize = 12.sp,
                     fontFamily = OutfitFontFamily,
@@ -150,285 +173,232 @@ fun OnboardingScreen(
                 .fillMaxWidth(),
             label = "onboarding_flow"
         ) { step ->
-            if (step == 1) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Spacer(modifier = Modifier.height(8.dp))
+            when (step) {
+                1 -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Spacer(modifier = Modifier.height(8.dp))
 
-                        // Brand Header Card
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            Surface(
-                                modifier = Modifier.size(58.dp),
-                                shape = RoundedCornerShape(16.dp),
-                                color = surfaceColor,
-                                border = BorderStroke(1.dp, borderColor.copy(alpha = 0.5f))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
-                                Image(
-                                    painter = painterResource(id = R.drawable.ic_splash_logo),
-                                    contentDescription = "Seitharol",
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            }
-
-                            Column {
                                 Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = primaryColor.copy(alpha = 0.14f)
+                                    modifier = Modifier.size(58.dp),
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = surfaceColor,
+                                    border = BorderStroke(1.dp, borderColor.copy(alpha = 0.5f))
                                 ) {
-                                    Text(
-                                        text = "SEITHAROL AUDIO",
-                                        color = primaryColor,
-                                        fontSize = 10.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        letterSpacing = 0.9.sp,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    Image(
+                                        painter = painterResource(id = R.drawable.ic_splash_logo),
+                                        contentDescription = "Seitharol",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
                                     )
                                 }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Welcome to Seitharol",
-                                    color = primaryText,
-                                    fontSize = 23.sp,
-                                    lineHeight = 28.sp,
-                                    fontFamily = SyneFontFamily,
-                                    fontWeight = FontWeight.Bold
+
+                                Column {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = primaryColor.copy(alpha = 0.14f)
+                                    ) {
+                                        Text(
+                                            text = "SEITHAROL AUDIO",
+                                            color = primaryColor,
+                                            fontSize = 10.sp,
+                                            fontFamily = OutfitFontFamily,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            letterSpacing = 0.9.sp,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Welcome to Seitharol",
+                                        color = primaryText,
+                                        fontSize = 23.sp,
+                                        lineHeight = 28.sp,
+                                        fontFamily = SyneFontFamily,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Text(
+                                text = "Ad-free high-bitrate streaming, time-synced lyrics, and offline playback tailored to your taste.",
+                                color = secondaryText,
+                                fontSize = 14.sp,
+                                lineHeight = 20.sp,
+                                fontFamily = OutfitFontFamily
+                            )
+
+                            Spacer(modifier = Modifier.height(20.dp))
+
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                OnboardingFeatureCard(
+                                    icon = Icons.Outlined.GraphicEq,
+                                    title = "Pure Studio Audio",
+                                    body = "High-bitrate audio streaming with a built-in 5-band studio equalizer.",
+                                    primaryColor = primaryColor,
+                                    surfaceColor = surfaceColor,
+                                    borderColor = borderColor,
+                                    primaryText = primaryText,
+                                    secondaryText = secondaryText
+                                )
+                                OnboardingFeatureCard(
+                                    icon = Icons.Outlined.Subtitles,
+                                    title = "Synchronized Lyrics",
+                                    body = "Real-time scrolling lyrics with instant tap-to-seek and fullscreen view.",
+                                    primaryColor = primaryColor,
+                                    surfaceColor = surfaceColor,
+                                    borderColor = borderColor,
+                                    primaryText = primaryText,
+                                    secondaryText = secondaryText
+                                )
+                                OnboardingFeatureCard(
+                                    icon = Icons.Outlined.CloudDownload,
+                                    title = "Offline Playback",
+                                    body = "Save songs and videos directly to your device for uninterrupted offline listening.",
+                                    primaryColor = primaryColor,
+                                    surfaceColor = surfaceColor,
+                                    borderColor = borderColor,
+                                    primaryText = primaryText,
+                                    secondaryText = secondaryText
                                 )
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Text(
-                            text = "Ad-free high-bitrate streaming, time-synced lyrics, and offline playback tailored to your taste.",
-                            color = secondaryText,
-                            fontSize = 14.sp,
-                            lineHeight = 20.sp,
-                            fontFamily = OutfitFontFamily
-                        )
-
-                        Spacer(modifier = Modifier.height(20.dp))
-
                         Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 16.dp)
                         ) {
-                            OnboardingFeatureCard(
-                                icon = Icons.Outlined.GraphicEq,
-                                title = "Pure Studio Audio",
-                                body = "High-bitrate audio streaming with a built-in 5-band studio equalizer.",
-                                primaryColor = primaryColor,
-                                surfaceColor = surfaceColor,
-                                borderColor = borderColor,
-                                primaryText = primaryText,
-                                secondaryText = secondaryText
-                            )
-                            OnboardingFeatureCard(
-                                icon = Icons.Outlined.Subtitles,
-                                title = "Synchronized Lyrics",
-                                body = "Real-time scrolling lyrics with instant tap-to-seek and fullscreen view.",
-                                primaryColor = primaryColor,
-                                surfaceColor = surfaceColor,
-                                borderColor = borderColor,
-                                primaryText = primaryText,
-                                secondaryText = secondaryText
-                            )
-                            OnboardingFeatureCard(
-                                icon = Icons.Outlined.CloudDownload,
-                                title = "Offline Playback",
-                                body = "Save songs and videos directly to your device for uninterrupted offline listening.",
-                                primaryColor = primaryColor,
-                                surfaceColor = surfaceColor,
-                                borderColor = borderColor,
-                                primaryText = primaryText,
-                                secondaryText = secondaryText
-                            )
+                            Button(
+                                onClick = { currentStep = 2 },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = primaryColor,
+                                    contentColor = onPrimaryColor
+                                ),
+                                elevation = ButtonDefaults.buttonElevation(
+                                    defaultElevation = 0.dp,
+                                    pressedElevation = 0.dp
+                                ),
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(52.dp)
+                            ) {
+                                Text(
+                                    text = "Continue",
+                                    color = onPrimaryColor,
+                                    fontFamily = SyneFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
+                }
+
+                2 -> {
+                    BackHandler { currentStep = 1 }
+                    val currentCal = Calendar.getInstance()
+                    val defaultYear = currentCal.get(Calendar.YEAR) - 20
+                    val defaultMonth = currentCal.get(Calendar.MONTH)
+                    val defaultDay = currentCal.get(Calendar.DAY_OF_MONTH)
+
+                    val showDatePicker = {
+                        val datePickerDialog = DatePickerDialog(
+                            context,
+                            { _, year, monthOfYear, dayOfMonth ->
+                                val selectedCal = Calendar.getInstance().apply {
+                                    set(Calendar.YEAR, year)
+                                    set(Calendar.MONTH, monthOfYear)
+                                    set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                                }
+                                val isoFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                                val displayFormat = SimpleDateFormat("MMMM d, yyyy", Locale.US)
+                                birthdateIso = isoFormat.format(selectedCal.time)
+                                birthdateDisplay = displayFormat.format(selectedCal.time)
+
+                                val today = Calendar.getInstance()
+                                var ageYears = today.get(Calendar.YEAR) - year
+                                if (today.get(Calendar.DAY_OF_YEAR) < selectedCal.get(Calendar.DAY_OF_YEAR)) {
+                                    ageYears--
+                                }
+                                calculatedAge = ageYears.coerceAtLeast(0).toString()
+                            },
+                            defaultYear,
+                            defaultMonth,
+                            defaultDay
+                        )
+                        datePickerDialog.datePicker.maxDate = System.currentTimeMillis()
+                        datePickerDialog.show()
+                    }
+
+                    val isFormValid = name.trim().isNotBlank() && birthdateIso.isNotBlank()
 
                     Column(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 16.dp)
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Button(
-                            onClick = { currentStep = 2 },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = primaryColor,
-                                contentColor = onPrimaryColor
-                            ),
-                            elevation = ButtonDefaults.buttonElevation(
-                                defaultElevation = 0.dp,
-                                pressedElevation = 0.dp
-                            ),
-                            shape = RoundedCornerShape(16.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(52.dp)
-                        ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+
                             Text(
-                                text = "Continue",
-                                color = onPrimaryColor,
+                                text = "Personalize your profile",
+                                color = primaryText,
+                                fontSize = 23.sp,
+                                lineHeight = 28.sp,
                                 fontFamily = SyneFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp
+                                fontWeight = FontWeight.Bold
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            Text(
+                                text = "Tell us your name and date of birth to customize your home feed.",
+                                color = secondaryText,
+                                fontSize = 13.5.sp,
+                                lineHeight = 19.sp,
+                                fontFamily = OutfitFontFamily
                             )
-                        }
-                    }
-                }
-            } else {
-                val currentCal = Calendar.getInstance()
-                val defaultYear = currentCal.get(Calendar.YEAR) - 20
-                val defaultMonth = currentCal.get(Calendar.MONTH)
-                val defaultDay = currentCal.get(Calendar.DAY_OF_MONTH)
 
-                val showDatePicker = {
-                    val datePickerDialog = DatePickerDialog(
-                        context,
-                        { _, year, monthOfYear, dayOfMonth ->
-                            val selectedCal = Calendar.getInstance().apply {
-                                set(Calendar.YEAR, year)
-                                set(Calendar.MONTH, monthOfYear)
-                                set(Calendar.DAY_OF_MONTH, dayOfMonth)
-                            }
-                            val isoFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-                            val displayFormat = SimpleDateFormat("MMMM d, yyyy", Locale.US)
-                            birthdateIso = isoFormat.format(selectedCal.time)
-                            birthdateDisplay = displayFormat.format(selectedCal.time)
+                            Spacer(modifier = Modifier.height(22.dp))
 
-                            val today = Calendar.getInstance()
-                            var ageYears = today.get(Calendar.YEAR) - year
-                            if (today.get(Calendar.DAY_OF_YEAR) < selectedCal.get(Calendar.DAY_OF_YEAR)) {
-                                ageYears--
-                            }
-                            calculatedAge = ageYears.coerceAtLeast(0).toString()
-                        },
-                        defaultYear,
-                        defaultMonth,
-                        defaultDay
-                    )
-                    datePickerDialog.datePicker.maxDate = System.currentTimeMillis()
-                    datePickerDialog.show()
-                }
+                            Text(
+                                text = "Your Name",
+                                color = primaryText,
+                                fontSize = 13.sp,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
 
-                val isFormValid = name.trim().isNotBlank() && birthdateIso.isNotBlank()
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Text(
-                            text = "Personalize your profile",
-                            color = primaryText,
-                            fontSize = 23.sp,
-                            lineHeight = 28.sp,
-                            fontFamily = SyneFontFamily,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        Text(
-                            text = "Tell us your name and date of birth to customize your home feed.",
-                            color = secondaryText,
-                            fontSize = 13.5.sp,
-                            lineHeight = 19.sp,
-                            fontFamily = OutfitFontFamily
-                        )
-
-                        Spacer(modifier = Modifier.height(22.dp))
-
-                        Text(
-                            text = "Your Name",
-                            color = primaryText,
-                            fontSize = 13.sp,
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-
-                        OutlinedTextField(
-                            value = name,
-                            onValueChange = { name = it },
-                            placeholder = {
-                                Text(
-                                    text = "Enter your name",
-                                    color = secondaryText.copy(alpha = 0.6f),
-                                    fontFamily = OutfitFontFamily,
-                                    fontSize = 14.sp,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Outlined.Person,
-                                    contentDescription = null,
-                                    tint = if (name.isNotBlank()) primaryColor else secondaryText,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            },
-                            singleLine = true,
-                            shape = RoundedCornerShape(14.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = primaryColor,
-                                unfocusedBorderColor = borderColor.copy(alpha = 0.6f),
-                                focusedContainerColor = surfaceColor.copy(alpha = 0.5f),
-                                unfocusedContainerColor = surfaceColor.copy(alpha = 0.5f),
-                                focusedTextColor = primaryText,
-                                focusedPlaceholderColor = secondaryText.copy(alpha = 0.6f),
-                                unfocusedTextColor = primaryText,
-                                cursorColor = primaryColor
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        Spacer(modifier = Modifier.height(18.dp))
-
-                        Text(
-                            text = "Date of Birth",
-                            color = primaryText,
-                            fontSize = 13.sp,
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .clickable { showDatePicker() }
-                        ) {
                             OutlinedTextField(
-                                value = birthdateDisplay,
-                                onValueChange = {},
-                                readOnly = true,
-                                enabled = false,
+                                value = name,
+                                onValueChange = { name = it },
                                 placeholder = {
                                     Text(
-                                        text = "Select Date of Birth",
+                                        text = "Enter your name",
                                         color = secondaryText.copy(alpha = 0.6f),
                                         fontFamily = OutfitFontFamily,
                                         fontSize = 14.sp,
@@ -439,67 +409,299 @@ fun OnboardingScreen(
                                 },
                                 leadingIcon = {
                                     Icon(
-                                        imageVector = Icons.Outlined.Cake,
-                                        contentDescription = "Select Date of Birth",
-                                        tint = if (birthdateIso.isNotBlank()) primaryColor else secondaryText,
+                                        imageVector = Icons.Outlined.Person,
+                                        contentDescription = null,
+                                        tint = if (name.isNotBlank()) primaryColor else secondaryText,
                                         modifier = Modifier.size(20.dp)
                                     )
                                 },
                                 singleLine = true,
                                 shape = RoundedCornerShape(14.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
-                                    disabledTextColor = primaryText,
-                                    disabledBorderColor = if (birthdateIso.isNotBlank()) primaryColor else borderColor.copy(alpha = 0.6f),
-                                    disabledContainerColor = surfaceColor.copy(alpha = 0.5f),
-                                    disabledPlaceholderColor = secondaryText.copy(alpha = 0.6f),
-                                    disabledLeadingIconColor = if (birthdateIso.isNotBlank()) primaryColor else secondaryText
+                                    focusedBorderColor = primaryColor,
+                                    unfocusedBorderColor = borderColor.copy(alpha = 0.6f),
+                                    focusedContainerColor = surfaceColor.copy(alpha = 0.5f),
+                                    unfocusedContainerColor = surfaceColor.copy(alpha = 0.5f),
+                                    focusedTextColor = primaryText,
+                                    focusedPlaceholderColor = secondaryText.copy(alpha = 0.6f),
+                                    unfocusedTextColor = primaryText,
+                                    cursorColor = primaryColor
                                 ),
                                 modifier = Modifier.fillMaxWidth()
                             )
+
+                            Spacer(modifier = Modifier.height(18.dp))
+
+                            Text(
+                                text = "Date of Birth",
+                                color = primaryText,
+                                fontSize = 13.sp,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .clickable { showDatePicker() }
+                            ) {
+                                OutlinedTextField(
+                                    value = birthdateDisplay,
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    enabled = false,
+                                    placeholder = {
+                                        Text(
+                                            text = "Select Date of Birth",
+                                            color = secondaryText.copy(alpha = 0.6f),
+                                            fontFamily = OutfitFontFamily,
+                                            fontSize = 14.sp,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Cake,
+                                            contentDescription = "Select Date of Birth",
+                                            tint = if (birthdateIso.isNotBlank()) primaryColor else secondaryText,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        disabledTextColor = primaryText,
+                                        disabledBorderColor = if (birthdateIso.isNotBlank()) primaryColor else borderColor.copy(alpha = 0.6f),
+                                        disabledContainerColor = surfaceColor.copy(alpha = 0.5f),
+                                        disabledPlaceholderColor = secondaryText.copy(alpha = 0.6f),
+                                        disabledLeadingIconColor = if (birthdateIso.isNotBlank()) primaryColor else secondaryText
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 16.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = { currentStep = 1 },
+                                    shape = RoundedCornerShape(16.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = primaryText
+                                    ),
+                                    border = BorderStroke(1.dp, borderColor.copy(alpha = 0.7f)),
+                                    modifier = Modifier
+                                        .weight(0.36f)
+                                        .height(52.dp)
+                                ) {
+                                    Text(
+                                        text = "Back",
+                                        color = primaryText,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 14.sp
+                                    )
+                                }
+
+                                Button(
+                                    onClick = {
+                                        if (isFormValid) {
+                                            currentStep = 3
+                                        }
+                                    },
+                                    enabled = isFormValid,
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = primaryColor,
+                                        contentColor = onPrimaryColor,
+                                        disabledContainerColor = surfaceColor,
+                                        disabledContentColor = secondaryText.copy(alpha = 0.45f)
+                                    ),
+                                    elevation = ButtonDefaults.buttonElevation(
+                                        defaultElevation = 0.dp,
+                                        pressedElevation = 0.dp,
+                                        disabledElevation = 0.dp
+                                    ),
+                                    shape = RoundedCornerShape(16.dp),
+                                    modifier = Modifier
+                                        .weight(0.64f)
+                                        .height(52.dp)
+                                ) {
+                                    Text(
+                                        text = "Continue",
+                                        fontFamily = SyneFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                else -> {
+                    // Step 3: Creator's Note Onboarding Page (right after registration, with exact 5s friction)
+                    val loadProgress = remember { Animatable(0f) }
+                    LaunchedEffect(Unit) {
+                        loadProgress.animateTo(
+                            targetValue = 1f,
+                            animationSpec = tween(
+                                durationMillis = 5000,
+                                easing = LinearEasing
+                            )
+                        )
+                    }
+                    val canProceed = loadProgress.value >= 0.999f
+                    val displayName = name.trim().ifBlank { "Friend" }
+
+                    // Same friction: block back button while 5s timer is running
+                    BackHandler(enabled = true) {
+                        if (canProceed) {
+                            completeOnboarding()
                         }
                     }
 
                     Column(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 16.dp)
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            OutlinedButton(
-                                onClick = { currentStep = 1 },
-                                shape = RoundedCornerShape(16.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = primaryText
-                                ),
-                                border = BorderStroke(1.dp, borderColor.copy(alpha = 0.7f)),
-                                modifier = Modifier
-                                    .weight(0.36f)
-                                    .height(52.dp)
-                            ) {
-                                Text(
-                                    text = "Back",
-                                    color = primaryText,
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 14.sp
-                                )
-                            }
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Spacer(modifier = Modifier.height(8.dp))
 
-                            // "Get Started" button: no overlay, simply disabled & loses color until valid
-                            Button(
-                                onClick = {
-                                    if (isFormValid) {
-                                        onContinue(
-                                            name.trim(),
-                                            birthdateIso,
-                                            calculatedAge.ifBlank { "18" }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(16.dp),
+                                        color = surfaceColor,
+                                        border = BorderStroke(1.dp, borderColor.copy(alpha = 0.5f)),
+                                        modifier = Modifier.size(54.dp)
+                                    ) {
+                                        Image(
+                                            painter = painterResource(id = R.drawable.ic_splash_logo),
+                                            contentDescription = "Seitharol Logo",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
                                         )
                                     }
+                                    Column {
+                                        Text(
+                                            text = "SEITHAROL",
+                                            fontFamily = SyneFontFamily,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 15.sp,
+                                            letterSpacing = 1.2.sp,
+                                            color = primaryText
+                                        )
+                                        Text(
+                                            text = "Creator's Note",
+                                            fontFamily = OutfitFontFamily,
+                                            fontWeight = FontWeight.Medium,
+                                            fontSize = 12.5.sp,
+                                            color = secondaryText
+                                        )
+                                    }
+                                }
+
+                                // Top-right friction indicator: 0% -> 100% circular loader over 5s that becomes the X button
+                                Surface(
+                                    shape = CircleShape,
+                                    color = surfaceColor.copy(alpha = 0.75f),
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .clip(CircleShape)
+                                        .then(
+                                            if (canProceed) {
+                                                Modifier.clickable { completeOnboarding() }
+                                            } else {
+                                                Modifier
+                                            }
+                                        )
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        if (canProceed) {
+                                            Icon(
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = "Continue to App",
+                                                tint = primaryText,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        } else {
+                                            CircularProgressIndicator(
+                                                progress = { loadProgress.value.coerceIn(0f, 1f) },
+                                                modifier = Modifier.size(20.dp),
+                                                color = primaryColor,
+                                                trackColor = secondaryText.copy(alpha = 0.2f),
+                                                strokeWidth = 2.2.dp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(22.dp))
+
+                            Surface(
+                                shape = RoundedCornerShape(22.dp),
+                                color = surfaceColor.copy(alpha = 0.45f),
+                                border = BorderStroke(1.dp, borderColor.copy(alpha = 0.5f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 20.dp, vertical = 20.dp)
+                                ) {
+                                    Text(
+                                        text = "Welcome $displayName, I'm Yumkhaibam Johnson Singh. I dedicated 71 days to developing this app for you. My hope is to provide an ad-free and limitless experience, serving as a supportive background companion for your work and an emotional stabilizer for those with broken hearts.",
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.Normal,
+                                        fontSize = 15.sp,
+                                        lineHeight = 23.sp,
+                                        color = primaryText
+                                    )
+                                }
+                            }
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 16.dp)
+                        ) {
+                            // Single "Get Started" button with same 5s friction — disabled & desaturated until ready
+                            Button(
+                                onClick = {
+                                    if (canProceed) {
+                                        completeOnboarding()
+                                    }
                                 },
-                                enabled = isFormValid,
+                                enabled = canProceed,
+                                shape = RoundedCornerShape(16.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = primaryColor,
                                     contentColor = onPrimaryColor,
@@ -511,9 +713,8 @@ fun OnboardingScreen(
                                     pressedElevation = 0.dp,
                                     disabledElevation = 0.dp
                                 ),
-                                shape = RoundedCornerShape(16.dp),
                                 modifier = Modifier
-                                    .weight(0.64f)
+                                    .fillMaxWidth()
                                     .height(52.dp)
                             ) {
                                 Text(

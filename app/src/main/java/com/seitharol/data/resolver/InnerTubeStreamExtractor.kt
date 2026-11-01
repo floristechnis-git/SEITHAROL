@@ -1977,28 +1977,93 @@ object InnerTubeStreamExtractor {
                     }
 
                     val vRenderers = mutableListOf<JSONObject>()
-                    fun collectChannelVideos(node: Any?) {
-                        if (vRenderers.size >= 100) return
+                    fun collectChannelVideosAndContinuations(node: Any?, tokensOut: MutableList<String>) {
                         when (node) {
                             is JSONObject -> {
                                 node.optJSONObject("videoRenderer")?.let { vRenderers.add(it); return }
                                 node.optJSONObject("gridVideoRenderer")?.let { vRenderers.add(it); return }
+                                node.optJSONObject("playlistVideoRenderer")?.let { vRenderers.add(it); return }
+                                node.optJSONObject("continuationItemRenderer")
+                                    ?.optJSONObject("continuationEndpoint")
+                                    ?.optJSONObject("continuationCommand")
+                                    ?.optString("token")
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?.let { tokensOut.add(it) }
+                                node.optJSONObject("nextContinuationData")
+                                    ?.optString("continuation")
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?.let { tokensOut.add(it) }
                                 val keys = node.keys()
-                                while (keys.hasNext()) collectChannelVideos(node.opt(keys.next()))
+                                while (keys.hasNext()) collectChannelVideosAndContinuations(node.opt(keys.next()), tokensOut)
                             }
                             is JSONArray -> {
-                                for (i in 0 until node.length()) collectChannelVideos(node.opt(i))
+                                for (i in 0 until node.length()) collectChannelVideosAndContinuations(node.opt(i), tokensOut)
                             }
                         }
                     }
-                    collectChannelVideos(root)
 
+                    val pendingContinuations = mutableListOf<String>()
+                    val visitedTokens = HashSet<String>()
+                    collectChannelVideosAndContinuations(root, pendingContinuations)
+
+                    // Follow continuation tokens on the Channel Videos tab so ALL uploaded videos are loaded
+                    var pageCount = 0
+                    while (pendingContinuations.isNotEmpty() && pageCount < 18) {
+                        val nextToken = pendingContinuations.removeAt(0)
+                        if (!visitedTokens.add(nextToken)) continue
+                        pageCount++
+                        runCatching {
+                            val contConn = (URL("https://www.youtube.com/youtubei/v1/browse?prettyPrint=false").openConnection() as HttpURLConnection).apply {
+                                requestMethod = "POST"
+                                connectTimeout = 3500
+                                readTimeout = 4000
+                                doOutput = true
+                                setRequestProperty("Content-Type", "application/json")
+                                setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+                                setRequestProperty("X-YouTube-Client-Name", "1")
+                                setRequestProperty("X-YouTube-Client-Version", "2.20250310.01.00")
+                            }
+                            val contPayload = JSONObject().apply {
+                                put("continuation", nextToken)
+                                put("context", JSONObject().apply {
+                                    put("client", JSONObject().apply {
+                                        put("clientName", "WEB")
+                                        put("clientVersion", "2.20250310.01.00")
+                                        put("hl", "en")
+                                        put("gl", resolveDeviceGl())
+                                    })
+                                })
+                            }
+                            contConn.outputStream.use { it.write(contPayload.toString().toByteArray(Charsets.UTF_8)) }
+                            if (contConn.responseCode == 200) {
+                                val contRoot = JSONObject(contConn.inputStream.bufferedReader().use { it.readText() })
+                                collectChannelVideosAndContinuations(contRoot, pendingContinuations)
+                            }
+                        }
+                    }
+
+                    fun extractVideoDurationText(vr: JSONObject): String {
+                        val direct = extractSimpleOrRunsText(vr.optJSONObject("lengthText"))
+                        if (direct.isNotBlank()) return direct
+                        val overlays = vr.optJSONArray("thumbnailOverlays") ?: return ""
+                        for (i in 0 until overlays.length()) {
+                            val timeTxt = extractSimpleOrRunsText(
+                                overlays.optJSONObject(i)
+                                    ?.optJSONObject("thumbnailOverlayTimeStatusRenderer")
+                                    ?.optJSONObject("text")
+                            )
+                            if (timeTxt.isNotBlank()) return timeTxt
+                        }
+                        return ""
+                    }
+
+                    val seenVidIds = HashSet<String>()
                     for ((idx, vr) in vRenderers.withIndex()) {
                         val vid = extractVideoId(vr.optString("videoId")) ?: continue
+                        if (!seenVidIds.add(vid)) continue
                         val vTitle = extractSimpleOrRunsText(vr.optJSONObject("title")).takeIf { it.isNotBlank() } ?: continue
-                        val lenText = extractSimpleOrRunsText(vr.optJSONObject("lengthText"))
-                        if (lenText.isBlank()) continue
-                        val durSec = parseDurationSeconds(lenText)
+                        val lenText = extractVideoDurationText(vr)
+                        val durSec = if (lenText.isNotBlank()) parseDurationSeconds(lenText) else 0
                         val viewsTxt = extractSimpleOrRunsText(vr.optJSONObject("viewCountText"))
                             .ifBlank { extractSimpleOrRunsText(vr.optJSONObject("shortViewCountText")) }
                         val pubTxt = extractSimpleOrRunsText(vr.optJSONObject("publishedTimeText"))
@@ -2666,7 +2731,28 @@ object InnerTubeStreamExtractor {
                     val isOfficialAlbumBrowseId = navBrowseId.startsWith("MPREb_") || navBrowseId.startsWith("OLAK5uy_")
 
                     when {
-                        shelfTitle.contains("video") || shelfTitle.contains("live performance") || isFakeVideoTitle -> Unit
+                        shelfTitle.contains("video") || shelfTitle.contains("live performance") -> {
+                            val vid = extractVideoId(directWatchVideoId)
+                            if (vid != null && !isFakeVideoTitle && belongsToArtist(name, itemTitle, itemSubtitle)) {
+                                topSongs.add(
+                                    CandidateStream(
+                                        videoId = vid,
+                                        title = itemTitle,
+                                        artist = name,
+                                        artistBrowseId = browseId,
+                                        channelName = name,
+                                        albumName = null,
+                                        durationSeconds = 0,
+                                        videoType = "MUSIC_VIDEO_TYPE_OMV",
+                                        viewCount = 0L,
+                                        thumbnailUrl = itemThumb.ifBlank { "https://i.ytimg.com/vi/$vid/hqdefault.jpg" },
+                                        isVerifiedArtist = true
+                                    )
+                                )
+                            }
+                        }
+
+                        isFakeVideoTitle -> Unit
 
                         shelfTitle.contains("fan") || shelfTitle.contains("similar") || shelfTitle.contains("like") ||
                             navBrowseId.startsWith("UC") || navBrowseId.startsWith("MPLA") -> {
@@ -2748,7 +2834,10 @@ object InnerTubeStreamExtractor {
             )?.videos.orEmpty()
         }.getOrDefault(emptyList())
 
-        (searchedPrimary + searchedSecondary + channelUploads).forEach { song ->
+        channelUploads.forEach { upload ->
+            topSongs.add(upload.copy(artist = name))
+        }
+        (searchedPrimary + searchedSecondary).forEach { song ->
             if (belongsToArtist(name, song.title, itemArtist = song.artist)) {
                 topSongs.add(song)
             }
@@ -2986,6 +3075,64 @@ object InnerTubeStreamExtractor {
                     }
                 }
             }
+        }
+
+        // Follow playlist/collection continuation tokens so artist "All Songs" & channel uploads playlists return every item
+        fun collectMusicContinuationTokens(node: Any?, out: MutableList<String>) {
+            when (node) {
+                is JSONObject -> {
+                    node.optJSONObject("continuationItemRenderer")
+                        ?.optJSONObject("continuationEndpoint")
+                        ?.optJSONObject("continuationCommand")
+                        ?.optString("token")
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { out.add(it) }
+                    node.optJSONObject("nextContinuationData")
+                        ?.optString("continuation")
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { out.add(it) }
+                    val keys = node.keys()
+                    while (keys.hasNext()) collectMusicContinuationTokens(node.opt(keys.next()), out)
+                }
+                is JSONArray -> {
+                    for (i in 0 until node.length()) collectMusicContinuationTokens(node.opt(i), out)
+                }
+            }
+        }
+
+        fun collectContinuationSongItems(node: Any?) {
+            when (node) {
+                is JSONObject -> {
+                    node.optJSONObject("musicResponsiveListItemRenderer")?.let { item ->
+                        parseSingleResponsiveSongItem(item, defaultArtist = author, defaultArt = headerThumb, defaultAlbum = title)?.let {
+                            tracks.add(it)
+                        }
+                        return
+                    }
+                    val keys = node.keys()
+                    while (keys.hasNext()) collectContinuationSongItems(node.opt(keys.next()))
+                }
+                is JSONArray -> {
+                    for (i in 0 until node.length()) collectContinuationSongItems(node.opt(i))
+                }
+            }
+        }
+
+        val contTokens = mutableListOf<String>()
+        val seenContTokens = HashSet<String>()
+        collectMusicContinuationTokens(root, contTokens)
+        var contPages = 0
+        while (contTokens.isNotEmpty() && contPages < 12) {
+            val token = contTokens.removeAt(0)
+            if (!seenContTokens.add(token)) continue
+            contPages++
+            val contPayload = webRemixPayload().apply {
+                put("continuation", token)
+            }
+            val contRoot = postWebRemix("https://music.youtube.com/youtubei/v1/browse?prettyPrint=false&ctoken=$token&continuation=$token", contPayload)
+                ?: continue
+            collectContinuationSongItems(contRoot)
+            collectMusicContinuationTokens(contRoot, contTokens)
         }
 
         return YtmCollectionPageData(

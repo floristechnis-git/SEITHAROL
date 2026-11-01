@@ -12,6 +12,8 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -246,7 +248,7 @@ fun PlaybackQueueSheet(
                                     contentDescription = suggestion.title,
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier
-                                        .size(if (isCurrentVideo) 58.dp else 46.dp, 46.dp)
+                                        .then(if (isCurrentVideo) Modifier.width(86.dp).height(48.dp) else Modifier.size(46.dp))
                                         .clip(RoundedCornerShape(8.dp)),
                                     error = appLogoPainter,
                                     placeholder = appLogoPainter,
@@ -443,12 +445,16 @@ fun ReorderableQueueLazyColumn(
                             )
                         }
                         Spacer(modifier = Modifier.width(6.dp))
+                        val isVideoQueueItem = track.source.equals("YOUTUBE_VIDEO", ignoreCase = true) ||
+                            track.album.equals("YouTube Video", ignoreCase = true) ||
+                            track.album.equals("Local Video", ignoreCase = true) ||
+                            track.album.equals("MP4 Video", ignoreCase = true)
                         AsyncImage(
                             model = track.thumbnailUrl.ifBlank { R.drawable.ic_splash_logo },
                             contentDescription = track.title,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
-                                .size(46.dp)
+                                .then(if (isVideoQueueItem) Modifier.width(86.dp).height(48.dp) else Modifier.size(46.dp))
                                 .clip(RoundedCornerShape(8.dp)),
                             error = appLogoPainter,
                             placeholder = appLogoPainter,
@@ -489,29 +495,36 @@ fun ReorderableQueueLazyColumn(
                             )
                         }
 
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(3.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(horizontal = 8.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .width(16.dp)
-                                    .height(2.dp)
-                                    .background(
-                                        if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                        RoundedCornerShape(1.dp)
+                        if (queue.size > 1) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(0.dp)
+                            ) {
+                                IconButton(
+                                    onClick = { if (index > 0) onMoveTrack(index, index - 1) },
+                                    enabled = index > 0,
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = androidx.compose.material.icons.Icons.Default.KeyboardArrowUp,
+                                        contentDescription = "Move Up",
+                                        tint = if (index > 0) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f),
+                                        modifier = Modifier.size(18.dp)
                                     )
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .width(16.dp)
-                                    .height(2.dp)
-                                    .background(
-                                        if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                        RoundedCornerShape(1.dp)
+                                }
+                                IconButton(
+                                    onClick = { if (index < queue.lastIndex) onMoveTrack(index, index + 1) },
+                                    enabled = index < queue.lastIndex,
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = androidx.compose.material.icons.Icons.Default.KeyboardArrowDown,
+                                        contentDescription = "Move Down",
+                                        tint = if (index < queue.lastIndex) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f),
+                                        modifier = Modifier.size(18.dp)
                                     )
-                            )
+                                }
+                            }
                         }
                     }
                 }

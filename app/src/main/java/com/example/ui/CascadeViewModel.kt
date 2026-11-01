@@ -810,6 +810,7 @@ class CascadeViewModel(
                 .collectLatest { sig ->
                     if (sig.isNotBlank() && !isOfflineMode.value) {
                         loadHomeScreenMusic(isBackgroundUpdate = true)
+                        loadDiscoverFeed()
                     }
                 }
         }
@@ -1076,14 +1077,31 @@ class CascadeViewModel(
         viewModelScope.launch(vmExceptionHandler) {
             if (isOfflineMode.value) return@launch
             try {
-                val hist = musicRepository.getActiveHistory().firstOrNull().orEmpty()
+                val dbHist = musicRepository.getActiveHistory().firstOrNull().orEmpty()
+                val dbArchived = runCatching { musicRepository.getArchivedHistory().firstOrNull().orEmpty() }.getOrDefault(emptyList())
+                val hist = (activeHistory.value + dbHist + dbArchived)
                     .filterNot { it.isLocalOnlyTrack }
+                    .distinctBy { it.id }
                     .map { it.toNormalizedTrack() }
-                val liked = musicRepository.getLikedTracks().firstOrNull().orEmpty()
+
+                val dbLiked = musicRepository.getLikedTracks().firstOrNull().orEmpty()
+                val liked = (likedTracks.value + dbLiked)
                     .filterNot { it.isLocalOnlyTrack }
+                    .distinctBy { it.id }
                     .map { it.toNormalizedTrack() }
-                val feed = discoverFeedSeeder.generatePersonalizedFeed(hist, liked)
-                _discoverTracks.value = feed
+
+                val recentSearches = runCatching {
+                    com.example.data.AppPreferences.getInstance(com.example.CascadeApplication.instance).recentSearches.value
+                }.getOrDefault(emptyList())
+
+                val feed = discoverFeedSeeder.generatePersonalizedFeed(
+                    listeningHistory = hist,
+                    likedTracks = liked,
+                    recentSearchQueries = recentSearches
+                )
+                if (feed.isNotEmpty()) {
+                    _discoverTracks.value = feed
+                }
             } catch (e: Exception) {
                 Log.w("CascadeViewModel", "Failed to load discover feed: ${e.message}")
             }

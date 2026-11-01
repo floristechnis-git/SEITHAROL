@@ -256,6 +256,7 @@ class AppPreferences private constructor(context: Context) {
     fun saveOnboarding(name: String, age: String, birthdate: String = "") {
         prefs.edit()
             .putBoolean("onboarded", true)
+            .putBoolean("seen_dev_welcome_popup_v1", true)
             .putString("user_name", name.trim())
             .putString("user_age", age.trim())
             .putString("user_birthdate", birthdate.trim())

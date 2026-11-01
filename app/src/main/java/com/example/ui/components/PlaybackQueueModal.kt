@@ -522,11 +522,21 @@ fun PlaybackQueueModal(
 
                                 Spacer(modifier = Modifier.width(6.dp))
 
+                                val isVideoQueueItem = track.isVideoTrack || isCurrentVideo
                                 Box(
-                                    modifier = Modifier
-                                        .size(46.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    modifier = if (isVideoQueueItem) {
+                                        Modifier
+                                            .width(86.dp)
+                                            .height(48.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    } else {
+                                        Modifier
+                                            .size(46.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    },
+                                    contentAlignment = Alignment.Center
                                 ) {
                                     val upgradedArt = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
                                     if (upgradedArt.isBlank()) {
@@ -546,6 +556,24 @@ fun PlaybackQueueModal(
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier.fillMaxSize()
                                         )
+                                    }
+                                    if (isVideoQueueItem && track.durationMs > 0L) {
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = Color.Black.copy(alpha = 0.78f),
+                                            modifier = Modifier
+                                                .align(Alignment.BottomEnd)
+                                                .padding(3.dp)
+                                        ) {
+                                            Text(
+                                                text = track.durationFormatted,
+                                                color = Color.White,
+                                                fontSize = 9.sp,
+                                                fontFamily = OutfitFontFamily,
+                                                fontWeight = FontWeight.SemiBold,
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                            )
+                                        }
                                     }
                                 }
 
@@ -629,85 +657,7 @@ fun PlaybackQueueModal(
                                     }
                                 }
 
-                                // Instant Drag Handle ('='): drags immediately on touch without long-press delay and live-swaps items!
-                                Box(
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .pointerInput(track.id) {
-                                            detectVerticalDragGestures(
-                                                onDragStart = { offset: Offset ->
-                                                    draggingFromIndex = currentIndexState
-                                                    dragOffsetY = 0f
-                                                    pointerWindowY = listTopWindowY + offset.y
-                                                },
-                                                onVerticalDrag = { change: PointerInputChange, dragAmount: Float ->
-                                                    change.consume()
-                                                    dragOffsetY += dragAmount
-                                                    pointerWindowY += dragAmount
 
-                                                    val fromIdx = draggingFromIndex ?: return@detectVerticalDragGestures
-                                                    val visibleItems = listState.layoutInfo.visibleItemsInfo
-                                                    val currentItemInfo = visibleItems.firstOrNull { it.index == fromIdx }
-                                                        ?: return@detectVerticalDragGestures
-                                                    val draggedCenterY = currentItemInfo.offset + (currentItemInfo.size / 2f) + dragOffsetY
-
-                                                    val targetItem = visibleItems.firstOrNull { item ->
-                                                        item.index in 0 until currentQueueSizeState &&
-                                                            item.index != fromIdx &&
-                                                            if (dragOffsetY > 0f && item.index > fromIdx) {
-                                                                draggedCenterY > item.offset + (item.size / 2f)
-                                                            } else if (dragOffsetY < 0f && item.index < fromIdx) {
-                                                                draggedCenterY < item.offset + (item.size / 2f)
-                                                            } else {
-                                                                false
-                                                            }
-                                                    }
-
-                                                    if (targetItem != null) {
-                                                        val offsetAdjustment = currentItemInfo.offset - targetItem.offset
-                                                        viewModel.moveTrack(fromIdx, targetItem.index)
-                                                        draggingFromIndex = targetItem.index
-                                                        dragOffsetY += offsetAdjustment
-                                                    }
-                                                },
-                                                onDragEnd = {
-                                                    draggingFromIndex = null
-                                                    dragOffsetY = 0f
-                                                    pointerWindowY = -1f
-                                                },
-                                                onDragCancel = {
-                                                    draggingFromIndex = null
-                                                    dragOffsetY = 0f
-                                                    pointerWindowY = -1f
-                                                }
-                                            )
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Column(
-                                        verticalArrangement = Arrangement.spacedBy(3.5.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .width(18.dp)
-                                                .height(2.dp)
-                                                .background(
-                                                    if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
-                                                    RoundedCornerShape(1.dp)
-                                                )
-                                        )
-                                        Box(
-                                            modifier = Modifier
-                                                .width(18.dp)
-                                                .height(2.dp)
-                                                .background(
-                                                    if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
-                                                    RoundedCornerShape(1.dp)
-                                                )
-                                        )
-                                    }
-                                }
                             }
                         }
                     }
@@ -804,10 +754,20 @@ fun PlaybackQueueModal(
                                             .padding(horizontal = 10.dp, vertical = 8.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
+                                        val isSuggestedVideo = track.isVideoTrack || isCurrentVideo
                                         Box(
-                                            modifier = Modifier
-                                                .size(if (isCurrentVideo) 56.dp else 42.dp, 42.dp)
-                                                .clip(RoundedCornerShape(6.dp))
+                                            modifier = if (isSuggestedVideo) {
+                                                Modifier
+                                                    .width(86.dp)
+                                                    .height(48.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                            } else {
+                                                Modifier
+                                                    .size(46.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                            }
                                         ) {
                                             val upgradedArt = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
                                             if (upgradedArt.isBlank()) {

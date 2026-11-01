@@ -94,9 +94,7 @@ private fun DiscoverSubScreenHost(
 
     val feedTracks by viewModel.discoverTracks.collectAsState()
     LaunchedEffect(Unit) {
-        if (feedTracks.isEmpty()) {
-            viewModel.loadDiscoverFeed()
-        }
+        viewModel.loadDiscoverFeed()
     }
     com.seitharol.ui.discover.DiscoverScreen(
         feedTracks = feedTracks,

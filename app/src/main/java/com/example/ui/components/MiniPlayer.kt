@@ -175,8 +175,8 @@ fun MiniPlayer(
                                 .fillMaxWidth()
                                 .basicMarquee(
                                     iterations = Int.MAX_VALUE,
-                                    initialDelayMillis = 1000,
-                                    repeatDelayMillis = 1000,
+                                    initialDelayMillis = 4000,
+                                    repeatDelayMillis = 4000,
                                     velocity = 28.dp
                                 )
                         )
@@ -192,8 +192,8 @@ fun MiniPlayer(
                                 .fillMaxWidth()
                                 .basicMarquee(
                                     iterations = Int.MAX_VALUE,
-                                    initialDelayMillis = 1000,
-                                    repeatDelayMillis = 1000,
+                                    initialDelayMillis = 4000,
+                                    repeatDelayMillis = 4000,
                                     velocity = 26.dp
                                 )
                         )

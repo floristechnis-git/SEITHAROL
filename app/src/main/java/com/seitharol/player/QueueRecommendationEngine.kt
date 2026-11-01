@@ -211,9 +211,9 @@ object QueueRecommendationEngine {
             .take(3)
 
         coroutineScope {
-            // 1. Primary: Real YouTube Music RDAMVM Automix Queue + Player Related Tracks for current seed
+            // 1. Primary: Real YouTube Music RDAMVM Automix Queue for current seed + secondary queue/history seed
             val automixDeferred = async {
-                val seedVid = if (currentTrack.id.length == 11) {
+                val seedVid: String? = if (currentTrack.id.length == 11) {
                     currentTrack.id
                 } else {
                     InnerTubeStreamExtractor.searchOfficialYtmSongs(
@@ -221,19 +221,22 @@ object QueueRecommendationEngine {
                         limit = 2
                     ).firstOrNull()?.videoId
                 }
-                val rawAutomix = if (seedVid != null) {
-                    val radio = InnerTubeStreamExtractor.fetchAutomixQueue(seedVid, limit = limit + 12)
-                    val related = runCatching {
-                        InnerTubeStreamExtractor.fetchPlayerRelatedContent(
-                            videoId = seedVid,
-                            title = currentTrack.title,
-                            artist = primaryArtist
-                        ).relatedTracks
-                    }.getOrDefault(emptyList())
-                    radio + related
-                } else emptyList()
+                val primaryRadio: List<CandidateStream> = if (seedVid != null) {
+                    InnerTubeStreamExtractor.fetchAutomixQueue(seedVid, limit = limit + 14)
+                } else {
+                    emptyList()
+                }
+                val secondarySeedId: String? = queueTracks
+                    .firstOrNull { it.id != currentTrack.id && it.id.length == 11 }
+                    ?.id
+                val secondaryRadio: List<CandidateStream> = if (secondarySeedId != null) {
+                    InnerTubeStreamExtractor.fetchAutomixQueue(secondarySeedId, limit = 8)
+                } else {
+                    emptyList()
+                }
+                val rawAutomix: List<CandidateStream> = primaryRadio + secondaryRadio
 
-                rawAutomix.filter { cand ->
+                rawAutomix.filter { cand: CandidateStream ->
                     val candLower = "${cand.title} ${cand.artist} ${cand.channelName}".lowercase()
                     if (!isSeedHindiOrBollywood && GENERIC_BOLLYWOOD_LABELS.any { candLower.contains(it) }) {
                         false

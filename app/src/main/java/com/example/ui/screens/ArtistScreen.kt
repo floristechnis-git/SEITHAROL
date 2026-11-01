@@ -47,7 +47,7 @@ import com.example.ui.theme.*
 import com.seitharol.data.resolver.CandidateStream
 import com.seitharol.data.resolver.InnerTubeStreamExtractor
 import com.seitharol.data.resolver.YtmArtistPageData
-import com.seitharol.ui.components.FilterSlidersSvgIcon
+import com.seitharol.ui.library.FilterSlidersSvgIcon
 import com.seitharol.ui.search.BackArrowSvgIcon
 
 private enum class ChannelVideoSortFilter(val label: String) {
@@ -517,7 +517,7 @@ fun ArtistScreen(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
-                                        text = "No items match "${searchQuery.trim()}"",
+                                        text = "No items match \"${searchQuery.trim()}\"",
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         fontSize = 14.sp
                                     )

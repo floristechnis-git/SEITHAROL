@@ -298,26 +298,6 @@ fun SeitharolProProgressBar(
                             onValueChange(frac)
                         }
                     )
-                }
-                .pointerInput(isControlsLocked, showInlineSuggestionsDrawer) {
-                    var vDrag = 0f
-                    detectVerticalDragGestures(
-                        onDragStart = { vDrag = 0f },
-                        onDragEnd = {
-                            if (!isControlsLocked) {
-                                if (vDrag < -75f && !showInlineSuggestionsDrawer) {
-                                    showInlineSuggestionsDrawer = true
-                                    showOverlayControls = false
-                                } else if (vDrag > 75f && showInlineSuggestionsDrawer) {
-                                    showInlineSuggestionsDrawer = false
-                                }
-                            }
-                            vDrag = 0f
-                        },
-                        onVerticalDrag = { _, dragAmount ->
-                            vDrag += dragAmount
-                        }
-                    )
                 },
             contentAlignment = Alignment.Center
         ) {
@@ -2453,6 +2433,26 @@ fun SeitharolRawVideoSurface(
                             }
                         }
                     )
+                }
+                .pointerInput(isControlsLocked, showInlineSuggestionsDrawer) {
+                    var vDrag = 0f
+                    detectVerticalDragGestures(
+                        onDragStart = { vDrag = 0f },
+                        onDragEnd = {
+                            if (!isControlsLocked) {
+                                if (vDrag < -75f && !showInlineSuggestionsDrawer) {
+                                    showInlineSuggestionsDrawer = true
+                                    showOverlayControls = false
+                                } else if (vDrag > 75f && showInlineSuggestionsDrawer) {
+                                    showInlineSuggestionsDrawer = false
+                                }
+                            }
+                            vDrag = 0f
+                        },
+                        onVerticalDrag = { _, dragAmount ->
+                            vDrag += dragAmount
+                        }
+                    )
                 },
             contentAlignment = Alignment.Center
         ) {
@@ -2871,7 +2871,7 @@ fun SeitharolRawVideoSurface(
                     selectedFilterChip = selectedInlineChip,
                     onSelectFilterChip = { selectedInlineChip = it },
                     isAutoplayEnabled = isAutoSuggestEnabled,
-                    onToggleAutoplay = { viewModel.autoSuggestManager.setAutoSuggest(!isAutoSuggestEnabled) },
+                    onToggleAutoplay = { viewModel.autoSuggestManager.toggleAutoSuggest() },
                     onPlaySuggestion = { sugTrack ->
                         showInlineSuggestionsDrawer = false
                         val videoQueue = inlineRelatedSuggestions.map {
@@ -3911,7 +3911,7 @@ fun SeitharolFullscreenVideoModal(
                                         selectedFilterChip = selectedFsChip,
                                         onSelectFilterChip = { selectedFsChip = it },
                                         isAutoplayEnabled = isAutoSuggestEnabled,
-                                        onToggleAutoplay = { viewModel.autoSuggestManager.setAutoSuggest(!isAutoSuggestEnabled) },
+                                        onToggleAutoplay = { viewModel.autoSuggestManager.toggleAutoSuggest() },
                                         onPlaySuggestion = { sugTrack ->
                                             showSuggestionsDrawer = false
                                             val videoQueue = relatedSuggestions.map {

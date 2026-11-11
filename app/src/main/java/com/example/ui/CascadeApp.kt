@@ -422,7 +422,11 @@ fun CascadeApp(
                         )
                         is SubScreen.LocalMusic -> {
                             val downloadedTracks by viewModel.downloadedTracks.collectAsState()
+                            val activeDownloads by viewModel.activeDownloads.collectAsState()
                             com.seitharol.ui.local.LocalMusicScreen(
+                                activeDownloads = activeDownloads,
+                                onCancelDownload = { viewModel.cancelDownload(it) },
+                                onRefreshDownloads = { viewModel.refreshLibrary() },
                                 appDownloadedTracks = downloadedTracks.map {
                                     com.seitharol.domain.model.NormalizedTrack(
                                         source = com.seitharol.domain.model.TrackSource.LOCAL_FILE,
@@ -733,7 +737,11 @@ fun CascadeApp(
                     is SubScreen.LocalMusic -> {
                         BackHandler { currentSubScreen = SubScreen.None }
                         val downloadedTracks by viewModel.downloadedTracks.collectAsState()
+                        val activeDownloads by viewModel.activeDownloads.collectAsState()
                         com.seitharol.ui.local.LocalMusicScreen(
+                            activeDownloads = activeDownloads,
+                            onCancelDownload = { viewModel.cancelDownload(it) },
+                            onRefreshDownloads = { viewModel.refreshLibrary() },
                             appDownloadedTracks = downloadedTracks.map {
                                 com.seitharol.domain.model.NormalizedTrack(
                                     source = com.seitharol.domain.model.TrackSource.LOCAL_FILE,

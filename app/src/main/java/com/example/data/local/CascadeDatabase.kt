@@ -42,6 +42,7 @@ abstract class CascadeDatabase : RoomDatabase() {
                     "cascade_music.db"
                 )
                     .fallbackToDestructiveMigration()
+                    .allowMainThreadQueries()
                     .addCallback(object : Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)

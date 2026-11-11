@@ -12,8 +12,8 @@ android {
     applicationId = "in.floristechnis.seitharol"
     minSdk = 24
     targetSdk = 36
-    versionCode = 4
-    versionName = "3.2.4"
+    versionCode = 5
+    versionName = "3.4.3"
     base.archivesName.set("in.floristechnis.seitharol-v$versionName")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

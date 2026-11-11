@@ -76,11 +76,22 @@ class CascadeApplication : Application(), coil.ImageLoaderFactory {
             }
             val msg = throwable.message.orEmpty()
             val className = throwable.javaClass.name
+            val causeName = throwable.cause?.javaClass?.name.orEmpty()
             if (className.contains("ForegroundService") ||
                 className.contains("RemoteServiceException") ||
                 className.contains("DeadSystemException") ||
-                msg.contains("startForeground")
+                className.contains("SecurityException") ||
+                className.contains("IllegalStateException") ||
+                className.contains("SQLite") ||
+                causeName.contains("ForegroundService") ||
+                causeName.contains("IllegalStateException") ||
+                msg.contains("startForeground") ||
+                msg.contains("Not allowed to start service") ||
+                msg.contains("Surface") ||
+                msg.contains("MediaCodec") ||
+                msg.contains("Player is accessed on the wrong thread")
             ) {
+                releaseNonEssentialMemory()
                 return@setDefaultUncaughtExceptionHandler
             }
             defaultHandler?.uncaughtException(thread, throwable)

@@ -243,39 +243,47 @@ class CascadeViewModel(
         trackId: String,
         fallbackTitle: String = "",
         fallbackArtist: String = "",
-        fallbackArtUrl: String = ""
+        fallbackArtUrl: String = "",
+        isVideo: Boolean = false
     ) {
         viewModelScope.launch(vmExceptionHandler) {
             runCatching {
                 val cleanId = InnerTubeStreamExtractor.extractVideoId(trackId) ?: trackId.trim()
                 val existing = musicRepository.getTrackById(cleanId)
                     ?: downloadedTracks.value.firstOrNull { it.id == cleanId }
-                val trackToPlay = when {
-                    existing != null -> existing
-                    fallbackTitle.isNotBlank() -> Track(
-                        id = cleanId,
-                        title = fallbackTitle,
-                        artist = fallbackArtist.ifBlank { "Artist" },
-                        album = "",
-                        durationMs = 210_000L,
-                        artUrl = fallbackArtUrl.ifBlank {
-                            if (cleanId.length == 11) "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg" else ""
-                        }
-                    )
-                    else -> {
-                        val oembed = runCatching {
-                            resolverEngine.youtubeInnerTubeProvider.fetchMetadataById(cleanId)
-                        }.getOrNull()
-                        Track(
-                            id = cleanId,
-                            title = oembed?.first ?: "Track",
-                            artist = oembed?.second ?: "Artist",
-                            album = "",
-                            durationMs = 210_000L,
-                            artUrl = if (cleanId.length == 11) "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg" else ""
-                        )
-                    }
+                val vdMeta = if (cleanId.length == 11 && (fallbackTitle.isBlank() || isVideo)) {
+                    runCatching {
+                        InnerTubeStreamExtractor.fetchVideoDetailsDescription(cleanId, fallbackTitle, fallbackArtist)
+                    }.getOrNull()
+                } else null
+                val oembed = if (fallbackTitle.isBlank() && vdMeta?.title.isNullOrBlank()) {
+                    runCatching {
+                        resolverEngine.youtubeInnerTubeProvider.fetchMetadataById(cleanId)
+                    }.getOrNull()
+                } else null
+
+                val resolvedTitle = fallbackTitle.ifBlank { vdMeta?.title.orEmpty() }.ifBlank { oembed?.first.orEmpty() }.ifBlank { "YouTube Video ($cleanId)" }
+                val resolvedArtist = fallbackArtist.ifBlank { vdMeta?.author.orEmpty() }.ifBlank { oembed?.second.orEmpty() }.ifBlank { "YouTube" }
+                val resolvedArt = fallbackArtUrl.ifBlank {
+                    if (cleanId.length == 11) "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg" else ""
                 }
+
+                val trackToPlay = if (existing != null) {
+                    if (isVideo) existing.copy(genre = "YouTube Video", codec = "MP4", itag = 18) else existing
+                } else {
+                    Track(
+                        id = cleanId,
+                        title = resolvedTitle,
+                        artist = resolvedArtist,
+                        album = if (isVideo) "YouTube Video" else "",
+                        durationMs = 210_000L,
+                        artUrl = resolvedArt,
+                        genre = if (isVideo) "YouTube Video" else "Music",
+                        itag = if (isVideo) 18 else 251,
+                        codec = if (isVideo) "MP4" else "Opus"
+                    )
+                }
+                musicRepository.insertTrack(trackToPlay)
                 playTrack(trackToPlay)
                 _playerExpandEvent.emit(Unit)
             }
@@ -457,8 +465,27 @@ class CascadeViewModel(
         SeitharolDeepLinkHelper.parseSharedTextOrUrl(clean)?.let { target ->
             when (target) {
                 is SeitharolDeepLinkHelper.DeepLinkTarget.TrackTarget -> {
-                    searchQuery.value = ""
-                    openSharedTrackById(target.trackId, target.title, target.artist, target.artUrl)
+                    openSharedTrackById(target.trackId, target.title, target.artist, target.artUrl, isVideo = target.isVideo)
+                    // Also populate search results with this direct/unlisted video so user can download MP4 directly from Search
+                    viewModelScope.launch(vmExceptionHandler) {
+                        val cleanId = InnerTubeStreamExtractor.extractVideoId(target.trackId) ?: target.trackId.trim()
+                        val vd = runCatching { InnerTubeStreamExtractor.fetchVideoDetailsDescription(cleanId, target.title, target.artist) }.getOrNull()
+                        val oem = if (vd?.title.isNullOrBlank()) runCatching { resolverEngine.youtubeInnerTubeProvider.fetchMetadataById(cleanId) }.getOrNull() else null
+                        val directTrack = Track(
+                            id = cleanId,
+                            title = target.title.ifBlank { vd?.title.orEmpty() }.ifBlank { oem?.first.orEmpty() }.ifBlank { "YouTube Video ($cleanId)" },
+                            artist = target.artist.ifBlank { vd?.author.orEmpty() }.ifBlank { oem?.second.orEmpty() }.ifBlank { "YouTube" },
+                            album = "YouTube Video",
+                            durationMs = 210_000L,
+                            artUrl = target.artUrl.ifBlank { "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg" },
+                            genre = "YouTube Video",
+                            itag = 18,
+                            codec = "MP4"
+                        )
+                        onlineSearchResults.value = listOf(directTrack) + onlineSearchResults.value.filterNot { it.id == cleanId }
+                        isSearchingOnline.value = false
+                        hasCompletedOnlineSearch.value = true
+                    }
                     return
                 }
                 is SeitharolDeepLinkHelper.DeepLinkTarget.ArtistTarget -> {
@@ -576,7 +603,30 @@ class CascadeViewModel(
                     ProviderFilter.LOCAL -> emptyList()
                 }
 
-                val ranked = rawCandidates.distinctBy { it.videoId }
+                val directUnlistedVid = InnerTubeStreamExtractor.extractVideoId(clean)
+                    ?: clean.takeIf { it.length == 11 && it.matches(Regex("^[a-zA-Z0-9_-]{11}$")) }
+                val directVideoCandidate = if (!directUnlistedVid.isNullOrBlank() && rawCandidates.none { it.videoId == directUnlistedVid }) {
+                    val vd = runCatching { InnerTubeStreamExtractor.fetchVideoDetailsDescription(directUnlistedVid) }.getOrNull()
+                    val oem = if (vd?.title.isNullOrBlank()) runCatching { resolverEngine.youtubeInnerTubeProvider.fetchMetadataById(directUnlistedVid) }.getOrNull() else null
+                    val resolvedTitle = vd?.title?.takeIf { it.isNotBlank() } ?: oem?.first?.takeIf { it.isNotBlank() }
+                    if (!resolvedTitle.isNullOrBlank()) {
+                        listOf(
+                            com.seitharol.data.resolver.CandidateStream(
+                                videoId = directUnlistedVid,
+                                title = resolvedTitle,
+                                artist = vd?.author?.takeIf { it.isNotBlank() } ?: oem?.second ?: "YouTube",
+                                channelName = vd?.author ?: "YouTube",
+                                albumName = "YouTube Video",
+                                durationSeconds = 210,
+                                videoType = "MUSIC_VIDEO_TYPE_OMV",
+                                thumbnailUrl = "https://i.ytimg.com/vi/$directUnlistedVid/hqdefault.jpg",
+                                isVerifiedArtist = true
+                            )
+                        )
+                    } else emptyList()
+                } else emptyList()
+
+                val ranked = (directVideoCandidate + rawCandidates).distinctBy { it.videoId }
 
                 onlineSearchResults.value = ranked.map { c ->
                     val isYtVideo = filter == ProviderFilter.YOUTUBE || c.videoType == "MUSIC_VIDEO_TYPE_OMV"
@@ -1376,7 +1426,7 @@ class CascadeViewModel(
                         !it.isVideoTrack && (it.title.contains(cleanQuery, ignoreCase = true) || it.artist.contains(cleanQuery, ignoreCase = true))
                     }
                     val enrichedOnline = onlineTracks
-                        .filterNot { it.isVideoTrack }
+                        .filterNot { (provider == ProviderFilter.MUSIC || provider == ProviderFilter.JIOSAAVN) && it.isVideoTrack }
                         .map { enrichTrackStatus(it, likedIds, dlMap) }
                     (matchingLocalAudio + enrichedOnline).distinctBy { it.id }
                 }

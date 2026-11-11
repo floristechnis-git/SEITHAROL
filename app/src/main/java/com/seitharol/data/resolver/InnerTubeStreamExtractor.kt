@@ -3784,25 +3784,69 @@ object InnerTubeStreamExtractor {
         }.getOrNull()
     }
 
+    suspend fun resolveProgressiveMuxedVideoById(videoId: String): String? = withContext(Dispatchers.IO) {
+        val cleanId = extractVideoId(videoId) ?: videoId.trim()
+        if (!VALID_VIDEO_ID_REGEX.matches(cleanId)) return@withContext null
+        for (client in VIDEO_CLIENTS) {
+            val url = extractProgressiveVideoWithClient(
+                cleanVideoId = cleanId,
+                client = client,
+                cpn = generateCpn(),
+                includeVisitorData = client.isEmbedded,
+                allowAdaptiveMerge = false
+            )
+            if (!url.isNullOrBlank() && !url.startsWith("merged_av::") && !url.contains(".m3u8", true)) {
+                return@withContext url
+            }
+        }
+        for (client in VERIFIED_CLIENTS) {
+            val url = extractStreamWithConfig(
+                videoId = cleanId,
+                client = client,
+                preferredQuality = AudioQuality.HIGH,
+                cpn = generateCpn(),
+                allowHls = false,
+                includeVisitorData = client.isEmbedded,
+                requiredItag = 18,
+                preferProgressiveMp4 = true
+            )
+            if (!url.isNullOrBlank() && !url.contains(".m3u8", true)) {
+                return@withContext url
+            }
+        }
+        resolvePipedOrInvidiousMuxedVideo(cleanId)
+    }
+
     suspend fun resolveDownloadableVideoCandidates(
         videoId: String?,
         title: String,
         artist: String
     ): List<String> = withContext(Dispatchers.IO) {
         val candidates = mutableListOf<String>()
+        val adaptiveMp4Fallbacks = mutableListOf<String>()
+
         fun addVideoCandidate(url: String?) {
-            if (!url.isNullOrBlank() &&
-                url.startsWith("http") &&
-                !url.startsWith("merged_av::") &&
+            if (url.isNullOrBlank()) return
+            if (url.startsWith("merged_av::")) {
+                val vidPart = url.removePrefix("merged_av::").substringBefore("|||").trim()
+                if (vidPart.startsWith("http") && !adaptiveMp4Fallbacks.contains(vidPart)) {
+                    adaptiveMp4Fallbacks.add(vidPart)
+                }
+                return
+            }
+            if (url.startsWith("http") &&
                 !url.contains(".m3u8", ignoreCase = true) &&
-                !url.contains("manifest.googlevideo.com", ignoreCase = true) &&
-                !candidates.contains(url)
+                !url.contains("manifest.googlevideo.com", ignoreCase = true)
             ) {
-                candidates.add(url)
+                val cleanUrl = com.seitharol.player.OuterTuneResolvingDataSource.stripRangeQueryParam(url)
+                if (!candidates.contains(cleanUrl)) {
+                    candidates.add(cleanUrl)
+                }
             }
         }
 
         var targetYtId = extractVideoId(videoId)
+            ?: videoId?.trim()?.takeIf { VALID_VIDEO_ID_REGEX.matches(it) }
         if (targetYtId.isNullOrBlank() && title.isNotBlank()) {
             val cleanArtist = artist.takeIf { !it.equals("Unknown Artist", true) && !it.equals("YouTube", true) }.orEmpty()
             val q = "$title $cleanArtist".trim()
@@ -3813,12 +3857,30 @@ object InnerTubeStreamExtractor {
         if (!targetYtId.isNullOrBlank()) {
             videoStreamCache[targetYtId]?.first?.let { addVideoCandidate(it) }
 
+            // 1. Check all VIDEO_CLIENTS for progressive muxed MP4 (itag=18 / itag=22) - works for both public and unlisted videos
             for (client in VIDEO_CLIENTS) {
-                val url = extractProgressiveVideoWithClient(targetYtId, client, generateCpn(), allowAdaptiveMerge = false)
+                val url = extractProgressiveVideoWithClient(
+                    cleanVideoId = targetYtId,
+                    client = client,
+                    cpn = generateCpn(),
+                    includeVisitorData = client.isEmbedded,
+                    allowAdaptiveMerge = false
+                )
                 addVideoCandidate(url)
+                if (url.isNullOrBlank() && !client.isEmbedded) {
+                    val withVis = extractProgressiveVideoWithClient(
+                        cleanVideoId = targetYtId,
+                        client = client,
+                        cpn = generateCpn(),
+                        includeVisitorData = true,
+                        allowAdaptiveMerge = false
+                    )
+                    addVideoCandidate(withVis)
+                }
                 if (candidates.size >= 3) break
             }
 
+            // 2. Check VERIFIED_CLIENTS for progressive MP4 (itag=18)
             if (candidates.size < 3) {
                 for (client in VERIFIED_CLIENTS) {
                     val url = extractStreamWithConfig(
@@ -3827,6 +3889,7 @@ object InnerTubeStreamExtractor {
                         preferredQuality = AudioQuality.HIGH,
                         cpn = generateCpn(),
                         allowHls = false,
+                        includeVisitorData = true,
                         requiredItag = 18,
                         preferProgressiveMp4 = true
                     )
@@ -3835,10 +3898,35 @@ object InnerTubeStreamExtractor {
                 }
             }
 
+            // 3. Check federated Piped / Invidious nodes for muxed MP4
+            if (candidates.isEmpty()) {
+                val federated = runCatching { resolvePipedOrInvidiousMuxedVideo(targetYtId) }.getOrNull()
+                addVideoCandidate(federated)
+            }
+
+            // 4. Check adaptive MP4 video streams if muxed stream was not provided for this unlisted/restricted video
+            if (candidates.isEmpty()) {
+                for (client in VIDEO_CLIENTS) {
+                    val mergedOrProg = extractProgressiveVideoWithClient(
+                        cleanVideoId = targetYtId,
+                        client = client,
+                        cpn = generateCpn(),
+                        includeVisitorData = true,
+                        allowAdaptiveMerge = true
+                    )
+                    addVideoCandidate(mergedOrProg)
+                    if (candidates.isNotEmpty() || adaptiveMp4Fallbacks.size >= 2) break
+                }
+            }
+
             if (candidates.isEmpty()) {
                 val resolved = resolveRawVideoStreamById(targetYtId, forceRefresh = true, allowHlsFallback = false).getOrNull()
                 addVideoCandidate(resolved)
             }
+        }
+
+        adaptiveMp4Fallbacks.forEach { fb ->
+            if (!candidates.contains(fb)) candidates.add(fb)
         }
 
         candidates
@@ -3967,6 +4055,13 @@ object InnerTubeStreamExtractor {
         val headers = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(cleanBaseUrl)
         val isGoogleVideo = cleanBaseUrl.contains("googlevideo.com", ignoreCase = true)
         var knownClen = com.seitharol.player.OuterTuneResolvingDataSource.getKnownStreamLength(cleanBaseUrl)
+        if (knownClen <= 0L) {
+            val urlClen = Regex("[?&]clen=(\\d+)").find(cleanBaseUrl)?.groupValues?.get(1)?.toLongOrNull() ?: -1L
+            if (urlClen > 10_240L) {
+                knownClen = urlClen
+                com.seitharol.player.OuterTuneResolvingDataSource.recordKnownStreamLength(cleanBaseUrl, urlClen)
+            }
+        }
 
         val isProgressiveItag = cleanBaseUrl.contains("itag=18&", ignoreCase = true) ||
             cleanBaseUrl.endsWith("itag=18", ignoreCase = true) ||
@@ -4095,10 +4190,18 @@ object InnerTubeStreamExtractor {
                 com.example.network.NetworkClients.okHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
                     if (!resp.isSuccessful && resp.code != 206) return@runCatching false
                     val body = resp.body ?: return@runCatching false
-                    val totalBytes = body.contentLength().takeIf { it > 10_240L }
+                    val rangeTotal = resp.header("Content-Range")
+                        ?.substringAfterLast("/", "")
+                        ?.trim()
+                        ?.toLongOrNull()
+                        ?.takeIf { it > 10_240L }
+                    val isVideoStream = cleanBaseUrl.contains("itag=18") || cleanBaseUrl.contains("itag=22") || cleanBaseUrl.contains("mime=video")
+                    var totalBytes = rangeTotal
+                        ?: body.contentLength().takeIf { it > 10_240L }
                         ?: knownClen.takeIf { it > 10_240L }
-                        ?: 4_000_000L
+                        ?: (if (isVideoStream) 16_000_000L else 4_000_000L)
 
+                    onProgress(0L, totalBytes)
                     var lastProgressEmitMs = 0L
                     body.byteStream().use { input ->
                         java.io.FileOutputStream(tempFile).use { output ->
@@ -4111,14 +4214,17 @@ object InnerTubeStreamExtractor {
                                 }
                                 output.write(buffer, 0, read)
                                 totalRead += read
+                                if (totalRead >= (totalBytes * 92L / 100L) && rangeTotal == null && body.contentLength() <= 0L && knownClen <= 0L) {
+                                    totalBytes = (totalRead * 115L / 100L).coerceAtLeast(totalBytes + 512_000L)
+                                }
                                 val now = System.currentTimeMillis()
-                                if (now - lastProgressEmitMs >= 220L) {
+                                if (now - lastProgressEmitMs >= 160L) {
                                     lastProgressEmitMs = now
-                                    onProgress(totalRead, totalBytes)
+                                    onProgress(totalRead, totalBytes.coerceAtLeast(totalRead))
                                 }
                             }
                             output.flush()
-                            onProgress(totalRead, totalRead.coerceAtLeast(totalBytes))
+                            onProgress(totalRead, totalRead.coerceAtLeast(1L))
                         }
                     }
                 }

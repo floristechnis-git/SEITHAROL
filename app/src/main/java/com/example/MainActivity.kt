@@ -124,7 +124,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Run Manipur Solar/Lunar Calendar & past notification store off the UI thread
+        // Run Manipur Solar/Lunar Calendar & notification check off the UI thread
         val appCtx = applicationContext
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching {
@@ -230,7 +230,8 @@ class MainActivity : ComponentActivity() {
                                     trackId = target.trackId,
                                     fallbackTitle = target.title,
                                     fallbackArtist = target.artist,
-                                    fallbackArtUrl = target.artUrl
+                                    fallbackArtUrl = target.artUrl,
+                                    isVideo = target.isVideo
                                 )
                             }
                             is SeitharolDeepLinkHelper.DeepLinkTarget.ArtistTarget -> {
@@ -306,7 +307,9 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        if (!isChangingConfigurations) {
+        // CRITICAL: Only tear down playback if the Activity is genuinely finishing (`isFinishing == true`)
+        // and not merely being reclaimed in the background by the OS while music is playing!
+        if (isFinishing && !isChangingConfigurations) {
             val appCtx = applicationContext
             val playerMgr = (application as? CascadeApplication)?.audioPlayerManager
             runCatching { playerMgr?.onAppClearedFromRecents() }
@@ -315,7 +318,6 @@ class MainActivity : ComponentActivity() {
             runCatching {
                 val nm = appCtx.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
                 nm?.cancel(com.example.player.MediaPlaybackService.NOTIFICATION_ID)
-                nm?.cancelAll()
             }
         }
         super.onDestroy()

@@ -666,7 +666,7 @@ fun OnboardingScreen(
                             Spacer(modifier = Modifier.height(22.dp))
 
                             Text(
-                                text = "Welcome $displayName, I'm Yumkhaibam Johnson Singh. I dedicated 71 days to developing this app for you. My hope is to provide an ad-free and limitless experience, serving as a supportive background companion for your work and an emotional stabilizer for those with broken hearts.",
+                                text = "Welcome $displayName, I'm Yumkhaibam Johnson Singh. I dedicated 102 days to developing this app for you. My hope is to provide an ad-free and limitless experience, serving as a supportive background companion for your work and an emotional stabilizer for those with broken hearts.",
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = FontWeight.Normal,
                                 fontSize = 15.5.sp,

@@ -141,15 +141,22 @@ class DownloadPreferencesAndService(private val context: Context) {
         )
     }
 
-    private fun updateDownloadNotification(title: String, progress: Int, isCompleted: Boolean = false, isFailed: Boolean = false) {
+    private fun updateDownloadNotification(
+        title: String,
+        progress: Int,
+        isCompleted: Boolean = false,
+        isFailed: Boolean = false,
+        isVideo: Boolean = false
+    ) {
         try {
-            val notifId = title.hashCode()
+            val notifId = (("disc_dl_" + title).hashCode() and 0x3FFFFFFF).coerceAtLeast(30_000)
+            val mediaLabel = if (isVideo) "Video (MP4)" else "Audio"
             if (isCompleted || isFailed) {
                 notificationManager?.cancel(notifId)
                 val completedNotification = NotificationCompat.Builder(appContext, DOWNLOAD_CHANNEL_ID)
                     .setSmallIcon(com.example.R.drawable.ic_stat_music_note)
-                    .setContentTitle(if (isFailed) "Download Failed" else "Download Completed")
-                    .setContentText(if (isFailed) "$title • Tap to dismiss" else "$title is ready for offline playback")
+                    .setContentTitle(if (isFailed) "$mediaLabel Download Failed" else "$mediaLabel Download Completed")
+                    .setContentText(if (isFailed) "$title • Tap to dismiss" else "$title ($mediaLabel) is ready for offline playback")
                     .setPriority(NotificationCompat.PRIORITY_LOW)
                     .setOngoing(false)
                     .setAutoCancel(true)
@@ -159,12 +166,13 @@ class DownloadPreferencesAndService(private val context: Context) {
                 return
             }
 
-            val clamped = progress.coerceIn(0, 99)
+            val clamped = progress.coerceIn(1, 99)
             val cancelPending = buildCancelPendingIntent(notifId)
             val builder = NotificationCompat.Builder(appContext, DOWNLOAD_CHANNEL_ID)
                 .setSmallIcon(com.example.R.drawable.ic_stat_music_note)
-                .setContentTitle("Downloading $title")
-                .setContentText("$clamped% • Tap to cancel")
+                .setContentTitle("Downloading ${if (isVideo) "Video" else "Audio"}: $title")
+                .setContentText("$clamped% ($mediaLabel) • Tap to cancel")
+                .setSubText(mediaLabel)
                 .setContentIntent(cancelPending)
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", cancelPending)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -255,7 +263,7 @@ class DownloadPreferencesAndService(private val context: Context) {
             totalBytes = 4_000_000L,
             provider = provider
         )
-        updateDownloadNotification(track.title, 2)
+        updateDownloadNotification(track.title, 2, isVideo = format == DownloadFormat.VIDEO)
 
         val downloadDir = File(appContext.filesDir, "downloads").apply { if (!exists()) mkdirs() }
         val safeFileId = canonicalId.replace(Regex("[^a-zA-Z0-9_-]"), "_")
@@ -350,7 +358,7 @@ class DownloadPreferencesAndService(private val context: Context) {
                         val now = System.currentTimeMillis()
                         if (now - lastNotifMs > 250L) {
                             lastNotifMs = now
-                            updateDownloadNotification(track.title, maxProgressPercent)
+                            updateDownloadNotification(track.title, maxProgressPercent, isVideo = isVideoFormat)
                             runCatching {
                                 downloadDao.updateDownload(
                                     com.example.data.local.DownloadEntity(
@@ -446,7 +454,7 @@ class DownloadPreferencesAndService(private val context: Context) {
             }
             activeTrackTitle = null
             activeCanonicalId = null
-            updateDownloadNotification(track.title, 100, isCompleted = true)
+            updateDownloadNotification(track.title, 100, isCompleted = true, isVideo = isVideoFormat)
             _downloadState.value = DownloadTaskState.Completed(track.sourceId, savedUri)
             savedUri
         }.onFailure { err ->
@@ -461,7 +469,7 @@ class DownloadPreferencesAndService(private val context: Context) {
             } else {
                 Log.e("DownloadPreferences", "Discover download failed for ${track.title}: ${err.message}", err)
                 runCatching { db?.downloadDao()?.deleteDownload(canonicalId) }
-                updateDownloadNotification(track.title, 0, isFailed = true)
+                updateDownloadNotification(track.title, 0, isFailed = true, isVideo = format == DownloadFormat.VIDEO)
                 _downloadState.value = DownloadTaskState.Failed(
                     trackId = track.sourceId,
                     message = err.localizedMessage ?: "Download failed for ${track.title}"

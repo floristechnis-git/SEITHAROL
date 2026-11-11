@@ -298,6 +298,26 @@ fun SeitharolProProgressBar(
                             onValueChange(frac)
                         }
                     )
+                }
+                .pointerInput(isControlsLocked, showInlineSuggestionsDrawer) {
+                    var vDrag = 0f
+                    detectVerticalDragGestures(
+                        onDragStart = { vDrag = 0f },
+                        onDragEnd = {
+                            if (!isControlsLocked) {
+                                if (vDrag < -75f && !showInlineSuggestionsDrawer) {
+                                    showInlineSuggestionsDrawer = true
+                                    showOverlayControls = false
+                                } else if (vDrag > 75f && showInlineSuggestionsDrawer) {
+                                    showInlineSuggestionsDrawer = false
+                                }
+                            }
+                            vDrag = 0f
+                        },
+                        onVerticalDrag = { _, dragAmount ->
+                            vDrag += dragAmount
+                        }
+                    )
                 },
             contentAlignment = Alignment.Center
         ) {
@@ -2341,7 +2361,37 @@ fun SeitharolRawVideoSurface(
     }
 
     val context = LocalContext.current
+    val queueSuggestions by viewModel.queueVideoSuggestions.collectAsState()
+    val isAutoSuggestEnabled by viewModel.isAutoSuggestEnabled.collectAsState()
+    var showInlineSuggestionsDrawer by remember(track?.id) { mutableStateOf(false) }
+    var selectedInlineChip by remember(track?.id) { mutableStateOf("All") }
     var attachedInlineView by remember { mutableStateOf<TextureView?>(null) }
+
+    LaunchedEffect(track?.id, playerState.isVideoMode) {
+        attachedInlineView?.let { tv ->
+            viewModel.attachVideoTextureView(tv)
+        }
+        if (track != null && queueSuggestions.isEmpty() && !track.isLocalOnlyTrack) {
+            viewModel.refreshQueueSuggestions(track)
+        }
+    }
+
+    val inlineRelatedSuggestions = remember(queueSuggestions, playerState.queue, playerState.currentIndex, track?.id, selectedInlineChip) {
+        val upcomingQueue = if (playerState.currentIndex + 1 < playerState.queue.size) {
+            playerState.queue.subList(playerState.currentIndex + 1, playerState.queue.size)
+        } else emptyList()
+        val combined = (upcomingQueue + queueSuggestions)
+            .filter { it.id != track?.id }
+            .distinctBy { it.id }
+        when (selectedInlineChip) {
+            "Up Next" -> upcomingQueue.filter { it.id != track?.id }.ifEmpty { combined }
+            "From Channel" -> combined.filter {
+                track != null && it.artist.contains(track.artist, ignoreCase = true)
+            }.ifEmpty { combined }
+            else -> combined
+        }.take(20)
+    }
+
     DisposableEffect(Unit) {
         onDispose {
             if (!viewModel.isFullscreenVideo.value) {
@@ -2446,19 +2496,32 @@ fun SeitharolRawVideoSurface(
                 modifier = exactAspectModifier
             )
 
-            if (track != null && !playerState.isVideoFrameRendered && (playerState.isBuffering || !playerState.isPlaying)) {
+            if (track != null && !playerState.isVideoFrameRendered) {
                 val upgradedArt = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
-                if (upgradedArt.isNotBlank()) {
-                    AsyncImage(
-                        model = upgradedArt,
-                        contentDescription = null,
-                        placeholder = appLogoPainter,
-                        error = appLogoPainter,
-                        fallback = appLogoPainter,
-                        contentScale = ContentScale.Fit,
-                        modifier = exactAspectModifier
-                            .graphicsLayer { alpha = 0.55f }
-                    )
+                Box(
+                    modifier = exactAspectModifier,
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (upgradedArt.isNotBlank()) {
+                        AsyncImage(
+                            model = upgradedArt,
+                            contentDescription = null,
+                            placeholder = appLogoPainter,
+                            error = appLogoPainter,
+                            fallback = appLogoPainter,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer { alpha = if (playerState.isPlaying) 0.78f else 0.65f }
+                        )
+                    }
+                    if (playerState.isBuffering) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(34.dp),
+                            color = Color.White,
+                            strokeWidth = 2.8.dp
+                        )
+                    }
                 }
             }
 
@@ -2705,24 +2768,539 @@ fun SeitharolRawVideoSurface(
                             }
                         }
 
-                        // Bottom-Right Fullscreen Button (matching YouTube placement)
+                        // Bottom Bar: YouTube-Style "More Videos" Slide-Up Pill + Fit/Crop + Fullscreen Button
                         if (showOverlayControls) {
                             Surface(
-                                onClick = onEnterFullscreen,
-                                shape = RoundedCornerShape(10.dp),
-                                color = Color.Black.copy(alpha = 0.58f),
+                                onClick = {
+                                    showInlineSuggestionsDrawer = true
+                                    showOverlayControls = false
+                                },
+                                shape = RoundedCornerShape(18.dp),
+                                color = Color.Black.copy(alpha = 0.68f),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
+                                modifier = Modifier
+                                    .align(Alignment.BottomStart)
+                                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.KeyboardArrowUp,
+                                        contentDescription = "More Videos",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = "More Videos (${inlineRelatedSuggestions.size})",
+                                        color = Color.White,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 11.5.sp
+                                    )
+                                }
+                            }
+
+                            Row(
                                 modifier = Modifier
                                     .align(Alignment.BottomEnd)
-                                    .padding(horizontal = 12.dp, vertical = 10.dp)
-                                    .size(36.dp)
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.Fullscreen,
-                                        contentDescription = "Fullscreen Video",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(20.dp)
+                                Surface(
+                                    onClick = onToggleZoomCrop,
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color.Black.copy(alpha = 0.58f),
+                                    modifier = Modifier.height(36.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 9.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.AspectRatio,
+                                            contentDescription = "Zoom / Fit",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Text(
+                                            text = if (isZoomCrop) "Crop" else "Fit",
+                                            color = Color.White,
+                                            fontSize = 11.sp,
+                                            fontFamily = OutfitFontFamily,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+
+                                Surface(
+                                    onClick = onEnterFullscreen,
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color.Black.copy(alpha = 0.58f),
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Fullscreen,
+                                            contentDescription = "Fullscreen Video",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // YouTube-Structure Slide-Up Video Suggestions Overlay inside Inline Video Frame
+            AnimatedVisibility(
+                visible = showInlineSuggestionsDrawer,
+                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(tween(180)),
+                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(tween(150)),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                SeitharolYouTubeVideoSuggestionsDrawer(
+                    currentTrack = track,
+                    suggestions = inlineRelatedSuggestions,
+                    selectedFilterChip = selectedInlineChip,
+                    onSelectFilterChip = { selectedInlineChip = it },
+                    isAutoplayEnabled = isAutoSuggestEnabled,
+                    onToggleAutoplay = { viewModel.autoSuggestManager.setAutoSuggest(!isAutoSuggestEnabled) },
+                    onPlaySuggestion = { sugTrack ->
+                        showInlineSuggestionsDrawer = false
+                        val videoQueue = inlineRelatedSuggestions.map {
+                            it.copy(genre = "YouTube Video", album = "YouTube Video", itag = 18, codec = "MP4")
+                        }
+                        val targetIdx = videoQueue.indexOfFirst { it.id == sugTrack.id }.coerceAtLeast(0)
+                        viewModel.playQueue(videoQueue, targetIdx, isPlaylist = true)
+                    },
+                    onPlayNextSuggestion = { sugTrack ->
+                        viewModel.playNext(sugTrack.copy(genre = "YouTube Video", album = "YouTube Video", itag = 18, codec = "MP4"))
+                    },
+                    onDownloadMp4Suggestion = { sugTrack ->
+                        viewModel.startDownload(
+                            sugTrack.copy(genre = "YouTube Video", album = "YouTube Video", itag = 18, codec = "MP4"),
+                            com.example.data.model.DownloadTier.VIDEO_MP4
+                        )
+                    },
+                    onClose = { showInlineSuggestionsDrawer = false },
+                    isCompactInline = true
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SeitharolYouTubeVideoSuggestionsDrawer(
+    currentTrack: com.example.data.model.Track?,
+    suggestions: List<com.example.data.model.Track>,
+    selectedFilterChip: String,
+    onSelectFilterChip: (String) -> Unit,
+    isAutoplayEnabled: Boolean,
+    onToggleAutoplay: () -> Unit,
+    onPlaySuggestion: (com.example.data.model.Track) -> Unit,
+    onPlayNextSuggestion: (com.example.data.model.Track) -> Unit,
+    onDownloadMp4Suggestion: (com.example.data.model.Track) -> Unit,
+    onClose: () -> Unit,
+    isCompactInline: Boolean = false
+) {
+    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
+    val filterChips = remember(currentTrack?.artist) {
+        listOf("All", "Up Next", "From Channel")
+    }
+
+    Surface(
+        shape = RoundedCornerShape(if (isCompactInline) 14.dp else 22.dp),
+        color = Color(0xF2121316),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (isCompactInline) Modifier.fillMaxHeight() else Modifier.padding(bottom = 10.dp))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = if (isCompactInline) 10.dp else 14.dp)
+        ) {
+            // Drag Handle Bar
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(bottom = 8.dp)
+                    .width(38.dp)
+                    .height(4.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.32f))
+            )
+
+            // Header Row: YouTube Play Badge + Title + Autoplay Pill + Close Button
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(7.dp),
+                        color = Color(0xFFFF0033)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier
+                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                                .size(14.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = "Up Next & Related Videos",
+                            color = Color.White,
+                            fontFamily = SyneFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = if (isCompactInline) 13.5.sp else 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (!isCompactInline && currentTrack != null) {
+                            Text(
+                                text = "Playing: ${currentTrack.title} • ${currentTrack.artist}",
+                                color = Color.White.copy(alpha = 0.65f),
+                                fontFamily = OutfitFontFamily,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // YouTube-style Autoplay Toggle Pill
+                    Surface(
+                        onClick = onToggleAutoplay,
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (isAutoplayEnabled) Color.White.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.08f),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (isAutoplayEnabled) Color.White.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.12f)
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isAutoplayEnabled) Icons.Default.MotionPhotosAuto else Icons.Default.PauseCircleOutline,
+                                contentDescription = "Autoplay",
+                                tint = if (isAutoplayEnabled) Color(0xFF00E676) else Color.White.copy(alpha = 0.65f),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = if (isAutoplayEnabled) "Autoplay ON" else "Autoplay OFF",
+                                color = Color.White,
+                                fontSize = 10.5.sp,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    Surface(
+                        onClick = onClose,
+                        shape = CircleShape,
+                        color = Color.White.copy(alpha = 0.12f),
+                        modifier = Modifier.size(30.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowDown,
+                                contentDescription = "Close Suggestions",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // YouTube Filter Chips Row ("All", "Up Next", "From Channel")
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(filterChips) { chip ->
+                    val isSelected = selectedFilterChip == chip
+                    val chipLabel = if (chip == "From Channel" && !currentTrack?.artist.isNullOrBlank()) {
+                        "From ${currentTrack?.artist?.take(18)}"
+                    } else chip
+                    Surface(
+                        onClick = { onSelectFilterChip(chip) },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isSelected) Color.White else Color.White.copy(alpha = 0.12f)
+                    ) {
+                        Text(
+                            text = chipLabel,
+                            color = if (isSelected) Color.Black else Color.White,
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.5.sp,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            if (suggestions.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(110.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp
+                        )
+                        Text(
+                            text = "Loading YouTube video suggestions...",
+                            color = Color.White.copy(alpha = 0.78f),
+                            fontSize = 13.sp,
+                            fontFamily = OutfitFontFamily
+                        )
+                    }
+                }
+            } else {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    itemsIndexed(suggestions, key = { idx, item -> "yt_sug_${item.id}_$idx" }) { idx, sugTrack ->
+                        val cardWidth = if (isCompactInline) 196.dp else 224.dp
+                        val thumbHeight = if (isCompactInline) 104.dp else 120.dp
+                        Surface(
+                            onClick = { onPlaySuggestion(sugTrack) },
+                            shape = RoundedCornerShape(14.dp),
+                            color = Color(0xFF1E2025),
+                            border = androidx.compose.foundation.BorderStroke(
+                                width = if (idx == 0) 1.2.dp else 0.8.dp,
+                                color = if (idx == 0) Color(0xFFFF0033).copy(alpha = 0.65f) else Color.White.copy(alpha = 0.10f)
+                            ),
+                            modifier = Modifier.width(cardWidth)
+                        ) {
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                // 16:9 YouTube Widescreen Thumbnail with Badges
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(thumbHeight)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(Color(0xFF2A2D34))
+                                ) {
+                                    AsyncImage(
+                                        model = InnerTubeResolver.upgradeThumbnailUrl(sugTrack.artUrl).ifBlank { R.drawable.ic_splash_logo },
+                                        contentDescription = sugTrack.title,
+                                        placeholder = appLogoPainter,
+                                        error = appLogoPainter,
+                                        fallback = appLogoPainter,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
                                     )
+
+                                    // Top-Left "UP NEXT" or "HD • MP4" Badge
+                                    Surface(
+                                        shape = RoundedCornerShape(5.dp),
+                                        color = if (idx == 0) Color(0xE6FF0033) else Color(0xCC000000),
+                                        modifier = Modifier
+                                            .align(Alignment.TopStart)
+                                            .padding(5.dp)
+                                    ) {
+                                        Text(
+                                            text = if (idx == 0) "UP NEXT" else "HD • MP4",
+                                            color = Color.White,
+                                            fontSize = 9.sp,
+                                            fontFamily = OutfitFontFamily,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+
+                                    // Center Play Pill
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = Color.Black.copy(alpha = 0.62f),
+                                        modifier = Modifier
+                                            .align(Alignment.Center)
+                                            .size(34.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.PlayArrow,
+                                                contentDescription = "Play Video",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    }
+
+                                    // Bottom-Right Duration Badge
+                                    if (sugTrack.durationMs > 0L) {
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = Color(0xE6000000),
+                                            modifier = Modifier
+                                                .align(Alignment.BottomEnd)
+                                                .padding(5.dp)
+                                        ) {
+                                            Text(
+                                                text = sugTrack.durationFormatted,
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontFamily = OutfitFontFamily,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(7.dp))
+
+                                // YouTube Channel Avatar + Title + Metadata Row + Quick Actions
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.Top,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = Color.White.copy(alpha = 0.14f),
+                                        modifier = Modifier
+                                            .padding(top = 2.dp)
+                                            .size(24.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                text = sugTrack.artist.trim().take(1).uppercase().ifBlank { "Y" },
+                                                color = Color.White,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = sugTrack.title,
+                                            color = Color.White,
+                                            fontFamily = OutfitFontFamily,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 12.5.sp,
+                                            lineHeight = 16.sp,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = "${sugTrack.artist} • YouTube Video",
+                                            color = Color.White.copy(alpha = 0.68f),
+                                            fontFamily = OutfitFontFamily,
+                                            fontSize = 10.5.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                // Quick Action Strip: Play Next + Download MP4
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Surface(
+                                        onClick = { onPlayNextSuggestion(sugTrack) },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color.White.copy(alpha = 0.10f),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.PlaylistPlay,
+                                                contentDescription = "Queue Next",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(3.dp))
+                                            Text(
+                                                text = "Play Next",
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontFamily = OutfitFontFamily,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    }
+
+                                    Surface(
+                                        onClick = { onDownloadMp4Suggestion(sugTrack) },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color.White.copy(alpha = 0.10f),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Videocam,
+                                                contentDescription = "Save MP4",
+                                                tint = Color(0xFFFFB4AB),
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(3.dp))
+                                            Text(
+                                                text = "Save MP4",
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontFamily = OutfitFontFamily,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2751,9 +3329,11 @@ fun SeitharolFullscreenVideoModal(
 ) {
     val track = playerState.currentTrack ?: return
     val queueSuggestions by viewModel.queueVideoSuggestions.collectAsState()
+    val isAutoSuggestEnabled by viewModel.isAutoSuggestEnabled.collectAsState()
     var showControls by remember { mutableStateOf(true) }
     var isControlsLocked by remember(track.id) { mutableStateOf(false) }
     var showSuggestionsDrawer by remember(track.id) { mutableStateOf(false) }
+    var selectedFsChip by remember(track.id) { mutableStateOf("All") }
     var isDraggingSlider by remember { mutableStateOf(false) }
     var seekingPosition by remember { mutableStateOf<Float?>(null) }
     var skipFeedbackIsForward by remember { mutableStateOf<Boolean?>(null) }
@@ -2777,14 +3357,18 @@ fun SeitharolFullscreenVideoModal(
         }
     }
 
-    val relatedSuggestions = remember(queueSuggestions, playerState.queue, playerState.currentIndex, track.id) {
+    val relatedSuggestions = remember(queueSuggestions, playerState.queue, playerState.currentIndex, track.id, selectedFsChip) {
         val upcomingQueue = if (playerState.currentIndex + 1 < playerState.queue.size) {
             playerState.queue.subList(playerState.currentIndex + 1, playerState.queue.size)
         } else emptyList()
-        (upcomingQueue + queueSuggestions)
+        val combined = (upcomingQueue + queueSuggestions)
             .filter { it.id != track.id }
             .distinctBy { it.id }
-            .take(18)
+        when (selectedFsChip) {
+            "Up Next" -> upcomingQueue.filter { it.id != track.id }.ifEmpty { combined }
+            "From Channel" -> combined.filter { it.artist.contains(track.artist, ignoreCase = true) }.ifEmpty { combined }
+            else -> combined
+        }.take(20)
     }
 
     LaunchedEffect(showControls, playerState.isPlaying, isDraggingSlider, showSuggestionsDrawer, isControlsLocked) {
@@ -2960,19 +3544,38 @@ fun SeitharolFullscreenVideoModal(
                     modifier = exactFullscreenAspectModifier
                 )
 
-                if (!playerState.isVideoFrameRendered && (playerState.isBuffering || !playerState.isPlaying)) {
+                LaunchedEffect(track.id, playerState.isVideoMode) {
+                    attachedFullscreenView?.let { tv ->
+                        viewModel.attachVideoTextureView(tv)
+                    }
+                }
+
+                if (!playerState.isVideoFrameRendered) {
                     val upgradedArt = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
-                    if (upgradedArt.isNotBlank()) {
-                        AsyncImage(
-                            model = upgradedArt,
-                            contentDescription = null,
-                            placeholder = appLogoPainter,
-                            error = appLogoPainter,
-                            fallback = appLogoPainter,
-                            contentScale = ContentScale.Fit,
-                            modifier = exactFullscreenAspectModifier
-                                .graphicsLayer { alpha = 0.55f }
-                        )
+                    Box(
+                        modifier = exactFullscreenAspectModifier,
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (upgradedArt.isNotBlank()) {
+                            AsyncImage(
+                                model = upgradedArt,
+                                contentDescription = null,
+                                placeholder = appLogoPainter,
+                                error = appLogoPainter,
+                                fallback = appLogoPainter,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer { alpha = if (playerState.isPlaying) 0.78f else 0.65f }
+                            )
+                        }
+                        if (playerState.isBuffering) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(38.dp),
+                                color = Color.White,
+                                strokeWidth = 3.dp
+                            )
+                        }
                     }
                 }
 
@@ -3296,185 +3899,39 @@ fun SeitharolFullscreenVideoModal(
                                     .align(Alignment.BottomCenter)
                                     .padding(horizontal = 20.dp, vertical = 10.dp)
                             ) {
-                                // Slide-up YouTube Suggestions Drawer when opened
+                                // Slide-up YouTube Suggestions Drawer when opened (Massive YouTube-Structure UI Upgrade)
                                 AnimatedVisibility(
                                     visible = showSuggestionsDrawer,
                                     enter = slideInVertically(initialOffsetY = { it }) + fadeIn(tween(180)),
                                     exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(tween(150))
                                 ) {
-                                    Surface(
-                                        shape = RoundedCornerShape(20.dp),
-                                        color = Color(0xEB141619),
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(bottom = 10.dp)
-                                    ) {
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(vertical = 12.dp)
-                                        ) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(horizontal = 16.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.VideoLibrary,
-                                                        contentDescription = null,
-                                                        tint = MaterialTheme.colorScheme.primary,
-                                                        modifier = Modifier.size(18.dp)
-                                                    )
-                                                    Text(
-                                                        text = "Suggested Next on YouTube",
-                                                        color = Color.White,
-                                                        fontFamily = SyneFontFamily,
-                                                        fontWeight = FontWeight.Bold,
-                                                        fontSize = 14.sp
-                                                    )
-                                                }
-                                                Surface(
-                                                    onClick = { showSuggestionsDrawer = false },
-                                                    shape = RoundedCornerShape(8.dp),
-                                                    color = Color.White.copy(alpha = 0.12f)
-                                                ) {
-                                                    Row(
-                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                                    ) {
-                                                        Text(
-                                                            text = "Close",
-                                                            color = Color.White,
-                                                            fontSize = 11.sp,
-                                                            fontFamily = OutfitFontFamily,
-                                                            fontWeight = FontWeight.SemiBold
-                                                        )
-                                                        Icon(
-                                                            imageVector = Icons.Default.KeyboardArrowDown,
-                                                            contentDescription = "Close Suggestions",
-                                                            tint = Color.White,
-                                                            modifier = Modifier.size(16.dp)
-                                                        )
-                                                    }
-                                                }
+                                    SeitharolYouTubeVideoSuggestionsDrawer(
+                                        currentTrack = track,
+                                        suggestions = relatedSuggestions,
+                                        selectedFilterChip = selectedFsChip,
+                                        onSelectFilterChip = { selectedFsChip = it },
+                                        isAutoplayEnabled = isAutoSuggestEnabled,
+                                        onToggleAutoplay = { viewModel.autoSuggestManager.setAutoSuggest(!isAutoSuggestEnabled) },
+                                        onPlaySuggestion = { sugTrack ->
+                                            showSuggestionsDrawer = false
+                                            val videoQueue = relatedSuggestions.map {
+                                                it.copy(genre = "YouTube Video", album = "YouTube Video", itag = 18, codec = "MP4")
                                             }
-
-                                            Spacer(modifier = Modifier.height(10.dp))
-
-                                            if (relatedSuggestions.isEmpty()) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(90.dp),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Text(
-                                                        text = "Loading YouTube suggestions...",
-                                                        color = Color.White.copy(alpha = 0.7f),
-                                                        fontSize = 13.sp,
-                                                        fontFamily = OutfitFontFamily
-                                                    )
-                                                }
-                                            } else {
-                                                LazyRow(
-                                                    contentPadding = PaddingValues(horizontal = 16.dp),
-                                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                                ) {
-                                                    items(relatedSuggestions, key = { "fs_sug_${it.id}" }) { sugTrack ->
-                                                        Surface(
-                                                            onClick = {
-                                                                showSuggestionsDrawer = false
-                                                                val videoQueue = relatedSuggestions.map {
-                                                                    it.copy(genre = "YouTube Video", album = "YouTube Video", itag = 18, codec = "MP4")
-                                                                }
-                                                                val targetIdx = videoQueue.indexOfFirst { it.id == sugTrack.id }.coerceAtLeast(0)
-                                                                viewModel.playQueue(videoQueue, targetIdx, isPlaylist = true)
-                                                            },
-                                                            shape = RoundedCornerShape(14.dp),
-                                                            color = Color.White.copy(alpha = 0.08f),
-                                                            modifier = Modifier.width(186.dp)
-                                                        ) {
-                                                            Column(modifier = Modifier.padding(8.dp)) {
-                                                                Box(
-                                                                    modifier = Modifier
-                                                                        .fillMaxWidth()
-                                                                        .height(98.dp)
-                                                                        .clip(RoundedCornerShape(10.dp))
-                                                                        .background(Color.DarkGray)
-                                                                ) {
-                                                                    AsyncImage(
-                                                                        model = InnerTubeResolver.upgradeThumbnailUrl(sugTrack.artUrl),
-                                                                        contentDescription = sugTrack.title,
-                                                                        contentScale = ContentScale.Crop,
-                                                                        modifier = Modifier.fillMaxSize()
-                                                                    )
-                                                                    Surface(
-                                                                        shape = RoundedCornerShape(8.dp),
-                                                                        color = Color.Black.copy(alpha = 0.58f),
-                                                                        modifier = Modifier
-                                                                            .align(Alignment.Center)
-                                                                            .size(30.dp)
-                                                                    ) {
-                                                                        Box(contentAlignment = Alignment.Center) {
-                                                                            Icon(
-                                                                                imageVector = Icons.Default.PlayArrow,
-                                                                                contentDescription = "Play",
-                                                                                tint = Color.White,
-                                                                                modifier = Modifier.size(18.dp)
-                                                                            )
-                                                                        }
-                                                                    }
-                                                                    if (sugTrack.durationMs > 0L) {
-                                                                        Surface(
-                                                                            shape = RoundedCornerShape(5.dp),
-                                                                            color = Color.Black.copy(alpha = 0.82f),
-                                                                            modifier = Modifier
-                                                                                .align(Alignment.BottomEnd)
-                                                                                .padding(4.dp)
-                                                                        ) {
-                                                                            Text(
-                                                                                text = sugTrack.durationFormatted,
-                                                                                color = Color.White,
-                                                                                fontSize = 10.sp,
-                                                                                fontWeight = FontWeight.Bold,
-                                                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                                                                            )
-                                                                        }
-                                                                    }
-                                                                }
-                                                                Spacer(modifier = Modifier.height(6.dp))
-                                                                Text(
-                                                                    text = sugTrack.title,
-                                                                    color = Color.White,
-                                                                    fontFamily = OutfitFontFamily,
-                                                                    fontWeight = FontWeight.SemiBold,
-                                                                    fontSize = 12.5.sp,
-                                                                    maxLines = 2,
-                                                                    overflow = TextOverflow.Ellipsis
-                                                                )
-                                                                Text(
-                                                                    text = sugTrack.artist,
-                                                                    color = Color.White.copy(alpha = 0.68f),
-                                                                    fontFamily = OutfitFontFamily,
-                                                                    fontSize = 11.sp,
-                                                                    maxLines = 1,
-                                                                    overflow = TextOverflow.Ellipsis
-                                                                )
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                                            val targetIdx = videoQueue.indexOfFirst { it.id == sugTrack.id }.coerceAtLeast(0)
+                                            viewModel.playQueue(videoQueue, targetIdx, isPlaylist = true)
+                                        },
+                                        onPlayNextSuggestion = { sugTrack ->
+                                            viewModel.playNext(sugTrack.copy(genre = "YouTube Video", album = "YouTube Video", itag = 18, codec = "MP4"))
+                                        },
+                                        onDownloadMp4Suggestion = { sugTrack ->
+                                            viewModel.startDownload(
+                                                sugTrack.copy(genre = "YouTube Video", album = "YouTube Video", itag = 18, codec = "MP4"),
+                                                com.example.data.model.DownloadTier.VIDEO_MP4
+                                            )
+                                        },
+                                        onClose = { showSuggestionsDrawer = false },
+                                        isCompactInline = false
+                                    )
                                 }
 
                                 SeitharolProProgressBar(
@@ -4383,6 +4840,41 @@ fun PlayerRelatedModalSheet(
                 }
             }
 
+            var selectedRelatedTab by remember { mutableStateOf("All") }
+            val relatedFilterTabs = remember(currentTrack.artist) {
+                listOf("All", "YouTube Videos", "From ${currentTrack.artist.take(18)}", "Mixes & Playlists")
+            }
+
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                items(relatedFilterTabs) { tab ->
+                    val isSelected = selectedRelatedTab == tab
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { selectedRelatedTab = tab },
+                        label = {
+                            Text(
+                                text = tab,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp
+                            )
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primary,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            labelColor = MaterialTheme.colorScheme.onSurface
+                        ),
+                        border = null
+                    )
+                }
+            }
+
             HorizontalDivider(
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
@@ -4421,9 +4913,188 @@ fun PlayerRelatedModalSheet(
                     verticalArrangement = Arrangement.spacedBy(22.dp)
                 ) {
                     // ────────────────────────────────────────────────────────────
+                    // 0. YouTube Watch-Next 16:9 Video Feed Cards
+                    // ────────────────────────────────────────────────────────────
+                    if (relatedData.relatedTracks.isNotEmpty() && (selectedRelatedTab == "All" || selectedRelatedTab == "YouTube Videos" || selectedRelatedTab.startsWith("From "))) {
+                        val videoFeedItems = if (selectedRelatedTab.startsWith("From ")) {
+                            relatedData.relatedTracks.filter { it.artist.contains(currentTrack.artist, ignoreCase = true) }
+                                .ifEmpty { relatedData.relatedTracks }
+                        } else {
+                            relatedData.relatedTracks
+                        }.take(if (selectedRelatedTab == "YouTube Videos") 12 else 4)
+
+                        item(key = "rel_yt_video_watch_next_header") {
+                            Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = Color(0xFFFF0033)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.PlayArrow,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp).size(14.dp)
+                                        )
+                                    }
+                                    Text(
+                                        text = "Watch Next on YouTube",
+                                        fontFamily = SyneFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 18.sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                                Text(
+                                    text = "16:9 YouTube video stream & MP4 download ready",
+                                    fontFamily = OutfitFontFamily,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        itemsIndexed(videoFeedItems, key = { idx, item -> "yt_feed_card_${item.id}_$idx" }) { idx, vidTrack ->
+                            Surface(
+                                onClick = {
+                                    val asVideo = vidTrack.copy(genre = "YouTube Video", album = "YouTube Video", itag = 18, codec = "MP4")
+                                    viewModel.playRelatedTrackPreservingQueue(asVideo)
+                                    onDismiss()
+                                },
+                                shape = RoundedCornerShape(18.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 20.dp)
+                            ) {
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .aspectRatio(16f / 9f)
+                                            .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                                            .background(Color.Black)
+                                    ) {
+                                        AsyncImage(
+                                            model = InnerTubeResolver.upgradeThumbnailUrl(vidTrack.artUrl).ifBlank { R.drawable.ic_splash_logo },
+                                            contentDescription = vidTrack.title,
+                                            placeholder = appLogoPainter,
+                                            error = appLogoPainter,
+                                            fallback = appLogoPainter,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = if (idx == 0) Color(0xE6FF0033) else Color(0xCC000000),
+                                            modifier = Modifier
+                                                .align(Alignment.TopStart)
+                                                .padding(10.dp)
+                                        ) {
+                                            Text(
+                                                text = if (idx == 0) "UP NEXT VIDEO" else "YOUTUBE MP4",
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontFamily = OutfitFontFamily,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                            )
+                                        }
+                                        if (vidTrack.durationMs > 0L) {
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = Color(0xE6000000),
+                                                modifier = Modifier
+                                                    .align(Alignment.BottomEnd)
+                                                    .padding(10.dp)
+                                            ) {
+                                                Text(
+                                                    text = vidTrack.durationFormatted,
+                                                    color = Color.White,
+                                                    fontSize = 11.sp,
+                                                    fontFamily = OutfitFontFamily,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = MaterialTheme.colorScheme.primaryContainer,
+                                            modifier = Modifier.size(38.dp)
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Text(
+                                                    text = vidTrack.artist.trim().take(1).uppercase().ifBlank { "Y" },
+                                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                    fontFamily = SyneFontFamily,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 15.sp
+                                                )
+                                            }
+                                        }
+
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = vidTrack.title,
+                                                fontFamily = OutfitFontFamily,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 14.5.sp,
+                                                lineHeight = 19.sp,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = "${vidTrack.artist} • YouTube Video • ${vidTrack.durationFormatted}",
+                                                fontFamily = OutfitFontFamily,
+                                                fontSize = 12.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+
+                                        Surface(
+                                            onClick = {
+                                                trackForDownload = vidTrack.copy(genre = "YouTube Video", album = "YouTube Video", itag = 18, codec = "MP4")
+                                            },
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = MaterialTheme.colorScheme.surface,
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Download,
+                                                    contentDescription = "Download MP4 Video",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ────────────────────────────────────────────────────────────
                     // 1. "You might also like" — YouTube Music 4-Row Horizontal Snap Grid
                     // ────────────────────────────────────────────────────────────
-                    if (relatedData.relatedTracks.isNotEmpty()) {
+                    if (relatedData.relatedTracks.isNotEmpty() && selectedRelatedTab != "Mixes & Playlists") {
                         item(key = "rel_you_might_also_like") {
                             val columns = remember(relatedData.relatedTracks) {
                                 relatedData.relatedTracks.chunked(4)

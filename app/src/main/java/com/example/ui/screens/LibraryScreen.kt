@@ -427,6 +427,37 @@ fun LibraryScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = if (inProgressCount > 0) MaterialTheme.colorScheme.primary else SeitharolTextSecondary
                         )
+                        if (inProgressCount > 0) {
+                            val activeItems = activeDownloads.filter {
+                                it.state == DownloadState.DOWNLOADING || it.state == DownloadState.FINALIZING || it.state == DownloadState.QUEUED
+                            }
+                            val avgProgress = activeItems.map {
+                                if (it.progress.isNaN() || it.progress.isInfinite()) 0.05f else it.progress.coerceIn(0.02f, 0.99f)
+                            }.average().toFloat().coerceIn(0.02f, 0.99f)
+                            val firstActive = activeItems.firstOrNull()
+                            Spacer(modifier = Modifier.height(6.dp))
+                            LinearProgressIndicator(
+                                progress = { avgProgress },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(4.dp)
+                                    .clip(RoundedCornerShape(2.dp)),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant
+                            )
+                            if (firstActive != null) {
+                                val isVid = firstActive.tier == com.example.data.model.DownloadTier.VIDEO_MP4 ||
+                                    firstActive.localFilePath?.endsWith(".mp4", true) == true
+                                Text(
+                                    text = "${if (isVid) "Video (MP4)" else "Audio"}: ${firstActive.title} • ${(avgProgress * 100).toInt()}%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -1005,14 +1036,22 @@ fun DownloadsScreen(
                 }
 
                 items(inProgressQueueItems, key = { "active_dl_${it.trackId}" }) { item ->
-                    val safeProg = if (item.progress.isNaN() || item.progress.isInfinite()) 0f else item.progress.coerceIn(0f, 1f)
-                    val pct = (safeProg * 100).toInt().coerceIn(0, 99)
+                    val safeProg = if (item.progress.isNaN() || item.progress.isInfinite()) 0.02f else item.progress.coerceIn(0.02f, 0.99f)
+                    val pct = (safeProg * 100).toInt().coerceIn(1, 99)
+                    val isVid = item.tier == com.example.data.model.DownloadTier.VIDEO_MP4 ||
+                        item.localFilePath?.endsWith(".mp4", ignoreCase = true) == true
+                    val dlMb = item.downloadedBytes.toFloat() / (1024f * 1024f)
+                    val totMb = item.totalBytes.toFloat() / (1024f * 1024f)
+                    val sizeLabel = if (item.totalBytes > 0L) {
+                        String.format(java.util.Locale.US, " • %.1f / %.1f MB", dlMb, totMb)
+                    } else ""
+                    val typeTag = if (isVid) "Video MP4" else item.tier.label
                     ActiveProcessingDownloadCard(
                         title = item.title,
                         artist = item.artist,
                         artUrl = item.artUrl,
                         progressFraction = safeProg,
-                        subtitle = "Downloading (${item.tier.label}) • $pct%",
+                        subtitle = "${if (item.state == DownloadState.QUEUED) "Starting" else "Downloading"} ($typeTag) • $pct%$sizeLabel",
                         onCancel = { viewModel.cancelDownload(item.trackId) }
                     )
                 }

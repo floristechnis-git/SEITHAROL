@@ -490,7 +490,7 @@ fun DownloadItemRow(
                 }
             }
 
-            if (item.state == DownloadState.DOWNLOADING || item.state == DownloadState.FINALIZING) {
+            if (item.state == DownloadState.DOWNLOADING || item.state == DownloadState.FINALIZING || item.state == DownloadState.QUEUED) {
                 Spacer(modifier = Modifier.height(8.dp))
                 LinearProgressIndicator(
                     progress = { safeProgress },

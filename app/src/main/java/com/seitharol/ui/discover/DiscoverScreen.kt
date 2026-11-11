@@ -776,7 +776,7 @@ fun DownloadProviderFormatBottomSheet(
     val sortedProviders = remember { downloadService.getSortedProviders() }
     var selectedProvider by remember { mutableStateOf(sortedProviders.first()) }
     var selectedFormat by remember(track.sourceId, isVideoTrack) {
-        mutableStateOf(if (isVideoTrack) downloadService.getPreferredFormat() else DownloadFormat.AUDIO)
+        mutableStateOf(if (isVideoTrack) DownloadFormat.VIDEO else downloadService.getPreferredFormat())
     }
     var selectedQuality by remember { mutableStateOf(persistedState.downloadQuality) }
 
@@ -797,7 +797,7 @@ fun DownloadProviderFormatBottomSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = if (isVideoTrack) "Download Track" else "Download Audio",
+                    text = if (selectedFormat == DownloadFormat.VIDEO) "Download Video (MP4)" else "Download Track",
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -823,7 +823,7 @@ fun DownloadProviderFormatBottomSheet(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            if (isVideoTrack) {
+            if (true) {
                 Text(
                     text = "Download Format",
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),

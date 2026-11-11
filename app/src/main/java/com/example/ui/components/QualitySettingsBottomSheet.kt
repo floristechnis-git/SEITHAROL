@@ -376,10 +376,9 @@ fun TrackDownloadFormatQualitySheet(
         track.album.equals("YouTube Video", ignoreCase = true) ||
         track.album.equals("MP4 Video", ignoreCase = true)
 
-    // Audio songs only download as Audio (no Audio vs Video format selection needed).
-    // The 2-option Format selection ("Audio Only" vs "Video") is only shown for video tracks.
+    // Allow downloading any track or unlisted video as either Audio Only or Video (MP4)
     var isVideoSelected by remember(track.id, isVideoTrack) {
-        mutableStateOf(if (isVideoTrack) persistedState.downloadVideoFormat else false)
+        mutableStateOf(if (isVideoTrack) true else persistedState.downloadVideoFormat)
     }
     var selectedQuality by remember(track.id) {
         mutableStateOf(persistedState.downloadQuality)
@@ -397,7 +396,7 @@ fun TrackDownloadFormatQualitySheet(
                 .navigationBarsPadding()
         ) {
             Text(
-                text = if (isVideoTrack) "Download Options" else "Download Audio",
+                text = if (isVideoSelected) "Download Video (MP4)" else "Download Options",
                 fontFamily = SyneFontFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 20.sp,
@@ -414,7 +413,7 @@ fun TrackDownloadFormatQualitySheet(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            if (isVideoTrack) {
+            if (true) {
                 Text(
                     text = "Format",
                     fontFamily = SyneFontFamily,

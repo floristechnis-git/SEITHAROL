@@ -25,6 +25,8 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -368,6 +370,22 @@ class DownloadRepository(
     private val activeDownloadJobs = ConcurrentHashMap<String, Job>()
     private val downloadSemaphore = Semaphore(2)
     private val activeTrackTitles = ConcurrentHashMap<String, String>()
+    private val activeNotifIds = ConcurrentHashMap<String, Int>()
+    private val liveProgressMap = MutableStateFlow<Map<String, DownloadItem>>(emptyMap())
+
+    private fun putLiveProgress(item: DownloadItem) {
+        val next = LinkedHashMap(liveProgressMap.value)
+        next[item.trackId] = item
+        liveProgressMap.value = next
+    }
+
+    private fun removeLiveProgress(trackId: String) {
+        if (liveProgressMap.value.containsKey(trackId)) {
+            val next = LinkedHashMap(liveProgressMap.value)
+            next.remove(trackId)
+            liveProgressMap.value = next
+        }
+    }
     private val notificationManager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
     private val DOWNLOAD_CHANNEL_ID = "seitharol_download_channel"
 
@@ -432,22 +450,32 @@ class DownloadRepository(
         )
     }
 
+    private fun resolveNotifId(trackId: String, title: String): Int {
+        return activeNotifIds.getOrPut(trackId) {
+            (("dl_" + trackId + "_" + title).hashCode() and 0x3FFFFFFF).coerceAtLeast(20_000)
+        }
+    }
+
     private fun updateDownloadNotification(
         trackId: String,
         title: String,
         progress: Int,
         isCompleted: Boolean = false,
-        isFailed: Boolean = false
+        isFailed: Boolean = false,
+        isVideo: Boolean = false,
+        isIndeterminate: Boolean = false
     ) {
         try {
-            val notifId = title.hashCode()
+            val notifId = resolveNotifId(trackId, title)
+            val mediaLabel = if (isVideo) "Video (MP4)" else "Audio"
             if (isCompleted || isFailed) {
                 notificationManager?.cancel(notifId)
+                activeNotifIds.remove(trackId)
 
                 val completedNotification = NotificationCompat.Builder(appContext, DOWNLOAD_CHANNEL_ID)
                     .setSmallIcon(R.drawable.ic_stat_music_note)
-                    .setContentTitle(if (isFailed) "Download Failed" else "Download Completed")
-                    .setContentText(if (isFailed) "$title • Tap to dismiss" else "$title is ready for offline playback")
+                    .setContentTitle(if (isFailed) "$mediaLabel Download Failed" else "$mediaLabel Download Completed")
+                    .setContentText(if (isFailed) "$title • Tap to dismiss" else "$title ($mediaLabel) is ready for offline playback")
                     .setPriority(NotificationCompat.PRIORITY_LOW)
                     .setOngoing(false)
                     .setAutoCancel(true)
@@ -458,18 +486,19 @@ class DownloadRepository(
                 return
             }
 
-            val clamped = progress.coerceIn(0, 99)
+            val clamped = progress.coerceIn(1, 99)
             val cancelPending = buildCancelPendingIntent(trackId, notifId)
             val builder = NotificationCompat.Builder(appContext, DOWNLOAD_CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_music_note)
-                .setContentTitle("Downloading $title")
-                .setContentText("$clamped% • Tap to cancel")
+                .setContentTitle("Downloading ${if (isVideo) "Video" else "Audio"}: $title")
+                .setContentText(if (isIndeterminate) "Preparing $mediaLabel stream... • Tap to cancel" else "$clamped% ($mediaLabel) • Tap to cancel")
+                .setSubText(mediaLabel)
                 .setContentIntent(cancelPending)
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", cancelPending)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
-                .setProgress(100, clamped, false)
+                .setProgress(100, clamped, isIndeterminate)
 
             notificationManager?.notify(notifId, builder.build())
         } catch (e: Exception) {
@@ -477,37 +506,79 @@ class DownloadRepository(
         }
     }
 
-    fun getAllDownloads(): Flow<List<DownloadItem>> = downloadDao.getAllDownloads().map { list ->
-        list.map { entity ->
-            val track = trackDao.getTrackById(entity.trackId)
-            DownloadItem(
+    fun getAllDownloads(): Flow<List<DownloadItem>> = combine(
+        downloadDao.getAllDownloads(),
+        liveProgressMap,
+        com.seitharol.data.download.DownloadPreferencesAndService.getInstance(appContext).downloadState
+    ) { list, liveMap, discoverState ->
+        val merged = LinkedHashMap<String, DownloadItem>()
+        list.forEach { entity ->
+            val track = runCatching { trackDao.getTrackById(entity.trackId) }.getOrNull()
+            val liveOverride = liveMap[entity.trackId]
+            val mappedState = when (entity.state) {
+                "DOWNLOADING" -> DownloadState.DOWNLOADING
+                "FINALIZING" -> DownloadState.FINALIZING
+                "COMPLETED" -> DownloadState.COMPLETED
+                "ERROR" -> DownloadState.ERROR
+                else -> DownloadState.QUEUED
+            }
+            val baseItem = DownloadItem(
                 trackId = entity.trackId,
-                title = track?.title ?: "Track ${entity.trackId}",
-                artist = track?.artist ?: "Unknown Artist",
-                artUrl = track?.artUrl ?: "",
-                tier = when (entity.tier) {
+                title = liveOverride?.title?.takeIf { it.isNotBlank() } ?: track?.title ?: "Track ${entity.trackId}",
+                artist = liveOverride?.artist?.takeIf { it.isNotBlank() } ?: track?.artist ?: "Unknown Artist",
+                artUrl = liveOverride?.artUrl?.takeIf { it.isNotBlank() } ?: track?.artUrl ?: "",
+                tier = liveOverride?.tier ?: when (entity.tier) {
                     "Data Saver" -> DownloadTier.DATA_SAVER
                     "High", "Lossless / Master" -> DownloadTier.HIGH
                     "Original" -> DownloadTier.ORIGINAL
                     "MP4 Video" -> DownloadTier.VIDEO_MP4
                     else -> DownloadTier.STANDARD
                 },
-                progress = entity.progress,
-                downloadedBytes = entity.bytesDownloaded,
-                totalBytes = entity.totalBytes,
-                state = when (entity.state) {
-                    "DOWNLOADING" -> DownloadState.DOWNLOADING
-                    "FINALIZING" -> DownloadState.FINALIZING
-                    "COMPLETED" -> DownloadState.COMPLETED
-                    "ERROR" -> DownloadState.ERROR
-                    else -> DownloadState.QUEUED
-                },
-                localFilePath = entity.localPath
+                progress = if (liveOverride != null && mappedState != DownloadState.COMPLETED) {
+                    maxOf(entity.progress, liveOverride.progress)
+                } else entity.progress,
+                downloadedBytes = if (liveOverride != null && mappedState != DownloadState.COMPLETED) {
+                    maxOf(entity.bytesDownloaded, liveOverride.downloadedBytes)
+                } else entity.bytesDownloaded,
+                totalBytes = if (liveOverride != null && mappedState != DownloadState.COMPLETED) {
+                    maxOf(entity.totalBytes, liveOverride.totalBytes)
+                } else entity.totalBytes,
+                state = if (liveOverride != null && mappedState == DownloadState.QUEUED && liveOverride.state == DownloadState.DOWNLOADING) {
+                    DownloadState.DOWNLOADING
+                } else mappedState,
+                localFilePath = entity.localPath ?: liveOverride?.localFilePath
+            )
+            merged[entity.trackId] = baseItem
+        }
+        // Include any in-memory queued/downloading items not yet flushed by Room
+        liveMap.forEach { (id, liveItem) ->
+            if (!merged.containsKey(id)) {
+                merged[id] = liveItem
+            }
+        }
+        // Include active Discover download state if running
+        if (discoverState is com.seitharol.data.download.DownloadTaskState.Downloading) {
+            val dlService = com.seitharol.data.download.DownloadPreferencesAndService.getInstance(appContext)
+            val canonId = dlService.canonicalTrackId(discoverState.trackId)
+            val existing = merged[canonId] ?: merged[discoverState.trackId]
+            val discProg = (discoverState.progressPercent / 100f).coerceIn(0.02f, 0.99f)
+            merged[canonId] = DownloadItem(
+                trackId = canonId,
+                title = discoverState.trackTitle,
+                artist = discoverState.artistName,
+                artUrl = discoverState.thumbnailUrl,
+                tier = existing?.tier ?: DownloadTier.HIGH,
+                progress = maxOf(existing?.progress ?: 0f, discProg),
+                downloadedBytes = maxOf(existing?.downloadedBytes ?: 0L, discoverState.downloadedBytes),
+                totalBytes = maxOf(existing?.totalBytes ?: 4_000_000L, discoverState.totalBytes),
+                state = DownloadState.DOWNLOADING,
+                localFilePath = existing?.localFilePath
             )
         }
-    }
+        merged.values.toList()
+    }.flowOn(Dispatchers.IO)
 
-    fun getTotalDownloadedBytes(): Flow<Long> = downloadDao.getTotalDownloadedBytes().map { it ?: 0L }
+    fun getTotalDownloadedBytes(): Flow<Long> = downloadDao.getTotalDownloadedBytes().map { it ?: 0L }.flowOn(Dispatchers.IO)
 
     fun cancelDownload(trackId: String) {
         val discoverService = runCatching {
@@ -518,7 +589,11 @@ class DownloadRepository(
         activeDownloadJobs.remove(trackId)?.cancel()
         activeDownloadJobs.remove(canonicalId)?.cancel()
 
+        removeLiveProgress(trackId)
+        removeLiveProgress(canonicalId)
         val savedTitle = activeTrackTitles.remove(trackId) ?: activeTrackTitles.remove(canonicalId)
+        activeNotifIds.remove(trackId)?.let { notificationManager?.cancel(it) }
+        activeNotifIds.remove(canonicalId)?.let { notificationManager?.cancel(it) }
         if (savedTitle != null) {
             notificationManager?.cancel(savedTitle.hashCode())
         }
@@ -561,11 +636,35 @@ class DownloadRepository(
         activeTrackTitles[track.id] = track.title
         val effectiveTier = tier
         val isVideoDownload = effectiveTier == DownloadTier.VIDEO_MP4
+        val downloadDir = File(appContext.filesDir, "downloads").apply { if (!exists()) mkdirs() }
+        val ext = if (isVideoDownload) "mp4" else "m4a"
+        val safeFileId = track.id.replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { "track_${track.title.hashCode()}" }
+        val destFile = File(downloadDir, "${safeFileId}_${effectiveTier.name.lowercase()}.$ext")
+        val estTotal = if (isVideoDownload) 18_000_000L else 4_000_000L
+
+        putLiveProgress(
+            DownloadItem(
+                trackId = track.id,
+                title = track.title,
+                artist = track.artist,
+                artUrl = track.artUrl,
+                tier = effectiveTier,
+                progress = 0.02f,
+                downloadedBytes = 0L,
+                totalBytes = estTotal,
+                state = DownloadState.QUEUED,
+                localFilePath = destFile.absolutePath
+            )
+        )
+        updateDownloadNotification(
+            trackId = track.id,
+            title = track.title,
+            progress = 2,
+            isVideo = isVideoDownload,
+            isIndeterminate = true
+        )
+
         val job = repoScope.launch {
-            val downloadDir = File(appContext.filesDir, "downloads").apply { if (!exists()) mkdirs() }
-            val ext = if (isVideoDownload) "mp4" else "m4a"
-            val safeFileId = track.id.replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { "track_${track.title.hashCode()}" }
-            val destFile = File(downloadDir, "${safeFileId}_${effectiveTier.name.lowercase()}.$ext")
             runCatching {
                 val existing = trackDao.getTrackById(track.id)
                 trackDao.insertTrack(
@@ -583,9 +682,9 @@ class DownloadRepository(
                         tier = effectiveTier.label,
                         state = "QUEUED",
                         localPath = destFile.absolutePath,
-                        progress = 0.01f,
+                        progress = 0.02f,
                         bytesDownloaded = 0L,
-                        totalBytes = if (isVideoDownload) 18_000_000L else 4_000_000L
+                        totalBytes = estTotal
                     )
                 )
             }
@@ -623,6 +722,21 @@ class DownloadRepository(
                     localPath = destFile.absolutePath
                 ).toEntity()
             )
+            val initialTotal = if (isVideo) 18_000_000L else 4_000_000L
+            putLiveProgress(
+                DownloadItem(
+                    trackId = track.id,
+                    title = track.title,
+                    artist = track.artist,
+                    artUrl = track.artUrl,
+                    tier = tier,
+                    progress = 0.05f,
+                    downloadedBytes = 0L,
+                    totalBytes = initialTotal,
+                    state = DownloadState.DOWNLOADING,
+                    localFilePath = destFile.absolutePath
+                )
+            )
             downloadDao.insertDownload(
                 DownloadEntity(
                     trackId = track.id,
@@ -631,10 +745,10 @@ class DownloadRepository(
                     localPath = destFile.absolutePath,
                     progress = 0.05f,
                     bytesDownloaded = 0L,
-                    totalBytes = if (isVideo) 18_000_000L else 4_000_000L
+                    totalBytes = initialTotal
                 )
             )
-            updateDownloadNotification(track.id, track.title, 5)
+            updateDownloadNotification(track.id, track.title, 5, isVideo = isVideo, isIndeterminate = false)
 
             val candidateUrls = if (isVideo) {
                 com.seitharol.data.resolver.InnerTubeStreamExtractor.resolveDownloadableVideoCandidates(
@@ -683,12 +797,28 @@ class DownloadRepository(
                     tempFile = tempFile
                 ) { totalRead, contentLength ->
                     val now = System.currentTimeMillis()
-                    if (now - lastProgressUpdate > 250L) {
+                    if (now - lastProgressUpdate > 160L || totalRead == 0L) {
                         lastProgressUpdate = now
-                        val rawProgress = (totalRead.toFloat() / contentLength.coerceAtLeast(1L).toFloat()).coerceIn(0.05f, 0.98f)
-                        if (rawProgress >= maxProgressSoFar) {
-                            maxProgressSoFar = rawProgress
+                        val effectiveTotal = contentLength.coerceAtLeast(maxOf(totalRead, 1L))
+                        val rawProgress = if (totalRead <= 0L) 0.06f else (totalRead.toFloat() / effectiveTotal.toFloat()).coerceIn(0.06f, 0.98f)
+                        if (rawProgress >= maxProgressSoFar || totalRead > maxBytesSoFar) {
+                            maxProgressSoFar = maxOf(maxProgressSoFar, rawProgress)
                             maxBytesSoFar = maxOf(maxBytesSoFar, totalRead)
+                            val updatedTotal = effectiveTotal.coerceAtLeast(maxBytesSoFar)
+                            putLiveProgress(
+                                DownloadItem(
+                                    trackId = track.id,
+                                    title = track.title,
+                                    artist = track.artist,
+                                    artUrl = track.artUrl,
+                                    tier = tier,
+                                    progress = maxProgressSoFar,
+                                    downloadedBytes = maxBytesSoFar,
+                                    totalBytes = updatedTotal,
+                                    state = DownloadState.DOWNLOADING,
+                                    localFilePath = destFile.absolutePath
+                                )
+                            )
                             downloadDao.updateDownload(
                                 DownloadEntity(
                                     trackId = track.id,
@@ -697,10 +827,16 @@ class DownloadRepository(
                                     localPath = destFile.absolutePath,
                                     progress = maxProgressSoFar,
                                     bytesDownloaded = maxBytesSoFar,
-                                    totalBytes = contentLength.coerceAtLeast(maxBytesSoFar)
+                                    totalBytes = updatedTotal
                                 )
                             )
-                            updateDownloadNotification(track.id, track.title, (maxProgressSoFar * 100).toInt())
+                            updateDownloadNotification(
+                                trackId = track.id,
+                                title = track.title,
+                                progress = (maxProgressSoFar * 100).toInt(),
+                                isVideo = isVideo,
+                                isIndeterminate = false
+                            )
                         }
                     }
                 }
@@ -742,21 +878,25 @@ class DownloadRepository(
                 )
                 trackDao.insertTrack(completedTrack.toEntity())
                 trackDao.setDownloaded(track.id, true, finalFile.absolutePath)
+                removeLiveProgress(track.id)
                 activeDownloadJobs.remove(track.id)
                 activeTrackTitles.remove(track.id)
-                updateDownloadNotification(track.id, track.title, 100, isCompleted = true)
+                updateDownloadNotification(track.id, track.title, 100, isCompleted = true, isVideo = isVideo)
             } else {
                 if (tempFile.exists()) tempFile.delete()
                 throw IllegalStateException("Unable to download ${if (isVideo) "MP4 video" else "audio"} stream for ${track.title}")
             }
         } catch (e: CancellationException) {
+            removeLiveProgress(track.id)
             activeDownloadJobs.remove(track.id)
             activeTrackTitles.remove(track.id)
             if (tempFile.exists()) tempFile.delete()
+            activeNotifIds.remove(track.id)?.let { notificationManager?.cancel(it) }
             notificationManager?.cancel(track.title.hashCode())
             downloadDao.deleteDownload(track.id)
             throw e
         } catch (e: Exception) {
+            removeLiveProgress(track.id)
             activeDownloadJobs.remove(track.id)
             activeTrackTitles.remove(track.id)
             Log.e("DownloadRepository", "Download failed for ${track.id}: ${e.message}", e)
@@ -773,7 +913,7 @@ class DownloadRepository(
                     totalBytes = 0L
                 )
             )
-            updateDownloadNotification(track.id, track.title, 0, isFailed = true)
+            updateDownloadNotification(track.id, track.title, 0, isFailed = true, isVideo = isVideo)
         }
     }
 

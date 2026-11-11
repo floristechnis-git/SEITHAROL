@@ -68,7 +68,7 @@ object ManipurCalendarNotificationEngine {
     private const val SYNODIC_MONTH = 29.530588853
     private const val FESTIVAL_CHANNEL_ID = "seitharol_manipur_alerts_channel"
     private const val PREFS_NAME = "seitharol_calendar_notifs"
-    private const val KEY_STORED_NOTIFS = "stored_past_notifications_v3"
+    private const val KEY_STORED_NOTIFS = "stored_active_notifications_v5"
 
     private val _unreadCount = MutableStateFlow(0)
     val unreadCount: StateFlow<Int> = _unreadCount.asStateFlow()
@@ -427,117 +427,45 @@ object ManipurCalendarNotificationEngine {
             storedMap[todayEvent.id] = existing.copy(isToday = true, dateLabel = todayEvent.dateLabel)
         }
 
-        // 2. Always scan past 90 days (lightweight <0.5ms loop) to backfill any missed past events
-        // and update any previously-stored event whose date has now passed so it NEVER stays "Today"!
-        val pastCal = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 9)
+        // 2. Clean up legacy past notifications and remove any passed records from before today
+        if (prefs.contains("stored_past_notifications_v3")) {
+            prefs.edit().remove("stored_past_notifications_v3").apply()
+        }
+        val startOfTodayMs = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
             set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
-        }
-        val alreadyInitializedPast = prefs.getBoolean("calendar_past_scanned_v3", false)
-        for (daysAgo in 1..90) {
-            pastCal.add(Calendar.DAY_OF_YEAR, -1)
-            val y = pastCal.get(Calendar.YEAR)
-            val m = pastCal.get(Calendar.MONTH) + 1
-            val d = pastCal.get(Calendar.DAY_OF_MONTH)
-            val isYest = (daysAgo == 1)
-            val pastEv = getEventForDate(
-                year = y,
-                month = m,
-                day = d,
-                isToday = false,
-                eventTimestampMs = pastCal.timeInMillis,
-                context = context,
-                isYesterday = isYest
-            )
-            if (pastEv != null) {
-                val existing = storedMap[pastEv.id]
-                if (existing == null) {
-                    // If app was already initialized previously and a festival happened yesterday/recently while app was closed,
-                    // add it with its accurate past date label (never "Today").
-                    storedMap[pastEv.id] = pastEv.copy(isUnread = alreadyInitializedPast && daysAgo <= 2)
-                } else {
-                    // Demote any previously stored "Today • ..." event to its accurate past/yesterday label!
-                    storedMap[pastEv.id] = existing.copy(
-                        isToday = false,
-                        dateLabel = pastEv.dateLabel,
-                        timestampMs = pastCal.timeInMillis
-                    )
-                }
+        }.timeInMillis
+
+        // Purge any passed notification record that is not for today (e.g. August or earlier dates)
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        val allKeys = storedMap.keys.toList()
+        for (key in allKeys) {
+            val ev = storedMap[key] ?: continue
+            val isTodayMatch = (todayEvent != null && ev.id == todayEvent.id) ||
+                (ev.id.startsWith("seitharol_release_notice") && ev.dateLabel.contains(todayDateStr))
+            if (!isTodayMatch) {
+                storedMap.remove(key)
+                runCatching { nm?.cancel(key.hashCode()) }
             }
         }
-        if (!alreadyInitializedPast) {
-            prefs.edit().putBoolean("calendar_past_scanned_v3", true).apply()
-        }
 
-        // 3. Ensure initial app release notice uses its true date (never falsely claiming "Today")
-        val dailyReleaseId = "seitharol_release_notice_$todayYear"
-        val releaseCreatedDateKey = "release_notice_date_str_$todayYear"
-        val releaseCreatedTsKey = "release_notice_ts_$todayYear"
+        // 3. Ensure active app release notice uses today's current date when no passed records are kept
+        val dailyReleaseId = "seitharol_release_notice_${todayYear}_${todayMonth}_${todayDay}"
         if (!storedMap.containsKey(dailyReleaseId)) {
-            val savedDateStr = prefs.getString(releaseCreatedDateKey, null) ?: todayDateStr
-            val savedTs = prefs.getLong(releaseCreatedTsKey, 0L).takeIf { it > 0L } ?: (nowCal.timeInMillis - 7L * 86_400_000L)
-            prefs.edit()
-                .putString(releaseCreatedDateKey, savedDateStr)
-                .putLong(releaseCreatedTsKey, savedTs)
-                .apply()
             val releaseNotice = CalendarEventNotification(
                 id = dailyReleaseId,
                 title = "New Manipuri & Regional Releases",
                 body = "Fresh studio tracks from your favorite artists are ready to stream and save offline.",
-                dateLabel = savedDateStr,
+                dateLabel = "Today • $todayDateStr",
                 iconName = "MUSIC",
                 icon = Icons.Outlined.MusicNote,
-                isToday = false,
-                timestampMs = savedTs,
+                isToday = true,
+                timestampMs = nowCal.timeInMillis - 60_000L,
                 isUnread = false
             )
             storedMap[dailyReleaseId] = releaseNotice
-        }
-
-        // 4. Sanitize ALL stored notifications so NO notification with a date other than todayEvent ever shows "Today"
-        val sanitizedKeys = storedMap.keys.toList()
-        for (key in sanitizedKeys) {
-            val ev = storedMap[key] ?: continue
-            if (todayEvent != null && ev.id == todayEvent.id) {
-                storedMap[key] = ev.copy(
-                    isToday = true,
-                    dateLabel = "Today • $todayDateStr"
-                )
-            } else {
-                val cleanDatePart = ev.dateLabel
-                    .removePrefix("Today • ")
-                    .removePrefix("Yesterday • ")
-                    .removePrefix("Passed • ")
-                    .removePrefix("Pulled on ")
-                    .trim()
-                    .ifBlank {
-                        if (ev.timestampMs > 0L) {
-                            SimpleDateFormat("MMM d, yyyy", Locale.US).format(Date(ev.timestampMs))
-                        } else {
-                            yesterdayDateStr
-                        }
-                    }
-
-                val updatedLabel = when (cleanDatePart) {
-                    todayDateStr -> if (ev.id.startsWith("seitharol_release_notice")) cleanDatePart else "Today • $todayDateStr"
-                    yesterdayDateStr -> "Yesterday • $yesterdayDateStr"
-                    else -> cleanDatePart
-                }
-                val isActuallyToday = (cleanDatePart == todayDateStr && !ev.id.startsWith("seitharol_release_notice"))
-                // Also ensure release notice doesn't sort above more recent festival notifications
-                val adjustedTs = if (ev.id.startsWith("seitharol_release_notice") && ev.timestampMs > nowCal.timeInMillis - 3L * 86_400_000L) {
-                    nowCal.timeInMillis - 15L * 86_400_000L
-                } else {
-                    ev.timestampMs
-                }
-                storedMap[key] = ev.copy(
-                    isToday = isActuallyToday,
-                    dateLabel = updatedLabel,
-                    timestampMs = adjustedTs
-                )
-            }
         }
 
         val sortedPastList = storedMap.values
@@ -761,14 +689,14 @@ fun NotificationsModal(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Notifications & Past Alerts",
+                        text = "Notifications",
                         fontFamily = SyneFontFamily,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 20.sp,
                         color = SeitharolDark
                     )
                     Text(
-                        text = "Showing today's and past notifications only",
+                        text = "Showing today's active notifications only",
                         fontFamily = OutfitFontFamily,
                         fontSize = 12.sp,
                         color = SeitharolTextSecondary

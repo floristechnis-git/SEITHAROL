@@ -71,7 +71,7 @@ object OuterTuneResolvingDataSource {
     const val MEDIA_HTTP_USER_AGENT = VISIONOS_USER_AGENT
 
     private const val STREAM_TTL_MS = 3 * 60 * 60 * 1000L // 3 hours
-    private const val GOOGLE_VIDEO_CHUNK_BYTES = 256L * 1024L // 256 KB per fast chunk (low-RAM safe for 2GB phones)
+    private const val GOOGLE_VIDEO_CHUNK_BYTES = 1024L * 1024L // 1 MB per chunk to minimize mid-song HTTP chunk transitions
     private const val MAX_DISK_CACHE_BYTES = 180L * 1024L * 1024L // 180 MB LRU active disk cache
 
     private data class CachedStream(
@@ -1227,7 +1227,7 @@ object OuterTuneResolvingDataSource {
                             return C.RESULT_END_OF_INPUT
                         }
                         if (!openNextGoogleVideoChunkWithRetry()) {
-                            if (nextReadPosition == 0L || (totalStreamLength > 0L && nextReadPosition < totalStreamLength)) {
+                            if (nextReadPosition == 0L || totalStreamLength <= 0L || nextReadPosition < totalStreamLength - 4096L) {
                                 (mappedVideoId ?: currentlyPlayingTrackId)?.let { invalidate(it) }
                                 throw IOException("Unable to open next audio chunk at byte $nextReadPosition / $totalStreamLength")
                             }
@@ -1241,7 +1241,13 @@ object OuterTuneResolvingDataSource {
                             .coerceAtMost(cachedBlock.size - activeCachedBlockReadOffset)
                         if (maxToCopy <= 0) {
                             activeCachedBlock = null
-                            if (!openNextGoogleVideoChunkWithRetry()) return C.RESULT_END_OF_INPUT
+                            if (!openNextGoogleVideoChunkWithRetry()) {
+                                if (nextReadPosition == 0L || totalStreamLength <= 0L || nextReadPosition < totalStreamLength - 4096L) {
+                                    (mappedVideoId ?: currentlyPlayingTrackId)?.let { invalidate(it) }
+                                    throw IOException("Unable to open next audio chunk after cached block at byte $nextReadPosition / $totalStreamLength")
+                                }
+                                return C.RESULT_END_OF_INPUT
+                            }
                             return read(buffer, offset, length)
                         } else {
                             System.arraycopy(cachedBlock, activeCachedBlockReadOffset, buffer, offset, maxToCopy)
@@ -1294,7 +1300,7 @@ object OuterTuneResolvingDataSource {
                             preferRangeHeaderOnCurrentStream = true
                             if (consecutiveEmptyChunkRetries > 3) {
                                 (mappedVideoId ?: currentlyPlayingTrackId)?.let { invalidate(it) }
-                                if (nextReadPosition == 0L || (totalStreamLength > 0L && nextReadPosition < totalStreamLength)) {
+                                if (nextReadPosition == 0L || totalStreamLength <= 0L || nextReadPosition < totalStreamLength - 4096L) {
                                     throw IOException("Empty chunk response at byte $nextReadPosition / $totalStreamLength")
                                 }
                                 return C.RESULT_END_OF_INPUT
@@ -1308,7 +1314,7 @@ object OuterTuneResolvingDataSource {
                             return C.RESULT_END_OF_INPUT
                         }
                         if (!openNextGoogleVideoChunkWithRetry()) {
-                            if (nextReadPosition == 0L || (totalStreamLength > 0L && nextReadPosition < totalStreamLength)) {
+                            if (nextReadPosition == 0L || totalStreamLength <= 0L || nextReadPosition < totalStreamLength - 4096L) {
                                 (mappedVideoId ?: currentlyPlayingTrackId)?.let { invalidate(it) }
                                 throw IOException("Stream chunk transition failed at byte $nextReadPosition / $totalStreamLength")
                             }

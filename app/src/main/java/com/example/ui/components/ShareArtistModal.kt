@@ -241,7 +241,8 @@ object SeitharolDeepLinkHelper {
             val trackId: String,
             val title: String,
             val artist: String,
-            val artUrl: String
+            val artUrl: String,
+            val isVideo: Boolean = false
         ) : DeepLinkTarget
 
         data class ArtistTarget(
@@ -567,11 +568,13 @@ object SeitharolDeepLinkHelper {
                     )
                 }
                 if (!ytId.isNullOrBlank()) {
+                    val isStandardYtVideo = !host.contains("music.youtube.com", ignoreCase = true)
                     return DeepLinkTarget.TrackTarget(
                         trackId = ytId,
                         title = uri.getQueryParameter("title")?.let(::decodeParam).orEmpty(),
                         artist = uri.getQueryParameter("artist")?.let(::decodeParam).orEmpty(),
-                        artUrl = "https://i.ytimg.com/vi/$ytId/hqdefault.jpg"
+                        artUrl = "https://i.ytimg.com/vi/$ytId/hqdefault.jpg",
+                        isVideo = isStandardYtVideo
                     )
                 }
             }

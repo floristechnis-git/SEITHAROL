@@ -633,7 +633,7 @@ fun TrackCard(
                                 showDownloadFormatSheet = true
                             }
                         )
-                        if (track.isVideoTrack) {
+                        if (!track.isLocalOnlyTrack) {
                             DropdownMenuItem(
                                 text = { Text("Quick Download Video (MP4)", color = MaterialTheme.colorScheme.onSurface) },
                                 leadingIcon = {

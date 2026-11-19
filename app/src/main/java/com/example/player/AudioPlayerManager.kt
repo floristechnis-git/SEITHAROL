@@ -85,7 +85,10 @@ data class PlayerState(
     val bufferedPositionMs: Long = 0L,
     val bufferedFraction: Float = 0f,
     val isStreamCachedOnDisk: Boolean = false,
-    val isEnded: Boolean = false
+    val isEnded: Boolean = false,
+    val isCaptionsEnabled: Boolean = false,
+    val activeCaptionText: String = "",
+    val hasEmbeddedCaptions: Boolean = false
 )
 
 /**
@@ -103,6 +106,8 @@ class AudioPlayerManager(
     private val LYRIC_SYNC_LEAD_MS = 120L
     @Volatile
     private var isAppInForeground: Boolean = true
+    @Volatile
+    private var activeMovieRawStream: com.seitharol.data.resolver.VidLinkRawMovieStreamer.RawMovieStream? = null
     private var lastLyricsFetchDurationSec: Long = 0L
 
     fun setAppInForeground(inForeground: Boolean) {
@@ -664,6 +669,25 @@ class AudioPlayerManager(
                 )
             }
         }
+        if (com.seitharol.data.resolver.VidLinkRawMovieStreamer.isMovieTrack(track) && !track.isDownloaded && track.localPath.isNullOrBlank()) {
+            val movieStream = com.seitharol.data.resolver.VidLinkRawMovieStreamer.resolveRawMovieStream(
+                track = track,
+                forceRefresh = forceRefresh
+            ) ?: throw IllegalStateException("Unable to extract raw movie stream for '${track.title}'")
+            activeMovieRawStream = movieStream
+            return ResolvedStream(
+                videoId = track.id,
+                streamUrl = movieStream.streamUrl,
+                itag = 18,
+                codec = if (movieStream.isHls) "HLS" else "MP4",
+                bitrate = movieStream.qualityLabel,
+                expiresAtMs = System.currentTimeMillis() + 6 * 60 * 60 * 1000L,
+                isLocal = false,
+                resolvedBy = "VidLink Raw Movie",
+                latencyMs = 0
+            )
+        }
+        activeMovieRawStream = null
         if (isVideo && !track.isDownloaded && track.localPath.isNullOrBlank()) {
             var ytId = InnerTubeStreamExtractor.extractVideoId(track.id)
             if (ytId.isNullOrBlank() && track.title.isNotBlank()) {
@@ -833,8 +857,9 @@ class AudioPlayerManager(
                 .setLoadControl(loadControl)
                 .setAudioAttributes(
                     AudioAttributes.Builder()
-                        .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                        .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
                         .setUsage(C.USAGE_MEDIA)
+                        .setAllowedCapturePolicy(C.ALLOW_CAPTURE_BY_ALL)
                         .build(),
                     /* handleAudioFocus = */ false
                 )
@@ -991,6 +1016,19 @@ class AudioPlayerManager(
                             _state.value = _state.value.copy(
                                 isVideoFrameRendered = true,
                                 videoAspectRatio = detectedRatio
+                            )
+                        }
+                    }
+
+                    override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
+                        val captionLine = cueGroup.cues
+                            .mapNotNull { it.text?.toString()?.trim() }
+                            .filter { it.isNotBlank() }
+                            .joinToString("
+")
+                        if (_state.value.activeCaptionText != captionLine) {
+                            _state.value = _state.value.copy(
+                                activeCaptionText = if (_state.value.isCaptionsEnabled) captionLine else ""
                             )
                         }
                     }
@@ -1482,8 +1520,47 @@ class AudioPlayerManager(
                     sourceUrl
                 }
                 val parsedUri = parseSourceUri(singleUrl)
-                val mediaItem = track.toMediaItem(parsedUri)
-                if (effectiveStartPos > 0L) {
+                val movieMeta = activeMovieRawStream.takeIf {
+                    com.seitharol.data.resolver.VidLinkRawMovieStreamer.isMovieTrack(track)
+                }
+                val baseMediaItem = track.toMediaItem(parsedUri)
+                val mediaItem = if (movieMeta != null && !movieMeta.captionVttUrl.isNullOrBlank()) {
+                    val subConfig = MediaItem.SubtitleConfiguration.Builder(Uri.parse(movieMeta.captionVttUrl))
+                        .setMimeType(androidx.media3.common.MimeTypes.TEXT_VTT)
+                        .setLanguage("en")
+                        .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                        .build()
+                    baseMediaItem.buildUpon()
+                        .setSubtitleConfigurations(listOf(subConfig))
+                        .build()
+                } else {
+                    baseMediaItem
+                }
+                _state.value = _state.value.copy(
+                    hasEmbeddedCaptions = movieMeta?.captionVttUrl != null,
+                    activeCaptionText = ""
+                )
+                runCatching {
+                    player.trackSelectionParameters = player.trackSelectionParameters
+                        .buildUpon()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !_state.value.isCaptionsEnabled)
+                        .build()
+                }
+                if (movieMeta != null) {
+                    val headers = mutableMapOf<String, String>()
+                    movieMeta.referer?.let { headers["Referer"] = it }
+                    movieMeta.origin?.let { headers["Origin"] = it }
+                    val movieHttpFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
+                        .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36")
+                        .setAllowCrossProtocolRedirects(true)
+                        .setDefaultRequestProperties(headers)
+                    val movieSource = DefaultMediaSourceFactory(movieHttpFactory).createMediaSource(mediaItem)
+                    if (effectiveStartPos > 0L) {
+                        player.setMediaSource(movieSource, effectiveStartPos)
+                    } else {
+                        player.setMediaSource(movieSource)
+                    }
+                } else if (effectiveStartPos > 0L) {
                     player.setMediaItem(mediaItem, effectiveStartPos)
                 } else {
                     player.setMediaItem(mediaItem)
@@ -3500,6 +3577,22 @@ class AudioPlayerManager(
             }
         } catch (t: Throwable) {
             Log.w(TAG, "attachVideoTextureView error: ${t.message}")
+        }
+    }
+
+    fun toggleCaptions() {
+        val nextEnabled = !_state.value.isCaptionsEnabled
+        _state.value = _state.value.copy(
+            isCaptionsEnabled = nextEnabled,
+            activeCaptionText = if (nextEnabled) _state.value.activeCaptionText else ""
+        )
+        runCatching {
+            exoPlayer?.let { player ->
+                player.trackSelectionParameters = player.trackSelectionParameters
+                    .buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !nextEnabled)
+                    .build()
+            }
         }
     }
 

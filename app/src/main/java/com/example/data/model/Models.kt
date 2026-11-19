@@ -46,13 +46,16 @@ data class Track(
             val lowerPath = localPath?.lowercase().orEmpty()
             val lowerAudioUrl = audioUrl.lowercase()
             return genre.equals("YouTube Video", ignoreCase = true) ||
+                genre.equals("Raw Movie", ignoreCase = true) ||
                 genre.equals("Local Video", ignoreCase = true) ||
                 genre.equals("MP4 Video", ignoreCase = true) ||
                 album.equals("YouTube Video", ignoreCase = true) ||
+                album.equals("Raw Movie", ignoreCase = true) ||
                 album.equals("Local Video", ignoreCase = true) ||
                 album.equals("MP4 Video", ignoreCase = true) ||
                 codec.equals("MP4", ignoreCase = true) ||
                 id.startsWith("vidfile_", ignoreCase = true) ||
+                id.startsWith("movie_vidlink_", ignoreCase = true) ||
                 lowerPath.endsWith(".mp4") ||
                 lowerPath.endsWith(".mkv") ||
                 lowerPath.endsWith(".webm") ||

@@ -37,6 +37,7 @@ enum class ProviderFilter(val label: String) {
     MUSIC("Music"),
     JIOSAAVN("JioSaavn"),
     YOUTUBE("YouTube"),
+    MOVIES("Movies"),
     LOCAL("Downloaded")
 }
 
@@ -480,7 +481,35 @@ class CascadeViewModel(
             }
         }
 
-        if (clean.length < 2 || isOfflineMode.value || !com.example.util.ErrorFormatter.isOnline(com.example.CascadeApplication.instance)) {
+        val isOnlineNow = !isOfflineMode.value && com.example.util.ErrorFormatter.isOnline(com.example.CascadeApplication.instance)
+        if (filter == ProviderFilter.MOVIES && isOnlineNow) {
+            val token = ++searchRequestToken
+            searchedVerifiedArtists.value = emptyList()
+            searchedOnlinePlaylists.value = emptyList()
+            searchedOnlineAlbums.value = emptyList()
+            isSearchingOnline.value = true
+            hasCompletedOnlineSearch.value = false
+            activeSearchJob = viewModelScope.launch(vmExceptionHandler) {
+                try {
+                    val movies = com.seitharol.data.resolver.VidLinkRawMovieStreamer.searchMovies(clean, limit = 24)
+                    if (token == searchRequestToken) {
+                        onlineSearchResults.value = movies
+                    }
+                } catch (e: Exception) {
+                    if (e !is kotlinx.coroutines.CancellationException && token == searchRequestToken) {
+                        onlineSearchResults.value = emptyList()
+                    }
+                } finally {
+                    if (token == searchRequestToken) {
+                        isSearchingOnline.value = false
+                        hasCompletedOnlineSearch.value = true
+                    }
+                }
+            }
+            return
+        }
+
+        if (clean.length < 2 || !isOnlineNow) {
             searchRequestToken++
             onlineSearchResults.value = emptyList()
             searchedVerifiedArtists.value = emptyList()
@@ -573,6 +602,7 @@ class CascadeViewModel(
                         }
                     }
                     ProviderFilter.YOUTUBE -> InnerTubeStreamExtractor.searchAllYoutubeVideos(clean, limit = 25)
+                    ProviderFilter.MOVIES -> emptyList()
                     ProviderFilter.LOCAL -> emptyList()
                 }
 
@@ -1358,6 +1388,7 @@ class CascadeViewModel(
                         it.album.contains(cleanQuery, ignoreCase = true)
                 }
             }
+            provider == ProviderFilter.MOVIES -> online
             provider == ProviderFilter.YOUTUBE -> {
                 if (cleanQuery.isBlank()) {
                     downloaded.filter { it.isVideoTrack }
@@ -2144,6 +2175,7 @@ class CascadeViewModel(
     fun setVideoMode(enabled: Boolean) = playerManager.setVideoMode(enabled)
     fun setPlaybackSpeed(speed: Float) = playerManager.setPlaybackSpeed(speed)
     fun attachVideoTextureView(textureView: android.view.TextureView?) = playerManager.attachVideoTextureView(textureView)
+    fun toggleCaptions() = playerManager.toggleCaptions()
     fun detachVideoTextureView(textureView: android.view.TextureView?) = playerManager.detachVideoTextureView(textureView)
     fun setTemporaryTrackQuality(quality: AudioQuality) = playerManager.setTemporaryTrackQuality(quality)
     fun getTemporaryTrackQuality(): AudioQuality? = playerManager.getTemporaryTrackQuality()

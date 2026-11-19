@@ -279,6 +279,7 @@ fun SearchScreen(
         when {
             currentProvider == com.example.ui.ProviderFilter.LOCAL -> searchResults.distinctBy { it.id }
             currentProvider == com.example.ui.ProviderFilter.YOUTUBE -> searchResults.distinctBy { it.id }
+            currentProvider == com.example.ui.ProviderFilter.MOVIES -> searchResults.distinctBy { it.id }
             query.isNotBlank() -> searchResults.filterNot { it.isVideoTrack }.distinctBy { it.id }
             else -> {
                 (personalizedTracks + trendingHits + historyTracks)
@@ -304,7 +305,7 @@ fun SearchScreen(
         }
     }
 
-    val shouldShowArtists = if (currentProvider == com.example.ui.ProviderFilter.LOCAL || currentProvider == com.example.ui.ProviderFilter.YOUTUBE) {
+    val shouldShowArtists = if (currentProvider == com.example.ui.ProviderFilter.LOCAL || currentProvider == com.example.ui.ProviderFilter.YOUTUBE || currentProvider == com.example.ui.ProviderFilter.MOVIES) {
         false
     } else {
         query.trim().length >= 2 &&
@@ -313,7 +314,7 @@ fun SearchScreen(
     }
 
     val activeOnlinePlaylists = remember(currentProvider, query, searchedOnlinePlaylists, suggestedYoutubePlaylists) {
-        if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
+        if (currentProvider == com.example.ui.ProviderFilter.LOCAL || currentProvider == com.example.ui.ProviderFilter.MOVIES) {
             emptyList()
         } else if (query.trim().length >= 2) {
             searchedOnlinePlaylists
@@ -326,7 +327,7 @@ fun SearchScreen(
     }
 
     val activeAlbums = remember(currentProvider, query, selectedTab, searchedOnlineAlbums, suggestedYoutubePlaylists) {
-        if (currentProvider == com.example.ui.ProviderFilter.LOCAL) {
+        if (currentProvider == com.example.ui.ProviderFilter.LOCAL || currentProvider == com.example.ui.ProviderFilter.MOVIES) {
             emptyList()
         } else if (query.trim().length >= 2) {
             if (selectedTab == SearchTab.TOP) searchedOnlineAlbums.take(3) else searchedOnlineAlbums
@@ -490,6 +491,7 @@ fun SearchScreen(
                                     Text(
                                         text = when (currentProvider) {
                                             com.example.ui.ProviderFilter.YOUTUBE -> "Search YouTube videos, live sets, music..."
+                                            com.example.ui.ProviderFilter.MOVIES -> "Search movies to stream raw..."
                                             com.example.ui.ProviderFilter.MUSIC -> "Search YouTube Music songs, artists..."
                                             else -> "Search songs, official artists, albums..."
                                         },
@@ -546,6 +548,7 @@ fun SearchScreen(
                         com.example.ui.ProviderFilter.MUSIC,
                         com.example.ui.ProviderFilter.JIOSAAVN,
                         com.example.ui.ProviderFilter.YOUTUBE,
+                        com.example.ui.ProviderFilter.MOVIES,
                         com.example.ui.ProviderFilter.LOCAL
                     )
                     items(orderedProviders) { provider ->
@@ -591,6 +594,14 @@ fun SearchScreen(
                                             painter = painterResource(id = R.drawable.ic_youtube),
                                             contentDescription = "YouTube",
                                             modifier = Modifier.size(20.dp, 14.dp)
+                                        )
+                                    }
+                                    com.example.ui.ProviderFilter.MOVIES -> {
+                                        Icon(
+                                            imageVector = Icons.Default.Movie,
+                                            contentDescription = "Movies",
+                                            tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
                                         )
                                     }
                                     com.example.ui.ProviderFilter.LOCAL -> {
@@ -1280,6 +1291,7 @@ fun SearchScreen(
                                             text = when {
                                                 query.isBlank() -> "Recommended Songs"
                                                 currentProvider == com.example.ui.ProviderFilter.YOUTUBE -> "YouTube Videos & Audio"
+                                                currentProvider == com.example.ui.ProviderFilter.MOVIES -> "Raw Movies (VidLink Direct)"
                                                 else -> "Songs"
                                             },
                                             fontFamily = SyneFontFamily,

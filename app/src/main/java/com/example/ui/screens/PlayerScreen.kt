@@ -2295,6 +2295,174 @@ fun SeitharolNextTrackCountdownBanner(
     }
 }
 
+private fun openSystemLiveCaptionSettings(context: android.content.Context) {
+    runCatching {
+        val intent = android.content.Intent(android.provider.Settings.ACTION_CAPTIONING_SETTINGS).apply {
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    }
+}
+
+/**
+ * Exact YouTube Wireframe Edge-to-Edge Video Scrubber Bar:
+ * - Crisp 3dp flat played/buffered/unplayed bar at the bottom of the video player
+ * - Smoothly expands to 5dp with circular thumb & floating time badge on drag
+ */
+@Composable
+private fun SeitharolYouTubeVideoScrubber(
+    progress: Float,
+    bufferedFraction: Float,
+    displayPositionMs: Long,
+    totalDurationMs: Long,
+    isDragging: Boolean,
+    onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val activeColor = Color(0xFFFF0033) // Exact YouTube wireframe scrubber red
+    val safeProgress = progress.coerceIn(0f, 1f)
+    val safeBuffered = if (bufferedFraction.isNaN() || bufferedFraction.isInfinite()) 0f else bufferedFraction.coerceIn(safeProgress, 1f)
+    val trackHeightDp by animateDpAsState(
+        targetValue = if (isDragging) 5.dp else 3.dp,
+        animationSpec = tween(140),
+        label = "yt_scrubber_height"
+    )
+    val thumbRadiusDp by animateDpAsState(
+        targetValue = if (isDragging) 8.5.dp else 5.5.dp,
+        animationSpec = tween(140),
+        label = "yt_scrubber_thumb"
+    )
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        AnimatedVisibility(
+            visible = isDragging,
+            enter = fadeIn(tween(100)),
+            exit = fadeOut(tween(120)),
+            modifier = Modifier.align(Alignment.CenterHorizontally)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xE6101216),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
+                modifier = Modifier.padding(bottom = 6.dp)
+            ) {
+                Text(
+                    text = "${formatMs(displayPositionMs)} / ${formatMs(totalDurationMs)}",
+                    color = Color.White,
+                    fontFamily = OutfitFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.5.sp,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(24.dp)
+                .pointerInput(totalDurationMs) {
+                    detectTapGestures { offset ->
+                        val frac = (offset.x / size.width.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+                        onValueChange(frac)
+                        onValueChangeFinished()
+                    }
+                }
+                .pointerInput(totalDurationMs) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { offset ->
+                            val frac = (offset.x / size.width.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+                            onValueChange(frac)
+                        },
+                        onDragEnd = { onValueChangeFinished() },
+                        onDragCancel = { onValueChangeFinished() },
+                        onHorizontalDrag = { change, _ ->
+                            change.consume()
+                            val frac = (change.position.x / size.width.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+                            onValueChange(frac)
+                        }
+                    )
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.fillMaxWidth().height(18.dp)) {
+                val trackH = trackHeightDp.toPx()
+                val cy = size.height / 2f
+                val thumbR = thumbRadiusDp.toPx()
+                val w = size.width
+                val thumbX = (w * safeProgress).coerceIn(thumbR, (w - thumbR).coerceAtLeast(thumbR))
+                val bufferedX = (w * safeBuffered).coerceIn(thumbX, w)
+
+                // Unplayed track
+                drawLine(
+                    color = Color.White.copy(alpha = 0.28f),
+                    start = Offset(0f, cy),
+                    end = Offset(w, cy),
+                    strokeWidth = trackH,
+                    cap = StrokeCap.Round
+                )
+                // Buffered segment
+                if (bufferedX > 0f) {
+                    drawLine(
+                        color = Color.White.copy(alpha = 0.52f),
+                        start = Offset(0f, cy),
+                        end = Offset(bufferedX, cy),
+                        strokeWidth = trackH,
+                        cap = StrokeCap.Round
+                    )
+                }
+                // Played segment
+                if (thumbX > 0f) {
+                    drawLine(
+                        color = activeColor,
+                        start = Offset(0f, cy),
+                        end = Offset(thumbX, cy),
+                        strokeWidth = trackH,
+                        cap = StrokeCap.Round
+                    )
+                }
+                // Circular YouTube thumb dot
+                drawCircle(
+                    color = activeColor,
+                    radius = thumbR,
+                    center = Offset(thumbX, cy)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SeitharolCaptionOverlay(
+    captionText: String,
+    modifier: Modifier = Modifier
+) {
+    AnimatedVisibility(
+        visible = captionText.isNotBlank(),
+        enter = fadeIn(tween(120)),
+        exit = fadeOut(tween(140)),
+        modifier = modifier
+    ) {
+        Surface(
+            shape = RoundedCornerShape(6.dp),
+            color = Color.Black.copy(alpha = 0.78f),
+            modifier = Modifier.padding(horizontal = 24.dp)
+        ) {
+            Text(
+                text = captionText,
+                color = Color.White,
+                fontFamily = OutfitFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = 13.5.sp,
+                lineHeight = 18.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SeitharolRawVideoSurface(
@@ -2310,6 +2478,8 @@ fun SeitharolRawVideoSurface(
     val track = playerState.currentTrack
     var showOverlayControls by remember(track?.id) { mutableStateOf(false) }
     var isControlsLocked by remember(track?.id) { mutableStateOf(false) }
+    var isDraggingSlider by remember { mutableStateOf(false) }
+    var seekingPosition by remember { mutableStateOf<Float?>(null) }
     var skipFeedbackIsForward by remember { mutableStateOf<Boolean?>(null) }
     var skipAccumulatedSeconds by remember { mutableIntStateOf(10) }
     var lastTapTimeMs by remember { mutableLongStateOf(0L) }
@@ -2317,17 +2487,23 @@ fun SeitharolRawVideoSurface(
     var singleTapJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val scope = rememberCoroutineScope()
     val latestState by rememberUpdatedState(playerState)
-    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
+    val context = LocalContext.current
+    val isAutoplayEnabled by viewModel.isAutoSuggestEnabled.collectAsState()
+
+    val displayPosition = (if (isDraggingSlider) seekingPosition?.toLong() else null)
+        ?: playerState.currentPositionMs.coerceAtLeast(0L)
+    val totalDuration = playerState.durationMs.coerceAtLeast(1000L)
+    val progress = (displayPosition.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
 
     LaunchedEffect(playerState.isPlaying) {
-        if (playerState.isPlaying) {
+        if (playerState.isPlaying && !isDraggingSlider) {
             showOverlayControls = false
         }
     }
 
-    LaunchedEffect(showOverlayControls, playerState.isPlaying, isControlsLocked) {
-        if (showOverlayControls && playerState.isPlaying) {
-            delay(if (isControlsLocked) 2200L else 2600L)
+    LaunchedEffect(showOverlayControls, playerState.isPlaying, isControlsLocked, isDraggingSlider) {
+        if (showOverlayControls && playerState.isPlaying && !isDraggingSlider) {
+            delay(if (isControlsLocked) 2200L else 2800L)
             showOverlayControls = false
         }
     }
@@ -2341,10 +2517,15 @@ fun SeitharolRawVideoSurface(
         }
     }
 
-    val context = LocalContext.current
-    val isAutoplayEnabled by viewModel.isAutoSuggestEnabled.collectAsState()
     var attachedInlineView by remember { mutableStateOf<TextureView?>(null) }
-    var hasLocalInlineFrame by remember(track?.id) { mutableStateOf(false) }
+
+    // Attach TextureView once when track or view changes (never inside AndroidView.update on every position tick!)
+    LaunchedEffect(track?.id, attachedInlineView) {
+        attachedInlineView?.let { tv ->
+            viewModel.attachVideoTextureView(tv)
+        }
+    }
+
     DisposableEffect(Unit) {
         onDispose {
             if (!viewModel.isFullscreenVideo.value) {
@@ -2356,7 +2537,11 @@ fun SeitharolRawVideoSurface(
     val videoRatio = playerState.videoAspectRatio.takeIf { !it.isNaN() && !it.isInfinite() && it in 0.25f..4.0f } ?: (16f / 9f)
     val frameCornerShape = RoundedCornerShape(14.dp)
 
-    // 100% Width Video Frame with subtle 14.dp border-radius
+    // Hide thumbnail as soon as ExoPlayer renders the first video frame (or active video playback advances past 150ms)
+    val showThumbnailPlaceholder = track != null &&
+        !playerState.isVideoFrameRendered &&
+        !(playerState.isPlaying && playerState.currentPositionMs > 150L)
+
     Surface(
         modifier = modifier
             .fillMaxWidth()
@@ -2380,7 +2565,6 @@ fun SeitharolRawVideoSurface(
                             val now = System.currentTimeMillis()
                             val isLeftHalf = offset.x < size.width / 2f
                             if ((now - lastTapTimeMs) < 420L && lastTapSideLeft == isLeftHalf) {
-                                // Cumulative multi-tap seek: 2nd tap = 10s, 3rd tap = 20s, 4th tap = 30s...
                                 singleTapJob?.cancel()
                                 if (skipFeedbackIsForward != null) {
                                     skipAccumulatedSeconds += 10
@@ -2400,7 +2584,7 @@ fun SeitharolRawVideoSurface(
                                 lastTapSideLeft = isLeftHalf
                                 singleTapJob?.cancel()
                                 singleTapJob = scope.launch {
-                                    delay(240L)
+                                    delay(220L)
                                     showOverlayControls = !showOverlayControls
                                 }
                             }
@@ -2423,25 +2607,12 @@ fun SeitharolRawVideoSurface(
                     .aspectRatio(videoRatio, matchHeightConstraintsFirst = false)
             }
 
+            // NOTE: Do NOT set TextureView.surfaceTextureListener here — ExoPlayer.setVideoTextureView()
+            // manages the SurfaceTextureListener internally and fires Player.Listener.onRenderedFirstFrame().
             AndroidView(
                 factory = { ctx ->
                     TextureView(ctx).apply {
                         attachedInlineView = this
-                        surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                            override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
-                                viewModel.attachVideoTextureView(this@apply)
-                            }
-                            override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {}
-                            override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean {
-                                hasLocalInlineFrame = false
-                                return true
-                            }
-                            override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) {
-                                if (!hasLocalInlineFrame) {
-                                    hasLocalInlineFrame = true
-                                }
-                            }
-                        }
                         viewModel.attachVideoTextureView(this)
                         addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
                             val loc = IntArray(2)
@@ -2452,34 +2623,43 @@ fun SeitharolRawVideoSurface(
                     }
                 },
                 update = { tv ->
-                    attachedInlineView = tv
-                    viewModel.attachVideoTextureView(tv)
-                    val loc = IntArray(2)
-                    tv.getLocationOnScreen(loc)
-                    if (tv.width > 0 && tv.height > 0) {
-                        val rect = android.graphics.Rect(loc[0], loc[1], loc[0] + tv.width, loc[1] + tv.height)
-                        (context.findActivity() as? MainActivity)?.updateVideoSourceRect(rect)
+                    if (attachedInlineView !== tv) {
+                        attachedInlineView = tv
+                        viewModel.attachVideoTextureView(tv)
                     }
                 },
                 modifier = exactAspectModifier
             )
 
-            // Keep video thumbnail visible until THIS TextureView has actually rendered a live frame,
-            // completely eliminating black video frames during buffering, surface switching, or pause!
-            if (track != null && (!hasLocalInlineFrame || !playerState.isVideoFrameRendered)) {
-                val upgradedArt = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
-                com.seitharol.ui.components.UniversalMediaThumbnail(
-                    artUrl = upgradedArt,
-                    localPath = track.localPath,
-                    isVideo = true,
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = exactAspectModifier
-                        .graphicsLayer { alpha = if (playerState.isBuffering) 0.65f else 0.85f }
-                )
+            // Thumbnail fades out cleanly once ExoPlayer renders its first live video frame (never sticks!)
+            AnimatedVisibility(
+                visible = showThumbnailPlaceholder,
+                enter = fadeIn(tween(100)),
+                exit = fadeOut(tween(180)),
+                modifier = exactAspectModifier
+            ) {
+                if (track != null) {
+                    val upgradedArt = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
+                    com.seitharol.ui.components.UniversalMediaThumbnail(
+                        artUrl = upgradedArt,
+                        localPath = track.localPath,
+                        isVideo = true,
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
 
-            // YouTube-Style Left / Right Ripple Arc Overlay for Cumulative Multi-Tap Seek (10s, 20s, 30s...)
+            // Captions overlay (renders embedded/VTT captions when CC is ON)
+            SeitharolCaptionOverlay(
+                captionText = playerState.activeCaptionText,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = if (showOverlayControls) 52.dp else 14.dp)
+            )
+
+            // YouTube-Style Left / Right Ripple Arc Overlay for Cumulative Multi-Tap Seek
             AnimatedVisibility(
                 visible = skipFeedbackIsForward != null,
                 enter = fadeIn(tween(100)),
@@ -2508,29 +2688,39 @@ fun SeitharolRawVideoSurface(
                 }
             }
 
+            // Exact YouTube Wireframe Overlay Controls (Top/Bottom Gradient Scrim + Circular Center Controls + Bottom Scrubber)
             AnimatedVisibility(
                 visible = showOverlayControls || playerState.isBuffering || playerState.isEnded,
                 enter = fadeIn(animationSpec = tween(150)),
-                exit = fadeOut(animationSpec = tween(200))
+                exit = fadeOut(animationSpec = tween(200)),
+                modifier = Modifier.fillMaxSize()
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = if (showOverlayControls) 0.40f else 0.18f))
+                        .background(
+                            Brush.verticalGradient(
+                                colorStops = arrayOf(
+                                    0.0f to Color.Black.copy(alpha = if (showOverlayControls) 0.62f else 0.15f),
+                                    0.35f to Color.Black.copy(alpha = if (showOverlayControls) 0.22f else 0.08f),
+                                    0.65f to Color.Black.copy(alpha = if (showOverlayControls) 0.22f else 0.08f),
+                                    1.0f to Color.Black.copy(alpha = if (showOverlayControls) 0.72f else 0.22f)
+                                )
+                            )
+                        )
                 ) {
                     if (isControlsLocked) {
-                        // Locked Controls Mode: only show "Tap to Unlock" pill at bottom center (like YouTube)
                         Surface(
                             onClick = { isControlsLocked = false },
-                            shape = RoundedCornerShape(14.dp),
-                            color = Color.Black.copy(alpha = 0.78f),
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color.Black.copy(alpha = 0.80f),
                             border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.35f)),
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .padding(bottom = 18.dp)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
@@ -2541,155 +2731,135 @@ fun SeitharolRawVideoSurface(
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Text(
-                                    text = "Tap to Unlock Controls",
+                                    text = "Tap to unlock",
                                     color = Color.White,
                                     fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.SemiBold,
                                     fontSize = 13.sp
                                 )
                             }
                         }
                     } else {
-                        // Top Bar: YouTube-Style Top-Left Minimize Chevron + Top-Right Lock, Mute, PiP
+                        // Top Bar: Exact YouTube Wireframe (Minimize left; Autoplay, CC/Live Caption, Lock, Mute, PiP right)
                         if (showOverlayControls) {
-                            Surface(
+                            IconButton(
                                 onClick = onMinimizePlayer,
-                                shape = RoundedCornerShape(10.dp),
-                                color = Color.Black.copy(alpha = 0.58f),
                                 modifier = Modifier
                                     .align(Alignment.TopStart)
-                                    .padding(horizontal = 12.dp, vertical = 10.dp)
-                                    .size(36.dp)
+                                    .padding(4.dp)
+                                    .size(38.dp)
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.KeyboardArrowDown,
-                                        contentDescription = "Minimize Video Player",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    contentDescription = "Minimize Video Player",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(26.dp)
+                                )
                             }
 
                             Row(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // Next Video Autoplay ON/OFF Toggle Pill (when OFF, Replay button appears at end of video)
-                                Surface(
+                                // YouTube-style Autoplay toggle icon
+                                IconButton(
                                     onClick = { viewModel.toggleAutoSuggest() },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = if (isAutoplayEnabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.88f) else Color.Black.copy(alpha = 0.62f),
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        1.dp,
-                                        if (isAutoplayEnabled) Color.White.copy(alpha = 0.45f) else Color.White.copy(alpha = 0.22f)
-                                    ),
-                                    modifier = Modifier.height(36.dp)
+                                    modifier = Modifier.size(36.dp)
                                 ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = if (isAutoplayEnabled) Icons.Default.PlayCircleFilled else Icons.Default.Replay,
-                                            contentDescription = "Toggle Autoplay Next Video",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Text(
-                                            text = if (isAutoplayEnabled) "Autoplay ON" else "Autoplay OFF",
-                                            color = Color.White,
-                                            fontFamily = OutfitFontFamily,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 11.sp
-                                        )
-                                    }
+                                    Icon(
+                                        imageVector = if (isAutoplayEnabled) Icons.Default.PlayCircleFilled else Icons.Default.PauseCircleOutline,
+                                        contentDescription = if (isAutoplayEnabled) "Autoplay ON" else "Autoplay OFF",
+                                        tint = if (isAutoplayEnabled) Color.White else Color.White.copy(alpha = 0.55f),
+                                        modifier = Modifier.size(21.dp)
+                                    )
                                 }
 
-                                Surface(
+                                // CC / Google On-Device Live Caption button
+                                IconButton(
+                                    onClick = {
+                                        if (playerState.hasEmbeddedCaptions) {
+                                            viewModel.toggleCaptions()
+                                        } else {
+                                            viewModel.toggleCaptions()
+                                            openSystemLiveCaptionSettings(context)
+                                        }
+                                    },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ClosedCaption,
+                                        contentDescription = "Captions / Live Caption",
+                                        tint = if (playerState.isCaptionsEnabled) Color(0xFFFF0033) else Color.White,
+                                        modifier = Modifier.size(21.dp)
+                                    )
+                                }
+
+                                IconButton(
                                     onClick = { isControlsLocked = true },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = Color.Black.copy(alpha = 0.58f),
                                     modifier = Modifier.size(36.dp)
                                 ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.Lock,
-                                            contentDescription = "Lock Controls",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(17.dp)
-                                        )
-                                    }
+                                    Icon(
+                                        imageVector = Icons.Default.Lock,
+                                        contentDescription = "Lock Controls",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(19.dp)
+                                    )
                                 }
 
-                                Surface(
+                                IconButton(
                                     onClick = { viewModel.toggleMute() },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = Color.Black.copy(alpha = 0.58f),
                                     modifier = Modifier.size(36.dp)
                                 ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = if (playerState.isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
-                                            contentDescription = if (playerState.isMuted) "Unmute" else "Mute",
-                                            tint = if (playerState.isMuted) MaterialTheme.colorScheme.primary else Color.White,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
+                                    Icon(
+                                        imageVector = if (playerState.isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                                        contentDescription = if (playerState.isMuted) "Unmute" else "Mute",
+                                        tint = if (playerState.isMuted) Color(0xFFFF0033) else Color.White,
+                                        modifier = Modifier.size(20.dp)
+                                    )
                                 }
 
-                                Surface(
+                                IconButton(
                                     onClick = onEnterPiP,
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = Color.Black.copy(alpha = 0.58f),
                                     modifier = Modifier.size(36.dp)
                                 ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.PictureInPictureAlt,
-                                            contentDescription = "Picture in Picture",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
+                                    Icon(
+                                        imageVector = Icons.Default.PictureInPictureAlt,
+                                        contentDescription = "Picture in Picture",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(19.dp)
+                                    )
                                 }
                             }
                         }
 
-                        // Center Transport Controls (Rounded-Square Play Button & Cumulative 10s/20s/30s Skip)
+                        // Center Transport Controls: Exact YouTube Circular Translucent Buttons
                         Row(
                             modifier = Modifier.align(Alignment.Center),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(24.dp)
+                            horizontalArrangement = Arrangement.spacedBy(28.dp)
                         ) {
                             if (showOverlayControls) {
                                 Surface(
                                     onClick = {
                                         val now = System.currentTimeMillis()
-                                        if (skipFeedbackIsForward == false && (now - lastTapTimeMs) < 900L) {
-                                            skipAccumulatedSeconds += 10
-                                        } else {
-                                            skipAccumulatedSeconds = 10
-                                        }
+                                        skipAccumulatedSeconds = if (skipFeedbackIsForward == false && (now - lastTapTimeMs) < 900L) skipAccumulatedSeconds + 10 else 10
                                         lastTapTimeMs = now
                                         skipFeedbackIsForward = false
-                                        val target = (latestState.currentPositionMs - 10_000L).coerceAtLeast(0L)
-                                        viewModel.seekTo(target)
+                                        viewModel.seekTo((latestState.currentPositionMs - 10_000L).coerceAtLeast(0L))
                                     },
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = Color.Black.copy(alpha = 0.58f),
+                                    shape = CircleShape,
+                                    color = Color.Black.copy(alpha = 0.45f),
                                     modifier = Modifier.size(42.dp)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         Icon(
                                             imageVector = Icons.Default.Replay10,
-                                            contentDescription = "Rewind 10 seconds",
+                                            contentDescription = "Rewind 10s",
                                             tint = Color.White,
-                                            modifier = Modifier.size(22.dp)
+                                            modifier = Modifier.size(24.dp)
                                         )
                                     }
                                 }
@@ -2697,8 +2867,8 @@ fun SeitharolRawVideoSurface(
 
                             Surface(
                                 onClick = { viewModel.togglePlayPause() },
-                                shape = RoundedCornerShape(16.dp),
-                                color = Color.Black.copy(alpha = 0.65f),
+                                shape = CircleShape,
+                                color = Color.Black.copy(alpha = 0.52f),
                                 modifier = Modifier.size(56.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
@@ -2717,7 +2887,7 @@ fun SeitharolRawVideoSurface(
                                             },
                                             contentDescription = if (playerState.isEnded) "Replay" else "Play/Pause",
                                             tint = Color.White,
-                                            modifier = Modifier.size(32.dp)
+                                            modifier = Modifier.size(34.dp)
                                         )
                                     }
                                 }
@@ -2727,55 +2897,101 @@ fun SeitharolRawVideoSurface(
                                 Surface(
                                     onClick = {
                                         val now = System.currentTimeMillis()
-                                        if (skipFeedbackIsForward == true && (now - lastTapTimeMs) < 900L) {
-                                            skipAccumulatedSeconds += 10
-                                        } else {
-                                            skipAccumulatedSeconds = 10
-                                        }
+                                        skipAccumulatedSeconds = if (skipFeedbackIsForward == true && (now - lastTapTimeMs) < 900L) skipAccumulatedSeconds + 10 else 10
                                         lastTapTimeMs = now
                                         skipFeedbackIsForward = true
                                         val dur = latestState.durationMs.coerceAtLeast(1000L)
-                                        val target = (latestState.currentPositionMs + 10_000L).coerceAtMost(dur)
-                                        viewModel.seekTo(target)
+                                        viewModel.seekTo((latestState.currentPositionMs + 10_000L).coerceAtMost(dur))
                                     },
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = Color.Black.copy(alpha = 0.58f),
+                                    shape = CircleShape,
+                                    color = Color.Black.copy(alpha = 0.45f),
                                     modifier = Modifier.size(42.dp)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         Icon(
                                             imageVector = Icons.Default.Forward10,
-                                            contentDescription = "Forward 10 seconds",
+                                            contentDescription = "Forward 10s",
                                             tint = Color.White,
-                                            modifier = Modifier.size(22.dp)
+                                            modifier = Modifier.size(24.dp)
                                         )
                                     }
                                 }
                             }
                         }
 
-                        // Bottom-Right Fullscreen Button (matching YouTube placement)
+                        // Bottom Area: Exact YouTube Wireframe (Time Left, Fullscreen Right, Edge-to-Edge Scrubber at Bottom)
                         if (showOverlayControls) {
-                            Surface(
-                                onClick = onEnterFullscreen,
-                                shape = RoundedCornerShape(10.dp),
-                                color = Color.Black.copy(alpha = 0.58f),
+                            Column(
                                 modifier = Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .padding(horizontal = 12.dp, vertical = 10.dp)
-                                    .size(36.dp)
+                                    .align(Alignment.BottomCenter)
+                                    .fillMaxWidth()
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.Fullscreen,
-                                        contentDescription = "Fullscreen Video",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(20.dp)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${formatMs(displayPosition)} / ${formatMs(totalDuration)}",
+                                        color = Color.White,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.Medium,
+                                        fontSize = 11.5.sp
                                     )
+                                    IconButton(
+                                        onClick = onEnterFullscreen,
+                                        modifier = Modifier.size(34.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Fullscreen,
+                                            contentDescription = "Fullscreen Video",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
                                 }
+                                SeitharolYouTubeVideoScrubber(
+                                    progress = progress,
+                                    bufferedFraction = playerState.bufferedFraction,
+                                    displayPositionMs = displayPosition,
+                                    totalDurationMs = totalDuration,
+                                    isDragging = isDraggingSlider,
+                                    onValueChange = { frac ->
+                                        isDraggingSlider = true
+                                        seekingPosition = frac * totalDuration
+                                    },
+                                    onValueChangeFinished = {
+                                        seekingPosition?.let { viewModel.seekTo(it.toLong()) }
+                                        seekingPosition = null
+                                        isDraggingSlider = false
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 8.dp)
+                                )
                             }
                         }
                     }
+                }
+            }
+
+            // Razor-thin passive bottom-edge progress line when controls are hidden (exact YouTube wireframe)
+            if (!showOverlayControls && !playerState.isBuffering && !isControlsLocked) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .height(2.dp)
+                        .background(Color.White.copy(alpha = 0.22f))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(progress)
+                            .background(Color(0xFFFF0033))
+                    )
                 }
             }
         }
@@ -2802,7 +3018,6 @@ fun SeitharolFullscreenVideoModal(
     val queueSuggestions by viewModel.queueVideoSuggestions.collectAsState()
     var showControls by remember { mutableStateOf(true) }
     var isControlsLocked by remember(track.id) { mutableStateOf(false) }
-    var showSuggestionsDrawer by remember(track.id) { mutableStateOf(false) }
     var isDraggingSlider by remember { mutableStateOf(false) }
     var seekingPosition by remember { mutableStateOf<Float?>(null) }
     var skipFeedbackIsForward by remember { mutableStateOf<Boolean?>(null) }
@@ -2813,13 +3028,32 @@ fun SeitharolFullscreenVideoModal(
     val scope = rememberCoroutineScope()
     val latestState by rememberUpdatedState(playerState)
     val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val isAutoplayEnabled by viewModel.isAutoSuggestEnabled.collectAsState()
+
+    // Smooth finger-tracked 60fps Animatable for the Related Videos shelf (0f = closed, 1f = open)
+    val drawerProgress = remember(track.id) { Animatable(0f) }
+    val dismissOffsetPx = remember(track.id) { Animatable(0f) }
+    val isDrawerOpen = drawerProgress.value > 0.04f
+
+    fun animateDrawerTo(open: Boolean) {
+        scope.launch {
+            drawerProgress.animateTo(
+                targetValue = if (open) 1f else 0f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            )
+        }
+    }
 
     val displayPosition = (if (isDraggingSlider) seekingPosition?.toLong() else null)
         ?: playerState.currentPositionMs.coerceAtLeast(0L)
     val totalDuration = playerState.durationMs.coerceAtLeast(1000L)
     val progress = (displayPosition.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
 
-    // Ensure YouTube video suggestions are loaded for the slide-up drawer
     LaunchedEffect(track.id) {
         if (queueSuggestions.isEmpty() && !track.isLocalOnlyTrack) {
             viewModel.refreshQueueSuggestions(track)
@@ -2836,8 +3070,8 @@ fun SeitharolFullscreenVideoModal(
             .take(18)
     }
 
-    LaunchedEffect(showControls, playerState.isPlaying, isDraggingSlider, showSuggestionsDrawer, isControlsLocked) {
-        if (showControls && playerState.isPlaying && !isDraggingSlider && !showSuggestionsDrawer) {
+    LaunchedEffect(showControls, playerState.isPlaying, isDraggingSlider, isDrawerOpen, isControlsLocked) {
+        if (showControls && playerState.isPlaying && !isDraggingSlider && !isDrawerOpen) {
             delay(if (isControlsLocked) 2200L else 3000L)
             showControls = false
         }
@@ -2852,24 +3086,29 @@ fun SeitharolFullscreenVideoModal(
         }
     }
 
-    val context = LocalContext.current
-    val isAutoplayEnabled by viewModel.isAutoSuggestEnabled.collectAsState()
     var attachedFullscreenView by remember { mutableStateOf<TextureView?>(null) }
-    var hasLocalFullscreenFrame by remember(track.id) { mutableStateOf(false) }
     var showFullscreenDescriptionSheet by remember { mutableStateOf(false) }
     val videoRatio = playerState.videoAspectRatio.takeIf { !it.isNaN() && !it.isInfinite() && it in 0.25f..4.0f } ?: (16f / 9f)
     val isPortraitVideo = videoRatio < 1.0f
 
+    // Attach TextureView once when track or view changes
+    LaunchedEffect(track.id, attachedFullscreenView) {
+        attachedFullscreenView?.let { tv ->
+            viewModel.attachVideoTextureView(tv)
+        }
+    }
+
+    val showThumbnailPlaceholder = !playerState.isVideoFrameRendered &&
+        !(playerState.isPlaying && playerState.currentPositionMs > 150L)
+
     androidx.activity.compose.BackHandler {
         when {
-            showSuggestionsDrawer -> showSuggestionsDrawer = false
+            drawerProgress.value > 0.1f -> animateDrawerTo(false)
             isControlsLocked -> showControls = true
             else -> onDismiss()
         }
     }
 
-    // Orientation Management: If height > width (videoRatio < 1.0f, vertical/portrait video),
-    // do NOT rotate to horizontal landscape — keep portrait orientation!
     DisposableEffect(isPortraitVideo) {
         val activity = context.findActivity()
         activity?.requestedOrientation = if (isPortraitVideo) {
@@ -2897,25 +3136,32 @@ fun SeitharolFullscreenVideoModal(
         }
     }
 
+    val drawerHeightPx = with(density) { 268.dp.toPx() }
+    val dismissThresholdPx = with(density) { 120.dp.toPx() }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .graphicsLayer {
+                translationY = dismissOffsetPx.value.coerceAtLeast(0f)
+                val dismissScale = (1f - (dismissOffsetPx.value / 1400f)).coerceIn(0.88f, 1f)
+                scaleX = dismissScale
+                scaleY = dismissScale
+            }
     ) {
         Surface(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black),
+            modifier = Modifier.fillMaxSize(),
             color = Color.Black
         ) {
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(isControlsLocked, showSuggestionsDrawer) {
+                    .pointerInput(isControlsLocked) {
                         detectTapGestures(
                             onTap = { offset ->
-                                if (showSuggestionsDrawer) {
-                                    showSuggestionsDrawer = false
+                                if (drawerProgress.value > 0.15f) {
+                                    animateDrawerTo(false)
                                     return@detectTapGestures
                                 }
                                 if (isControlsLocked) {
@@ -2926,52 +3172,77 @@ fun SeitharolFullscreenVideoModal(
                                 val isLeft = offset.x < size.width / 2f
                                 if ((now - lastTapTimeMs) < 420L && lastTapSideLeft == isLeft) {
                                     singleTapJob?.cancel()
-                                    if (skipFeedbackIsForward != null) {
-                                        skipAccumulatedSeconds += 10
-                                    } else {
-                                        skipAccumulatedSeconds = 10
-                                    }
+                                    skipAccumulatedSeconds = if (skipFeedbackIsForward != null) skipAccumulatedSeconds + 10 else 10
                                     lastTapTimeMs = now
                                     skipFeedbackIsForward = !isLeft
                                     val delta = if (isLeft) -10_000L else 10_000L
                                     val dur = latestState.durationMs.coerceAtLeast(1000L)
-                                    viewModel.seekTo(
-                                        (latestState.currentPositionMs + delta).coerceIn(0L, dur)
-                                    )
+                                    viewModel.seekTo((latestState.currentPositionMs + delta).coerceIn(0L, dur))
                                 } else {
                                     lastTapTimeMs = now
                                     lastTapSideLeft = isLeft
                                     singleTapJob?.cancel()
                                     singleTapJob = scope.launch {
-                                        delay(240L)
+                                        delay(220L)
                                         showControls = !showControls
                                     }
                                 }
                             }
                         )
                     }
-                    .pointerInput(isControlsLocked, showSuggestionsDrawer) {
-                        var verticalDragSum = 0f
+                    .pointerInput(isControlsLocked, drawerHeightPx) {
+                        var isDraggingDrawerMode = false
+                        var isDismissingMode = false
                         detectVerticalDragGestures(
-                            onDragStart = { verticalDragSum = 0f },
+                            onDragStart = {
+                                isDraggingDrawerMode = drawerProgress.value > 0.05f
+                                isDismissingMode = false
+                            },
+                            onVerticalDrag = { change, dragAmount ->
+                                if (isControlsLocked) return@detectVerticalDragGestures
+                                change.consume()
+                                // Determine drag intent smoothly on first movement
+                                if (!isDraggingDrawerMode && !isDismissingMode) {
+                                    if (dragAmount < 0f) {
+                                        isDraggingDrawerMode = true
+                                    } else if (dragAmount > 0f) {
+                                        isDismissingMode = true
+                                    }
+                                }
+                                if (isDraggingDrawerMode) {
+                                    val deltaFrac = -dragAmount / drawerHeightPx
+                                    scope.launch {
+                                        drawerProgress.snapTo((drawerProgress.value + deltaFrac).coerceIn(0f, 1f))
+                                    }
+                                } else if (isDismissingMode) {
+                                    scope.launch {
+                                        dismissOffsetPx.snapTo((dismissOffsetPx.value + dragAmount).coerceAtLeast(0f))
+                                    }
+                                }
+                            },
                             onDragEnd = {
-                                if (!isControlsLocked) {
-                                    if (verticalDragSum < -95f && !showSuggestionsDrawer) {
-                                        // Slide up on fullscreen opens YouTube Suggestion shelf!
-                                        showSuggestionsDrawer = true
-                                        showControls = true
-                                    } else if (verticalDragSum > 95f) {
-                                        if (showSuggestionsDrawer) {
-                                            showSuggestionsDrawer = false
-                                        } else {
-                                            onDismiss()
+                                if (isDraggingDrawerMode) {
+                                    animateDrawerTo(drawerProgress.value > 0.28f)
+                                } else if (isDismissingMode) {
+                                    if (dismissOffsetPx.value > dismissThresholdPx) {
+                                        onDismiss()
+                                    } else {
+                                        scope.launch {
+                                            dismissOffsetPx.animateTo(
+                                                0f,
+                                                spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
+                                            )
                                         }
                                     }
                                 }
-                                verticalDragSum = 0f
+                                isDraggingDrawerMode = false
+                                isDismissingMode = false
                             },
-                            onVerticalDrag = { _, dragAmount ->
-                                verticalDragSum += dragAmount
+                            onDragCancel = {
+                                animateDrawerTo(drawerProgress.value > 0.35f)
+                                scope.launch { dismissOffsetPx.animateTo(0f, spring()) }
+                                isDraggingDrawerMode = false
+                                isDismissingMode = false
                             }
                         )
                     },
@@ -2991,55 +3262,66 @@ fun SeitharolFullscreenVideoModal(
                         .aspectRatio(videoRatio, matchHeightConstraintsFirst = false)
                 }
 
-                AndroidView(
-                    factory = { ctx ->
-                        TextureView(ctx).apply {
-                            attachedFullscreenView = this
-                            surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                                override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
-                                    viewModel.attachVideoTextureView(this@apply)
-                                }
-                                override fun onSurfaceTextureSizeChanged(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {}
-                                override fun onSurfaceTextureDestroyed(surface: android.graphics.SurfaceTexture): Boolean {
-                                    hasLocalFullscreenFrame = false
-                                    return true
-                                }
-                                override fun onSurfaceTextureUpdated(surface: android.graphics.SurfaceTexture) {
-                                    if (!hasLocalFullscreenFrame) {
-                                        hasLocalFullscreenFrame = true
-                                    }
+                // Subtle cinematic scale-back of video frame as the Related Videos sheet glides up
+                val videoShelfScale = 1f - (0.045f * drawerProgress.value)
+                Box(
+                    modifier = exactFullscreenAspectModifier.graphicsLayer {
+                        scaleX = videoShelfScale
+                        scaleY = videoShelfScale
+                    },
+                    contentAlignment = Alignment.Center
+                ) {
+                    AndroidView(
+                        factory = { ctx ->
+                            TextureView(ctx).apply {
+                                attachedFullscreenView = this
+                                viewModel.attachVideoTextureView(this)
+                                addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+                                    val loc = IntArray(2)
+                                    v.getLocationOnScreen(loc)
+                                    val rect = android.graphics.Rect(loc[0], loc[1], loc[0] + v.width, loc[1] + v.height)
+                                    (ctx.findActivity() as? MainActivity)?.updateVideoSourceRect(rect)
                                 }
                             }
-                            viewModel.attachVideoTextureView(this)
-                            addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
-                                val loc = IntArray(2)
-                                v.getLocationOnScreen(loc)
-                                val rect = android.graphics.Rect(loc[0], loc[1], loc[0] + v.width, loc[1] + v.height)
-                                (ctx.findActivity() as? MainActivity)?.updateVideoSourceRect(rect)
+                        },
+                        update = { tv ->
+                            if (attachedFullscreenView !== tv) {
+                                attachedFullscreenView = tv
+                                viewModel.attachVideoTextureView(tv)
                             }
-                        }
-                    },
-                    update = { tv ->
-                        attachedFullscreenView = tv
-                        viewModel.attachVideoTextureView(tv)
-                    },
-                    modifier = exactFullscreenAspectModifier
-                )
-
-                if (!hasLocalFullscreenFrame || !playerState.isVideoFrameRendered) {
-                    val upgradedArt = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
-                    com.seitharol.ui.components.UniversalMediaThumbnail(
-                        artUrl = upgradedArt,
-                        localPath = track.localPath,
-                        isVideo = true,
-                        contentDescription = null,
-                        contentScale = ContentScale.Fit,
-                        modifier = exactFullscreenAspectModifier
-                            .graphicsLayer { alpha = if (playerState.isBuffering) 0.65f else 0.85f }
+                        },
+                        modifier = Modifier.fillMaxSize()
                     )
+
+                    // Thumbnail fades out cleanly once ExoPlayer renders its first live frame (never sticks!)
+                    AnimatedVisibility(
+                        visible = showThumbnailPlaceholder,
+                        enter = fadeIn(tween(100)),
+                        exit = fadeOut(tween(180)),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        val upgradedArt = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
+                        com.seitharol.ui.components.UniversalMediaThumbnail(
+                            artUrl = upgradedArt,
+                            localPath = track.localPath,
+                            isVideo = true,
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
                 }
 
-                // YouTube-Style Left / Right Ripple Arc Overlay for Cumulative Multi-Tap Seek (10s, 20s, 30s...)
+                // Captions Overlay (embedded/VTT)
+                SeitharolCaptionOverlay(
+                    captionText = playerState.activeCaptionText,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(bottom = if (showControls || isDrawerOpen) 92.dp else 24.dp)
+                )
+
+                // Cumulative 10s/20s/30s Ripple Arc Overlay
                 AnimatedVisibility(
                     visible = skipFeedbackIsForward != null,
                     enter = fadeIn(tween(100)),
@@ -3068,31 +3350,53 @@ fun SeitharolFullscreenVideoModal(
                     }
                 }
 
+                // Smooth finger-tracked scrim for Related Videos shelf
+                if (drawerProgress.value > 0.005f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.68f * drawerProgress.value))
+                    )
+                }
+
+                // Exact YouTube Wireframe Fullscreen Controls
+                val controlsAlpha = (1f - drawerProgress.value * 2.2f).coerceIn(0f, 1f)
                 AnimatedVisibility(
-                    visible = showControls || playerState.isBuffering || playerState.isEnded || showSuggestionsDrawer,
+                    visible = (showControls || playerState.isBuffering || playerState.isEnded) && controlsAlpha > 0.02f,
                     enter = fadeIn(animationSpec = tween(150)),
-                    exit = fadeOut(animationSpec = tween(200))
+                    exit = fadeOut(animationSpec = tween(200)),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { alpha = controlsAlpha }
                 ) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color.Black.copy(alpha = if (showSuggestionsDrawer) 0.65f else 0.45f))
+                            .background(
+                                Brush.verticalGradient(
+                                    colorStops = arrayOf(
+                                        0.0f to Color.Black.copy(alpha = 0.68f),
+                                        0.30f to Color.Black.copy(alpha = 0.16f),
+                                        0.68f to Color.Black.copy(alpha = 0.18f),
+                                        1.0f to Color.Black.copy(alpha = 0.78f)
+                                    )
+                                )
+                            )
                             .statusBarsPadding()
                             .navigationBarsPadding()
                     ) {
                         if (isControlsLocked) {
-                            // YouTube-style Screen Lock Mode: hides all transport controls and shows only the Unlock pill button
                             Surface(
                                 onClick = { isControlsLocked = false },
-                                shape = RoundedCornerShape(16.dp),
+                                shape = RoundedCornerShape(22.dp),
                                 color = Color.Black.copy(alpha = 0.82f),
-                                border = androidx.compose.foundation.BorderStroke(1.2.dp, Color.White.copy(alpha = 0.45f)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.40f)),
                                 modifier = Modifier
                                     .align(Alignment.BottomCenter)
-                                    .padding(bottom = 28.dp)
+                                    .padding(bottom = 26.dp)
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 11.dp),
+                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
@@ -3100,24 +3404,24 @@ fun SeitharolFullscreenVideoModal(
                                         imageVector = Icons.Default.LockOpen,
                                         contentDescription = "Unlock Screen",
                                         tint = Color.White,
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(19.dp)
                                     )
                                     Text(
-                                        text = "Screen Locked • Tap to Unlock",
+                                        text = "Screen locked • Tap to unlock",
                                         color = Color.White,
-                                        fontFamily = SyneFontFamily,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 13.5.sp
                                     )
                                 }
                             }
                         } else {
-                            // Top Bar: YouTube-Style Top-Left Minimize Button + Marquee Title + Lock/Mute/PiP on Top-Right
+                            // Top Bar: Exact YouTube Wireframe (Minimize + Title Left; Autoplay, CC/Live Caption, Lock, Mute, PiP Right)
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .align(Alignment.TopCenter)
-                                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                                    .padding(horizontal = 16.dp, vertical = 10.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -3125,25 +3429,18 @@ fun SeitharolFullscreenVideoModal(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    // Top-Left Minimize Button (exact YouTube placement)
-                                    Surface(
+                                    IconButton(
                                         onClick = onDismiss,
-                                        shape = RoundedCornerShape(12.dp),
-                                        color = Color.White.copy(alpha = 0.14f),
                                         modifier = Modifier.size(40.dp)
                                     ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = Icons.Default.KeyboardArrowDown,
-                                                contentDescription = "Minimize Fullscreen",
-                                                tint = Color.White,
-                                                modifier = Modifier.size(26.dp)
-                                            )
-                                        }
+                                        Icon(
+                                            imageVector = Icons.Default.KeyboardArrowDown,
+                                            contentDescription = "Minimize Fullscreen",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(28.dp)
+                                        )
                                     }
-
-                                    Spacer(modifier = Modifier.width(12.dp))
-
+                                    Spacer(modifier = Modifier.width(6.dp))
                                     Column(
                                         modifier = Modifier
                                             .weight(1f)
@@ -3152,6 +3449,7 @@ fun SeitharolFullscreenVideoModal(
                                                 showFullscreenDescriptionSheet = true
                                                 onOpenVideoDescription()
                                             }
+                                            .padding(horizontal = 4.dp, vertical = 2.dp)
                                     ) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             Text(
@@ -3159,11 +3457,10 @@ fun SeitharolFullscreenVideoModal(
                                                 color = Color.White,
                                                 fontFamily = SyneFontFamily,
                                                 fontWeight = FontWeight.Bold,
-                                                fontSize = 16.sp,
+                                                fontSize = 15.5.sp,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
-                                                modifier = Modifier
-                                                    .weight(1f, fill = false)
+                                                modifier = Modifier.weight(1f, fill = false)
                                             )
                                             Spacer(modifier = Modifier.width(4.dp))
                                             Icon(
@@ -3175,9 +3472,9 @@ fun SeitharolFullscreenVideoModal(
                                         }
                                         Text(
                                             text = "${track.artist} • ${track.durationFormatted}",
-                                            color = Color.White.copy(alpha = 0.75f),
+                                            color = Color.White.copy(alpha = 0.72f),
                                             fontFamily = OutfitFontFamily,
-                                            fontSize = 12.5.sp,
+                                            fontSize = 12.sp,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
@@ -3186,494 +3483,184 @@ fun SeitharolFullscreenVideoModal(
 
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
-                                    // Next Video Autoplay ON/OFF Toggle Pill
-                                    Surface(
+                                    IconButton(
                                         onClick = { viewModel.toggleAutoSuggest() },
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = if (isAutoplayEnabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.88f) else Color.White.copy(alpha = 0.14f),
-                                        border = androidx.compose.foundation.BorderStroke(
-                                            1.dp,
-                                            Color.White.copy(alpha = if (isAutoplayEnabled) 0.45f else 0.20f)
-                                        ),
-                                        modifier = Modifier.height(38.dp)
+                                        modifier = Modifier.size(38.dp)
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 11.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = if (isAutoplayEnabled) Icons.Default.PlayCircleFilled else Icons.Default.Replay,
-                                                contentDescription = "Toggle Autoplay Next Video",
-                                                tint = Color.White,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Text(
-                                                text = if (isAutoplayEnabled) "Autoplay: ON" else "Autoplay: OFF",
-                                                color = Color.White,
-                                                fontFamily = OutfitFontFamily,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 11.5.sp
-                                            )
-                                        }
+                                        Icon(
+                                            imageVector = if (isAutoplayEnabled) Icons.Default.PlayCircleFilled else Icons.Default.PauseCircleOutline,
+                                            contentDescription = if (isAutoplayEnabled) "Autoplay ON" else "Autoplay OFF",
+                                            tint = if (isAutoplayEnabled) Color.White else Color.White.copy(alpha = 0.55f),
+                                            modifier = Modifier.size(22.dp)
+                                        )
                                     }
 
-                                    // Lock Play Controls Button (like YouTube)
-                                    Surface(
+                                    IconButton(
                                         onClick = {
-                                            showSuggestionsDrawer = false
+                                            if (playerState.hasEmbeddedCaptions) {
+                                                viewModel.toggleCaptions()
+                                            } else {
+                                                viewModel.toggleCaptions()
+                                                openSystemLiveCaptionSettings(context)
+                                            }
+                                        },
+                                        modifier = Modifier.size(38.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.ClosedCaption,
+                                            contentDescription = "Captions / Live Caption",
+                                            tint = if (playerState.isCaptionsEnabled) Color(0xFFFF0033) else Color.White,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+
+                                    IconButton(
+                                        onClick = {
+                                            animateDrawerTo(false)
                                             isControlsLocked = true
                                         },
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = Color.White.copy(alpha = 0.14f),
                                         modifier = Modifier.size(38.dp)
                                     ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = Icons.Default.Lock,
-                                                contentDescription = "Lock Controls",
-                                                tint = Color.White,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = "Lock Controls",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(20.dp)
+                                        )
                                     }
 
-                                    Surface(
+                                    IconButton(
                                         onClick = { viewModel.toggleMute() },
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = Color.White.copy(alpha = 0.14f),
                                         modifier = Modifier.size(38.dp)
                                     ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = if (playerState.isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
-                                                contentDescription = if (playerState.isMuted) "Unmute" else "Mute",
-                                                tint = if (playerState.isMuted) MaterialTheme.colorScheme.primary else Color.White,
-                                                modifier = Modifier.size(19.dp)
-                                            )
-                                        }
+                                        Icon(
+                                            imageVector = if (playerState.isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                                            contentDescription = if (playerState.isMuted) "Unmute" else "Mute",
+                                            tint = if (playerState.isMuted) Color(0xFFFF0033) else Color.White,
+                                            modifier = Modifier.size(21.dp)
+                                        )
                                     }
 
-                                    Surface(
+                                    IconButton(
                                         onClick = onEnterPiP,
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = Color.White.copy(alpha = 0.14f),
                                         modifier = Modifier.size(38.dp)
                                     ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = Icons.Default.PictureInPictureAlt,
-                                                contentDescription = "Picture in Picture",
-                                                tint = Color.White,
-                                                modifier = Modifier.size(19.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Center Transport Controls (hidden when slide-up suggestions drawer is expanded)
-                            if (!showSuggestionsDrawer) {
-                                Row(
-                                    modifier = Modifier.align(Alignment.Center),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(24.dp)
-                                ) {
-                                    IconButton(onClick = { viewModel.previous() }) {
                                         Icon(
-                                            imageVector = Icons.Default.SkipPrevious,
-                                            contentDescription = "Previous",
+                                            imageVector = Icons.Default.PictureInPictureAlt,
+                                            contentDescription = "Picture in Picture",
                                             tint = Color.White,
-                                            modifier = Modifier.size(34.dp)
-                                        )
-                                    }
-
-                                    Surface(
-                                        onClick = {
-                                            val now = System.currentTimeMillis()
-                                            if (skipFeedbackIsForward == false && (now - lastTapTimeMs) < 900L) {
-                                                skipAccumulatedSeconds += 10
-                                            } else {
-                                                skipAccumulatedSeconds = 10
-                                            }
-                                            lastTapTimeMs = now
-                                            skipFeedbackIsForward = false
-                                            val target = (latestState.currentPositionMs - 10_000L).coerceAtLeast(0L)
-                                            viewModel.seekTo(target)
-                                        },
-                                        shape = RoundedCornerShape(14.dp),
-                                        color = Color.White.copy(alpha = 0.16f),
-                                        modifier = Modifier.size(46.dp)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = Icons.Default.Replay10,
-                                                contentDescription = "Rewind 10 seconds",
-                                                tint = Color.White,
-                                                modifier = Modifier.size(26.dp)
-                                            )
-                                        }
-                                    }
-
-                                    Surface(
-                                        onClick = { viewModel.togglePlayPause() },
-                                        shape = RoundedCornerShape(18.dp),
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(64.dp)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            if (playerState.isBuffering) {
-                                                CircularProgressIndicator(
-                                                    modifier = Modifier.size(28.dp),
-                                                    color = Color.White,
-                                                    strokeWidth = 2.8.dp
-                                                )
-                                            } else {
-                                                Icon(
-                                                    imageVector = when {
-                                                        playerState.isPlaying -> Icons.Default.Pause
-                                                        playerState.isEnded -> Icons.Default.Replay
-                                                        else -> Icons.Default.PlayArrow
-                                                    },
-                                                    contentDescription = "Play/Pause",
-                                                    tint = Color.White,
-                                                    modifier = Modifier.size(34.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    Surface(
-                                        onClick = {
-                                            val now = System.currentTimeMillis()
-                                            if (skipFeedbackIsForward == true && (now - lastTapTimeMs) < 900L) {
-                                                skipAccumulatedSeconds += 10
-                                            } else {
-                                                skipAccumulatedSeconds = 10
-                                            }
-                                            lastTapTimeMs = now
-                                            skipFeedbackIsForward = true
-                                            val dur = latestState.durationMs.coerceAtLeast(1000L)
-                                            val target = (latestState.currentPositionMs + 10_000L).coerceAtMost(dur)
-                                            viewModel.seekTo(target)
-                                        },
-                                        shape = RoundedCornerShape(14.dp),
-                                        color = Color.White.copy(alpha = 0.16f),
-                                        modifier = Modifier.size(46.dp)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = Icons.Default.Forward10,
-                                                contentDescription = "Forward 10 seconds",
-                                                tint = Color.White,
-                                                modifier = Modifier.size(26.dp)
-                                            )
-                                        }
-                                    }
-
-                                    IconButton(onClick = { viewModel.next() }) {
-                                        Icon(
-                                            imageVector = Icons.Default.SkipNext,
-                                            contentDescription = "Next",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(34.dp)
+                                            modifier = Modifier.size(20.dp)
                                         )
                                     }
                                 }
                             }
 
-                            // Independent Floating Dribbble-Style Glassmorphic Related Videos Sheet Overlay
-                            AnimatedVisibility(
-                                visible = showSuggestionsDrawer,
-                                enter = slideInVertically(
-                                    animationSpec = spring(
-                                        dampingRatio = Spring.DampingRatioNoBouncy,
-                                        stiffness = Spring.StiffnessMediumLow
-                                    ),
-                                    initialOffsetY = { it }
-                                ) + fadeIn(tween(200)),
-                                exit = slideOutVertically(
-                                    animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
-                                    targetOffsetY = { it }
-                                ) + fadeOut(tween(160)),
-                                modifier = Modifier
-                                    .align(Alignment.BottomCenter)
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 12.dp)
-                                    .zIndex(25f)
+                            // Center Transport Controls: Exact YouTube Circular Buttons
+                            Row(
+                                modifier = Modifier.align(Alignment.Center),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(26.dp)
                             ) {
+                                IconButton(onClick = { viewModel.previous() }) {
+                                    Icon(
+                                        imageVector = Icons.Default.SkipPrevious,
+                                        contentDescription = "Previous",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                }
+
                                 Surface(
-                                    shape = RoundedCornerShape(24.dp),
-                                    color = Color(0xF5121417),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
-                                    shadowElevation = 20.dp,
-                                    modifier = Modifier.fillMaxWidth()
+                                    onClick = {
+                                        val now = System.currentTimeMillis()
+                                        skipAccumulatedSeconds = if (skipFeedbackIsForward == false && (now - lastTapTimeMs) < 900L) skipAccumulatedSeconds + 10 else 10
+                                        lastTapTimeMs = now
+                                        skipFeedbackIsForward = false
+                                        viewModel.seekTo((latestState.currentPositionMs - 10_000L).coerceAtLeast(0L))
+                                    },
+                                    shape = CircleShape,
+                                    color = Color.Black.copy(alpha = 0.45f),
+                                    modifier = Modifier.size(46.dp)
                                 ) {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 14.dp)
-                                    ) {
-                                        // Dribbble-style pill drag handle
-                                        Box(
-                                            modifier = Modifier
-                                                .align(Alignment.CenterHorizontally)
-                                                .padding(bottom = 10.dp)
-                                                .width(38.dp)
-                                                .height(4.dp)
-                                                .clip(CircleShape)
-                                                .background(Color.White.copy(alpha = 0.28f))
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Replay10,
+                                            contentDescription = "Rewind 10s",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(26.dp)
                                         )
+                                    }
+                                }
 
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 18.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                            ) {
-                                                Surface(
-                                                    shape = RoundedCornerShape(10.dp),
-                                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
-                                                    modifier = Modifier.size(32.dp)
-                                                ) {
-                                                    Box(contentAlignment = Alignment.Center) {
-                                                        Icon(
-                                                            imageVector = Icons.Default.VideoLibrary,
-                                                            contentDescription = null,
-                                                            tint = MaterialTheme.colorScheme.primary,
-                                                            modifier = Modifier.size(17.dp)
-                                                        )
-                                                    }
-                                                }
-                                                Column {
-                                                    Text(
-                                                        text = "Related Videos & Up Next",
-                                                        color = Color.White,
-                                                        fontFamily = SyneFontFamily,
-                                                        fontWeight = FontWeight.Bold,
-                                                        fontSize = 15.sp
-                                                    )
-                                                    Text(
-                                                        text = "${relatedSuggestions.size} curated video recommendations",
-                                                        color = Color.White.copy(alpha = 0.62f),
-                                                        fontFamily = OutfitFontFamily,
-                                                        fontSize = 11.sp
-                                                    )
-                                                }
-                                            }
-
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                Surface(
-                                                    onClick = { viewModel.toggleAutoSuggest() },
-                                                    shape = RoundedCornerShape(10.dp),
-                                                    color = if (isAutoplayEnabled) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f)
-                                                ) {
-                                                    Text(
-                                                        text = if (isAutoplayEnabled) "Autoplay ON" else "Autoplay OFF",
-                                                        color = Color.White,
-                                                        fontSize = 11.sp,
-                                                        fontFamily = OutfitFontFamily,
-                                                        fontWeight = FontWeight.Bold,
-                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                                    )
-                                                }
-
-                                                Surface(
-                                                    onClick = { showSuggestionsDrawer = false },
-                                                    shape = RoundedCornerShape(10.dp),
-                                                    color = Color.White.copy(alpha = 0.12f)
-                                                ) {
-                                                    Row(
-                                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                                    ) {
-                                                        Text(
-                                                            text = "Close",
-                                                            color = Color.White,
-                                                            fontSize = 11.5.sp,
-                                                            fontFamily = OutfitFontFamily,
-                                                            fontWeight = FontWeight.SemiBold
-                                                        )
-                                                        Icon(
-                                                            imageVector = Icons.Default.KeyboardArrowDown,
-                                                            contentDescription = "Close Suggestions",
-                                                            tint = Color.White,
-                                                            modifier = Modifier.size(16.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        Spacer(modifier = Modifier.height(12.dp))
-
-                                        if (relatedSuggestions.isEmpty()) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .height(110.dp),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                                ) {
-                                                    CircularProgressIndicator(
-                                                        color = MaterialTheme.colorScheme.primary,
-                                                        strokeWidth = 2.2.dp,
-                                                        modifier = Modifier.size(20.dp)
-                                                    )
-                                                    Text(
-                                                        text = "Loading related YouTube videos...",
-                                                        color = Color.White.copy(alpha = 0.75f),
-                                                        fontSize = 13.sp,
-                                                        fontFamily = OutfitFontFamily
-                                                    )
-                                                }
-                                            }
+                                Surface(
+                                    onClick = { viewModel.togglePlayPause() },
+                                    shape = CircleShape,
+                                    color = Color.Black.copy(alpha = 0.56f),
+                                    modifier = Modifier.size(64.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        if (playerState.isBuffering) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(28.dp),
+                                                color = Color.White,
+                                                strokeWidth = 2.8.dp
+                                            )
                                         } else {
-                                            LazyRow(
-                                                contentPadding = PaddingValues(horizontal = 18.dp),
-                                                horizontalArrangement = Arrangement.spacedBy(14.dp)
-                                            ) {
-                                                items(relatedSuggestions, key = { "fs_sug_${it.id}" }) { sugTrack ->
-                                                    Surface(
-                                                        onClick = {
-                                                            showSuggestionsDrawer = false
-                                                            val videoQueue = relatedSuggestions.map {
-                                                                it.copy(genre = "YouTube Video", album = "YouTube Video", itag = 18, codec = "MP4")
-                                                            }
-                                                            val targetIdx = videoQueue.indexOfFirst { it.id == sugTrack.id }.coerceAtLeast(0)
-                                                            viewModel.playQueue(videoQueue, targetIdx, isPlaylist = true)
-                                                        },
-                                                        shape = RoundedCornerShape(16.dp),
-                                                        color = Color(0xFF1D2025),
-                                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)),
-                                                        modifier = Modifier.width(210.dp)
-                                                    ) {
-                                                        Column(modifier = Modifier.padding(10.dp)) {
-                                                            Box(
-                                                                modifier = Modifier
-                                                                    .fillMaxWidth()
-                                                                    .height(110.dp)
-                                                                    .clip(RoundedCornerShape(12.dp))
-                                                                    .background(Color(0xFF282C34))
-                                                            ) {
-                                                                AsyncImage(
-                                                                    model = InnerTubeResolver.upgradeThumbnailUrl(sugTrack.artUrl),
-                                                                    contentDescription = sugTrack.title,
-                                                                    placeholder = appLogoPainter,
-                                                                    error = appLogoPainter,
-                                                                    fallback = appLogoPainter,
-                                                                    contentScale = ContentScale.Crop,
-                                                                    modifier = Modifier.fillMaxSize()
-                                                                )
-                                                                Surface(
-                                                                    shape = RoundedCornerShape(10.dp),
-                                                                    color = Color.Black.copy(alpha = 0.62f),
-                                                                    modifier = Modifier
-                                                                        .align(Alignment.Center)
-                                                                        .size(34.dp)
-                                                                ) {
-                                                                    Box(contentAlignment = Alignment.Center) {
-                                                                        Icon(
-                                                                            imageVector = Icons.Default.PlayArrow,
-                                                                            contentDescription = "Play",
-                                                                            tint = Color.White,
-                                                                            modifier = Modifier.size(20.dp)
-                                                                        )
-                                                                    }
-                                                                }
-                                                                if (sugTrack.durationMs > 0L) {
-                                                                    Surface(
-                                                                        shape = RoundedCornerShape(6.dp),
-                                                                        color = Color.Black.copy(alpha = 0.82f),
-                                                                        modifier = Modifier
-                                                                            .align(Alignment.BottomEnd)
-                                                                            .padding(6.dp)
-                                                                    ) {
-                                                                        Text(
-                                                                            text = sugTrack.durationFormatted,
-                                                                            color = Color.White,
-                                                                            fontSize = 10.sp,
-                                                                            fontWeight = FontWeight.Bold,
-                                                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                                        )
-                                                                    }
-                                                                }
-                                                            }
-                                                            Spacer(modifier = Modifier.height(8.dp))
-                                                            Text(
-                                                                text = sugTrack.title,
-                                                                color = Color.White,
-                                                                fontFamily = OutfitFontFamily,
-                                                                fontWeight = FontWeight.SemiBold,
-                                                                fontSize = 13.sp,
-                                                                lineHeight = 16.sp,
-                                                                maxLines = 2,
-                                                                overflow = TextOverflow.Ellipsis
-                                                            )
-                                                            Spacer(modifier = Modifier.height(2.dp))
-                                                            Row(
-                                                                modifier = Modifier.fillMaxWidth(),
-                                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                                verticalAlignment = Alignment.CenterVertically
-                                                            ) {
-                                                                Text(
-                                                                    text = sugTrack.artist,
-                                                                    color = Color.White.copy(alpha = 0.68f),
-                                                                    fontFamily = OutfitFontFamily,
-                                                                    fontSize = 11.sp,
-                                                                    maxLines = 1,
-                                                                    overflow = TextOverflow.Ellipsis,
-                                                                    modifier = Modifier.weight(1f)
-                                                                )
-                                                                Surface(
-                                                                    onClick = {
-                                                                        viewModel.playNext(
-                                                                            sugTrack.copy(genre = "YouTube Video", album = "YouTube Video", itag = 18, codec = "MP4")
-                                                                        )
-                                                                    },
-                                                                    shape = RoundedCornerShape(8.dp),
-                                                                    color = Color.White.copy(alpha = 0.12f)
-                                                                ) {
-                                                                    Text(
-                                                                        text = "+ Queue",
-                                                                        color = Color.White,
-                                                                        fontSize = 10.sp,
-                                                                        fontFamily = OutfitFontFamily,
-                                                                        fontWeight = FontWeight.Bold,
-                                                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-                                                                    )
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
+                                            Icon(
+                                                imageVector = when {
+                                                    playerState.isPlaying -> Icons.Default.Pause
+                                                    playerState.isEnded -> Icons.Default.Replay
+                                                    else -> Icons.Default.PlayArrow
+                                                },
+                                                contentDescription = "Play/Pause",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(36.dp)
+                                            )
                                         }
                                     }
                                 }
+
+                                Surface(
+                                    onClick = {
+                                        val now = System.currentTimeMillis()
+                                        skipAccumulatedSeconds = if (skipFeedbackIsForward == true && (now - lastTapTimeMs) < 900L) skipAccumulatedSeconds + 10 else 10
+                                        lastTapTimeMs = now
+                                        skipFeedbackIsForward = true
+                                        val dur = latestState.durationMs.coerceAtLeast(1000L)
+                                        viewModel.seekTo((latestState.currentPositionMs + 10_000L).coerceAtMost(dur))
+                                    },
+                                    shape = CircleShape,
+                                    color = Color.Black.copy(alpha = 0.45f),
+                                    modifier = Modifier.size(46.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Forward10,
+                                            contentDescription = "Forward 10s",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(26.dp)
+                                        )
+                                    }
+                                }
+
+                                IconButton(onClick = { viewModel.next() }) {
+                                    Icon(
+                                        imageVector = Icons.Default.SkipNext,
+                                        contentDescription = "Next",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                }
                             }
 
-                            // Bottom Controls Area: Progress Bar + Slide-Up YouTube Suggestions Handle + Bottom-Right Exit Fullscreen
-                            if (!showSuggestionsDrawer) {
+                            // Bottom Controls Area: Exact YouTube Wireframe
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .align(Alignment.BottomCenter)
-                                    .padding(horizontal = 20.dp, vertical = 10.dp)
+                                    .padding(horizontal = 18.dp, vertical = 8.dp)
                             ) {
                                 if (showNextCountdown && isAutoplayEnabled && nextTrack != null) {
                                     SeitharolNextTrackCountdownBanner(
@@ -3686,17 +3673,75 @@ fun SeitharolFullscreenVideoModal(
                                         isCountingDown = true,
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(bottom = 10.dp)
+                                            .padding(bottom = 8.dp)
                                     )
                                 }
 
-                                SeitharolProProgressBar(
+                                // Row 1: Time Left + Fit/Zoom & Exit Fullscreen Right (above scrubber, exact YT wireframe)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${formatMs(displayPosition)} / ${formatMs(totalDuration)}",
+                                        color = Color.White,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.Medium,
+                                        fontSize = 12.sp
+                                    )
+
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Surface(
+                                            onClick = onToggleZoomCrop,
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = Color.White.copy(alpha = 0.14f)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.AspectRatio,
+                                                    contentDescription = "Zoom / Fit",
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(15.dp)
+                                                )
+                                                Text(
+                                                    text = if (isZoomCrop) "Crop" else "Fit",
+                                                    color = Color.White,
+                                                    fontSize = 11.sp,
+                                                    fontFamily = OutfitFontFamily,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+                                        }
+
+                                        IconButton(
+                                            onClick = onDismiss,
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.FullscreenExit,
+                                                contentDescription = "Exit Fullscreen",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(24.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // Row 2: Crisp YouTube Wireframe Edge-to-Edge Video Scrubber
+                                SeitharolYouTubeVideoScrubber(
                                     progress = progress,
                                     bufferedFraction = playerState.bufferedFraction,
                                     displayPositionMs = displayPosition,
                                     totalDurationMs = totalDuration,
                                     isDragging = isDraggingSlider,
-                                    isPlaying = playerState.isPlaying && !playerState.isBuffering,
                                     onValueChange = { frac ->
                                         isDraggingSlider = true
                                         seekingPosition = frac * totalDuration
@@ -3706,99 +3751,245 @@ fun SeitharolFullscreenVideoModal(
                                         seekingPosition = null
                                         isDraggingSlider = false
                                     },
-                                    isFullscreenDark = true,
                                     modifier = Modifier.fillMaxWidth()
                                 )
 
-                                Spacer(modifier = Modifier.height(4.dp))
-
-                                // Bottom Action Strip: Slide-Up More Videos Pill + Fit/Zoom + Bottom-Right Exit Fullscreen (YouTube layout)
+                                // Row 3: Subtle YouTube-style "More videos" swipe-up cue
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 2.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Surface(
-                                        onClick = { showSuggestionsDrawer = !showSuggestionsDrawer },
-                                        shape = RoundedCornerShape(12.dp),
-                                        color = Color.White.copy(alpha = 0.14f)
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = if (showSuggestionsDrawer) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
-                                                contentDescription = "More Videos",
-                                                tint = Color.White,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                            Text(
-                                                text = if (showSuggestionsDrawer) "Hide Suggestions" else "Swipe Up for More Videos (${relatedSuggestions.size})",
-                                                color = Color.White,
-                                                fontFamily = OutfitFontFamily,
-                                                fontWeight = FontWeight.SemiBold,
-                                                fontSize = 12.sp
-                                            )
-                                        }
-                                    }
-
                                     Row(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .clickable { animateDrawerTo(true) }
+                                            .padding(horizontal = 6.dp, vertical = 4.dp),
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
                                     ) {
-                                        Surface(
-                                            onClick = onToggleZoomCrop,
-                                            shape = RoundedCornerShape(10.dp),
-                                            color = Color.White.copy(alpha = 0.14f)
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.AspectRatio,
-                                                    contentDescription = "Zoom / Fit",
-                                                    tint = Color.White,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                                Text(
-                                                    text = if (isZoomCrop) "Crop" else "Fit",
-                                                    color = Color.White,
-                                                    fontSize = 11.5.sp,
-                                                    fontFamily = OutfitFontFamily,
-                                                    fontWeight = FontWeight.SemiBold
-                                                )
-                                            }
-                                        }
-
-                                        // Bottom-Right Fullscreen Exit Toggle (exact YouTube placement)
-                                        Surface(
-                                            onClick = onDismiss,
-                                            shape = RoundedCornerShape(10.dp),
-                                            color = Color.White.copy(alpha = 0.16f),
-                                            modifier = Modifier.size(36.dp)
-                                        ) {
-                                            Box(contentAlignment = Alignment.Center) {
-                                                Icon(
-                                                    imageVector = Icons.Default.FullscreenExit,
-                                                    contentDescription = "Exit Fullscreen",
-                                                    tint = Color.White,
-                                                    modifier = Modifier.size(22.dp)
-                                                )
-                                            }
-                                        }
+                                        Icon(
+                                            imageVector = Icons.Default.KeyboardArrowUp,
+                                            contentDescription = "More Videos",
+                                            tint = Color.White.copy(alpha = 0.85f),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Text(
+                                            text = "More videos",
+                                            color = Color.White.copy(alpha = 0.88f),
+                                            fontFamily = OutfitFontFamily,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 12.sp
+                                        )
                                     }
                                 }
-                            }
                             }
                         }
                     }
                 }
 
+                // Dribbble-Grade Smooth Finger-Tracked Related Videos Bottom Sheet (slides smoothly with finger + spring physics)
+                if (drawerProgress.value > 0.005f) {
+                    Surface(
+                        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+                        color = Color(0xF5101216),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+                        shadowElevation = 24.dp,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .zIndex(30f)
+                            .graphicsLayer {
+                                translationY = drawerHeightPx * (1f - drawerProgress.value)
+                                alpha = (drawerProgress.value * 1.4f).coerceIn(0f, 1f)
+                            }
+                            .pointerInput(drawerHeightPx) {
+                                detectVerticalDragGestures(
+                                    onVerticalDrag = { change, dragAmount ->
+                                        change.consume()
+                                        val deltaFrac = -dragAmount / drawerHeightPx
+                                        scope.launch {
+                                            drawerProgress.snapTo((drawerProgress.value + deltaFrac).coerceIn(0f, 1f))
+                                        }
+                                    },
+                                    onDragEnd = { animateDrawerTo(drawerProgress.value > 0.55f) },
+                                    onDragCancel = { animateDrawerTo(drawerProgress.value > 0.55f) }
+                                )
+                            }
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .navigationBarsPadding()
+                                .padding(top = 10.dp, bottom = 14.dp)
+                        ) {
+                            // Centered Dribbble-style pill drag handle
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.CenterHorizontally)
+                                    .padding(bottom = 10.dp)
+                                    .width(38.dp)
+                                    .height(4.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.30f))
+                            )
 
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 18.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "More videos",
+                                    color = Color.White,
+                                    fontFamily = SyneFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp
+                                )
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Surface(
+                                        onClick = { viewModel.toggleAutoSuggest() },
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = if (isAutoplayEnabled) Color(0xFFFF0033) else Color.White.copy(alpha = 0.12f)
+                                    ) {
+                                        Text(
+                                            text = if (isAutoplayEnabled) "Autoplay ON" else "Autoplay OFF",
+                                            color = Color.White,
+                                            fontSize = 11.sp,
+                                            fontFamily = OutfitFontFamily,
+                                            fontWeight = FontWeight.SemiBold,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                        )
+                                    }
+
+                                    IconButton(
+                                        onClick = { animateDrawerTo(false) },
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Close More Videos",
+                                            tint = Color.White.copy(alpha = 0.85f),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            if (relatedSuggestions.isEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(120.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        CircularProgressIndicator(
+                                            color = Color.White,
+                                            strokeWidth = 2.dp,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Text(
+                                            text = "Loading related videos...",
+                                            color = Color.White.copy(alpha = 0.72f),
+                                            fontSize = 12.5.sp,
+                                            fontFamily = OutfitFontFamily
+                                        )
+                                    }
+                                }
+                            } else {
+                                LazyRow(
+                                    contentPadding = PaddingValues(horizontal = 18.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    items(relatedSuggestions, key = { "fs_sug_${it.id}" }) { sugTrack ->
+                                        Column(
+                                            modifier = Modifier
+                                                .width(196.dp)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .clickable {
+                                                    animateDrawerTo(false)
+                                                    val videoQueue = relatedSuggestions.map {
+                                                        it.copy(genre = "YouTube Video", album = "YouTube Video", itag = 18, codec = "MP4")
+                                                    }
+                                                    val targetIdx = videoQueue.indexOfFirst { it.id == sugTrack.id }.coerceAtLeast(0)
+                                                    viewModel.playQueue(videoQueue, targetIdx, isPlaylist = true)
+                                                }
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .aspectRatio(16f / 9f)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .background(Color(0xFF1F2229))
+                                            ) {
+                                                AsyncImage(
+                                                    model = InnerTubeResolver.upgradeThumbnailUrl(sugTrack.artUrl),
+                                                    contentDescription = sugTrack.title,
+                                                    placeholder = appLogoPainter,
+                                                    error = appLogoPainter,
+                                                    fallback = appLogoPainter,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier.fillMaxSize()
+                                                )
+                                                if (sugTrack.durationMs > 0L) {
+                                                    Surface(
+                                                        shape = RoundedCornerShape(4.dp),
+                                                        color = Color.Black.copy(alpha = 0.84f),
+                                                        modifier = Modifier
+                                                            .align(Alignment.BottomEnd)
+                                                            .padding(5.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = sugTrack.durationFormatted,
+                                                            color = Color.White,
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Text(
+                                                text = sugTrack.title,
+                                                color = Color.White,
+                                                fontFamily = OutfitFontFamily,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 12.5.sp,
+                                                lineHeight = 15.5.sp,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = sugTrack.artist,
+                                                color = Color.White.copy(alpha = 0.64f),
+                                                fontFamily = OutfitFontFamily,
+                                                fontSize = 11.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 

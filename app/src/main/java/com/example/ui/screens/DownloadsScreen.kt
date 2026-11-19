@@ -316,6 +316,100 @@ fun DownloadsScreen(
             }
         }
 
+        // Exact YouTube Wireframe Bottom Download Progress Dock (pinned at bottom of screen)
+        val activeQueueDownload = deduplicatedQueueDownloads.firstOrNull {
+            it.state == DownloadState.DOWNLOADING || it.state == DownloadState.FINALIZING || it.state == DownloadState.QUEUED
+        }
+        val bottomDlTitle = activeDiscoverDownloading?.trackTitle ?: activeQueueDownload?.title
+        val bottomDlSubtitle = when {
+            activeDiscoverDownloading != null -> "Downloading via ${activeDiscoverDownloading.provider.displayName}"
+            activeQueueDownload != null -> if (activeQueueDownload.state == DownloadState.QUEUED) "Queued for download" else "Saving for offline playback"
+            else -> null
+        }
+        val bottomDlProgress = when {
+            activeDiscoverDownloading != null -> (activeDiscoverDownloading.progressPercent / 100f).coerceIn(0f, 1f)
+            activeQueueDownload != null -> activeQueueDownload.progress.takeIf { !it.isNaN() && !it.isInfinite() }?.coerceIn(0f, 1f) ?: 0f
+            else -> 0f
+        }
+        if (bottomDlTitle != null && bottomDlSubtitle != null) {
+            Surface(
+                color = Color(0xF514161A),
+                shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+                shadowElevation = 14.dp,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CloudDownload,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = bottomDlTitle,
+                                color = Color.White,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "$bottomDlSubtitle • ${(bottomDlProgress * 100).toInt()}%",
+                                color = Color.White.copy(alpha = 0.72f),
+                                fontFamily = OutfitFontFamily,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                if (activeDiscoverDownloading != null) {
+                                    downloadService.cancelActiveDownload()
+                                } else if (activeQueueDownload != null) {
+                                    viewModel.cancelDownload(activeQueueDownload.trackId)
+                                }
+                            },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Cancel Download",
+                                tint = Color.White.copy(alpha = 0.82f),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                    // Full-width edge-to-edge bottom progress bar (YouTube wireframe)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .background(Color.White.copy(alpha = 0.16f))
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(bottomDlProgress)
+                                .background(MaterialTheme.colorScheme.primary)
+                        )
+                    }
+                }
+            }
+        }
+
         if (showQualitySheet) {
             com.example.ui.components.QualitySettingsBottomSheet(
                 onDismiss = { showQualitySheet = false }
@@ -492,15 +586,20 @@ fun DownloadItemRow(
 
             if (item.state == DownloadState.DOWNLOADING || item.state == DownloadState.FINALIZING) {
                 Spacer(modifier = Modifier.height(8.dp))
-                LinearProgressIndicator(
-                    progress = { safeProgress },
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(4.dp)
-                        .clip(RoundedCornerShape(2.dp)),
-                    color = SeitharolDark,
-                    trackColor = Color(0xFFE0E0E0)
-                )
+                        .height(3.dp)
+                        .clip(RoundedCornerShape(1.5.dp))
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(safeProgress)
+                            .background(MaterialTheme.colorScheme.primary)
+                    )
+                }
             } else if (item.state == DownloadState.ERROR) {
                 Spacer(modifier = Modifier.height(4.dp))
                 val context = androidx.compose.ui.platform.LocalContext.current

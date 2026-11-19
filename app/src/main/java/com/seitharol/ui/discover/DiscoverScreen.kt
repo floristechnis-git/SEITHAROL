@@ -475,7 +475,7 @@ private fun DiscoverShortPage(
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .navigationBarsPadding()
-                .padding(start = 18.dp, end = 14.dp, bottom = 28.dp),
+                .padding(start = 18.dp, end = 14.dp, bottom = 36.dp),
             verticalAlignment = Alignment.Bottom
         ) {
             Column(modifier = Modifier.weight(1f)) {
@@ -529,48 +529,6 @@ private fun DiscoverShortPage(
                             )
                         }
                     }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // 30-Second Preview Progress Bar & Next Song Preload Progress Badge
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(end = 6.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        val elapsedSec = (previewProgressFraction * 30f).toInt().coerceIn(0, 30)
-                        Text(
-                            text = "30s Preview • 0:${"%02d".format(elapsedSec)} / 0:30",
-                            color = Color.White.copy(alpha = 0.82f),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        if (nextSongPreloadProgress > 0f) {
-                            val preloadPct = (nextSongPreloadProgress * 100f).toInt().coerceIn(10, 100)
-                            Text(
-                                text = if (preloadPct >= 100) "Next Song Ready" else "Preloading Next ($preloadPct%)",
-                                color = Color(0xFF1DB954),
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                    LinearProgressIndicator(
-                        progress = { previewProgressFraction.coerceIn(0f, 1f) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(3.5.dp)
-                            .clip(RoundedCornerShape(2.dp)),
-                        color = Color(0xFF1DB954),
-                        trackColor = Color.White.copy(alpha = 0.22f)
-                    )
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -674,19 +632,7 @@ private fun DiscoverShortPage(
                     }
                 }
 
-                if (downloadState is DownloadTaskState.Downloading && downloadState.trackId == track.sourceId) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    LinearProgressIndicator(
-                        progress = { (downloadState.progressPercent / 100f).coerceIn(0f, 1f) },
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.fillMaxWidth(0.9f)
-                    )
-                    Text(
-                        text = "Downloading via ${downloadState.provider.displayName} (${downloadState.progressPercent}%)",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White
-                    )
-                } else if (downloadState is DownloadTaskState.Completed && downloadState.trackId == track.sourceId) {
+                if (downloadState is DownloadTaskState.Completed && downloadState.trackId == track.sourceId) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = "Saved to Downloads for offline playback",
@@ -757,7 +703,79 @@ fun YouTubePlayBadgeSvgIcon(
             close()
         }
         drawPath(triangle, color = tint, style = Fill)
-    }
+    
+        // Exact YouTube Wireframe Bottom-Edge Progress Bar (Preview + Download Progress pinned at bottom)
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .navigationBarsPadding()
+        ) {
+            if (downloadState is DownloadTaskState.Downloading && downloadState.trackId == track.sourceId) {
+                Surface(
+                    color = Color(0xEE121417),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Downloading • ${downloadState.provider.displayName}",
+                                color = Color.White.copy(alpha = 0.90f),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = "${downloadState.progressPercent}%",
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        LinearProgressIndicator(
+                            progress = { (downloadState.progressPercent / 100f).coerceIn(0f, 1f) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(2.5.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = Color.White.copy(alpha = 0.16f)
+                        )
+                    }
+                }
+            }
+
+            // Edge-to-edge YouTube wireframe bottom scrubber bar (3dp height)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .background(Color.White.copy(alpha = 0.22f))
+            ) {
+                if (nextSongPreloadProgress > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(nextSongPreloadProgress.coerceIn(0f, 1f))
+                            .background(Color.White.copy(alpha = 0.36f))
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(previewProgressFraction.coerceIn(0f, 1f))
+                        .background(MaterialTheme.colorScheme.primary)
+                )
+            }
+        }
+}
 }
 
 @Composable

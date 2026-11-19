@@ -780,7 +780,7 @@ private suspend fun scanDeviceMediaFiles(context: Context): List<CandidateStream
                         isMp4OrVideo && (rawAlbum.equals("Download", true) || rawAlbum.equals("Downloads", true) || filePath.contains("/Download", true)) ->
                             "Download • MP4 Video"
                         isMp4OrVideo -> "MP4 Video"
-                        rawAlbum.equals("Download", true) || rawAlbum.equals("Downloads", true) || filePath.contains("/Download", true)) ->
+                        rawAlbum.equals("Download", true) || rawAlbum.equals("Downloads", true) || filePath.contains("/Download", true) ->
                             "Download Folder"
                         else -> rawAlbum
                     }

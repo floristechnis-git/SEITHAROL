@@ -716,7 +716,7 @@ fun CascadeApp(
             // Full Player Sheet: Directly morphs down to the MiniPlayer dock position without hiding off-screen first
             if (isPlayerExpanded || playerMorphProgress.value > 0.01f) {
                 val density = LocalDensity.current
-                val containerHeightPx = with(density) { maxHeight.toPx().coerceAtLeast(1f) }
+                val containerHeightPx = with(density) { configuration.screenHeightDp.dp.toPx().coerceAtLeast(1f) }
                 val miniDockBottomOffsetPx = with(density) {
                     (if (currentSubScreen is SubScreen.None) 144.dp else 72.dp).toPx()
                 }

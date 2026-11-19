@@ -4123,7 +4123,6 @@ object InnerTubeStreamExtractor {
         // HTTP Range downloading first to avoid YouTube single-GET throttling & 403 errors, then fall back to Single-GET if needed.
         if (isGoogleVideo) {
             val chunkedSuccess = runCatching {
-            return@withContext runCatching {
                 if (tempFile.exists()) tempFile.delete()
                 java.io.FileOutputStream(tempFile).use { output ->
                     var downloaded = 0L

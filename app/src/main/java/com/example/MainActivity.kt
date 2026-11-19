@@ -113,8 +113,12 @@ class MainActivity : ComponentActivity() {
         }
 
         // Ensure singleton ExoPlayer is initialized and restores any persisted checkpoint
+        com.example.player.MediaPlaybackService.isAppClosing = false
         val playerMgr = (application as? CascadeApplication)?.audioPlayerManager
-        runCatching { playerMgr?.ensurePlayerInitialized() }
+        runCatching {
+            playerMgr?.setAppInForeground(true)
+            playerMgr?.ensurePlayerInitialized()
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             runCatching {
@@ -124,7 +128,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Run Manipur Solar/Lunar Calendar & notification check off the UI thread
+        // Run Manipur Solar/Lunar Calendar & past notification store off the UI thread
         val appCtx = applicationContext
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching {
@@ -230,8 +234,7 @@ class MainActivity : ComponentActivity() {
                                     trackId = target.trackId,
                                     fallbackTitle = target.title,
                                     fallbackArtist = target.artist,
-                                    fallbackArtUrl = target.artUrl,
-                                    isVideo = target.isVideo
+                                    fallbackArtUrl = target.artUrl
                                 )
                             }
                             is SeitharolDeepLinkHelper.DeepLinkTarget.ArtistTarget -> {
@@ -298,26 +301,36 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        com.example.player.MediaPlaybackService.isAppClosing = false
+        runCatching {
+            (application as? CascadeApplication)?.audioPlayerManager?.setAppInForeground(true)
+        }
+    }
+
     override fun onStop() {
         super.onStop()
-        // Persist current playback position whenever the user leaves the foreground
+        // Persist current playback position & switch tracker to low-CPU background mode
         runCatching {
-            (application as? CascadeApplication)?.audioPlayerManager?.persistCurrentPlaybackState()
+            val mgr = (application as? CascadeApplication)?.audioPlayerManager
+            mgr?.setAppInForeground(false)
+            mgr?.persistCurrentPlaybackState()
         }
     }
 
     override fun onDestroy() {
-        // CRITICAL: Only tear down playback if the Activity is genuinely finishing (`isFinishing == true`)
-        // and not merely being reclaimed in the background by the OS while music is playing!
-        if (isFinishing && !isChangingConfigurations) {
+        if (!isChangingConfigurations) {
             val appCtx = applicationContext
+            com.example.player.MediaPlaybackService.isAppClosing = true
             val playerMgr = (application as? CascadeApplication)?.audioPlayerManager
             runCatching { playerMgr?.onAppClearedFromRecents() }
             runCatching { com.seitharol.player.AudioPlayerManager.stopActivePreviewIfAny() }
-            com.example.player.MediaPlaybackService.stopService(appCtx)
+            com.example.player.MediaPlaybackService.stopService(appCtx, fromAppCleared = true)
             runCatching {
                 val nm = appCtx.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
                 nm?.cancel(com.example.player.MediaPlaybackService.NOTIFICATION_ID)
+                nm?.cancelAll()
             }
         }
         super.onDestroy()

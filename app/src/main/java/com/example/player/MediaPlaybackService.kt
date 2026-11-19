@@ -42,8 +42,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * Crash-proof Foreground Service for background audio & video playback with synchronized media notification.
- * Properly terminates the MediaSession, notification play controls, and background service when the app is closed.
+ * Crash-proof Foreground Service for background audio playback with synchronized media notification.
+ * - Immediately clears Android 11-14 SystemUI MediaSession carousel notification when app is closed & cleared from Recents.
+ * - Eliminates 2-second NotificationManager.notify() binder spam on slow phones by letting MediaSessionCompat's
+ *   hardware PlaybackStateCompat drive the progress bar smoothly with minimal CPU usage.
  */
 class MediaPlaybackService : Service() {
 
@@ -77,7 +79,7 @@ class MediaPlaybackService : Service() {
 
         var playerManager: AudioPlayerManager? = null
         @Volatile var isRunning: Boolean = false
-        @Volatile private var isShuttingDownApp: Boolean = false
+        @Volatile var isAppClosing: Boolean = false
         @Volatile private var activeInstance: MediaPlaybackService? = null
 
         fun trimMemory() {
@@ -87,10 +89,7 @@ class MediaPlaybackService : Service() {
         }
 
         fun startService(context: Context) {
-            if (isShuttingDownApp) return
-            val mgr = playerManager ?: (context.applicationContext as? com.example.CascadeApplication)?.audioPlayerManager
-            if (mgr?.state?.value?.currentTrack == null) return
-            if (isRunning && activeInstance != null && activeInstance?.isTerminating == false) return
+            if (isAppClosing || isRunning) return
             val appCtx = context.applicationContext
             val intent = Intent(appCtx, MediaPlaybackService::class.java)
             try {
@@ -104,11 +103,11 @@ class MediaPlaybackService : Service() {
             }
         }
 
-        fun stopService(context: Context, isAppClosing: Boolean = false) {
-            isRunning = false
-            if (isAppClosing) {
-                isShuttingDownApp = true
+        fun stopService(context: Context, fromAppCleared: Boolean = false) {
+            if (fromAppCleared) {
+                isAppClosing = true
             }
+            isRunning = false
             val appCtx = context.applicationContext
             runCatching {
                 activeInstance?.isTerminating = true
@@ -118,18 +117,15 @@ class MediaPlaybackService : Service() {
             try {
                 val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
                 nm?.cancel(NOTIFICATION_ID)
+                nm?.cancelAll()
                 appCtx.stopService(Intent(appCtx, MediaPlaybackService::class.java))
             } catch (_: Throwable) {
             }
         }
-
-        fun clearShutdownFlag() {
-            isShuttingDownApp = false
-        }
     }
 
     private fun resolveConsistentSmallIcon(): Int {
-        return applicationInfo.icon.takeIf { it != 0 } ?: R.drawable.ic_stat_music_note
+        return R.drawable.ic_stat_music_note
     }
 
     private fun getOrDecodeAppLogoBitmap(): Bitmap? {
@@ -163,7 +159,7 @@ class MediaPlaybackService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        if (isShuttingDownApp) {
+        if (isAppClosing) {
             stopAndRemoveNotification()
             return
         }
@@ -209,10 +205,12 @@ class MediaPlaybackService : Service() {
             var lastNotifiedPlaying: Boolean? = null
             var lastNotifiedBuffering: Boolean? = null
             var lastNotifiedDurationBucket: Long = -1L
-            var lastNotifiedPositionSec: Long = -1L
+            var lastExpectedPositionSec: Long = -1L
+            var lastStateTimestampMs: Long = 0L
+
             manager?.state
                 ?.collect { state ->
-                    if (isTerminating || isShuttingDownApp) return@collect
+                    if (isTerminating || isAppClosing) return@collect
                     val track = state.currentTrack
                     val activePlayback = state.isPlaying || state.isBuffering
                     if (track != null) {
@@ -221,36 +219,35 @@ class MediaPlaybackService : Service() {
                         } else {
                             lockReleaseJob?.cancel()
                             lockReleaseJob = serviceScope.launch {
-                                delay(60_000L)
+                                delay(90_000L)
                                 val stillPaused = !(playerManager?.state?.value?.let { it.isPlaying || it.isBuffering } ?: false)
                                 if (stillPaused) {
                                     releaseWakeAndWifiLocks()
                                 }
                             }
                         }
-                        // Always keep MediaSessionCompat position & duration synced for both Audio and Video tracks
-                        syncMediaSessionState(track, state.isPlaying, state.isBuffering)
-                        val livePlayerDur = runCatching { manager.playerInstance?.duration?.takeIf { it > 0L } }.getOrNull()
-                        val effectiveDurationMs = state.durationMs.takeIf { it > 0L }
-                            ?: livePlayerDur
-                            ?: track.durationMs.takeIf { it > 0L }
-                            ?: 210_000L
-                        val livePlayerPos = runCatching { manager.playerInstance?.currentPosition?.takeIf { it >= 0L } }.getOrNull()
-                        val effectivePosMs = state.currentPositionMs.takeIf { it > 0L } ?: livePlayerPos ?: 0L
-                        val durBucket = effectiveDurationMs / 1000L
-                        val posSec = effectivePosMs.coerceAtLeast(0L) / 1000L
-                        val posJumped = kotlin.math.abs(posSec - lastNotifiedPositionSec) >= 1L
+                        val nowMs = SystemClock.elapsedRealtime()
+                        val durBucket = (state.durationMs.takeIf { it > 0L } ?: track.durationMs) / 1000L
+                        val posSec = state.currentPositionMs.coerceAtLeast(0L) / 1000L
+                        val elapsedSec = if (lastStateTimestampMs > 0L) ((nowMs - lastStateTimestampMs) / 1000L).coerceAtLeast(0L) else 0L
+                        val predictedSec = if (lastNotifiedPlaying == true) lastExpectedPositionSec + elapsedSec else lastExpectedPositionSec
+                        // Only treat as a seek jump if the position jumped by >= 5 seconds away from natural playback progression!
+                        val userSeekJumped = lastExpectedPositionSec >= 0L && kotlin.math.abs(posSec - predictedSec) >= 5L
+
                         val stateChanged = lastNotifiedTrackId != track.id ||
                             lastNotifiedPlaying != state.isPlaying ||
                             lastNotifiedBuffering != state.isBuffering ||
                             lastNotifiedDurationBucket != durBucket ||
-                            posJumped
+                            userSeekJumped
+
                         if (stateChanged) {
                             lastNotifiedTrackId = track.id
                             lastNotifiedPlaying = state.isPlaying
                             lastNotifiedBuffering = state.isBuffering
                             lastNotifiedDurationBucket = durBucket
-                            lastNotifiedPositionSec = posSec
+                            lastExpectedPositionSec = posSec
+                            lastStateTimestampMs = nowMs
+                            syncMediaSessionState(track, state.isPlaying, state.isBuffering)
                             loadArtAndNotify(track, state.isPlaying, state.isBuffering)
                         }
                     } else {
@@ -261,18 +258,13 @@ class MediaPlaybackService : Service() {
         }
 
         // Background watchdog: keeps notification state 100% synchronized with ExoPlayer hardware state
+        // and recovers from slow-phone background network/decoder stalls
         watchdogJob = serviceScope.launch {
-            while (isActive && !isTerminating && !isShuttingDownApp) {
-                delay(1500L)
-                if (isTerminating || isShuttingDownApp) break
+            while (isActive && !isTerminating && !isAppClosing) {
+                delay(2500L)
+                if (isTerminating || isAppClosing) break
                 val mgr = playerManager ?: (application as? com.example.CascadeApplication)?.audioPlayerManager
                 mgr?.verifyAndSyncBackgroundPlayback()
-                val st = mgr?.state?.value
-                val tr = st?.currentTrack
-                if (tr != null && (st.isPlaying || st.isBuffering)) {
-                    syncMediaSessionState(tr, st.isPlaying, st.isBuffering)
-                    updateNotification(tr, st.isPlaying, st.isBuffering)
-                }
             }
         }
     }
@@ -288,27 +280,19 @@ class MediaPlaybackService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (isTerminating || isShuttingDownApp || intent?.action == ACTION_STOP) {
+        if (isTerminating || isAppClosing || intent?.action == ACTION_STOP) {
             if (intent?.action == ACTION_STOP) {
-                val mgr = playerManager ?: (application as? com.example.CascadeApplication)?.audioPlayerManager
-                runCatching { mgr?.stopPlayback() }
+                playerManager?.pause()
             }
             stopAndRemoveNotification()
             return START_NOT_STICKY
         }
-
-        if (playerManager == null) {
-            playerManager = (application as? com.example.CascadeApplication)?.audioPlayerManager
-        }
-        val currentTrack = playerManager?.state?.value?.currentTrack
-        if (currentTrack == null && intent?.action == null) {
-            stopAndRemoveNotification()
-            return START_NOT_STICKY
-        }
-
         isRunning = true
         isTerminating = false
         createNotificationChannel()
+        if (playerManager == null) {
+            playerManager = (application as? com.example.CascadeApplication)?.audioPlayerManager
+        }
         playerManager?.ensurePlayerInitialized()
 
         when (intent?.action) {
@@ -329,14 +313,14 @@ class MediaPlaybackService : Service() {
             }
         }
 
-        if (!isInForeground && !isTerminating && !isShuttingDownApp) {
+        if (!isInForeground && !isTerminating && !isAppClosing) {
             startForegroundSynchronously()
         }
         return START_NOT_STICKY
     }
 
-    private fun promoteOrNotifySafely(notification: Notification, forceStartForeground: Boolean = false) {
-        if (isTerminating || isShuttingDownApp) return
+    private fun promoteOrNotifySafely(notification: Notification) {
+        if (isTerminating || isAppClosing) return
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 ServiceCompat.startForeground(
@@ -359,7 +343,7 @@ class MediaPlaybackService : Service() {
                 Log.w(TAG, "Foreground promotion fallback to notify: ${e2.message}")
             }
         }
-        if (!isTerminating && !isShuttingDownApp) {
+        if (!isTerminating && !isAppClosing) {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             runCatching {
                 nm?.notify(NOTIFICATION_ID, notification)
@@ -368,7 +352,7 @@ class MediaPlaybackService : Service() {
     }
 
     private fun startForegroundSynchronously() {
-        if (isTerminating || isShuttingDownApp) return
+        if (isTerminating || isAppClosing) return
         try {
             val currentTrack = playerManager?.state?.value?.currentTrack
             val isPlaying = playerManager?.state?.value?.isPlaying ?: false
@@ -376,7 +360,7 @@ class MediaPlaybackService : Service() {
 
             if (currentTrack != null) {
                 val notification = buildMediaNotification(currentTrack, isPlaying, isBuffering)
-                promoteOrNotifySafely(notification, forceStartForeground = true)
+                promoteOrNotifySafely(notification)
                 return
             }
 
@@ -397,11 +381,11 @@ class MediaPlaybackService : Service() {
                 .setContentIntent(openPendingIntent)
                 .setOnlyAlertOnce(true)
                 .setSilent(true)
-                .setOngoing(false)
+                .setOngoing(isPlaying)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .build()
 
-            promoteOrNotifySafely(notification, forceStartForeground = true)
+            promoteOrNotifySafely(notification)
         } catch (t: Throwable) {
             Log.e(TAG, "Failed startForegroundSynchronously: ${t.message}", t)
         }
@@ -427,7 +411,7 @@ class MediaPlaybackService : Service() {
     }
 
     private fun loadArtAndNotify(track: Track, isPlaying: Boolean, isBuffering: Boolean) {
-        if (isTerminating || isShuttingDownApp) return
+        if (isTerminating || isAppClosing) return
 
         val cached = (if (track.id.isNotBlank()) artBitmapCache.get(track.id) else null)
             ?: (if (track.artUrl.isNotBlank()) artBitmapCache.get(track.artUrl) else null)
@@ -457,7 +441,7 @@ class MediaPlaybackService : Service() {
         lastLoadedArtUrl = track.artUrl
         artLoadJob?.cancel()
         artLoadJob = serviceScope.launch {
-            if (isTerminating || isShuttingDownApp) return@launch
+            if (isTerminating || isAppClosing) return@launch
             val fastBitmap = withTimeoutOrNull(320L) {
                 fetchTrackArtBitmap(track.artUrl)
             }
@@ -466,7 +450,7 @@ class MediaPlaybackService : Service() {
                 if (track.artUrl.isNotBlank()) artBitmapCache.put(track.artUrl, fastBitmap)
                 val latest = playerManager?.state?.value
                 val latestTrack = latest?.currentTrack ?: track
-                if (!isTerminating && !isShuttingDownApp && latestTrack.id == track.id) {
+                if (!isTerminating && !isAppClosing && latestTrack.id == track.id) {
                     currentArtBitmap = fastBitmap
                     currentTrackIdForArt = track.id
                     updateNotification(latestTrack, latest?.isPlaying ?: isPlaying, latest?.isBuffering ?: isBuffering)
@@ -481,7 +465,7 @@ class MediaPlaybackService : Service() {
                 if (track.artUrl.isNotBlank()) artBitmapCache.put(track.artUrl, slowBitmap)
                 val latest = playerManager?.state?.value
                 val latestTrack = latest?.currentTrack ?: track
-                if (!isTerminating && !isShuttingDownApp && latestTrack.id == track.id) {
+                if (!isTerminating && !isAppClosing && latestTrack.id == track.id) {
                     currentArtBitmap = slowBitmap
                     currentTrackIdForArt = track.id
                     updateNotification(latestTrack, latest?.isPlaying ?: isPlaying, latest?.isBuffering ?: isBuffering)
@@ -535,20 +519,8 @@ class MediaPlaybackService : Service() {
         ensureMediaSessionInitialized()
         syncMediaSessionState(track, isPlaying, isBuffering, art)
 
-        val pState = playerManager?.state?.value
-        val hwPlayer = playerManager?.playerInstance
-        val hwDur = runCatching { hwPlayer?.duration?.takeIf { it > 0L } }.getOrNull()
-        val hwPos = runCatching { hwPlayer?.currentPosition?.takeIf { it >= 0L } }.getOrNull()
-        val durationMs = (pState?.durationMs?.takeIf { it > 0L } ?: hwDur ?: track.durationMs.takeIf { it > 0L } ?: 210_000L).coerceAtLeast(1000L)
-        val positionMs = (pState?.currentPositionMs?.takeIf { it > 0L } ?: hwPos ?: 0L).coerceIn(0L, durationMs)
-        val maxSec = (durationMs / 1000L).toInt().coerceAtLeast(1)
-        val curSec = (positionMs / 1000L).toInt().coerceIn(0, maxSec)
-        val isVideoPlaying = pState?.isVideoMode == true || track.isVideoTrack
-
         val mediaStyle = androidx.media.app.NotificationCompat.MediaStyle()
             .setShowActionsInCompactView(0, 1, 2)
-            .setCancelButtonIntent(stopPending)
-            .setShowCancelButton(true)
         mediaSession?.sessionToken?.let { token ->
             mediaStyle.setMediaSession(token)
         }
@@ -559,22 +531,19 @@ class MediaPlaybackService : Service() {
             .setContentText(track.artist)
             .setSubText(
                 when {
-                    isPlaying && isVideoPlaying -> "Video • Playing"
                     isPlaying && track.isDownloaded -> "Offline • Playing"
                     isPlaying -> "Playing"
-                    isBuffering && isVideoPlaying -> "Video • Loading..."
                     isBuffering -> "Loading..."
-                    isVideoPlaying -> "Video • Paused"
                     track.isDownloaded -> "Offline • Paused"
                     else -> "Paused"
                 }
             )
             .setColor(0xFF850101.toInt())
             .setColorized(true)
-            .setProgress(maxSec, curSec, isBuffering && curSec == 0)
             .setContentIntent(openPendingIntent)
             .setDeleteIntent(stopPending)
             .setOngoing(isPlaying)
+            .setAutoCancel(!isPlaying)
             .setOnlyAlertOnce(true)
             .setSilent(true)
             .setShowWhen(false)
@@ -583,7 +552,6 @@ class MediaPlaybackService : Service() {
             .addAction(R.drawable.ic_skip_previous, "Previous", prevPending)
             .addAction(playPauseIcon, playPauseTitle, playPausePending)
             .addAction(R.drawable.ic_skip_next, "Next", nextPending)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPending)
             .setStyle(mediaStyle)
 
         if (art != null) {
@@ -594,7 +562,7 @@ class MediaPlaybackService : Service() {
     }
 
     private fun updateNotification(track: Track, isPlaying: Boolean, isBuffering: Boolean) {
-        if (isTerminating || isShuttingDownApp) return
+        if (isTerminating || isAppClosing) return
         try {
             val notification = buildMediaNotification(track, isPlaying, isBuffering)
             promoteOrNotifySafely(notification)
@@ -610,7 +578,7 @@ class MediaPlaybackService : Service() {
                 "Seitharol Playback",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Controls and information for currently playing audio and video"
+                description = "Controls and information for currently playing audio"
                 setShowBadge(false)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
@@ -620,7 +588,7 @@ class MediaPlaybackService : Service() {
     }
 
     private fun ensureMediaSessionInitialized() {
-        if (mediaSession != null) return
+        if (mediaSession != null || isTerminating || isAppClosing) return
         runCatching {
             val openAppIntent = Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -677,7 +645,7 @@ class MediaPlaybackService : Service() {
 
                     override fun onStop() {
                         val mgr = playerManager ?: (application as? com.example.CascadeApplication)?.audioPlayerManager
-                        mgr?.stopPlayback()
+                        mgr?.pause()
                         stopAndRemoveNotification()
                     }
                 })
@@ -695,15 +663,12 @@ class MediaPlaybackService : Service() {
         artBitmap: Bitmap? = null,
         overridePositionMs: Long? = null
     ) {
-        if (isTerminating || isShuttingDownApp) return
+        if (isTerminating || isAppClosing) return
         val session = mediaSession ?: return
         runCatching {
             val pState = playerManager?.state?.value
-            val hwPlayer = playerManager?.playerInstance
-            val hwDur = runCatching { hwPlayer?.duration?.takeIf { it > 0L } }.getOrNull()
-            val hwPos = runCatching { hwPlayer?.currentPosition?.takeIf { it >= 0L } }.getOrNull()
-            val durationMs = (pState?.durationMs?.takeIf { it > 0L } ?: hwDur ?: track.durationMs.takeIf { it > 0L } ?: 210_000L).coerceAtLeast(1000L)
-            val positionMs = (overridePositionMs ?: pState?.currentPositionMs?.takeIf { it > 0L } ?: hwPos ?: 0L).coerceIn(0L, durationMs)
+            val durationMs = (pState?.durationMs?.takeIf { it > 0L } ?: track.durationMs.takeIf { it > 0L } ?: 210_000L).coerceAtLeast(1000L)
+            val positionMs = (overridePositionMs ?: pState?.currentPositionMs ?: 0L).coerceIn(0L, durationMs)
             val speed = if (isPlaying && !isBuffering) (pState?.playbackSpeed ?: 1f).coerceIn(0.25f, 3f) else 0f
 
             val art = artBitmap
@@ -767,18 +732,16 @@ class MediaPlaybackService : Service() {
         artLoadJob?.cancel()
         watchdogJob?.cancel()
         releaseWakeAndWifiLocks()
+        // CRITICAL FOR ANDROID 11-14 MEDIA CAROUSEL:
+        // Explicitly set STATE_NONE with 0 actions and null metadata BEFORE releasing MediaSessionCompat,
+        // otherwise Android SystemUI retains a sticky media notification card after the app is swiped away!
         runCatching {
             mediaSession?.let { session ->
-                val stoppedState = PlaybackStateCompat.Builder()
-                    .setActions(0L)
-                    .setState(PlaybackStateCompat.STATE_STOPPED, 0L, 0f, SystemClock.elapsedRealtime())
-                    .build()
-                session.setPlaybackState(stoppedState)
-                val noneState = PlaybackStateCompat.Builder()
+                val clearedState = PlaybackStateCompat.Builder()
                     .setActions(0L)
                     .setState(PlaybackStateCompat.STATE_NONE, 0L, 0f, SystemClock.elapsedRealtime())
                     .build()
-                session.setPlaybackState(noneState)
+                session.setPlaybackState(clearedState)
                 session.setMetadata(null)
                 session.isActive = false
                 session.release()
@@ -799,6 +762,7 @@ class MediaPlaybackService : Service() {
         runCatching {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             nm?.cancel(NOTIFICATION_ID)
+            nm?.cancelAll()
         }
         runCatching {
             stopSelf()
@@ -806,22 +770,18 @@ class MediaPlaybackService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
+        isAppClosing = true
         isTerminating = true
         isRunning = false
-        isShuttingDownApp = true
         lockReleaseJob?.cancel()
         artLoadJob?.cancel()
         watchdogJob?.cancel()
         serviceScope.cancel()
+        stopAndRemoveNotification()
         runCatching {
             val mgr = playerManager ?: (application as? com.example.CascadeApplication)?.audioPlayerManager
             mgr?.onAppClearedFromRecents()
             com.seitharol.player.AudioPlayerManager.stopActivePreviewIfAny()
-        }
-        stopAndRemoveNotification()
-        runCatching {
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-            nm?.cancel(NOTIFICATION_ID)
         }
         super.onTaskRemoved(rootIntent)
     }

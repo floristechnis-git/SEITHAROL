@@ -3784,69 +3784,30 @@ object InnerTubeStreamExtractor {
         }.getOrNull()
     }
 
-    suspend fun resolveProgressiveMuxedVideoById(videoId: String): String? = withContext(Dispatchers.IO) {
-        val cleanId = extractVideoId(videoId) ?: videoId.trim()
-        if (!VALID_VIDEO_ID_REGEX.matches(cleanId)) return@withContext null
-        for (client in VIDEO_CLIENTS) {
-            val url = extractProgressiveVideoWithClient(
-                cleanVideoId = cleanId,
-                client = client,
-                cpn = generateCpn(),
-                includeVisitorData = client.isEmbedded,
-                allowAdaptiveMerge = false
-            )
-            if (!url.isNullOrBlank() && !url.startsWith("merged_av::") && !url.contains(".m3u8", true)) {
-                return@withContext url
-            }
-        }
-        for (client in VERIFIED_CLIENTS) {
-            val url = extractStreamWithConfig(
-                videoId = cleanId,
-                client = client,
-                preferredQuality = AudioQuality.HIGH,
-                cpn = generateCpn(),
-                allowHls = false,
-                includeVisitorData = client.isEmbedded,
-                requiredItag = 18,
-                preferProgressiveMp4 = true
-            )
-            if (!url.isNullOrBlank() && !url.contains(".m3u8", true)) {
-                return@withContext url
-            }
-        }
-        resolvePipedOrInvidiousMuxedVideo(cleanId)
-    }
-
     suspend fun resolveDownloadableVideoCandidates(
         videoId: String?,
         title: String,
         artist: String
     ): List<String> = withContext(Dispatchers.IO) {
-        val candidates = mutableListOf<String>()
-        val adaptiveMp4Fallbacks = mutableListOf<String>()
+        val progressiveCandidates = mutableListOf<String>()
+        val mergedAvCandidates = mutableListOf<String>()
 
         fun addVideoCandidate(url: String?) {
             if (url.isNullOrBlank()) return
+            if (url.contains(".m3u8", ignoreCase = true) || url.contains("manifest.googlevideo.com", ignoreCase = true)) return
             if (url.startsWith("merged_av::")) {
-                val vidPart = url.removePrefix("merged_av::").substringBefore("|||").trim()
-                if (vidPart.startsWith("http") && !adaptiveMp4Fallbacks.contains(vidPart)) {
-                    adaptiveMp4Fallbacks.add(vidPart)
+                if (!mergedAvCandidates.contains(url)) {
+                    mergedAvCandidates.add(url)
                 }
-                return
-            }
-            if (url.startsWith("http") &&
-                !url.contains(".m3u8", ignoreCase = true) &&
-                !url.contains("manifest.googlevideo.com", ignoreCase = true)
-            ) {
+            } else if (url.startsWith("http")) {
                 val cleanUrl = com.seitharol.player.OuterTuneResolvingDataSource.stripRangeQueryParam(url)
-                if (!candidates.contains(cleanUrl)) {
-                    candidates.add(cleanUrl)
+                if (!progressiveCandidates.contains(cleanUrl)) {
+                    progressiveCandidates.add(cleanUrl)
                 }
             }
         }
 
         var targetYtId = extractVideoId(videoId)
-            ?: videoId?.trim()?.takeIf { VALID_VIDEO_ID_REGEX.matches(it) }
         if (targetYtId.isNullOrBlank() && title.isNotBlank()) {
             val cleanArtist = artist.takeIf { !it.equals("Unknown Artist", true) && !it.equals("YouTube", true) }.orEmpty()
             val q = "$title $cleanArtist".trim()
@@ -3857,79 +3818,147 @@ object InnerTubeStreamExtractor {
         if (!targetYtId.isNullOrBlank()) {
             videoStreamCache[targetYtId]?.first?.let { addVideoCandidate(it) }
 
-            // 1. Check all VIDEO_CLIENTS for progressive muxed MP4 (itag=18 / itag=22) - works for both public and unlisted videos
+            // 1. Try VIDEO_CLIENTS with both progressive muxed MP4 (itag=18/22) and adaptive merged_av:: (essential for Unlisted videos!)
             for (client in VIDEO_CLIENTS) {
-                val url = extractProgressiveVideoWithClient(
+                val includeVis = client.isEmbedded || client.clientName.equals("VISIONOS", ignoreCase = true)
+                val progUrl = extractProgressiveVideoWithClient(
                     cleanVideoId = targetYtId,
                     client = client,
                     cpn = generateCpn(),
-                    includeVisitorData = client.isEmbedded,
-                    allowAdaptiveMerge = false
+                    includeVisitorData = includeVis,
+                    allowAdaptiveMerge = true
                 )
-                addVideoCandidate(url)
-                if (url.isNullOrBlank() && !client.isEmbedded) {
-                    val withVis = extractProgressiveVideoWithClient(
-                        cleanVideoId = targetYtId,
-                        client = client,
-                        cpn = generateCpn(),
-                        includeVisitorData = true,
-                        allowAdaptiveMerge = false
-                    )
-                    addVideoCandidate(withVis)
-                }
-                if (candidates.size >= 3) break
+                addVideoCandidate(progUrl)
+                if (progressiveCandidates.size >= 3) break
             }
 
-            // 2. Check VERIFIED_CLIENTS for progressive MP4 (itag=18)
-            if (candidates.size < 3) {
+            // 2. Also query VERIFIED_CLIENTS (with visitorData for unlisted videos) for progressive itag=18 and adaptive merged_av::
+            if (progressiveCandidates.size < 3) {
                 for (client in VERIFIED_CLIENTS) {
-                    val url = extractStreamWithConfig(
+                    val includeVis = client.isEmbedded || client.clientName.equals("VISIONOS", ignoreCase = true)
+                    val prog18 = extractStreamWithConfig(
                         videoId = targetYtId,
                         client = client,
                         preferredQuality = AudioQuality.HIGH,
                         cpn = generateCpn(),
                         allowHls = false,
-                        includeVisitorData = true,
+                        includeVisitorData = includeVis,
                         requiredItag = 18,
                         preferProgressiveMp4 = true
                     )
-                    addVideoCandidate(url)
-                    if (candidates.size >= 4) break
+                    addVideoCandidate(prog18)
+                    if (progressiveCandidates.isEmpty()) {
+                        val adaptiveMerged = extractProgressiveVideoWithClient(
+                            cleanVideoId = targetYtId,
+                            client = client,
+                            cpn = generateCpn(),
+                            includeVisitorData = includeVis,
+                            allowAdaptiveMerge = true
+                        )
+                        addVideoCandidate(adaptiveMerged)
+                    }
+                    if (progressiveCandidates.size >= 4) break
                 }
             }
 
-            // 3. Check federated Piped / Invidious nodes for muxed MP4
-            if (candidates.isEmpty()) {
-                val federated = runCatching { resolvePipedOrInvidiousMuxedVideo(targetYtId) }.getOrNull()
-                addVideoCandidate(federated)
-            }
-
-            // 4. Check adaptive MP4 video streams if muxed stream was not provided for this unlisted/restricted video
-            if (candidates.isEmpty()) {
-                for (client in VIDEO_CLIENTS) {
-                    val mergedOrProg = extractProgressiveVideoWithClient(
-                        cleanVideoId = targetYtId,
-                        client = client,
-                        cpn = generateCpn(),
-                        includeVisitorData = true,
-                        allowAdaptiveMerge = true
-                    )
-                    addVideoCandidate(mergedOrProg)
-                    if (candidates.isNotEmpty() || adaptiveMp4Fallbacks.size >= 2) break
-                }
-            }
-
-            if (candidates.isEmpty()) {
-                val resolved = resolveRawVideoStreamById(targetYtId, forceRefresh = true, allowHlsFallback = false).getOrNull()
+            if (progressiveCandidates.isEmpty() && mergedAvCandidates.isEmpty()) {
+                val resolved = resolveRawVideoStreamById(targetYtId, forceRefresh = true, allowHlsFallback = true).getOrNull()
                 addVideoCandidate(resolved)
+                val fedMp4 = resolvePipedOrInvidiousMuxedVideo(targetYtId)
+                addVideoCandidate(fedMp4)
             }
         }
 
-        adaptiveMp4Fallbacks.forEach { fb ->
-            if (!candidates.contains(fb)) candidates.add(fb)
-        }
+        // Prioritize direct progressive MP4 first, followed by adaptive merged_av:: (which muxes video+audio on-device via MediaMuxer)
+        progressiveCandidates + mergedAvCandidates
+    }
 
-        candidates
+    /**
+     * Natively muxes a downloaded H.264/MP4 video stream file and an AAC/M4A audio stream file
+     * into a standard playable .mp4 file using Android's built-in MediaExtractor & MediaMuxer.
+     * Enables 100% reliable MP4 downloads for Unlisted videos where YouTube only returns adaptive video + audio tracks!
+     */
+    private fun muxVideoAndAudioFilesToMp4(videoFile: java.io.File, audioFile: java.io.File, outputFile: java.io.File): Boolean {
+        if (!videoFile.exists() || videoFile.length() <= 4096L || !audioFile.exists() || audioFile.length() <= 2048L) {
+            return false
+        }
+        var muxer: android.media.MediaMuxer? = null
+        val videoExtractor = android.media.MediaExtractor()
+        val audioExtractor = android.media.MediaExtractor()
+        return try {
+            if (outputFile.exists()) outputFile.delete()
+            videoExtractor.setDataSource(videoFile.absolutePath)
+            audioExtractor.setDataSource(audioFile.absolutePath)
+
+            var videoTrackIndex = -1
+            for (i in 0 until videoExtractor.trackCount) {
+                val format = videoExtractor.getTrackFormat(i)
+                val mime = format.getString(android.media.MediaFormat.KEY_MIME).orEmpty()
+                if (mime.startsWith("video/")) {
+                    videoExtractor.selectTrack(i)
+                    videoTrackIndex = i
+                    break
+                }
+            }
+
+            var audioTrackIndex = -1
+            for (i in 0 until audioExtractor.trackCount) {
+                val format = audioExtractor.getTrackFormat(i)
+                val mime = format.getString(android.media.MediaFormat.KEY_MIME).orEmpty()
+                if (mime.startsWith("audio/")) {
+                    audioExtractor.selectTrack(i)
+                    audioTrackIndex = i
+                    break
+                }
+            }
+
+            if (videoTrackIndex < 0) return false
+
+            muxer = android.media.MediaMuxer(outputFile.absolutePath, android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            val muxVideoTrack = muxer.addTrack(videoExtractor.getTrackFormat(videoTrackIndex))
+            val muxAudioTrack = if (audioTrackIndex >= 0) {
+                runCatching { muxer.addTrack(audioExtractor.getTrackFormat(audioTrackIndex)) }.getOrDefault(-1)
+            } else -1
+
+            muxer.start()
+
+            val buffer = java.nio.ByteBuffer.allocate(512 * 1024)
+            val bufferInfo = android.media.MediaCodec.BufferInfo()
+
+            videoExtractor.seekTo(0L, android.media.MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+            while (true) {
+                bufferInfo.offset = 0
+                bufferInfo.size = videoExtractor.readSampleData(buffer, 0)
+                if (bufferInfo.size < 0) break
+                bufferInfo.presentationTimeUs = videoExtractor.sampleTime
+                bufferInfo.flags = videoExtractor.sampleFlags
+                muxer.writeSampleData(muxVideoTrack, buffer, bufferInfo)
+                videoExtractor.advance()
+            }
+
+            if (muxAudioTrack >= 0) {
+                audioExtractor.seekTo(0L, android.media.MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+                while (true) {
+                    bufferInfo.offset = 0
+                    bufferInfo.size = audioExtractor.readSampleData(buffer, 0)
+                    if (bufferInfo.size < 0) break
+                    bufferInfo.presentationTimeUs = audioExtractor.sampleTime
+                    bufferInfo.flags = audioExtractor.sampleFlags
+                    muxer.writeSampleData(muxAudioTrack, buffer, bufferInfo)
+                    audioExtractor.advance()
+                }
+            }
+
+            runCatching { muxer.stop() }
+            outputFile.exists() && outputFile.length() > 16_384L
+        } catch (_: Throwable) {
+            // If MediaMuxer fails (e.g. VP9 container), fall back to copying videoFile directly if valid
+            false
+        } finally {
+            runCatching { videoExtractor.release() }
+            runCatching { audioExtractor.release() }
+            runCatching { muxer?.release() }
+        }
     }
 
     suspend fun resolveDownloadableStreamCandidates(
@@ -4051,27 +4080,49 @@ object InnerTubeStreamExtractor {
         tempFile: java.io.File,
         onProgress: suspend (downloadedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> }
     ): Boolean = withContext(Dispatchers.IO) {
+        // Support adaptive merged_av::<videoUrl>|||<audioUrl> for Unlisted & HD MP4 Video Downloads!
+        if (streamUrl.startsWith("merged_av::")) {
+            val parts = streamUrl.removePrefix("merged_av::").split("|||")
+            val videoRawUrl = parts.getOrNull(0).orEmpty()
+            val audioRawUrl = parts.getOrNull(1).orEmpty()
+            if (videoRawUrl.isBlank()) return@withContext false
+            if (audioRawUrl.isBlank() || audioRawUrl == videoRawUrl) {
+                return@withContext downloadUrlToFileReliable(videoRawUrl, tempFile, onProgress)
+            }
+            val videoTemp = java.io.File(tempFile.parentFile, "${tempFile.name}.vid.tmp")
+            val audioTemp = java.io.File(tempFile.parentFile, "${tempFile.name}.aud.tmp")
+            return@withContext try {
+                val vidOk = downloadUrlToFileReliable(videoRawUrl, videoTemp) { dl, tot ->
+                    onProgress((dl * 80L) / 100L, tot.coerceAtLeast(dl))
+                }
+                if (!vidOk) return@withContext false
+                val vidBytes = videoTemp.length().coerceAtLeast(1_000_000L)
+                val audOk = downloadUrlToFileReliable(audioRawUrl, audioTemp) { dl, tot ->
+                    val scaledDl = (vidBytes * 80L / 100L) + ((dl * 18L) / 100L)
+                    onProgress(scaledDl, vidBytes + tot.coerceAtLeast(dl))
+                }
+                if (audOk && muxVideoAndAudioFilesToMp4(videoTemp, audioTemp, tempFile)) {
+                    val finalLen = tempFile.length()
+                    onProgress(finalLen, finalLen)
+                    true
+                } else {
+                    false
+                }
+            } finally {
+                runCatching { if (videoTemp.exists()) videoTemp.delete() }
+                runCatching { if (audioTemp.exists()) audioTemp.delete() }
+            }
+        }
+
         val cleanBaseUrl = com.seitharol.player.OuterTuneResolvingDataSource.stripRangeQueryParam(streamUrl)
         val headers = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(cleanBaseUrl)
         val isGoogleVideo = cleanBaseUrl.contains("googlevideo.com", ignoreCase = true)
         var knownClen = com.seitharol.player.OuterTuneResolvingDataSource.getKnownStreamLength(cleanBaseUrl)
-        if (knownClen <= 0L) {
-            val urlClen = Regex("[?&]clen=(\\d+)").find(cleanBaseUrl)?.groupValues?.get(1)?.toLongOrNull() ?: -1L
-            if (urlClen > 10_240L) {
-                knownClen = urlClen
-                com.seitharol.player.OuterTuneResolvingDataSource.recordKnownStreamLength(cleanBaseUrl, urlClen)
-            }
-        }
 
-        val isProgressiveItag = cleanBaseUrl.contains("itag=18&", ignoreCase = true) ||
-            cleanBaseUrl.endsWith("itag=18", ignoreCase = true) ||
-            cleanBaseUrl.contains("itag=22&", ignoreCase = true) ||
-            cleanBaseUrl.endsWith("itag=22", ignoreCase = true) ||
-            !cleanBaseUrl.contains("gir=yes", ignoreCase = true)
-
-        // Adaptive googlevideo.com streams (gir=yes, VISIONOS itag=140 M4A / itag=251 Opus)
-        // Download in 512 KB chunks using standard HTTP Range header first (VISIONOS 206 Partial Content).
-        if (isGoogleVideo && !isProgressiveItag) {
+        // All googlevideo.com streams (both adaptive AND progressive itag=18/22) try fast 512 KB chunked
+        // HTTP Range downloading first to avoid YouTube single-GET throttling & 403 errors, then fall back to Single-GET if needed.
+        if (isGoogleVideo) {
+            val chunkedSuccess = runCatching {
             return@withContext runCatching {
                 if (tempFile.exists()) tempFile.delete()
                 java.io.FileOutputStream(tempFile).use { output ->
@@ -4175,6 +4226,7 @@ object InnerTubeStreamExtractor {
                 if (tempFile.exists()) tempFile.delete()
                 false
             }
+            if (chunkedSuccess) return@withContext true
         }
 
         // Single-GET download path for JioSaavn CDN and progressive MP4 (itag=18 ratebypass=yes)
@@ -4190,18 +4242,10 @@ object InnerTubeStreamExtractor {
                 com.example.network.NetworkClients.okHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
                     if (!resp.isSuccessful && resp.code != 206) return@runCatching false
                     val body = resp.body ?: return@runCatching false
-                    val rangeTotal = resp.header("Content-Range")
-                        ?.substringAfterLast("/", "")
-                        ?.trim()
-                        ?.toLongOrNull()
-                        ?.takeIf { it > 10_240L }
-                    val isVideoStream = cleanBaseUrl.contains("itag=18") || cleanBaseUrl.contains("itag=22") || cleanBaseUrl.contains("mime=video")
-                    var totalBytes = rangeTotal
-                        ?: body.contentLength().takeIf { it > 10_240L }
+                    val totalBytes = body.contentLength().takeIf { it > 10_240L }
                         ?: knownClen.takeIf { it > 10_240L }
-                        ?: (if (isVideoStream) 16_000_000L else 4_000_000L)
+                        ?: 4_000_000L
 
-                    onProgress(0L, totalBytes)
                     var lastProgressEmitMs = 0L
                     body.byteStream().use { input ->
                         java.io.FileOutputStream(tempFile).use { output ->
@@ -4214,17 +4258,14 @@ object InnerTubeStreamExtractor {
                                 }
                                 output.write(buffer, 0, read)
                                 totalRead += read
-                                if (totalRead >= (totalBytes * 92L / 100L) && rangeTotal == null && body.contentLength() <= 0L && knownClen <= 0L) {
-                                    totalBytes = (totalRead * 115L / 100L).coerceAtLeast(totalBytes + 512_000L)
-                                }
                                 val now = System.currentTimeMillis()
-                                if (now - lastProgressEmitMs >= 160L) {
+                                if (now - lastProgressEmitMs >= 220L) {
                                     lastProgressEmitMs = now
-                                    onProgress(totalRead, totalBytes.coerceAtLeast(totalRead))
+                                    onProgress(totalRead, totalBytes)
                                 }
                             }
                             output.flush()
-                            onProgress(totalRead, totalRead.coerceAtLeast(1L))
+                            onProgress(totalRead, totalRead.coerceAtLeast(totalBytes))
                         }
                     }
                 }

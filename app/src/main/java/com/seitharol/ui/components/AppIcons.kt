@@ -1,39 +1,54 @@
 package com.seitharol.ui.components
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
+import android.net.Uri
+import android.os.Build
+import android.util.LruCache
+import android.util.Size
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Size as ComposeSize
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.example.R
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
 
 /**
  * Exact requested Home Nav SVG:
- * <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"><path d="M4 11l8-7 8 7v9H4z"/></svg>
+ * <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linejoin="round"><path d="M4 11l8-7 8 7v9H4z"/></svg>
  */
 @Composable
 fun HomeNavSvgIcon(
-    tint: Color = MaterialTheme.colorScheme.onSurface,
+    tint: Color = Color(0xFFFFFFFF),
     modifier: Modifier = Modifier.size(20.dp)
 ) {
     Canvas(modifier = modifier) {
@@ -52,6 +67,216 @@ fun HomeNavSvgIcon(
             color = tint,
             style = Stroke(width = 1.8f * sx, join = StrokeJoin.Round, cap = StrokeCap.Round)
         )
+    }
+}
+
+/**
+ * Crisp Vector SVG Chevron Right (`>`) replacement so no ASCII '>' is ever rendered in UI text.
+ */
+@Composable
+fun ChevronRightSvgIcon(
+    tint: Color = MaterialTheme.colorScheme.onSurface,
+    modifier: Modifier = Modifier.size(16.dp)
+) {
+    Canvas(modifier = modifier) {
+        val sx = size.width / 24f
+        val sy = size.height / 24f
+        val path = Path().apply {
+            moveTo(9f * sx, 6f * sy)
+            lineTo(15f * sx, 12f * sy)
+            lineTo(9f * sx, 18f * sy)
+        }
+        drawPath(
+            path = path,
+            color = tint,
+            style = Stroke(width = 2.2f * sx, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        )
+    }
+}
+
+/**
+ * Profile SVG Icon used for Suggested Artists & Artist Avatars before loading or when no avatar exists
+ * (replaces the old single-letter initial fallback across every page).
+ */
+@Composable
+fun ArtistProfileSvgIcon(
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    modifier: Modifier = Modifier.size(38.dp)
+) {
+    Canvas(modifier = modifier) {
+        val sx = size.width / 24f
+        val sy = size.height / 24f
+        val stroke = Stroke(width = 1.85f * sx, cap = StrokeCap.Round, join = StrokeJoin.Round)
+
+        // Head circle
+        drawCircle(
+            color = tint,
+            radius = 4.0f * sx,
+            center = Offset(12f * sx, 8.0f * sy),
+            style = stroke
+        )
+
+        // Shoulders arc
+        val bodyPath = Path().apply {
+            moveTo(5.0f * sx, 19.8f * sy)
+            cubicTo(
+                5.0f * sx, 16.0f * sy,
+                8.2f * sx, 14.0f * sy,
+                12.0f * sx, 14.0f * sy
+            )
+            cubicTo(
+                15.8f * sx, 14.0f * sy,
+                19.0f * sx, 16.0f * sy,
+                19.0f * sx, 19.8f * sy
+            )
+        }
+        drawPath(path = bodyPath, color = tint, style = stroke)
+    }
+}
+
+/**
+ * Memory-cached Local Video Frame Preface / Thumbnail Extractor.
+ * Extracts a real frame from local MP4/MKV/WebM/MOV files or MediaStore video URIs so local videos
+ * always display their actual video thumbnail preface instead of a blank or generic icon.
+ */
+object LocalVideoFrameCache {
+    private val bitmapCache = LruCache<String, ImageBitmap>(36)
+
+    fun getCached(key: String): ImageBitmap? {
+        if (key.isBlank()) return null
+        return bitmapCache.get(key)
+    }
+
+    fun isLocalVideoSource(urlOrPath: String?): Boolean {
+        if (urlOrPath.isNullOrBlank()) return false
+        val lower = urlOrPath.lowercase().trim()
+        return lower.startsWith("content://media/external/video") ||
+            lower.startsWith("content://media/internal/video") ||
+            lower.endsWith(".mp4") ||
+            lower.endsWith(".mkv") ||
+            lower.endsWith(".webm") ||
+            lower.endsWith(".mov") ||
+            lower.endsWith(".m4v") ||
+            lower.contains("_video_mp4")
+    }
+
+    suspend fun loadVideoFrameThumbnail(context: Context, sourceUriOrPath: String): ImageBitmap? =
+        withContext(Dispatchers.IO) {
+            if (sourceUriOrPath.isBlank()) return@withContext null
+            bitmapCache.get(sourceUriOrPath)?.let { return@withContext it }
+
+            val extracted: Bitmap? = runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && sourceUriOrPath.startsWith("content://")) {
+                    val uri = Uri.parse(sourceUriOrPath)
+                    context.contentResolver.loadThumbnail(uri, Size(320, 200), null)
+                } else null
+            }.getOrNull() ?: runCatching {
+                val retriever = MediaMetadataRetriever()
+                try {
+                    when {
+                        sourceUriOrPath.startsWith("content://") -> {
+                            retriever.setDataSource(context, Uri.parse(sourceUriOrPath))
+                        }
+                        sourceUriOrPath.startsWith("file://") -> {
+                            val rawPath = Uri.parse(sourceUriOrPath).path ?: sourceUriOrPath.removePrefix("file://")
+                            retriever.setDataSource(rawPath)
+                        }
+                        sourceUriOrPath.startsWith("/") -> {
+                            retriever.setDataSource(sourceUriOrPath)
+                        }
+                        else -> return@runCatching null
+                    }
+                    retriever.getFrameAtTime(1_000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        ?: retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        ?: retriever.frameAtTime
+                } finally {
+                    runCatching { retriever.release() }
+                }
+            }.getOrNull()
+
+            if (extracted != null) {
+                val scaled = runCatching {
+                    val targetW = 320
+                    val ratio = extracted.height.toFloat() / extracted.width.coerceAtLeast(1).toFloat()
+                    val targetH = (targetW * ratio).toInt().coerceIn(90, 320)
+                    if (extracted.width > targetW * 1.3f) {
+                        Bitmap.createScaledBitmap(extracted, targetW, targetH, true)
+                    } else {
+                        extracted
+                    }
+                }.getOrDefault(extracted)
+                val imgBitmap = scaled.asImageBitmap()
+                bitmapCache.put(sourceUriOrPath, imgBitmap)
+                imgBitmap
+            } else {
+                null
+            }
+        }
+}
+
+/**
+ * Universal Media Thumbnail Composable that seamlessly supports both remote HTTP artwork AND
+ * local video frame extraction (`content://media/external/video/...`, `.mp4`, `.mkv`, `.webm`).
+ */
+@Composable
+fun UniversalMediaThumbnail(
+    artUrl: String,
+    localPath: String? = null,
+    isVideo: Boolean = false,
+    contentDescription: String? = null,
+    contentScale: ContentScale = ContentScale.Crop,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
+    val videoCandidateSource = remember(artUrl, localPath, isVideo) {
+        when {
+            LocalVideoFrameCache.isLocalVideoSource(artUrl) -> artUrl
+            LocalVideoFrameCache.isLocalVideoSource(localPath) -> localPath.orEmpty()
+            isVideo && !localPath.isNullOrBlank() && (localPath.startsWith("/") || localPath.startsWith("file://") || localPath.startsWith("content://")) -> localPath
+            else -> ""
+        }
+    }
+
+    val isHttpArt = artUrl.startsWith("http://", ignoreCase = true) || artUrl.startsWith("https://", ignoreCase = true)
+    var videoFrame by remember(videoCandidateSource) {
+        mutableStateOf(LocalVideoFrameCache.getCached(videoCandidateSource))
+    }
+
+    LaunchedEffect(videoCandidateSource, isHttpArt) {
+        if (!isHttpArt && videoCandidateSource.isNotBlank() && videoFrame == null) {
+            videoFrame = LocalVideoFrameCache.loadVideoFrameThumbnail(context, videoCandidateSource)
+        }
+    }
+
+    when {
+        videoFrame != null -> {
+            Image(
+                bitmap = videoFrame!!,
+                contentDescription = contentDescription,
+                contentScale = contentScale,
+                modifier = modifier
+            )
+        }
+        artUrl.isNotBlank() && !LocalVideoFrameCache.isLocalVideoSource(artUrl) -> {
+            AsyncImage(
+                model = artUrl,
+                contentDescription = contentDescription,
+                placeholder = appLogoPainter,
+                error = appLogoPainter,
+                fallback = appLogoPainter,
+                contentScale = contentScale,
+                modifier = modifier
+            )
+        }
+        else -> {
+            Image(
+                painter = appLogoPainter,
+                contentDescription = contentDescription,
+                contentScale = contentScale,
+                modifier = modifier
+            )
+        }
     }
 }
 
@@ -89,7 +314,7 @@ fun HeadphoneSvgIcon(
         drawRoundRect(
             color = tint,
             topLeft = Offset(3f * sx, 13f * sy),
-            size = Size(4.2f * sx, 6.5f * sy),
+            size = ComposeSize(4.2f * sx, 6.5f * sy),
             cornerRadius = CornerRadius(1.8f * sx, 1.8f * sy),
             style = Fill
         )
@@ -98,7 +323,7 @@ fun HeadphoneSvgIcon(
         drawRoundRect(
             color = tint,
             topLeft = Offset(16.8f * sx, 13f * sy),
-            size = Size(4.2f * sx, 6.5f * sy),
+            size = ComposeSize(4.2f * sx, 6.5f * sy),
             cornerRadius = CornerRadius(1.8f * sx, 1.8f * sy),
             style = Fill
         )
@@ -107,6 +332,8 @@ fun HeadphoneSvgIcon(
 
 /**
  * Notification Bell SVG Icon with integrated Alert UI (ringing waves + live unread alert dot).
+ * PERFORMANCE FIX: Only allocates an InfiniteTransition when [hasUnreadAlert] is true, eliminating
+ * 60fps idle recomposition overhead on HomeScreen!
  */
 @Composable
 fun NotificationBellAlertSvgIcon(
@@ -115,16 +342,21 @@ fun NotificationBellAlertSvgIcon(
     alertDotColor: Color = Color(0xFFFFB74D),
     modifier: Modifier = Modifier.size(22.dp)
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "notif_alert_pulse")
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.90f,
-        targetValue = if (hasUnreadAlert) 1.22f else 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 850, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "notif_dot_scale"
-    )
+    val pulseScale = if (hasUnreadAlert) {
+        val infiniteTransition = rememberInfiniteTransition(label = "notif_alert_pulse")
+        val animated by infiniteTransition.animateFloat(
+            initialValue = 0.90f,
+            targetValue = 1.22f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 850, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "notif_dot_scale"
+        )
+        animated
+    } else {
+        1.0f
+    }
 
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -348,9 +580,8 @@ fun PlaylistThumbnailWithBadge(
         contentAlignment = Alignment.Center
     ) {
         if (!firstTrackThumbnailUrl.isNullOrBlank()) {
-            AsyncImage(
-                model = firstTrackThumbnailUrl,
-                contentDescription = null,
+            UniversalMediaThumbnail(
+                artUrl = firstTrackThumbnailUrl,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )

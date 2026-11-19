@@ -143,6 +143,15 @@ fun PlaylistScreen(
         )
     }
 
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) {
+            focusManager.clearFocus(force = true)
+            keyboardController?.hide()
+        }
+    }
     var searchQuery by remember { mutableStateOf("") }
     val filteredTracks = remember(remotePlaylistTracks, searchQuery) {
         if (searchQuery.isBlank()) remotePlaylistTracks
@@ -188,6 +197,7 @@ fun PlaylistScreen(
             .testTag("playlist_screen")
     ) {
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 200.dp)
         ) {

@@ -3,6 +3,10 @@ package com.example.ui
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -16,8 +20,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -33,6 +39,7 @@ import com.seitharol.ui.components.HomeNavSvgIcon
 import com.seitharol.ui.settings.InfoDetailScreen
 import com.seitharol.ui.settings.InfoPageType
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 enum class AppDestination(val label: String, val icon: ImageVector) {
     HOME("Home", Icons.Default.Home),
@@ -70,7 +77,7 @@ private fun DiscoverSubScreenHost(
         }
         val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(context, resolvingFactory)
         val compactLoadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
-            .setBufferDurationsMs(4_000, 10_000, 800, 1_500)
+            .setBufferDurationsMs(6_000, 18_000, 350, 800)
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
         androidx.media3.exoplayer.ExoPlayer.Builder(context)
@@ -141,6 +148,7 @@ fun CascadeApp(
 ) {
     val playerState by viewModel.playerState.collectAsState()
     val isFullscreenVideo by viewModel.isFullscreenVideo.collectAsState()
+    val isAutoplayEnabled by viewModel.isAutoSuggestEnabled.collectAsState()
 
     // When Activity enters native Android Picture-in-Picture mode, display 100% video surface
     // without status bar, navigation bar, or extra UI overlays so it floats cleanly outside the app.
@@ -179,8 +187,10 @@ fun CascadeApp(
     }
 
     val playlists by viewModel.playlists.collectAsState()
+    val likedTrackIds by viewModel.likedTrackIds.collectAsState()
     val context = LocalContext.current
     val compositionStartMs = remember { System.currentTimeMillis() }
+    val appScope = rememberCoroutineScope()
 
     var currentDestination by remember { mutableStateOf(AppDestination.HOME) }
     var previousDestination by remember { mutableStateOf(AppDestination.HOME) }
@@ -188,11 +198,41 @@ fun CascadeApp(
     var previousSubScreen by remember { mutableStateOf<SubScreen>(SubScreen.None) }
     var isPlayerExpanded by remember { mutableStateOf(false) }
 
+    // Continuous morph progress (0f = MiniPlayer, 1f = Full PlayerScreen) so sliding down or clicking
+    // minimize directly converts PlayerScreen into MiniPlayer without hiding and then popping up!
+    val playerMorphProgress = remember { Animatable(0f) }
+    var activeSheetDragFraction by remember { mutableFloatStateOf(0f) }
+
+    val expandFullPlayer: () -> Unit = {
+        activeSheetDragFraction = 0f
+        isPlayerExpanded = true
+        appScope.launch {
+            playerMorphProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMedium
+                )
+            )
+        }
+    }
+
+    val minimizeToMiniPlayer: () -> Unit = {
+        appScope.launch {
+            playerMorphProgress.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
+            )
+            activeSheetDragFraction = 0f
+            isPlayerExpanded = false
+        }
+    }
+
     // When user plays a video, automatically expand full video player screen so video is immediately visible
     LaunchedEffect(playerState.currentTrack?.id, playerState.isVideoMode) {
         val current = playerState.currentTrack
         if (current != null && (current.isVideoTrack || playerState.isVideoMode)) {
-            isPlayerExpanded = true
+            expandFullPlayer()
         }
     }
 
@@ -226,7 +266,7 @@ fun CascadeApp(
     // Collect artist navigation events from PlayerScreen artist name clicks & deep links
     LaunchedEffect(Unit) {
         viewModel.artistNavigationEvent.collectLatest { artistName ->
-            isPlayerExpanded = false
+            minimizeToMiniPlayer()
             currentSubScreen = SubScreen.Artist(
                 artistName = artistName,
                 isChannel = viewModel.isArtistNavigationChannel.value
@@ -238,14 +278,14 @@ fun CascadeApp(
     LaunchedEffect(Unit) {
         viewModel.playerExpandEvent.collectLatest {
             currentSubScreen = SubScreen.None
-            isPlayerExpanded = true
+            expandFullPlayer()
         }
     }
 
     // Navigate to imported or shared playlist when resolved
     LaunchedEffect(Unit) {
         viewModel.playlistNavigationEvent.collectLatest { playlistId ->
-            isPlayerExpanded = false
+            minimizeToMiniPlayer()
             currentSubScreen = SubScreen.Playlist(playlistId)
         }
     }
@@ -253,7 +293,7 @@ fun CascadeApp(
     // Navigate to 404 Not Found screen when an invalid link or missing resource is opened
     LaunchedEffect(Unit) {
         viewModel.notFoundNavigationEvent.collectLatest { rawQueryOrUrl ->
-            isPlayerExpanded = false
+            minimizeToMiniPlayer()
             currentSubScreen = SubScreen.NotFound(queryOrUrl = rawQueryOrUrl)
         }
     }
@@ -261,18 +301,23 @@ fun CascadeApp(
     val rootFocusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val rootKeyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
 
-    LaunchedEffect(currentSubScreen) {
-        if (currentSubScreen !is SubScreen.None) {
-            rootFocusManager.clearFocus(force = true)
-            rootKeyboardController?.hide()
-            runCatching {
-                val imm = context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
-                val token = (context as? android.app.Activity)?.currentFocus?.windowToken
-                    ?: (context as? android.app.Activity)?.window?.decorView?.windowToken
-                if (token != null) {
-                    imm?.hideSoftInputFromWindow(token, 0)
-                }
+    val dismissGlobalKeyboard = {
+        rootFocusManager.clearFocus(force = true)
+        rootKeyboardController?.hide()
+        runCatching {
+            val imm = context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
+            val token = (context as? android.app.Activity)?.currentFocus?.windowToken
+                ?: (context as? android.app.Activity)?.window?.decorView?.windowToken
+            if (token != null) {
+                imm?.hideSoftInputFromWindow(token, 0)
             }
+        }
+    }
+
+    // Always close keyboard & unfocus search input container when navigating across tabs, subscreens, or player sheet
+    LaunchedEffect(currentSubScreen, currentDestination, isPlayerExpanded) {
+        if (currentDestination != AppDestination.SEARCH || currentSubScreen !is SubScreen.None || isPlayerExpanded) {
+            dismissGlobalKeyboard()
         }
         if (currentSubScreen is SubScreen.Discover) {
             viewModel.pause()
@@ -282,294 +327,238 @@ fun CascadeApp(
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(MaterialTheme.colorScheme.background),
+        contentAlignment = Alignment.TopCenter
     ) {
-        // Use smallestScreenWidth (`minOf(maxWidth, maxHeight) >= 600.dp`) AND `!isFullscreenVideo`
-        // so rotating a phone to landscape for fullscreen video NEVER switches to the 3-column tablet layout!
-        val isTablet = minOf(maxWidth, maxHeight) >= 600.dp && !isFullscreenVideo
+        // Tablet Display Fix:
+        // Instead of a broken 3-column tablet split layout, render a fixed mobile-display-like container
+        // (max width 480.dp centered on large tablet screens, full width on mobile phones) so every screen,
+        // card, player, and modal has an identical, unbreakable layout on both phones and tablets!
+        val isLargeTabletViewport = maxWidth > 520.dp && !isFullscreenVideo
+        val mobileContainerModifier = if (isLargeTabletViewport) {
+            Modifier
+                .widthIn(max = 480.dp)
+                .fillMaxWidth()
+                .fillMaxHeight()
+        } else {
+            Modifier.fillMaxSize()
+        }
 
-        if (isTablet) {
-            Row(modifier = Modifier.fillMaxSize()) {
-                NavigationRail(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.onSurface,
-                    header = {
-                        Box(
-                            modifier = Modifier
-                                .padding(top = 16.dp, bottom = 12.dp)
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primaryContainer),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.GraphicEq,
-                                contentDescription = "Logo",
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    },
-                    modifier = Modifier.fillMaxHeight().testTag("tablet_nav_rail")
-                ) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    AppDestination.values().forEach { dest ->
-                        val isSelected = currentDestination == dest && currentSubScreen is SubScreen.None
-                        val iconTint = if (isSelected) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        }
-                        NavigationRailItem(
-                            selected = isSelected,
-                            onClick = {
-                                if (dest == AppDestination.SEARCH) {
-                                    previousSubScreen = currentSubScreen
-                                }
-                                currentSubScreen = SubScreen.None
-                                if (currentDestination != dest) {
-                                    previousDestination = currentDestination
-                                    currentDestination = dest
-                                }
-                            },
-                            icon = {
-                                if (dest == AppDestination.HOME) {
-                                    HomeNavSvgIcon(tint = iconTint, modifier = Modifier.size(20.dp))
-                                } else {
-                                    Icon(
-                                        dest.icon,
-                                        contentDescription = dest.label,
-                                        tint = iconTint
-                                    )
-                                }
-                            },
-                            colors = NavigationRailItemDefaults.colors(
-                                selectedIconColor = MaterialTheme.colorScheme.primary,
-                                indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.weight(1f))
-
-                    val isSettingsSelected = currentSubScreen is SubScreen.SoundSettings
-                    val settingsIconTint = if (isSettingsSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                    NavigationRailItem(
-                        selected = isSettingsSelected,
-                        onClick = { currentSubScreen = SubScreen.SoundSettings },
-                        icon = {
-                            Icon(
-                                Icons.Default.Settings,
-                                contentDescription = "Settings",
-                                tint = settingsIconTint
-                            )
+        Box(modifier = mobileContainerModifier.background(MaterialTheme.colorScheme.background)) {
+            when (val sub = currentSubScreen) {
+                is SubScreen.Artist -> {
+                    BackHandler { currentSubScreen = SubScreen.None }
+                    ArtistScreen(
+                        artistName = sub.artistName,
+                        isChannel = sub.isChannel,
+                        viewModel = viewModel,
+                        playerState = playerState,
+                        onBack = { currentSubScreen = SubScreen.None },
+                        onShareArtist = { artistName ->
+                            SeitharolDeepLinkHelper.shareArtistSystemChooser(context, artistName)
                         },
-                        colors = NavigationRailItemDefaults.colors(
-                            selectedIconColor = MaterialTheme.colorScheme.primary,
-                            indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it, returnSubScreen = currentSubScreen) }
                     )
                 }
-
-                Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                    when (val sub = currentSubScreen) {
-                        is SubScreen.Artist -> ArtistScreen(
-                            artistName = sub.artistName,
-                            isChannel = sub.isChannel,
-                            viewModel = viewModel,
-                            playerState = playerState,
-                            onBack = { currentSubScreen = SubScreen.None },
-                            onShareArtist = { artistName ->
-                                SeitharolDeepLinkHelper.shareArtistSystemChooser(context, artistName)
-                            },
-                            onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it, returnSubScreen = currentSubScreen) }
+                is SubScreen.Playlist -> {
+                    BackHandler { currentSubScreen = sub.returnSubScreen ?: SubScreen.None }
+                    PlaylistScreen(
+                        playlistId = sub.playlistId,
+                        viewModel = viewModel,
+                        playerState = playerState,
+                        onBack = { currentSubScreen = sub.returnSubScreen ?: SubScreen.None },
+                        onAddToPlaylist = { trackToAddToPlaylist = it }
+                    )
+                }
+                is SubScreen.History -> {
+                    BackHandler { currentSubScreen = SubScreen.None }
+                    HistoryScreen(
+                        viewModel = viewModel,
+                        playerState = playerState,
+                        onBack = { currentSubScreen = SubScreen.None },
+                        onAddToPlaylist = { trackToAddToPlaylist = it }
+                    )
+                }
+                is SubScreen.Downloads -> {
+                    BackHandler { currentSubScreen = SubScreen.None }
+                    DownloadsScreen(
+                        viewModel = viewModel,
+                        playerState = playerState,
+                        onBack = { currentSubScreen = SubScreen.None },
+                        onAddToPlaylist = { trackToAddToPlaylist = it }
+                    )
+                }
+                is SubScreen.LikedSongs -> {
+                    BackHandler { currentSubScreen = SubScreen.None }
+                    LikedSongsScreen(
+                        viewModel = viewModel,
+                        playerState = playerState,
+                        onBack = { currentSubScreen = SubScreen.None },
+                        onAddToPlaylist = { trackToAddToPlaylist = it }
+                    )
+                }
+                is SubScreen.InfoDetail -> {
+                    BackHandler { currentSubScreen = SubScreen.None }
+                    InfoDetailScreen(
+                        pageType = sub.pageType,
+                        onBack = { currentSubScreen = SubScreen.None }
+                    )
+                }
+                is SubScreen.SoundSettings -> {
+                    BackHandler { currentSubScreen = SubScreen.None }
+                    com.seitharol.ui.settings.GeneralSettingsScreen(
+                        settingsManager = com.seitharol.data.preferences.AppSettingsManager.getInstance(context),
+                        onOpenInfoPage = { currentSubScreen = SubScreen.InfoDetail(it) },
+                        onNavigateBack = { currentSubScreen = SubScreen.None }
+                    )
+                }
+                is SubScreen.LocalMusic -> {
+                    BackHandler { currentSubScreen = SubScreen.None }
+                    val downloadedTracks by viewModel.downloadedTracks.collectAsState()
+                    fun candidateToDomainTrack(candidate: com.seitharol.data.resolver.CandidateStream): Track {
+                        val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
+                            candidate.videoId.lowercase().endsWith(".mp4") ||
+                            candidate.videoId.lowercase().contains("/video/")
+                        val cleanAlbum = candidate.albumName?.takeUnless {
+                            it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Storage", ignoreCase = true)
+                        }.orEmpty()
+                        val id = if (isVideo) "vidfile_${candidate.videoId.hashCode()}" else "local_${candidate.videoId.hashCode()}"
+                        return Track(
+                            id = id,
+                            title = candidate.title,
+                            artist = candidate.artist,
+                            album = if (isVideo) "MP4 Video" else cleanAlbum,
+                            durationMs = candidate.durationSeconds * 1000L,
+                            artUrl = candidate.thumbnailUrl,
+                            genre = if (isVideo) "Local Video" else "Local Audio",
+                            isDownloaded = true,
+                            isLiked = id in likedTrackIds,
+                            localPath = candidate.videoId,
+                            itag = if (isVideo) 18 else 251,
+                            codec = if (isVideo) "MP4" else "Opus"
                         )
-                        is SubScreen.Playlist -> PlaylistScreen(
-                            playlistId = sub.playlistId,
-                            viewModel = viewModel,
-                            playerState = playerState,
-                            onBack = { currentSubScreen = sub.returnSubScreen ?: SubScreen.None },
-                            onAddToPlaylist = { trackToAddToPlaylist = it }
-                        )
-                        is SubScreen.History -> HistoryScreen(
-                            viewModel = viewModel,
-                            playerState = playerState,
-                            onBack = { currentSubScreen = SubScreen.None },
-                            onAddToPlaylist = { trackToAddToPlaylist = it }
-                        )
-                        is SubScreen.Downloads -> DownloadsScreen(
-                            viewModel = viewModel,
-                            playerState = playerState,
-                            onBack = { currentSubScreen = SubScreen.None },
-                            onAddToPlaylist = { trackToAddToPlaylist = it }
-                        )
-                        is SubScreen.LikedSongs -> LikedSongsScreen(
-                            viewModel = viewModel,
-                            playerState = playerState,
-                            onBack = { currentSubScreen = SubScreen.None },
-                            onAddToPlaylist = { trackToAddToPlaylist = it }
-                        )
-                        is SubScreen.InfoDetail -> InfoDetailScreen(
-                            pageType = sub.pageType,
-                            onBack = { currentSubScreen = SubScreen.None }
-                        )
-                        is SubScreen.SoundSettings -> com.seitharol.ui.settings.GeneralSettingsScreen(
-                            settingsManager = com.seitharol.data.preferences.AppSettingsManager.getInstance(context),
-                            onOpenInfoPage = { currentSubScreen = SubScreen.InfoDetail(it) },
-                            onNavigateBack = { currentSubScreen = SubScreen.None }
-                        )
-                        is SubScreen.LocalMusic -> {
-                            val downloadedTracks by viewModel.downloadedTracks.collectAsState()
-                            val activeDownloads by viewModel.activeDownloads.collectAsState()
-                            com.seitharol.ui.local.LocalMusicScreen(
-                                activeDownloads = activeDownloads,
-                                onCancelDownload = { viewModel.cancelDownload(it) },
-                                onRefreshDownloads = { viewModel.refreshLibrary() },
-                                appDownloadedTracks = downloadedTracks.map {
-                                    com.seitharol.domain.model.NormalizedTrack(
-                                        source = com.seitharol.domain.model.TrackSource.LOCAL_FILE,
-                                        sourceId = it.id,
-                                        title = it.title,
-                                        artists = listOf(it.artist),
-                                        album = it.album,
-                                        durationMs = it.durationMs,
-                                        artUrl = it.artUrl,
-                                        isPlayableNatively = true,
-                                        localPath = it.localPath
-                                    )
-                                },
-                                availablePlaylists = playlists.map { it.id to it.title },
-                                onPlayLocalTrack = { candidate ->
-                                    val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
-                                        candidate.videoId.lowercase().endsWith(".mp4") ||
-                                        candidate.videoId.lowercase().contains("/video/")
-                                    val cleanAlbum = candidate.albumName?.takeUnless {
-                                        it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Storage", ignoreCase = true)
-                                    }.orEmpty()
-                                    val localTrack = Track(
-                                        id = if (isVideo) "vidfile_${candidate.videoId.hashCode()}" else "local_${candidate.videoId.hashCode()}",
-                                        title = candidate.title,
-                                        artist = candidate.artist,
-                                        album = if (isVideo) "MP4 Video" else cleanAlbum,
-                                        durationMs = candidate.durationSeconds * 1000L,
-                                        artUrl = candidate.thumbnailUrl,
-                                        genre = if (isVideo) "Local Video" else "Local Audio",
-                                        isDownloaded = true,
-                                        localPath = candidate.videoId,
-                                        itag = if (isVideo) 18 else 251,
-                                        codec = if (isVideo) "MP4" else "Opus"
-                                    )
-                                    viewModel.playQueue(listOf(localTrack), 0, isPlaylist = true)
-                                    isPlayerExpanded = true
-                                },
-                                onPlayLocalQueue = { candidates, startIndex ->
-                                    val mappedQueue = candidates.map { candidate ->
-                                        val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
-                                            candidate.videoId.lowercase().endsWith(".mp4") ||
-                                            candidate.videoId.lowercase().contains("/video/")
-                                        val cleanAlbum = candidate.albumName?.takeUnless {
-                                            it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Storage", ignoreCase = true)
-                                        }.orEmpty()
-                                        Track(
-                                            id = if (isVideo) "vidfile_${candidate.videoId.hashCode()}" else "local_${candidate.videoId.hashCode()}",
-                                            title = candidate.title,
-                                            artist = candidate.artist,
-                                            album = if (isVideo) "MP4 Video" else cleanAlbum,
-                                            durationMs = candidate.durationSeconds * 1000L,
-                                            artUrl = candidate.thumbnailUrl,
-                                            genre = if (isVideo) "Local Video" else "Local Audio",
-                                            isDownloaded = true,
-                                            localPath = candidate.videoId,
-                                            itag = if (isVideo) 18 else 251,
-                                            codec = if (isVideo) "MP4" else "Opus"
-                                        )
-                                    }
-                                    if (mappedQueue.isNotEmpty()) {
-                                        viewModel.playQueue(mappedQueue, startIndex.coerceIn(0, mappedQueue.lastIndex), isPlaylist = true)
-                                        isPlayerExpanded = true
-                                    }
-                                },
-                                onAddLocalTrackToPlaylist = { plId, candidate ->
-                                    val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
-                                        candidate.videoId.lowercase().endsWith(".mp4") ||
-                                        candidate.videoId.lowercase().contains("/video/")
-                                    val cleanAlbum = candidate.albumName?.takeUnless {
-                                        it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Storage", ignoreCase = true)
-                                    }.orEmpty()
-                                    val localTrack = Track(
-                                        id = if (isVideo) "vidfile_${candidate.videoId.hashCode()}" else "local_${candidate.videoId.hashCode()}",
-                                        title = candidate.title,
-                                        artist = candidate.artist,
-                                        album = if (isVideo) "MP4 Video" else cleanAlbum,
-                                        durationMs = candidate.durationSeconds * 1000L,
-                                        artUrl = candidate.thumbnailUrl,
-                                        genre = if (isVideo) "Local Video" else "Local Audio",
-                                        isDownloaded = true,
-                                        localPath = candidate.videoId,
-                                        itag = if (isVideo) 18 else 251,
-                                        codec = if (isVideo) "MP4" else "Opus"
-                                    )
-                                    viewModel.addTrackToPlaylist(plId, localTrack)
-                                },
-                                onBack = { currentSubScreen = SubScreen.None }
+                    }
+                    com.seitharol.ui.local.LocalMusicScreen(
+                        appDownloadedTracks = downloadedTracks.map {
+                            com.seitharol.domain.model.NormalizedTrack(
+                                source = com.seitharol.domain.model.TrackSource.LOCAL_FILE,
+                                sourceId = it.id,
+                                title = it.title,
+                                artists = listOf(it.artist),
+                                album = it.album,
+                                durationMs = it.durationMs,
+                                artUrl = it.artUrl,
+                                isPlayableNatively = true,
+                                localPath = it.localPath,
+                                isLiked = it.id in likedTrackIds || it.isLiked
                             )
+                        },
+                        availablePlaylists = playlists.map { it.id to it.title },
+                        likedTrackIds = likedTrackIds,
+                        onPlayLocalTrack = { candidate ->
+                            val localTrack = candidateToDomainTrack(candidate)
+                            viewModel.playQueue(listOf(localTrack), 0, isPlaylist = true)
+                            expandFullPlayer()
+                        },
+                        onPlayLocalQueue = { candidates, startIndex ->
+                            val mappedQueue = candidates.map { candidateToDomainTrack(it) }
+                            if (mappedQueue.isNotEmpty()) {
+                                viewModel.playQueue(mappedQueue, startIndex.coerceIn(0, mappedQueue.lastIndex), isPlaylist = true)
+                                expandFullPlayer()
+                            }
+                        },
+                        onPlayNextLocalTrack = { candidate ->
+                            viewModel.playNext(candidateToDomainTrack(candidate))
+                        },
+                        onAddLocalTrackToQueue = { candidate ->
+                            viewModel.addToQueue(candidateToDomainTrack(candidate))
+                        },
+                        onToggleLikeLocalTrack = { candidate ->
+                            viewModel.toggleLike(candidateToDomainTrack(candidate))
+                        },
+                        onAddLocalTrackToPlaylist = { plId, candidate ->
+                            viewModel.addTrackToPlaylist(plId, candidateToDomainTrack(candidate))
+                        },
+                        onBack = { currentSubScreen = SubScreen.None }
+                    )
+                }
+                is SubScreen.Discover -> {
+                    DiscoverSubScreenHost(
+                        viewModel = viewModel,
+                        onVisitArtist = { name -> currentSubScreen = SubScreen.Artist(name) },
+                        onOpenFullSongMaximized = { resolvedTrack ->
+                            currentSubScreen = SubScreen.None
+                            viewModel.playNormalizedTrackFull(resolvedTrack)
+                            expandFullPlayer()
+                        },
+                        onNavigateBack = { currentSubScreen = SubScreen.None }
+                    )
+                }
+                is SubScreen.NotFound -> {
+                    BackHandler { currentSubScreen = SubScreen.None }
+                    NotFound404Screen(
+                        title = sub.title,
+                        message = "The requested page, playlist, or link could not be found.",
+                        attemptedPathOrQuery = sub.queryOrUrl,
+                        onBack = { currentSubScreen = SubScreen.None },
+                        onGoHome = {
+                            currentSubScreen = SubScreen.None
+                            currentDestination = AppDestination.HOME
                         }
-                        is SubScreen.Discover -> {
-                            DiscoverSubScreenHost(
-                                viewModel = viewModel,
-                                onVisitArtist = { name -> currentSubScreen = SubScreen.Artist(name) },
-                                onOpenFullSongMaximized = { resolvedTrack ->
-                                    currentSubScreen = SubScreen.None
-                                    viewModel.playNormalizedTrackFull(resolvedTrack)
-                                    isPlayerExpanded = true
-                                },
-                                onNavigateBack = { currentSubScreen = SubScreen.None }
-                            )
-                        }
-                        is SubScreen.NotFound -> {
-                            NotFound404Screen(
-                                title = sub.title,
-                                message = "The requested page, playlist, or link could not be found.",
-                                attemptedPathOrQuery = sub.queryOrUrl,
-                                onBack = { currentSubScreen = SubScreen.None },
-                                onGoHome = {
-                                    currentSubScreen = SubScreen.None
-                                    currentDestination = AppDestination.HOME
+                    )
+                }
+                is SubScreen.None -> {
+                    when (currentDestination) {
+                        AppDestination.HOME -> HomeScreen(
+                            viewModel = viewModel,
+                            playerState = playerState,
+                            onNavigateToSearch = {
+                                previousSubScreen = currentSubScreen
+                                if (currentDestination != AppDestination.SEARCH) {
+                                    previousDestination = currentDestination
+                                    currentDestination = AppDestination.SEARCH
                                 }
-                            )
-                        }
-                        is SubScreen.None -> when (currentDestination) {
-                            AppDestination.HOME -> HomeScreen(
+                            },
+                            onNavigateToProfile = {
+                                if (currentDestination != AppDestination.PROFILE) {
+                                    previousDestination = currentDestination
+                                    currentDestination = AppDestination.PROFILE
+                                }
+                            },
+                            onNavigateToArtist = { currentSubScreen = SubScreen.Artist(it) },
+                            onNavigateToPlaylist = {
+                                if (it == "liked_songs") currentSubScreen = SubScreen.LikedSongs
+                                else currentSubScreen = SubScreen.Playlist(it)
+                            },
+                            onOpenNotifications = { showNotifications = true }
+                        )
+                        AppDestination.SEARCH -> {
+                            BackHandler {
+                                dismissGlobalKeyboard()
+                                if (viewModel.searchQuery.value.isNotEmpty()) {
+                                    viewModel.searchQuery.value = ""
+                                } else {
+                                    if (previousSubScreen !is SubScreen.None) {
+                                        currentSubScreen = previousSubScreen
+                                        previousSubScreen = SubScreen.None
+                                    } else {
+                                        currentDestination = if (previousDestination != AppDestination.SEARCH) previousDestination else AppDestination.HOME
+                                    }
+                                }
+                            }
+                            SearchScreen(
                                 viewModel = viewModel,
                                 playerState = playerState,
-                                onNavigateToSearch = {
-                                    previousSubScreen = currentSubScreen
-                                    if (currentDestination != AppDestination.SEARCH) {
-                                        previousDestination = currentDestination
-                                        currentDestination = AppDestination.SEARCH
-                                    }
+                                onNavigateToArtist = {
+                                    dismissGlobalKeyboard()
+                                    currentSubScreen = SubScreen.Artist(it)
                                 },
-                                onNavigateToProfile = {
-                                    if (currentDestination != AppDestination.PROFILE) {
-                                        previousDestination = currentDestination
-                                        currentDestination = AppDestination.PROFILE
-                                    }
-                                },
-                                onNavigateToArtist = { currentSubScreen = SubScreen.Artist(it) },
                                 onNavigateToPlaylist = {
-                                    if (it == "liked_songs") currentSubScreen = SubScreen.LikedSongs
-                                    else currentSubScreen = SubScreen.Playlist(it)
+                                    dismissGlobalKeyboard()
+                                    currentSubScreen = SubScreen.Playlist(it)
                                 },
-                                onOpenNotifications = { showNotifications = true }
-                            )
-                            AppDestination.SEARCH -> SearchScreen(
-                                viewModel = viewModel,
-                                playerState = playerState,
-                                onNavigateToArtist = { currentSubScreen = SubScreen.Artist(it) },
-                                onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) },
                                 onNavigateToHome = {
+                                    dismissGlobalKeyboard()
                                     if (previousSubScreen !is SubScreen.None) {
                                         currentSubScreen = previousSubScreen
                                         previousSubScreen = SubScreen.None
@@ -577,13 +566,20 @@ fun CascadeApp(
                                         currentDestination = if (previousDestination != AppDestination.SEARCH) previousDestination else AppDestination.HOME
                                     }
                                 },
-                                onOpenDiscover = { currentSubScreen = SubScreen.Discover },
+                                onOpenDiscover = {
+                                    dismissGlobalKeyboard()
+                                    currentSubScreen = SubScreen.Discover
+                                },
                                 onPlayTrackAndMaximize = { track ->
+                                    dismissGlobalKeyboard()
                                     viewModel.playTrack(track)
-                                    isPlayerExpanded = true
+                                    expandFullPlayer()
                                 }
                             )
-                            AppDestination.LIBRARY -> LibraryScreen(
+                        }
+                        AppDestination.LIBRARY -> {
+                            BackHandler { currentDestination = AppDestination.HOME }
+                            LibraryScreen(
                                 viewModel = viewModel,
                                 playerState = playerState,
                                 onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) },
@@ -594,7 +590,10 @@ fun CascadeApp(
                                 onNavigateToLocalMusic = { currentSubScreen = SubScreen.LocalMusic },
                                 onCreatePlaylist = { showCreatePlaylistDialog = true }
                             )
-                            AppDestination.PROFILE -> ProfileScreen(
+                        }
+                        AppDestination.PROFILE -> {
+                            BackHandler { currentDestination = AppDestination.HOME }
+                            ProfileScreen(
                                 viewModel = viewModel,
                                 onNavigateToSoundSettings = { currentSubScreen = SubScreen.SoundSettings },
                                 onOpenNotifications = { showNotifications = true },
@@ -603,440 +602,154 @@ fun CascadeApp(
                             )
                         }
                     }
+                }
+            }
 
-                    SnackbarHost(
-                        hostState = snackbarHostState,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(horizontal = 16.dp, vertical = 20.dp)
-                            .zIndex(100f),
-                        snackbar = { data ->
-                            Snackbar(
-                                snackbarData = data,
-                                containerColor = Color(0xFF222426),
-                                contentColor = Color.White,
-                                actionColor = MaterialTheme.colorScheme.primary,
-                                dismissActionContentColor = Color.White,
-                                shape = RoundedCornerShape(14.dp)
+            // Effective expand progress combining animatable state + real-time user drag gesture
+            val effectiveExpandProgress = if (isPlayerExpanded) {
+                (playerMorphProgress.value * (1f - activeSheetDragFraction)).coerceIn(0f, 1f)
+            } else {
+                0f
+            }
+
+            // MiniPlayer + Floating Navigation Dock
+            // MiniPlayer remains mounted during player slide-down and smoothly morphs in as effectiveExpandProgress -> 0f,
+            // so the full player directly converts into the MiniPlayer div without hiding and popping up!
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .zIndex(10f),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                if (playerState.currentTrack != null && currentSubScreen !is SubScreen.Discover && !isInPiPMode) {
+                    val miniAlpha = (1f - (effectiveExpandProgress * 1.15f)).coerceIn(0f, 1f)
+                    val miniScale = 0.96f + (0.04f * miniAlpha)
+                    if (miniAlpha > 0.01f || !isPlayerExpanded) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .graphicsLayer {
+                                    alpha = if (!isPlayerExpanded) 1f else miniAlpha
+                                    scaleX = if (!isPlayerExpanded) 1f else miniScale
+                                    scaleY = if (!isPlayerExpanded) 1f else miniScale
+                                }
+                        ) {
+                            MiniPlayer(
+                                playerState = playerState,
+                                onExpand = {
+                                    dismissGlobalKeyboard()
+                                    expandFullPlayer()
+                                },
+                                onTogglePlay = { viewModel.togglePlayPause() },
+                                onPrevious = { viewModel.previous() },
+                                onNext = { viewModel.next() },
+                                onDismissPlayback = { viewModel.stopPlayback() }
                             )
                         }
-                    )
+                    }
                 }
 
-                Surface(
-                    modifier = Modifier
-                        .widthIn(min = 340.dp, max = 400.dp)
-                        .fillMaxHeight(),
-                    color = SeitharolBg,
-                    tonalElevation = 2.dp
-                ) {
-                    if (playerState.currentTrack != null) {
-                        PlayerScreen(
-                            viewModel = viewModel,
-                            playerState = playerState,
-                            onDismiss = { },
-                            onOpenEqualizer = { currentSubScreen = SubScreen.SoundSettings },
-                            onOpenSleepTimer = { showSleepTimer = true },
-                            onShareTrack = { title ->
-                                runCatching {
-                                    val shareMsg = playerState.currentTrack?.let {
-                                        SeitharolDeepLinkHelper.buildTrackShareMessage(it)
-                                    } ?: "Listen to $title on Seitharol!"
-                                    val sendIntent = Intent().apply {
-                                        action = Intent.ACTION_SEND
-                                        putExtra(Intent.EXTRA_TEXT, shareMsg)
-                                        type = "text/plain"
+                if (currentSubScreen is SubScreen.None) {
+                    // Floating Navigation Bar Div: SVG icons are strictly #FFFFFF (Color(0xFFFFFFFF)) instead of red!
+                    val isDarkTheme = LocalIsDarkTheme.current
+                    val navBarContainerColor = if (isDarkTheme) Color(0xFF1E2022) else Color(0xFF1B1C1E)
+                    Surface(
+                        modifier = Modifier
+                            .padding(bottom = 16.dp, top = 4.dp)
+                            .width(236.dp)
+                            .height(60.dp)
+                            .testTag("mobile_floating_nav"),
+                        shape = RoundedCornerShape(30.dp),
+                        color = navBarContainerColor,
+                        shadowElevation = 12.dp
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalArrangement = Arrangement.SpaceAround,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            AppDestination.values().forEach { dest ->
+                                val isSelected = currentDestination == dest
+                                // Strictly #FFFFFF white SVG tint in nav div (never red!)
+                                val iconTint = if (isSelected) {
+                                    Color(0xFFFFFFFF)
+                                } else {
+                                    Color(0xFFFFFFFF).copy(alpha = 0.65f)
+                                }
+                                Surface(
+                                    modifier = Modifier.size(44.dp),
+                                    shape = CircleShape,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                    onClick = {
+                                        dismissGlobalKeyboard()
+                                        if (dest == AppDestination.SEARCH) {
+                                            previousSubScreen = currentSubScreen
+                                        }
+                                        currentSubScreen = SubScreen.None
+                                        if (currentDestination != dest) {
+                                            previousDestination = currentDestination
+                                            currentDestination = dest
+                                        }
                                     }
-                                    context.startActivity(Intent.createChooser(sendIntent, "Share Track"))
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        if (dest == AppDestination.HOME) {
+                                            HomeNavSvgIcon(tint = iconTint, modifier = Modifier.size(20.dp))
+                                        } else {
+                                            Icon(
+                                                imageVector = dest.icon,
+                                                contentDescription = dest.label,
+                                                tint = iconTint,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    }
                                 }
                             }
-                        )
-                    } else {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "Select a song to start playback",
-                                color = SeitharolTextSecondary,
-                                fontFamily = OutfitFontFamily
-                            )
                         }
                     }
                 }
             }
-        } else {
-            Box(modifier = Modifier.fillMaxSize()) {
-                when (val sub = currentSubScreen) {
-                    is SubScreen.Artist -> {
-                        BackHandler { currentSubScreen = SubScreen.None }
-                        ArtistScreen(
-                            artistName = sub.artistName,
-                            isChannel = sub.isChannel,
-                            viewModel = viewModel,
-                            playerState = playerState,
-                            onBack = { currentSubScreen = SubScreen.None },
-                            onShareArtist = { artistName ->
-                                SeitharolDeepLinkHelper.shareArtistSystemChooser(context, artistName)
-                            },
-                            onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it, returnSubScreen = currentSubScreen) }
-                        )
-                    }
-                    is SubScreen.Playlist -> {
-                        BackHandler { currentSubScreen = sub.returnSubScreen ?: SubScreen.None }
-                        PlaylistScreen(
-                            playlistId = sub.playlistId,
-                            viewModel = viewModel,
-                            playerState = playerState,
-                            onBack = { currentSubScreen = sub.returnSubScreen ?: SubScreen.None },
-                            onAddToPlaylist = { trackToAddToPlaylist = it }
-                        )
-                    }
-                    is SubScreen.History -> {
-                        BackHandler { currentSubScreen = SubScreen.None }
-                        HistoryScreen(
-                            viewModel = viewModel,
-                            playerState = playerState,
-                            onBack = { currentSubScreen = SubScreen.None },
-                            onAddToPlaylist = { trackToAddToPlaylist = it }
-                        )
-                    }
-                    is SubScreen.Downloads -> {
-                        BackHandler { currentSubScreen = SubScreen.None }
-                        DownloadsScreen(
-                            viewModel = viewModel,
-                            playerState = playerState,
-                            onBack = { currentSubScreen = SubScreen.None },
-                            onAddToPlaylist = { trackToAddToPlaylist = it }
-                        )
-                    }
-                    is SubScreen.LikedSongs -> {
-                        BackHandler { currentSubScreen = SubScreen.None }
-                        LikedSongsScreen(
-                            viewModel = viewModel,
-                            playerState = playerState,
-                            onBack = { currentSubScreen = SubScreen.None },
-                            onAddToPlaylist = { trackToAddToPlaylist = it }
-                        )
-                    }
-                    is SubScreen.InfoDetail -> {
-                        BackHandler { currentSubScreen = SubScreen.None }
-                        InfoDetailScreen(
-                            pageType = sub.pageType,
-                            onBack = { currentSubScreen = SubScreen.None }
-                        )
-                    }
-                    is SubScreen.SoundSettings -> {
-                        BackHandler { currentSubScreen = SubScreen.None }
-                        com.seitharol.ui.settings.GeneralSettingsScreen(
-                            settingsManager = com.seitharol.data.preferences.AppSettingsManager.getInstance(context),
-                            onOpenInfoPage = { currentSubScreen = SubScreen.InfoDetail(it) },
-                            onNavigateBack = { currentSubScreen = SubScreen.None }
-                        )
-                    }
-                    is SubScreen.LocalMusic -> {
-                        BackHandler { currentSubScreen = SubScreen.None }
-                        val downloadedTracks by viewModel.downloadedTracks.collectAsState()
-                        val activeDownloads by viewModel.activeDownloads.collectAsState()
-                        com.seitharol.ui.local.LocalMusicScreen(
-                            activeDownloads = activeDownloads,
-                            onCancelDownload = { viewModel.cancelDownload(it) },
-                            onRefreshDownloads = { viewModel.refreshLibrary() },
-                            appDownloadedTracks = downloadedTracks.map {
-                                com.seitharol.domain.model.NormalizedTrack(
-                                    source = com.seitharol.domain.model.TrackSource.LOCAL_FILE,
-                                    sourceId = it.id,
-                                    title = it.title,
-                                    artists = listOf(it.artist),
-                                    album = it.album,
-                                    durationMs = it.durationMs,
-                                    artUrl = it.artUrl,
-                                    isPlayableNatively = true,
-                                    localPath = it.localPath
-                                )
-                            },
-                            availablePlaylists = playlists.map { it.id to it.title },
-                            onPlayLocalTrack = { candidate ->
-                                val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
-                                    candidate.videoId.lowercase().endsWith(".mp4") ||
-                                    candidate.videoId.lowercase().contains("/video/")
-                                val cleanAlbum = candidate.albumName?.takeUnless {
-                                    it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Storage", ignoreCase = true)
-                                }.orEmpty()
-                                val localTrack = Track(
-                                    id = if (isVideo) "vidfile_${candidate.videoId.hashCode()}" else "local_${candidate.videoId.hashCode()}",
-                                    title = candidate.title,
-                                    artist = candidate.artist,
-                                    album = if (isVideo) "MP4 Video" else cleanAlbum,
-                                    durationMs = candidate.durationSeconds * 1000L,
-                                    artUrl = candidate.thumbnailUrl,
-                                    genre = if (isVideo) "Local Video" else "Local Audio",
-                                    isDownloaded = true,
-                                    localPath = candidate.videoId,
-                                    itag = if (isVideo) 18 else 251,
-                                    codec = if (isVideo) "MP4" else "Opus"
-                                )
-                                viewModel.playQueue(listOf(localTrack), 0, isPlaylist = true)
-                                isPlayerExpanded = true
-                            },
-                            onPlayLocalQueue = { candidates, startIndex ->
-                                val mappedQueue = candidates.map { candidate ->
-                                    val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
-                                        candidate.videoId.lowercase().endsWith(".mp4") ||
-                                        candidate.videoId.lowercase().contains("/video/")
-                                    val cleanAlbum = candidate.albumName?.takeUnless {
-                                        it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Storage", ignoreCase = true)
-                                    }.orEmpty()
-                                    Track(
-                                        id = if (isVideo) "vidfile_${candidate.videoId.hashCode()}" else "local_${candidate.videoId.hashCode()}",
-                                        title = candidate.title,
-                                        artist = candidate.artist,
-                                        album = if (isVideo) "MP4 Video" else cleanAlbum,
-                                        durationMs = candidate.durationSeconds * 1000L,
-                                        artUrl = candidate.thumbnailUrl,
-                                        genre = if (isVideo) "Local Video" else "Local Audio",
-                                        isDownloaded = true,
-                                        localPath = candidate.videoId,
-                                        itag = if (isVideo) 18 else 251,
-                                        codec = if (isVideo) "MP4" else "Opus"
-                                    )
-                                }
-                                if (mappedQueue.isNotEmpty()) {
-                                    viewModel.playQueue(mappedQueue, startIndex.coerceIn(0, mappedQueue.lastIndex), isPlaylist = true)
-                                    isPlayerExpanded = true
-                                }
-                            },
-                            onAddLocalTrackToPlaylist = { plId, candidate ->
-                                val isVideo = candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
-                                    candidate.videoId.lowercase().endsWith(".mp4") ||
-                                    candidate.videoId.lowercase().contains("/video/")
-                                val cleanAlbum = candidate.albumName?.takeUnless {
-                                    it.equals("YouTube Video", ignoreCase = true) || it.equals("Local Storage", ignoreCase = true)
-                                }.orEmpty()
-                                val localTrack = Track(
-                                    id = if (isVideo) "vidfile_${candidate.videoId.hashCode()}" else "local_${candidate.videoId.hashCode()}",
-                                    title = candidate.title,
-                                    artist = candidate.artist,
-                                    album = if (isVideo) "MP4 Video" else cleanAlbum,
-                                    durationMs = candidate.durationSeconds * 1000L,
-                                    artUrl = candidate.thumbnailUrl,
-                                    genre = if (isVideo) "Local Video" else "Local Audio",
-                                    isDownloaded = true,
-                                    localPath = candidate.videoId,
-                                    itag = if (isVideo) 18 else 251,
-                                    codec = if (isVideo) "MP4" else "Opus"
-                                )
-                                viewModel.addTrackToPlaylist(plId, localTrack)
-                            },
-                            onBack = { currentSubScreen = SubScreen.None }
-                        )
-                    }
-                    is SubScreen.Discover -> {
-                        DiscoverSubScreenHost(
-                            viewModel = viewModel,
-                            onVisitArtist = { name -> currentSubScreen = SubScreen.Artist(name) },
-                            onOpenFullSongMaximized = { resolvedTrack ->
-                                currentSubScreen = SubScreen.None
-                                viewModel.playNormalizedTrackFull(resolvedTrack)
-                                isPlayerExpanded = true
-                            },
-                            onNavigateBack = { currentSubScreen = SubScreen.None }
-                        )
-                    }
-                    is SubScreen.NotFound -> {
-                        BackHandler { currentSubScreen = SubScreen.None }
-                        NotFound404Screen(
-                            title = sub.title,
-                            message = "The requested page, playlist, or link could not be found.",
-                            attemptedPathOrQuery = sub.queryOrUrl,
-                            onBack = { currentSubScreen = SubScreen.None },
-                            onGoHome = {
-                                currentSubScreen = SubScreen.None
-                                currentDestination = AppDestination.HOME
-                            }
-                        )
-                    }
-                    is SubScreen.None -> {
-                        when (currentDestination) {
-                            AppDestination.HOME -> HomeScreen(
-                                viewModel = viewModel,
-                                playerState = playerState,
-                                onNavigateToSearch = {
-                                    previousSubScreen = currentSubScreen
-                                    if (currentDestination != AppDestination.SEARCH) {
-                                        previousDestination = currentDestination
-                                        currentDestination = AppDestination.SEARCH
-                                    }
-                                },
-                                onNavigateToProfile = {
-                                    if (currentDestination != AppDestination.PROFILE) {
-                                        previousDestination = currentDestination
-                                        currentDestination = AppDestination.PROFILE
-                                    }
-                                },
-                                onNavigateToArtist = { currentSubScreen = SubScreen.Artist(it) },
-                                onNavigateToPlaylist = {
-                                    if (it == "liked_songs") currentSubScreen = SubScreen.LikedSongs
-                                    else currentSubScreen = SubScreen.Playlist(it)
-                                },
-                                onOpenNotifications = { showNotifications = true }
-                            )
-                            AppDestination.SEARCH -> {
-                                BackHandler {
-                                    if (viewModel.searchQuery.value.isNotEmpty()) {
-                                        viewModel.searchQuery.value = ""
-                                    } else {
-                                        if (previousSubScreen !is SubScreen.None) {
-                                            currentSubScreen = previousSubScreen
-                                            previousSubScreen = SubScreen.None
-                                        } else {
-                                            currentDestination = if (previousDestination != AppDestination.SEARCH) previousDestination else AppDestination.HOME
-                                        }
-                                    }
-                                }
-                                SearchScreen(
-                                    viewModel = viewModel,
-                                    playerState = playerState,
-                                    onNavigateToArtist = { currentSubScreen = SubScreen.Artist(it) },
-                                    onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) },
-                                    onNavigateToHome = {
-                                        if (previousSubScreen !is SubScreen.None) {
-                                            currentSubScreen = previousSubScreen
-                                            previousSubScreen = SubScreen.None
-                                        } else {
-                                            currentDestination = if (previousDestination != AppDestination.SEARCH) previousDestination else AppDestination.HOME
-                                        }
-                                    },
-                                    onOpenDiscover = { currentSubScreen = SubScreen.Discover },
-                                    onPlayTrackAndMaximize = { track ->
-                                        viewModel.playTrack(track)
-                                        isPlayerExpanded = true
-                                    }
-                                )
-                            }
-                            AppDestination.LIBRARY -> {
-                                BackHandler { currentDestination = AppDestination.HOME }
-                                LibraryScreen(
-                                    viewModel = viewModel,
-                                    playerState = playerState,
-                                    onNavigateToPlaylist = { currentSubScreen = SubScreen.Playlist(it) },
-                                    onNavigateToArtist = { currentSubScreen = SubScreen.Artist(it) },
-                                    onNavigateToHistory = { currentSubScreen = SubScreen.History },
-                                    onNavigateToDownloads = { currentSubScreen = SubScreen.Downloads },
-                                    onNavigateToLikedSongs = { currentSubScreen = SubScreen.LikedSongs },
-                                    onNavigateToLocalMusic = { currentSubScreen = SubScreen.LocalMusic },
-                                    onCreatePlaylist = { showCreatePlaylistDialog = true }
-                                )
-                            }
-                            AppDestination.PROFILE -> {
-                                BackHandler { currentDestination = AppDestination.HOME }
-                                ProfileScreen(
-                                    viewModel = viewModel,
-                                    onNavigateToSoundSettings = { currentSubScreen = SubScreen.SoundSettings },
-                                    onOpenNotifications = { showNotifications = true },
-                                    onOpenSleepTimer = { showSleepTimer = true },
-                                    onOpenInfoPage = { currentSubScreen = SubScreen.InfoDetail(it) }
-                                )
-                            }
-                        }
-                    }
-                }
 
-                Column(
+            // Full Player Sheet: Directly morphs down to the MiniPlayer dock position without hiding off-screen first
+            if (isPlayerExpanded || playerMorphProgress.value > 0.01f) {
+                val density = LocalDensity.current
+                val containerHeightPx = with(density) { maxHeight.toPx().coerceAtLeast(1f) }
+                val miniDockBottomOffsetPx = with(density) {
+                    (if (currentSubScreen is SubScreen.None) 144.dp else 72.dp).toPx()
+                }
+                val targetMorphTranslateY = (containerHeightPx - miniDockBottomOffsetPx).coerceAtLeast(1f)
+                val currentTranslateY = targetMorphTranslateY * (1f - effectiveExpandProgress)
+                val sheetCorner = (22f * (1f - effectiveExpandProgress)).dp
+
+                Box(
                     modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .zIndex(10f),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    if (playerState.currentTrack != null && !isPlayerExpanded && currentSubScreen !is SubScreen.Discover && !isInPiPMode) {
-                        MiniPlayer(
-                            playerState = playerState,
-                            onExpand = { isPlayerExpanded = true },
-                            onTogglePlay = { viewModel.togglePlayPause() },
-                            onPrevious = { viewModel.previous() },
-                            onNext = { viewModel.next() },
-                            onDismissPlayback = { viewModel.stopPlayback() }
-                        )
-                    }
-
-                    if (currentSubScreen is SubScreen.None) {
-                        Surface(
-                            modifier = Modifier
-                                .padding(bottom = 16.dp, top = 4.dp)
-                                .width(230.dp)
-                                .height(60.dp)
-                                .testTag("mobile_floating_nav"),
-                            shape = RoundedCornerShape(30.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            shadowElevation = 10.dp
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxSize(),
-                                horizontalArrangement = Arrangement.SpaceAround,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                AppDestination.values().forEach { dest ->
-                                    val isSelected = currentDestination == dest
-                                    val iconTint = if (isSelected) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    }
-                                    Surface(
-                                        modifier = Modifier.size(44.dp),
-                                        shape = CircleShape,
-                                        color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent,
-                                        onClick = {
-                                            if (dest == AppDestination.SEARCH) {
-                                                previousSubScreen = currentSubScreen
-                                            }
-                                            currentSubScreen = SubScreen.None
-                                            if (currentDestination != dest) {
-                                                previousDestination = currentDestination
-                                                currentDestination = dest
-                                            }
-                                        }
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            if (dest == AppDestination.HOME) {
-                                                HomeNavSvgIcon(tint = iconTint, modifier = Modifier.size(20.dp))
-                                            } else {
-                                                Icon(
-                                                    imageVector = dest.icon,
-                                                    contentDescription = dest.label,
-                                                    tint = iconTint,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                        .fillMaxSize()
+                        .zIndex(30f)
+                        .graphicsLayer {
+                            translationY = currentTranslateY
+                            alpha = (effectiveExpandProgress * 1.15f).coerceIn(0f, 1f)
+                            val scale = 0.94f + (0.06f * effectiveExpandProgress)
+                            scaleX = scale
+                            scaleY = scale
+                            shape = RoundedCornerShape(sheetCorner)
+                            clip = effectiveExpandProgress < 0.99f
                         }
-                    }
-                }
-
-                AnimatedVisibility(
-                    visible = isPlayerExpanded,
-                    modifier = Modifier.zIndex(30f),
-                    enter = slideInVertically(
-                        animationSpec = tween(durationMillis = 280),
-                        initialOffsetY = { it }
-                    ) + fadeIn(animationSpec = tween(220)),
-                    exit = slideOutVertically(
-                        animationSpec = tween(durationMillis = 240),
-                        targetOffsetY = { it }
-                    ) + fadeOut(animationSpec = tween(180))
                 ) {
-                    BackHandler { isPlayerExpanded = false }
+                    BackHandler(enabled = isPlayerExpanded) {
+                        minimizeToMiniPlayer()
+                    }
                     PlayerScreen(
                         viewModel = viewModel,
                         playerState = playerState,
-                        onDismiss = { isPlayerExpanded = false },
+                        onDismiss = { minimizeToMiniPlayer() },
+                        onDragProgressChanged = { dragFrac ->
+                            activeSheetDragFraction = dragFrac.coerceIn(0f, 1f)
+                        },
                         onOpenEqualizer = {
-                            isPlayerExpanded = false
+                            minimizeToMiniPlayer()
                             currentSubScreen = SubScreen.SoundSettings
                         },
                         onOpenSleepTimer = { showSleepTimer = true },
@@ -1055,37 +768,36 @@ fun CascadeApp(
                         },
                         onAddToPlaylist = { trackToAddToPlaylist = it },
                         onNavigateToPlaylist = { plId ->
-                            isPlayerExpanded = false
+                            minimizeToMiniPlayer()
                             currentSubScreen = SubScreen.Playlist(plId)
                         }
                     )
                 }
-
-                // High-contrast Snackbar alert positioned above MiniPlayer with zIndex(100f)
-                // so it is never hidden behind MiniPlayer and never suffers from white-on-white text
-                SnackbarHost(
-                    hostState = snackbarHostState,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .navigationBarsPadding()
-                        .padding(
-                            start = 16.dp,
-                            end = 16.dp,
-                            bottom = if (playerState.currentTrack != null && !isPlayerExpanded) 152.dp else 92.dp
-                        )
-                        .zIndex(100f),
-                    snackbar = { data ->
-                        Snackbar(
-                            snackbarData = data,
-                            containerColor = Color(0xFF222426),
-                            contentColor = Color.White,
-                            actionColor = MaterialTheme.colorScheme.primary,
-                            dismissActionContentColor = Color.White,
-                            shape = RoundedCornerShape(14.dp)
-                        )
-                    }
-                )
             }
+
+            // High-contrast Snackbar alert positioned above MiniPlayer with zIndex(100f)
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(
+                        start = 16.dp,
+                        end = 16.dp,
+                        bottom = if (playerState.currentTrack != null && !isPlayerExpanded) 152.dp else 92.dp
+                    )
+                    .zIndex(100f),
+                snackbar = { data ->
+                    Snackbar(
+                        snackbarData = data,
+                        containerColor = Color(0xFF222426),
+                        contentColor = Color.White,
+                        actionColor = MaterialTheme.colorScheme.primary,
+                        dismissActionContentColor = Color.White,
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                }
+            )
         }
 
         if (showSleepTimer) {
@@ -1142,7 +854,7 @@ fun CascadeApp(
             val dispPos = playerState.currentPositionMs.coerceAtLeast(0L)
             val isSingleLoop = playerState.repeatMode == com.example.player.RepeatMode.ONE
             val fullscreenNextTrack = when {
-                isSingleLoop -> null
+                !isAutoplayEnabled || isSingleLoop -> null
                 playerState.currentIndex in 0 until playerState.queue.size - 1 ->
                     playerState.queue[playerState.currentIndex + 1]
                 playerState.repeatMode == com.example.player.RepeatMode.ALL && playerState.queue.size > 1 ->
@@ -1151,7 +863,8 @@ fun CascadeApp(
             }
             val fullscreenRemainingMs = (totalDur - dispPos).coerceAtLeast(0L)
             var dismissedFullscreenCountdown by remember(fsTrack.id, playerState.repeatMode) { mutableStateOf(false) }
-            val showFullscreenCountdown = playerState.isPlaying &&
+            val showFullscreenCountdown = isAutoplayEnabled &&
+                playerState.isPlaying &&
                 !playerState.isBuffering &&
                 !isSingleLoop &&
                 playerState.durationMs >= 15_000L &&

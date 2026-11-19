@@ -852,39 +852,28 @@ fun ArtistScreen(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Box(modifier = Modifier.size(84.dp)) {
-                                    if (page.avatarUrl.isNotBlank()) {
-                                        AsyncImage(
-                                            model = page.avatarUrl,
-                                            contentDescription = page.name,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier
-                                                .size(84.dp)
-                                                .clip(RoundedCornerShape(22.dp))
-                                                .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(22.dp))
+                                    val profileSvgPainter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.ic_artist_profile_svg)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(84.dp)
+                                            .clip(RoundedCornerShape(22.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                                            .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(22.dp)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        com.seitharol.ui.components.ArtistProfileSvgIcon(
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(38.dp)
                                         )
-                                    } else {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(84.dp)
-                                                .clip(RoundedCornerShape(22.dp))
-                                                .background(
-                                                    Brush.linearGradient(
-                                                        colors = listOf(
-                                                            MaterialTheme.colorScheme.primary,
-                                                            MaterialTheme.colorScheme.primaryContainer
-                                                        )
-                                                    )
-                                                )
-                                                .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(22.dp)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            val initial = page.name.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "A"
-                                            Text(
-                                                text = initial,
-                                                color = Color.White,
-                                                fontSize = 32.sp,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                fontFamily = SyneFontFamily
+                                        if (page.avatarUrl.isNotBlank()) {
+                                            AsyncImage(
+                                                model = page.avatarUrl,
+                                                contentDescription = page.name,
+                                                placeholder = profileSvgPainter,
+                                                error = profileSvgPainter,
+                                                fallback = profileSvgPainter,
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier.fillMaxSize()
                                             )
                                         }
                                     }
@@ -1798,37 +1787,27 @@ fun ArtistScreen(
                                         .width(104.dp)
                                         .clickable { viewModel.navigateToArtist(sim.name) }
                                 ) {
-                                    if (sim.avatarUrl.isNotBlank() && InnerTubeStreamExtractor.isAuthenticArtistAvatar(sim.avatarUrl)) {
-                                        AsyncImage(
-                                            model = sim.avatarUrl,
-                                            contentDescription = sim.name,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier
-                                                .size(92.dp)
-                                                .clip(CircleShape)
-                                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    val simProfilePainter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.ic_artist_profile_svg)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(92.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        com.seitharol.ui.components.ArtistProfileSvgIcon(
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(40.dp)
                                         )
-                                    } else {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(92.dp)
-                                                .clip(CircleShape)
-                                                .background(
-                                                    Brush.linearGradient(
-                                                        colors = listOf(
-                                                            MaterialTheme.colorScheme.primaryContainer,
-                                                            MaterialTheme.colorScheme.surfaceVariant
-                                                        )
-                                                    )
-                                                ),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            val initial = sim.name.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "A"
-                                            Text(
-                                                text = initial,
-                                                color = MaterialTheme.colorScheme.primary,
-                                                fontSize = 28.sp,
-                                                fontWeight = FontWeight.Bold
+                                        if (sim.avatarUrl.isNotBlank() && InnerTubeStreamExtractor.isAuthenticArtistAvatar(sim.avatarUrl)) {
+                                            AsyncImage(
+                                                model = sim.avatarUrl,
+                                                contentDescription = sim.name,
+                                                placeholder = simProfilePainter,
+                                                error = simProfilePainter,
+                                                fallback = simProfilePainter,
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier.fillMaxSize()
                                             )
                                         }
                                     }

@@ -107,13 +107,29 @@ class ResolverEngine(
                 }
 
                 // Fallback B: Search alternative playable YouTube Music streams by title + artist
+                // Strictly verified via CanonicalAudioResolver so a remix by a non-artist is never played!
                 if (playableTrack.title.isNotBlank()) {
                     val query = "${playableTrack.title} $primaryArtist".trim()
-                    val altCandidates = runCatching {
-                        InnerTubeStreamExtractor.searchOfficialYtmSongs(query, limit = 4)
+                    val rawCandidates = runCatching {
+                        InnerTubeStreamExtractor.searchOfficialYtmSongs(query, limit = 8)
                     }.getOrDefault(emptyList())
+                        .filter { it.videoId.isNotBlank() && it.videoId != playableTrack.sourceId }
+                    val bestMatch = CanonicalAudioResolver.selectBestCanonicalMatch(
+                        queryTitle = playableTrack.title,
+                        queryArtist = primaryArtist,
+                        targetDurationSeconds = targetDurationSec.takeIf { it > 45 && it != 210 },
+                        candidates = rawCandidates
+                    )
+                    val altCandidates = listOfNotNull(bestMatch) + rawCandidates.filter { cand ->
+                        cand.videoId != bestMatch?.videoId &&
+                            CanonicalAudioResolver.selectBestCanonicalMatch(
+                                queryTitle = playableTrack.title,
+                                queryArtist = primaryArtist,
+                                targetDurationSeconds = targetDurationSec.takeIf { it > 45 && it != 210 },
+                                candidates = listOf(cand)
+                            ) != null
+                    }
                     for (cand in altCandidates) {
-                        if (cand.videoId.isBlank() || cand.videoId == playableTrack.sourceId) continue
                         val altUrl = innerTubeProvider.resolveStreamUrl(cand.videoId).getOrNull()
                         if (!altUrl.isNullOrBlank()) {
                             return@withContext Result.success(

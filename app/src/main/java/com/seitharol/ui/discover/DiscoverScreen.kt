@@ -88,13 +88,24 @@ fun DiscoverScreen(
             if (activeFeed.isEmpty()) {
                 activeFeed.addAll(feedTracks)
             } else {
-                val keepCount = (pagerState.settledPage + 1).coerceIn(1, activeFeed.size)
-                val keptPrefix = activeFeed.take(keepCount)
-                val keptIds = keptPrefix.map { it.sourceId }.toSet()
-                val updatedTail = feedTracks.filterNot { it.sourceId in keptIds }
-                activeFeed.clear()
-                activeFeed.addAll(keptPrefix)
-                activeFeed.addAll(updatedTail)
+                // Never clear activeFeed while the user is scrolling up/down in VerticalPager!
+                // Update liked/localPath flags in-place and append any new unseen tracks to the tail.
+                val incomingById = feedTracks.associateBy { it.sourceId }
+                for (i in activeFeed.indices) {
+                    val existing = activeFeed[i]
+                    val incoming = incomingById[existing.sourceId]
+                    if (incoming != null && (existing.isLiked != incoming.isLiked || existing.localPath != incoming.localPath)) {
+                        activeFeed[i] = existing.copy(
+                            isLiked = incoming.isLiked,
+                            localPath = incoming.localPath ?: existing.localPath
+                        )
+                    }
+                }
+                val existingIds = activeFeed.map { it.sourceId }.toHashSet()
+                val newTail = feedTracks.filterNot { it.sourceId in existingIds }
+                if (newTail.isNotEmpty()) {
+                    activeFeed.addAll(newTail)
+                }
             }
         }
     }
@@ -129,25 +140,22 @@ fun DiscoverScreen(
     }
 
     val currentSettledTrackId = activeFeed.getOrNull(pagerState.settledPage)?.sourceId
-    LaunchedEffect(pagerState.settledPage, currentSettledTrackId, activeFeed.size, isInDiscoverSearchOpen) {
+    LaunchedEffect(pagerState.settledPage, currentSettledTrackId, isInDiscoverSearchOpen) {
         if (isInDiscoverSearchOpen) {
             audioPlayerManager.pausePreview()
         } else if (activeFeed.isNotEmpty()) {
-            val activeTrack = activeFeed.getOrNull(pagerState.settledPage)
+            val page = pagerState.settledPage
+            val activeTrack = activeFeed.getOrNull(page)
             if (activeTrack != null) {
                 audioPlayerManager.playPreview(activeTrack)
             }
-            val nextTrack = activeFeed.getOrNull(pagerState.settledPage + 1)
-            if (nextTrack != null) {
-                launch(Dispatchers.IO) {
-                    val nextYtId = InnerTubeStreamExtractor.extractVideoId(
-                        nextTrack.previewUrl?.removePrefix("ytm_clip:") ?: nextTrack.sourceId
-                    )
-                    if (!nextYtId.isNullOrBlank()) {
-                        InnerTubeStreamExtractor.resolveExactYoutubeStreamById(nextYtId, AudioQuality.LOW)
-                    }
-                }
-            }
+            // Preload next 2 songs (scroll down) AND previous song (scroll up) so scrolling never stops!
+            val adjacentToPreload = listOfNotNull(
+                activeFeed.getOrNull(page + 1),
+                activeFeed.getOrNull(page - 1),
+                activeFeed.getOrNull(page + 2)
+            )
+            audioPlayerManager.preloadAdjacentPreviews(adjacentToPreload)
         }
     }
 
@@ -157,6 +165,8 @@ fun DiscoverScreen(
 
     val isPreviewPlaying by audioPlayerManager.isPreviewPlaying.collectAsState()
     val isPreviewBuffering by audioPlayerManager.isPreviewBuffering.collectAsState()
+    val previewProgressFraction by audioPlayerManager.previewProgressFraction.collectAsState()
+    val nextSongPreloadProgress by audioPlayerManager.nextSongPreloadProgress.collectAsState()
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         if (activeFeed.isEmpty()) {
@@ -178,6 +188,8 @@ fun DiscoverScreen(
                     downloadState = downloadTaskState,
                     isPreviewPlaying = isPreviewPlaying && pagerState.settledPage == pageIndex,
                     isPreviewBuffering = isPreviewBuffering && pagerState.settledPage == pageIndex,
+                    previewProgressFraction = if (pagerState.settledPage == pageIndex) previewProgressFraction else 0f,
+                    nextSongPreloadProgress = if (pagerState.settledPage == pageIndex) nextSongPreloadProgress else 0f,
                     onTogglePlayPause = {
                         if (isPreviewPlaying) {
                             audioPlayerManager.pausePreview()
@@ -301,13 +313,12 @@ fun DiscoverScreen(
                 onOpenFullSong = { selectedTrack ->
                     focusManager.clearFocus(force = true)
                     keyboardController?.hide()
-                    audioPlayerManager.stopPreviewAndClear()
-                    activeFeed.removeAll { it.sourceId == selectedTrack.sourceId }
-                    activeFeed.add(0, selectedTrack)
+                    isInDiscoverSearchOpen = false
                     scope.launch {
-                        pagerState.scrollToPage(0)
-                        isInDiscoverSearchOpen = false
-                        audioPlayerManager.playPreview(selectedTrack)
+                        audioPlayerManager.openFullLengthSong(
+                            track = selectedTrack,
+                            onMaximizePlayer = onOpenFullSongMaximized
+                        )
                     }
                 },
                 onVisitArtist = { name, browseId ->
@@ -357,6 +368,8 @@ private fun DiscoverShortPage(
     downloadState: DownloadTaskState,
     isPreviewPlaying: Boolean,
     isPreviewBuffering: Boolean = false,
+    previewProgressFraction: Float = 0f,
+    nextSongPreloadProgress: Float = 0f,
     onTogglePlayPause: () -> Unit,
     onLikeClick: () -> Unit,
     onDownloadClick: () -> Unit,
@@ -473,10 +486,14 @@ private fun DiscoverShortPage(
                         .clickable { onVisitArtistClick() }
                         .padding(vertical = 4.dp)
                 ) {
-                    Box(modifier = Modifier.size(54.dp)) {
+                    val profileSvgPainter = painterResource(id = R.drawable.ic_artist_profile_svg)
+                    Box(modifier = Modifier.size(54.dp), contentAlignment = Alignment.Center) {
                         AsyncImage(
-                            model = avatarModel,
+                            model = avatarModel.ifBlank { R.drawable.ic_artist_profile_svg },
                             contentDescription = primaryArtist,
+                            placeholder = profileSvgPainter,
+                            error = profileSvgPainter,
+                            fallback = profileSvgPainter,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .size(52.dp)
@@ -494,17 +511,69 @@ private fun DiscoverShortPage(
                             overflow = TextOverflow.Ellipsis
                         )
                         Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = "${track.artists.joinToString(", ")} • Visit Artist >",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                            color = Color.White.copy(alpha = 0.82f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "${track.artists.joinToString(", ")} • Visit Artist",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                color = Color.White.copy(alpha = 0.85f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            com.seitharol.ui.components.ChevronRightSvgIcon(
+                                tint = Color.White.copy(alpha = 0.85f),
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // 30-Second Preview Progress Bar & Next Song Preload Progress Badge
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(end = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val elapsedSec = (previewProgressFraction * 30f).toInt().coerceIn(0, 30)
+                        Text(
+                            text = "30s Preview • 0:${"%02d".format(elapsedSec)} / 0:30",
+                            color = Color.White.copy(alpha = 0.82f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (nextSongPreloadProgress > 0f) {
+                            val preloadPct = (nextSongPreloadProgress * 100f).toInt().coerceIn(10, 100)
+                            Text(
+                                text = if (preloadPct >= 100) "Next Song Ready" else "Preloading Next ($preloadPct%)",
+                                color = Color(0xFF1DB954),
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    LinearProgressIndicator(
+                        progress = { previewProgressFraction.coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(3.5.dp)
+                            .clip(RoundedCornerShape(2.dp)),
+                        color = Color(0xFF1DB954),
+                        trackColor = Color.White.copy(alpha = 0.22f)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -776,7 +845,7 @@ fun DownloadProviderFormatBottomSheet(
     val sortedProviders = remember { downloadService.getSortedProviders() }
     var selectedProvider by remember { mutableStateOf(sortedProviders.first()) }
     var selectedFormat by remember(track.sourceId, isVideoTrack) {
-        mutableStateOf(if (isVideoTrack) DownloadFormat.VIDEO else downloadService.getPreferredFormat())
+        mutableStateOf(if (isVideoTrack) downloadService.getPreferredFormat() else DownloadFormat.AUDIO)
     }
     var selectedQuality by remember { mutableStateOf(persistedState.downloadQuality) }
 
@@ -797,7 +866,7 @@ fun DownloadProviderFormatBottomSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = if (selectedFormat == DownloadFormat.VIDEO) "Download Video (MP4)" else "Download Track",
+                    text = if (isVideoTrack) "Download Track" else "Download Audio",
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -823,7 +892,7 @@ fun DownloadProviderFormatBottomSheet(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            if (true) {
+            if (isVideoTrack) {
                 Text(
                     text = "Download Format",
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),

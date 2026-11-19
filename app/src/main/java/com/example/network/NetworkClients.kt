@@ -480,7 +480,7 @@ object NetworkClients {
             val effectiveDurSec = if (durationSec > 0L && durationSec != 210L) durationSec else 0L
             val candidatePairs = extractCandidateArtistTitlePairs(artist, title)
             val primaryPair = candidatePairs.firstOrNull() ?: Pair(cleanArtistName(artist), cleanTrackTitle(title))
-            val cacheKey = "${primaryPair.first.lowercase()}|${primaryPair.second.lowercase()}|$videoId"
+            val cacheKey = "${primaryPair.first.lowercase()}|${primaryPair.second.lowercase()}|$videoId|$effectiveDurSec"
             if (!forceRefresh) {
                 syncedLyricsCache[cacheKey]?.takeIf { it.isNotEmpty() }?.let { return@withContext it }
             }
@@ -560,30 +560,39 @@ object NetworkClients {
                     }
                 }
 
+                val targetDurMs = effectiveDurSec * 1000L
+
+                // 1. Exact YouTube VideoID Timed Lyrics FIRST (SimpMusic VideoID & Official YouTube Music timedLyricsData)
+                // Because these match the exact playing videoId, they have zero edition/tempo/intro speed mismatch!
+                val (simpSynced, simpPlain) = simpJob.await()
+                if (simpSynced.isNotEmpty()) {
+                    val calibrated = calibrateLyricsToTargetDuration(simpSynced, 0L, targetDurMs)
+                    syncedLyricsCache[cacheKey] = calibrated
+                    return@coroutineScope calibrated
+                }
+
+                val ytmResult = ytmJob.await()
+                if (ytmResult.syncedLines.isNotEmpty()) {
+                    val calibrated = calibrateLyricsToTargetDuration(ytmResult.syncedLines, 0L, targetDurMs)
+                    syncedLyricsCache[cacheKey] = calibrated
+                    return@coroutineScope calibrated
+                }
+
+                // 2. Duration-Verified & Tempo-Calibrated LRCLIB Synced Lyrics
                 val (lrclibSynced, lrclibPlain) = lrclibJob.await()
                 if (lrclibSynced.isNotEmpty()) {
                     syncedLyricsCache[cacheKey] = lrclibSynced
                     return@coroutineScope lrclibSynced
                 }
 
-                val (simpSynced, simpPlain) = simpJob.await()
-                if (simpSynced.isNotEmpty()) {
-                    syncedLyricsCache[cacheKey] = simpSynced
-                    return@coroutineScope simpSynced
-                }
-
-                val ytmResult = ytmJob.await()
-                if (ytmResult.syncedLines.isNotEmpty()) {
-                    syncedLyricsCache[cacheKey] = ytmResult.syncedLines
-                    return@coroutineScope ytmResult.syncedLines
-                }
-
+                // 3. Duration-Verified & Tempo-Calibrated NetEase Synced Lyrics
                 val netEaseSynced = netEaseJob.await()
                 if (netEaseSynced.isNotEmpty()) {
                     syncedLyricsCache[cacheKey] = netEaseSynced
                     return@coroutineScope netEaseSynced
                 }
 
+                // 4. Duration-Verified & Tempo-Calibrated KuGou Synced Lyrics
                 val kugouSynced = kugouJob.await()
                 if (kugouSynced.isNotEmpty()) {
                     syncedLyricsCache[cacheKey] = kugouSynced
@@ -721,20 +730,27 @@ object NetworkClients {
                         val itemArtist = item.optString("artistName", "").lowercase()
                         val itemDur = item.optDouble("duration", 0.0).toLong()
 
+                        if (durationSec > 30L && itemDur > 30L && abs(itemDur - durationSec) > 10L) {
+                            continue
+                        }
                         val durPenalty = if (durationSec > 0L && itemDur > 0L) {
-                            abs(itemDur - durationSec) * 3L
+                            abs(itemDur - durationSec) * 6L
                         } else {
                             i.toLong() * 5L
                         }
-                        val artistPenalty = if (artistLower.isNotBlank() && !itemArtist.contains(artistLower) && !artistLower.contains(itemArtist)) 22L else 0L
-                        val titlePenalty = if (titleLower.isNotBlank() && !itemTrack.contains(titleLower) && !titleLower.contains(itemTrack)) 25L else 0L
+                        val artistPenalty = if (artistLower.isNotBlank() && !itemArtist.contains(artistLower) && !artistLower.contains(itemArtist)) 28L else 0L
+                        val titlePenalty = if (titleLower.isNotBlank() && !itemTrack.contains(titleLower) && !titleLower.contains(itemTrack)) 30L else 0L
                         val totalPenalty = durPenalty + artistPenalty + titlePenalty
 
-                        if (synced.isNotBlank() && totalPenalty < bestScore && totalPenalty <= 85L) {
+                        if (synced.isNotBlank() && totalPenalty < bestScore && totalPenalty <= 55L) {
                             val parsed = parseLrc(synced)
                             if (parsed.size >= 2) {
                                 bestScore = totalPenalty
-                                bestSyncedLines = parsed
+                                bestSyncedLines = calibrateLyricsToTargetDuration(
+                                    lines = parsed,
+                                    sourceDurationMs = itemDur * 1000L,
+                                    targetDurationMs = durationSec * 1000L
+                                )
                             }
                         }
                         if (bestPlain == null && plain.isNotBlank() && totalPenalty <= 75L) {
@@ -1461,11 +1477,44 @@ object NetworkClients {
      * Parses synchronized LRC text format ([mm:ss.xx], [mm:ss.xxx], [mm:ss], and multi-tag lines)
      * with instrumental gap support and inline word-sync tag cleanup.
      */
+    /**
+     * Automatically calibrates lyric line timestamps when the LRC track duration or last cue timestamp
+     * differs slightly from the playing audio stream's hardware duration, eliminating lyrics speed mismatch.
+     */
+    fun calibrateLyricsToTargetDuration(
+        lines: List<LyricsLine>,
+        sourceDurationMs: Long,
+        targetDurationMs: Long
+    ): List<LyricsLine> {
+        if (lines.size < 3 || targetDurationMs <= 30_000L) return lines
+        val lastTimestampMs = lines.lastOrNull { !it.isInstrumental && it.text.isNotBlank() }?.timestampMs ?: return lines
+        val effectiveSourceDurMs = when {
+            sourceDurationMs > 30_000L -> sourceDurationMs
+            lastTimestampMs > targetDurationMs -> lastTimestampMs + 3_000L
+            else -> 0L
+        }
+        if (effectiveSourceDurMs <= 30_000L) return lines
+        val diffMs = abs(targetDurationMs - effectiveSourceDurMs)
+        if (diffMs < 450L) return lines
+        val ratio = targetDurationMs.toDouble() / effectiveSourceDurMs.toDouble()
+        if (ratio !in 0.85..1.18) return lines
+        return lines.map { line ->
+            if (line.timestampMs <= 0L) line
+            else line.copy(timestampMs = (line.timestampMs.toDouble() * ratio).toLong().coerceAtLeast(0L))
+        }
+    }
+
     fun parseLrc(lrcText: String): List<LyricsLine> {
         if (lrcText.isBlank()) return emptyList()
         val rawEntries = mutableListOf<Triple<Long, String, String?>>()
         val tagRegex = Regex("\\[(\\d{1,2}):(\\d{2})(?:[:.](\\d{1,3}))?]")
+        val offsetTagRegex = Regex("\\[offset:\\s*([+-]?\\d+)\\s*]", RegexOption.IGNORE_CASE)
         val creditLineRegex = Regex("^(?:作词|作曲|编曲|制作人|プロデューサー|lyrics\\s*by|composed\\s*by|arranged\\s*by|produced\\s*by)\\s*[:：]", RegexOption.IGNORE_CASE)
+
+        var globalOffsetMs = 0L
+        offsetTagRegex.find(lrcText)?.groupValues?.getOrNull(1)?.toLongOrNull()?.let { parsedOffset ->
+            globalOffsetMs = parsedOffset
+        }
 
         for (rawLine in lrcText.lines()) {
             val trimmed = rawLine.trim()
@@ -1489,8 +1538,9 @@ object NetworkClients {
                     val sec = match.groupValues[2].toLongOrNull() ?: 0L
                     val msStr = match.groupValues[3].padEnd(3, '0').take(3)
                     val ms = msStr.toLongOrNull() ?: 0L
-                    val totalMs = (min * 60 * 1000L) + (sec * 1000L) + ms
-                    rawEntries.add(Triple(totalMs, primary, translation))
+                    val rawTotalMs = (min * 60 * 1000L) + (sec * 1000L) + ms
+                    val adjustedMs = (rawTotalMs - globalOffsetMs).coerceAtLeast(0L)
+                    rawEntries.add(Triple(adjustedMs, primary, translation))
                 }
             }
         }
@@ -1500,7 +1550,7 @@ object NetworkClients {
 
         val output = mutableListOf<LyricsLine>()
         val firstVocalTime = rawEntries.first().first
-        if (firstVocalTime >= 4500L) {
+        if (firstVocalTime >= 5000L) {
             output.add(LyricsLine(timestampMs = 0L, text = "", isInstrumental = true))
         }
 
@@ -1508,11 +1558,13 @@ object NetworkClients {
             val (startMs, primary, translation) = rawEntries[i]
             val nextStartMs = if (i + 1 < rawEntries.size) rawEntries[i + 1].first else startMs + 5000L
             if (primary.isBlank()) {
-                output.add(LyricsLine(timestampMs = startMs, text = "", isInstrumental = true))
+                if (output.lastOrNull()?.isInstrumental != true) {
+                    output.add(LyricsLine(timestampMs = startMs, text = "", isInstrumental = true))
+                }
             } else {
                 val vocalDuration = nextStartMs - startMs
-                if (vocalDuration > 8500L) {
-                    val vocalEnd = startMs + 4800L
+                if (vocalDuration > 15_000L) {
+                    val vocalEnd = startMs + 7_500L
                     output.add(LyricsLine(timestampMs = startMs, text = primary, translation = translation, isInstrumental = false))
                     output.add(LyricsLine(timestampMs = vocalEnd, text = "", isInstrumental = true))
                 } else {

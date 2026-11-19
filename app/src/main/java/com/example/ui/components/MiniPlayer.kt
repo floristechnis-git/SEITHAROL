@@ -4,13 +4,11 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -19,27 +17,27 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
-import com.example.R
 import com.example.data.remote.InnerTubeResolver
 import com.example.player.PlayerState
 import com.example.ui.theme.*
+import com.seitharol.ui.components.UniversalMediaThumbnail
 
 /**
  * YouTube / YouTube Music Floating MiniPlayer Pill:
- * - Height: 60.dp, pill rounded 30.dp, adaptive surfaceVariant container with crisp contrast in Light & Dark themes.
+ * - Height: 60.dp, pill rounded 22.dp, adaptive surfaceVariant container with crisp contrast in Light & Dark themes.
  * - Uses smooth basicMarquee on the song title so long song names are always readable in full.
+ * - Uses UniversalMediaThumbnail so local MP4 video files show their real video frame preface/thumbnail.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -53,7 +51,8 @@ fun MiniPlayer(
     modifier: Modifier = Modifier
 ) {
     val track = playerState.currentTrack ?: return
-    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     val progress = if (playerState.durationMs > 0) {
         (playerState.currentPositionMs.toFloat() / playerState.durationMs.toFloat()).coerceIn(0f, 1f)
@@ -125,7 +124,11 @@ fun MiniPlayer(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .clickable(onClick = onExpand),
+                        .clickable {
+                            focusManager.clearFocus(force = true)
+                            keyboardController?.hide()
+                            onExpand()
+                        },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
@@ -136,24 +139,14 @@ fun MiniPlayer(
                         contentAlignment = Alignment.Center
                     ) {
                         val upgradedArt = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
-                        if (upgradedArt.isBlank()) {
-                            Image(
-                                painter = appLogoPainter,
-                                contentDescription = "Cover for ${track.title}",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            AsyncImage(
-                                model = upgradedArt,
-                                contentDescription = "Cover for ${track.title}",
-                                placeholder = appLogoPainter,
-                                error = appLogoPainter,
-                                fallback = appLogoPainter,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
+                        UniversalMediaThumbnail(
+                            artUrl = upgradedArt,
+                            localPath = track.localPath,
+                            isVideo = track.isVideoTrack || playerState.isVideoMode,
+                            contentDescription = "Cover for ${track.title}",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
                     }
 
                     Spacer(modifier = Modifier.width(10.dp))

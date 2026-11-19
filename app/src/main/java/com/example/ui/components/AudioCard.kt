@@ -28,6 +28,8 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -42,6 +44,8 @@ import com.example.R
 import com.example.data.model.DownloadTier
 import com.example.data.model.Track
 import com.example.ui.theme.*
+import com.seitharol.ui.components.ArtistProfileSvgIcon
+import com.seitharol.ui.components.UniversalMediaThumbnail
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -171,8 +175,10 @@ fun SeitharolPullToRefreshBox(
 /**
  * Standard Track Row from SEITHAROL design:
  * - Full song/video title visibility (2-line support + full untruncated header in 3-dot menu).
- * - Horizontal auto-scroll is strictly reserved for MiniPlayer, not individual cards.
- * - Supports slightly different card color (`isHighlightedOfficial`) for the most-viewed official song in search results.
+ * - Unified 3-dot options menu across all pages (Play Now, Play Next, Add to Queue, Start Radio Mix,
+ *   Save/Remove Liked Songs, Add to Playlist, Go to Artist/Channel, Download/Remove Offline, Share).
+ * - Automatically clears search focus and dismisses soft keyboard on any action.
+ * - Supports local video frame thumbnail extraction and preface badges.
  */
 @Composable
 fun TrackCard(
@@ -199,8 +205,16 @@ fun TrackCard(
     var showMenu by remember { mutableStateOf(false) }
     var showDownloadFormatSheet by remember { mutableStateOf(false) }
     var hasRequestedDownload by remember(track.id, track.isDownloaded) { mutableStateOf(false) }
-    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    val dismissKeyboardIfOpen = {
+        runCatching {
+            focusManager.clearFocus(force = true)
+            keyboardController?.hide()
+        }
+    }
 
     val cardColor = when {
         isPlaying -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
@@ -213,7 +227,10 @@ fun TrackCard(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onTrackClick)
+            .clickable {
+                dismissKeyboardIfOpen()
+                onTrackClick()
+            }
             .testTag("track_card_${track.id}"),
         color = cardColor,
         border = cardBorder,
@@ -253,24 +270,14 @@ fun TrackCard(
                 contentAlignment = Alignment.Center
             ) {
                 val upgradedArt = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
-                if (upgradedArt.isBlank()) {
-                    Image(
-                        painter = appLogoPainter,
-                        contentDescription = "Cover for ${track.title}",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    AsyncImage(
-                        model = upgradedArt,
-                        contentDescription = "Cover for ${track.title}",
-                        placeholder = appLogoPainter,
-                        error = appLogoPainter,
-                        fallback = appLogoPainter,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
+                UniversalMediaThumbnail(
+                    artUrl = upgradedArt,
+                    localPath = track.localPath,
+                    isVideo = isVideoCard,
+                    contentDescription = "Cover for ${track.title}",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
                 if (isPlaying) {
                     Box(
                         modifier = Modifier
@@ -286,7 +293,23 @@ fun TrackCard(
                         )
                     }
                 } else if (isVideoCard) {
-                    // Rounded-square play badge + bottom-right duration pill on big video thumbnail
+                    // Top-left VIDEO preface pill + Center Play badge + Bottom-right duration pill
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = Color.Black.copy(alpha = 0.72f),
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(4.dp)
+                    ) {
+                        Text(
+                            text = if (track.isLocalOnlyTrack) "LOCAL MP4" else "VIDEO",
+                            color = Color.White,
+                            fontSize = 8.5.sp,
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = Color.Black.copy(alpha = 0.55f),
@@ -363,7 +386,10 @@ fun TrackCard(
 
             // Connected Google Pixel Split-Action Pill (Like + 3-Dot Options with 0.dp center border-radius)
             Surface(
-                onClick = onLikeClick,
+                onClick = {
+                    dismissKeyboardIfOpen()
+                    onLikeClick()
+                },
                 shape = RoundedCornerShape(topStart = 10.dp, bottomStart = 10.dp, topEnd = 0.dp, bottomEnd = 0.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
                 modifier = Modifier
@@ -387,10 +413,11 @@ fun TrackCard(
                     .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             )
 
-            // Complete 3-Dot Options Menu
+            // Complete Unified 3-Dot Options Menu
             Box {
                 Surface(
                     onClick = {
+                        dismissKeyboardIfOpen()
                         if (onOptionsClick != null) onOptionsClick() else showMenu = true
                     },
                     shape = RoundedCornerShape(topStart = 0.dp, bottomStart = 0.dp, topEnd = 10.dp, bottomEnd = 10.dp),
@@ -411,7 +438,7 @@ fun TrackCard(
                     expanded = showMenu,
                     onDismissRequest = { showMenu = false },
                     modifier = Modifier
-                        .widthIn(min = 235.dp, max = 290.dp)
+                        .widthIn(min = 240.dp, max = 295.dp)
                         .background(MaterialTheme.colorScheme.surface)
                 ) {
                     // Full untruncated Song / Video Title + Artist header inside 3-dot popup
@@ -449,6 +476,7 @@ fun TrackCard(
                         },
                         onClick = {
                             showMenu = false
+                            dismissKeyboardIfOpen()
                             onTrackClick()
                         }
                     )
@@ -461,6 +489,7 @@ fun TrackCard(
                             },
                             onClick = {
                                 showMenu = false
+                                dismissKeyboardIfOpen()
                                 onPlayNextClick()
                             }
                         )
@@ -474,6 +503,7 @@ fun TrackCard(
                             },
                             onClick = {
                                 showMenu = false
+                                dismissKeyboardIfOpen()
                                 onAddToQueueClick()
                             }
                         )
@@ -487,6 +517,7 @@ fun TrackCard(
                             },
                             onClick = {
                                 showMenu = false
+                                dismissKeyboardIfOpen()
                                 if (onStartRadioClick != null) {
                                     onStartRadioClick()
                                 } else {
@@ -512,6 +543,7 @@ fun TrackCard(
                         },
                         onClick = {
                             showMenu = false
+                            dismissKeyboardIfOpen()
                             onLikeClick()
                         }
                     )
@@ -524,6 +556,7 @@ fun TrackCard(
                             },
                             onClick = {
                                 showMenu = false
+                                dismissKeyboardIfOpen()
                                 onAddToPlaylistClick()
                             }
                         )
@@ -546,9 +579,67 @@ fun TrackCard(
                             },
                             onClick = {
                                 showMenu = false
+                                dismissKeyboardIfOpen()
                                 onGoToArtistClick(track.artist)
                             }
                         )
+                    }
+
+                    if (track.isDownloaded) {
+                        if (onRemoveDownloadClick != null) {
+                            DropdownMenuItem(
+                                text = { Text("Remove Offline Copy", color = SeitharolRedHeart) },
+                                leadingIcon = {
+                                    Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = SeitharolRedHeart)
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    dismissKeyboardIfOpen()
+                                    onRemoveDownloadClick.invoke()
+                                }
+                            )
+                        }
+                    } else if (!track.isLocalOnlyTrack) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "Download (Format & Quality)",
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.CloudDownload,
+                                    contentDescription = "Download Options",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                dismissKeyboardIfOpen()
+                                showDownloadFormatSheet = true
+                            }
+                        )
+                        if (track.isVideoTrack) {
+                            DropdownMenuItem(
+                                text = { Text("Quick Download Video (MP4)", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Videocam,
+                                        contentDescription = "Download Video (MP4)",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    dismissKeyboardIfOpen()
+                                    hasRequestedDownload = true
+                                    onDownloadClick(DownloadTier.VIDEO_MP4)
+                                }
+                            )
+                        }
                     }
 
                     if (!track.isLocalOnlyTrack) {
@@ -559,6 +650,7 @@ fun TrackCard(
                             },
                             onClick = {
                                 showMenu = false
+                                dismissKeyboardIfOpen()
                                 if (onShareClick != null) {
                                     onShareClick()
                                 } else {
@@ -583,6 +675,7 @@ fun TrackCard(
                             },
                             onClick = {
                                 showMenu = false
+                                dismissKeyboardIfOpen()
                                 onRemoveFromPlaylistClick()
                             }
                         )
@@ -596,61 +689,10 @@ fun TrackCard(
                             },
                             onClick = {
                                 showMenu = false
+                                dismissKeyboardIfOpen()
                                 onRemoveFromHistoryClick()
                             }
                         )
-                    }
-
-                    if (track.isDownloaded) {
-                        DropdownMenuItem(
-                            text = { Text("Remove Offline Copy", color = SeitharolRedHeart) },
-                            leadingIcon = {
-                                Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = SeitharolRedHeart)
-                            },
-                            onClick = {
-                                showMenu = false
-                                onRemoveDownloadClick?.invoke()
-                            }
-                        )
-                    } else if (!track.isLocalOnlyTrack) {
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = "Download (Format & Quality)",
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Default.CloudDownload,
-                                    contentDescription = "Download Options",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            },
-                            onClick = {
-                                showMenu = false
-                                showDownloadFormatSheet = true
-                            }
-                        )
-                        if (!track.isLocalOnlyTrack) {
-                            DropdownMenuItem(
-                                text = { Text("Quick Download Video (MP4)", color = MaterialTheme.colorScheme.onSurface) },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Videocam,
-                                        contentDescription = "Download Video (MP4)",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                },
-                                onClick = {
-                                    showMenu = false
-                                    hasRequestedDownload = true
-                                    onDownloadClick(DownloadTier.VIDEO_MP4)
-                                }
-                            )
-                        }
                     }
                 }
             }
@@ -676,7 +718,6 @@ fun HitCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
     Surface(
         modifier = modifier
             .width(136.dp)
@@ -696,24 +737,14 @@ fun HitCard(
                 contentAlignment = Alignment.Center
             ) {
                 val upgradedArt = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
-                if (upgradedArt.isBlank()) {
-                    Image(
-                        painter = appLogoPainter,
-                        contentDescription = track.title,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    AsyncImage(
-                        model = upgradedArt,
-                        contentDescription = track.title,
-                        placeholder = appLogoPainter,
-                        error = appLogoPainter,
-                        fallback = appLogoPainter,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
+                UniversalMediaThumbnail(
+                    artUrl = upgradedArt,
+                    localPath = track.localPath,
+                    isVideo = track.isVideoTrack,
+                    contentDescription = track.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
 
                 if (isPlaying) {
                     Box(
@@ -904,6 +935,11 @@ object ArtistAvatarCache {
     }
 }
 
+/**
+ * Suggested Artist Item across Home and discovery shelves:
+ * Always displays the crisp Profile SVG (`ArtistProfileSvgIcon` / `ic_artist_profile_svg`)
+ * before loading or when no avatar URL is available — never the first letter of the artist name!
+ */
 @Composable
 fun SuggestedArtistItem(
     name: String,
@@ -911,6 +947,7 @@ fun SuggestedArtistItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val profileSvgPainter = painterResource(id = R.drawable.ic_artist_profile_svg)
     var resolvedAvatar by remember(name, imageUrl) {
         mutableStateOf(imageUrl.ifBlank { ArtistAvatarCache.get(name).orEmpty() })
     }
@@ -945,28 +982,27 @@ fun SuggestedArtistItem(
                 .background(
                     androidx.compose.ui.graphics.Brush.linearGradient(
                         colors = listOf(
-                            MaterialTheme.colorScheme.primaryContainer,
+                            MaterialTheme.colorScheme.surfaceContainerHigh,
                             MaterialTheme.colorScheme.surfaceVariant
                         )
                     )
                 ),
             contentAlignment = Alignment.Center
         ) {
+            // Profile SVG always sits as the base layer before image loads or when blank
+            ArtistProfileSvgIcon(
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(44.dp)
+            )
             if (resolvedAvatar.isNotBlank()) {
                 AsyncImage(
                     model = com.example.data.remote.InnerTubeResolver.upgradeThumbnailUrl(resolvedAvatar),
                     contentDescription = name,
+                    placeholder = profileSvgPainter,
+                    error = profileSvgPainter,
+                    fallback = profileSvgPainter,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                val initial = name.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "A"
-                Text(
-                    text = initial,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = SyneFontFamily
                 )
             }
         }

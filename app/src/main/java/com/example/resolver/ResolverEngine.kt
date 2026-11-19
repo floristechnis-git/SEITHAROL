@@ -348,19 +348,45 @@ class ResolverEngine {
                 }
             }
 
-            // Alternative YTM & YouTube Video Search Fallback for restricted "Art Tracks" (Topic songs)
+            // Alternative YTM & YouTube Search Fallback for restricted "Art Tracks" (Topic songs)
+            // STRICT CANONICAL GATE: Prioritize official YTM Songs first, and filter all candidates through
+            // CanonicalAudioResolver so an unoriginal remix or non-artist upload is NEVER selected!
             if (!track.isVideoTrack && track.title.isNotBlank()) {
                 try {
                     val query = "${track.title} ${track.artist}".trim()
-                    val ytVidCandidates = withTimeoutOrNull(3500L) {
-                        com.seitharol.data.resolver.InnerTubeStreamExtractor.searchAllYoutubeVideos(query, limit = 4)
-                    }.orEmpty()
                     val ytmCandidates = withTimeoutOrNull(3000L) {
-                        com.seitharol.data.resolver.InnerTubeStreamExtractor.searchOfficialYtmSongs(query, limit = 4)
+                        com.seitharol.data.resolver.InnerTubeStreamExtractor.searchOfficialYtmSongs(query, limit = 8)
                     }.orEmpty()
-                    val altCandidates = (ytVidCandidates + ytmCandidates).distinctBy { it.videoId }
-                    for (cand in altCandidates) {
-                        if (cand.videoId.isBlank() || cand.videoId == targetVideoId) continue
+                    val ytVidCandidates = withTimeoutOrNull(3000L) {
+                        com.seitharol.data.resolver.InnerTubeStreamExtractor.searchAllYoutubeVideos(query, limit = 6)
+                    }.orEmpty()
+                    val rawPool = (ytmCandidates + ytVidCandidates)
+                        .filter { it.videoId.isNotBlank() && it.videoId != targetVideoId }
+                        .distinctBy { it.videoId }
+                    val targetDurSec = (track.durationMs / 1000L).toInt().takeIf { it > 45 && it != 210 }
+                    val bestCanonical = com.seitharol.data.resolver.CanonicalAudioResolver.selectBestCanonicalMatch(
+                        queryTitle = track.title,
+                        queryArtist = track.artist,
+                        targetDurationSeconds = targetDurSec,
+                        candidates = rawPool
+                    )
+                    val verifiedAltCandidates = buildList {
+                        if (bestCanonical != null) add(bestCanonical)
+                        rawPool.forEach { cand ->
+                            if (cand.videoId != bestCanonical?.videoId &&
+                                !com.seitharol.data.resolver.CanonicalAudioResolver.containsBannedModifier(query, "${cand.title} ${cand.artist} ${cand.channelName}")
+                            ) {
+                                val candSingleMatch = com.seitharol.data.resolver.CanonicalAudioResolver.selectBestCanonicalMatch(
+                                    queryTitle = track.title,
+                                    queryArtist = track.artist,
+                                    targetDurationSeconds = targetDurSec,
+                                    candidates = listOf(cand)
+                                )
+                                if (candSingleMatch != null) add(candSingleMatch)
+                            }
+                        }
+                    }
+                    for (cand in verifiedAltCandidates) {
                         val altRes = com.seitharol.data.resolver.InnerTubeStreamExtractor
                             .resolveExactYoutubeStreamById(cand.videoId, preferredQuality, forceRefresh = false)
                         if (altRes.isSuccess) {

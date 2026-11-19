@@ -25,7 +25,9 @@ object CanonicalAudioResolver {
         "remix", "loop", "extended", "1 hour", "10 hours", "slowed", "reverb",
         "sped up", "nightcore", "cover", "live", "unplugged", "8d", "mashup",
         "instrumental", "karaoke", "lofi", "lo-fi", "bass boosted",
-        "ringtone", "status", "dj "
+        "ringtone", "status", "dj ", "dj-", "bootleg", "rework", "flip",
+        "unofficial", "fan made", "nonstop", "megamix", "club mix", "dance mix",
+        "electro mix", "trap mix", "phonk", "edit", "version by", "cover by", "remix by"
     )
 
     fun containsBannedModifier(userQuery: String, candidateTitle: String): Boolean {

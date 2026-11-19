@@ -519,7 +519,7 @@ fun HomeScreen(
         ) {
             val density = androidx.compose.ui.platform.LocalDensity.current
             val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
-            val isTabletExpanded = maxWidth >= 600.dp
+            val isTabletExpanded = false
             val availableWidthPx = with(density) { (maxWidth - 16.dp).coerceAtLeast(120.dp).toPx() }
             val baseStyle = androidx.compose.ui.text.TextStyle(
                 fontFamily = SyneFontFamily,
@@ -1661,7 +1661,7 @@ fun DeveloperWelcomePopupModal(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            text = "Welcome $userName, I'm Yumkhaibam Johnson Singh. I dedicated 102 days to developing this app for you. My hope is to provide an ad-free and limitless experience, serving as a supportive background companion for your work and an emotional stabilizer for those with broken hearts.",
+                            text = "Welcome $userName, I'm Yumkhaibam Johnson Singh. I dedicated 71 days to developing this app for you. My hope is to provide an ad-free and limitless experience, serving as a supportive background companion for your work and an emotional stabilizer for those with broken hearts.",
                             fontFamily = OutfitFontFamily,
                             fontWeight = FontWeight.Normal,
                             fontSize = 14.5.sp,
@@ -1849,7 +1849,7 @@ fun TrendingSongsHorizontalShelf(
         Spacer(modifier = Modifier.height(12.dp))
 
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val cardWidth = if (maxWidth >= 600.dp) {
+            val cardWidth = if (false) {
                 (maxWidth * 0.45f).coerceIn(280.dp, 360.dp)
             } else {
                 (maxWidth - 40.dp).coerceIn(260.dp, 344.dp)
@@ -2288,7 +2288,7 @@ fun QuickDialBentoSection(
     val columns = topItems.chunked(2)
     val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val cardWidth = if (maxWidth >= 600.dp) {
+        val cardWidth = if (false) {
             (maxWidth * 0.44f).coerceIn(260.dp, 340.dp)
         } else {
             (maxWidth * 0.74f).coerceIn(248.dp, 320.dp)

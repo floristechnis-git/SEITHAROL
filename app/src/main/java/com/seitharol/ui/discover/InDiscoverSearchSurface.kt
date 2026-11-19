@@ -66,6 +66,13 @@ fun InDiscoverSearchSurface(
     var latestSearchToken by remember { mutableIntStateOf(0) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
 
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) {
+            focusManager.clearFocus(force = true)
+            keyboardController?.hide()
+        }
+    }
     val activePreviewId by audioPlayerManager.activePreviewTrackId.collectAsState()
     val isPreviewPlaying by audioPlayerManager.isPreviewPlaying.collectAsState()
 
@@ -247,6 +254,7 @@ fun InDiscoverSearchSurface(
             }
 
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(bottom = 210.dp)
@@ -363,8 +371,11 @@ fun InDiscoverSearchSurface(
                                         }
                                     ) {
                                         AsyncImage(
-                                            model = avatarThumb,
+                                            model = avatarThumb.ifBlank { R.drawable.ic_artist_profile_svg },
                                             contentDescription = primaryArtist,
+                                            placeholder = painterResource(id = R.drawable.ic_artist_profile_svg),
+                                            error = painterResource(id = R.drawable.ic_artist_profile_svg),
+                                            fallback = painterResource(id = R.drawable.ic_artist_profile_svg),
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier
                                                 .size(20.dp)

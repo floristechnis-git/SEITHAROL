@@ -388,8 +388,10 @@ fun SearchScreen(
     }
 
     LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-        keyboardController?.show()
+        if (viewModel.searchQuery.value.isBlank()) {
+            focusRequester.requestFocus()
+            keyboardController?.show()
+        }
     }
 
     LaunchedEffect(listState.isScrollInProgress) {
@@ -550,7 +552,7 @@ fun SearchScreen(
                         val isSelected = currentProvider == provider
                         FilterChip(
                             selected = isSelected,
-                            onClick = { viewModel.selectProviderFilter(provider) },
+                            onClick = { dismissSearchKeyboard(); viewModel.selectProviderFilter(provider) },
                             modifier = Modifier.height(34.dp),
                             shape = RoundedCornerShape(17.dp),
                             border = null,
@@ -671,7 +673,7 @@ fun SearchScreen(
                                         textFieldValue = androidx.compose.ui.text.input.TextFieldValue(newText, androidx.compose.ui.text.TextRange(newText.length))
                                         viewModel.setQueryImmediately(newText)
                                         appPreferences.addRecentSearch(newText)
-                                        focusRequester.requestFocus()
+                                        dismissSearchKeyboard()
                                     },
                                 shape = RoundedCornerShape(17.dp),
                                 color = MaterialTheme.colorScheme.surfaceVariant
@@ -735,7 +737,7 @@ fun SearchScreen(
                                         textFieldValue = androidx.compose.ui.text.input.TextFieldValue(newText, androidx.compose.ui.text.TextRange(newText.length))
                                         viewModel.setQueryImmediately(newText)
                                         appPreferences.addRecentSearch(newText)
-                                        focusRequester.requestFocus()
+                                        dismissSearchKeyboard()
                                     },
                                 shape = RoundedCornerShape(17.dp),
                                 color = MaterialTheme.colorScheme.surfaceVariant
@@ -785,7 +787,7 @@ fun SearchScreen(
                                         textFieldValue = androidx.compose.ui.text.input.TextFieldValue(newText, androidx.compose.ui.text.TextRange(newText.length))
                                         viewModel.setQueryImmediately(newText)
                                         appPreferences.addRecentSearch(newText)
-                                        focusRequester.requestFocus()
+                                        dismissSearchKeyboard()
                                     },
                                 shape = RoundedCornerShape(16.dp),
                                 color = MaterialTheme.colorScheme.surfaceVariant
@@ -820,7 +822,7 @@ fun SearchScreen(
                             modifier = Modifier
                                 .height(36.dp)
                                 .clip(RoundedCornerShape(18.dp))
-                                .clickable { selectedTab = tab },
+                                .clickable { dismissSearchKeyboard(); selectedTab = tab },
                             shape = RoundedCornerShape(18.dp),
                             color = if (isSelected) SeitharolPillBg else MaterialTheme.colorScheme.surfaceVariant
                         ) {
@@ -888,8 +890,11 @@ fun SearchScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         AsyncImage(
-                                            model = artistPreview.avatarUrl,
+                                            model = artistPreview.avatarUrl.ifBlank { R.drawable.ic_artist_profile_svg },
                                             contentDescription = artistPreview.name,
+                                            placeholder = painterResource(id = R.drawable.ic_artist_profile_svg),
+                                            error = painterResource(id = R.drawable.ic_artist_profile_svg),
+                                            fallback = painterResource(id = R.drawable.ic_artist_profile_svg),
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier
                                                 .size(46.dp)
@@ -1334,15 +1339,17 @@ fun SearchScreen(
                                         keyboardController?.hide()
                                         onPlayTrackAndMaximize(track)
                                     },
-                                    onLikeClick = { viewModel.toggleLike(track) },
+                                    onLikeClick = { dismissSearchKeyboard(); viewModel.toggleLike(track) },
                                     onDownloadClick = { tier: DownloadTier ->
+                                        dismissSearchKeyboard()
                                         viewModel.startDownload(track, tier)
                                     },
-                                    onPlayNextClick = { viewModel.playNext(track) },
-                                    onAddToQueueClick = { viewModel.addToQueue(track) },
-                                    onStartRadioClick = { viewModel.startRadioMix(track) },
-                                    onAddToPlaylistClick = { trackToAddToPlaylist = track },
+                                    onPlayNextClick = { dismissSearchKeyboard(); viewModel.playNext(track) },
+                                    onAddToQueueClick = { dismissSearchKeyboard(); viewModel.addToQueue(track) },
+                                    onStartRadioClick = { dismissSearchKeyboard(); viewModel.startRadioMix(track) },
+                                    onAddToPlaylistClick = { dismissSearchKeyboard(); trackToAddToPlaylist = track },
                                     onGoToArtistClick = { creatorName ->
+                                        dismissSearchKeyboard()
                                         viewModel.navigateToArtist(creatorName, isChannel = isVideo)
                                     },
                                     onRemoveDownloadClick = { viewModel.removeDownload(track.id) },
@@ -1426,20 +1433,20 @@ fun SearchArtistAvatar(
             ),
         contentAlignment = Alignment.Center
     ) {
+        val profileSvgPainter = painterResource(id = R.drawable.ic_artist_profile_svg)
+        com.seitharol.ui.components.ArtistProfileSvgIcon(
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(24.dp)
+        )
         if (avatarUrl.isNotBlank()) {
             AsyncImage(
                 model = avatarUrl,
                 contentDescription = name,
+                placeholder = profileSvgPainter,
+                error = profileSvgPainter,
+                fallback = profileSvgPainter,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
-            )
-        } else {
-            val initial = name.firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "A"
-            Text(
-                text = initial,
-                color = MaterialTheme.colorScheme.primary,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold
             )
         }
     }

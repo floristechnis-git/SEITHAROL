@@ -60,6 +60,7 @@ sealed interface SubScreen {
     data object SoundSettings : SubScreen
     data object Discover : SubScreen
     data object LocalMusic : SubScreen
+    data class MovieDetail(val track: com.example.data.model.Track) : SubScreen
     data class NotFound(val queryOrUrl: String = "", val title: String = "404 — Page Not Found") : SubScreen
 }
 
@@ -495,6 +496,23 @@ fun CascadeApp(
                         onNavigateBack = { currentSubScreen = SubScreen.None }
                     )
                 }
+                is SubScreen.MovieDetail -> {
+                    BackHandler { currentSubScreen = SubScreen.None }
+                    MovieDetailScreen(
+                        seedTrack = sub.track,
+                        onBack = { currentSubScreen = SubScreen.None },
+                        onPlayMovie = { playableTrack ->
+                            dismissGlobalKeyboard()
+                            viewModel.playTrack(playableTrack)
+                            expandFullPlayer()
+                        },
+                        onPlayEpisodeQueue = { queue, startIndex ->
+                            dismissGlobalKeyboard()
+                            viewModel.playQueue(queue, startIndex, isPlaylist = true)
+                            expandFullPlayer()
+                        }
+                    )
+                }
                 is SubScreen.NotFound -> {
                     BackHandler { currentSubScreen = SubScreen.None }
                     NotFound404Screen(
@@ -570,6 +588,10 @@ fun CascadeApp(
                                 onOpenDiscover = {
                                     dismissGlobalKeyboard()
                                     currentSubScreen = SubScreen.Discover
+                                },
+                                onOpenMovieDetail = { movieTrack ->
+                                    dismissGlobalKeyboard()
+                                    currentSubScreen = SubScreen.MovieDetail(movieTrack)
                                 },
                                 onPlayTrackAndMaximize = { track ->
                                     dismissGlobalKeyboard()
@@ -664,6 +686,7 @@ fun CascadeApp(
                             .testTag("mobile_floating_nav"),
                         shape = RoundedCornerShape(30.dp),
                         color = navBarContainerColor,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
                         shadowElevation = 12.dp
                     ) {
                         Row(

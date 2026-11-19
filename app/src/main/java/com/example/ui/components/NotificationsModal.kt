@@ -222,7 +222,7 @@ object ManipurCalendarNotificationEngine {
             val safeId = userName.lowercase().replace(" ", "_")
             return CalendarEventNotification(
                 id = "bday_${safeId}_$year",
-                title = "Happy Birthday $userName! 🎂🎉",
+                title = "Happy Birthday, $userName!",
                 body = "Wishing you a wonderful year ahead filled with soulful melodies, joy, good health, and memorable moments with Seitharol!",
                 dateLabel = relativeLabel,
                 iconName = "CAKE",
@@ -236,7 +236,7 @@ object ManipurCalendarNotificationEngine {
         if (mmDd == "11-27") {
             return CalendarEventNotification(
                 id = "bday_johnson_$year",
-                title = "Happy Birthday Johnson! 🎂",
+                title = "Happy Birthday, Johnson!",
                 body = "Wishing you a wonderful year ahead filled with soulful melodies, good health, boundless creativity, and unforgettable moments with Seitharol!",
                 dateLabel = relativeLabel,
                 iconName = "CAKE",

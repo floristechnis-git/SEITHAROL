@@ -2742,23 +2742,8 @@ fun SeitharolRawVideoSurface(
                             }
                         }
                     } else {
-                        // Top Bar: Exact YouTube Wireframe (Minimize left; Autoplay, CC/Live Caption, Lock, Mute, PiP right)
+                        // Top Bar: Exact YouTube Wireframe (Autoplay, CC/Live Caption, Lock, Mute, PiP right — outer PlayerScreen already has slide-down)
                         if (showOverlayControls) {
-                            IconButton(
-                                onClick = onMinimizePlayer,
-                                modifier = Modifier
-                                    .align(Alignment.TopStart)
-                                    .padding(4.dp)
-                                    .size(38.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.KeyboardArrowDown,
-                                    contentDescription = "Minimize Video Player",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(26.dp)
-                                )
-                            }
-
                             Row(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)

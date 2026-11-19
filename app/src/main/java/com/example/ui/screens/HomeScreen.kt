@@ -60,7 +60,7 @@ import java.util.Calendar
 fun LikedPlaylistSvgThumbnail(modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .background(Color(0xFF262727), RoundedCornerShape(12.dp)),
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp)),
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.size(56.dp)) {
@@ -2222,7 +2222,7 @@ fun FreshNewMusicShelf(
                         ) {
                             Text(
                                 text = "NEW",
-                                color = Color(0xFFE3E4E2),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)

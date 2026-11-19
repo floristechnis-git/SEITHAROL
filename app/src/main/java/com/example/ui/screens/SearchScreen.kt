@@ -227,6 +227,7 @@ fun SearchScreen(
     onNavigateToArtist: (String) -> Unit,
     onNavigateToHome: () -> Unit = {},
     onOpenDiscover: () -> Unit = {},
+    onOpenMovieDetail: (Track) -> Unit = {},
     onPlayTrackAndMaximize: (Track) -> Unit = { viewModel.playTrack(it) },
     modifier: Modifier = Modifier
 ) {
@@ -631,7 +632,7 @@ fun SearchScreen(
             }
 
             // Recent Searches
-            if (recentSearches.isNotEmpty() && query.isBlank() && currentProvider != com.example.ui.ProviderFilter.LOCAL) {
+            if (recentSearches.isNotEmpty() && query.isBlank() && currentProvider != com.example.ui.ProviderFilter.LOCAL && currentProvider != com.example.ui.ProviderFilter.MOVIES) {
                 item {
                     Row(
                         modifier = Modifier
@@ -721,7 +722,7 @@ fun SearchScreen(
             }
 
             // Real Dynamic Trending Searches from YouTube
-            if (query.isBlank() && currentProvider != com.example.ui.ProviderFilter.LOCAL && trendingSearches.isNotEmpty()) {
+            if (query.isBlank() && currentProvider != com.example.ui.ProviderFilter.LOCAL && currentProvider != com.example.ui.ProviderFilter.MOVIES && trendingSearches.isNotEmpty()) {
                 item {
                     Text(
                         text = "Trending Searches",
@@ -780,7 +781,7 @@ fun SearchScreen(
             }
 
             // Typeahead suggestions
-            if (query.isNotBlank() && searchSuggestions.isNotEmpty() && currentProvider != com.example.ui.ProviderFilter.LOCAL) {
+            if (query.isNotBlank() && searchSuggestions.isNotEmpty() && currentProvider != com.example.ui.ProviderFilter.LOCAL && currentProvider != com.example.ui.ProviderFilter.MOVIES) {
                 item {
                     LazyRow(
                         contentPadding = PaddingValues(horizontal = 20.dp),
@@ -855,7 +856,7 @@ fun SearchScreen(
             }
 
             // Discover Entry Card
-            if (currentProvider != com.example.ui.ProviderFilter.LOCAL) {
+            if (currentProvider != com.example.ui.ProviderFilter.LOCAL && currentProvider != com.example.ui.ProviderFilter.MOVIES) {
                 item {
                     com.seitharol.ui.search.DiscoverEntryCard(
                         onOpenDiscover = {
@@ -1289,9 +1290,9 @@ fun SearchScreen(
                                     ) {
                                         Text(
                                             text = when {
+                                                currentProvider == com.example.ui.ProviderFilter.MOVIES -> "Movies & TV Series"
                                                 query.isBlank() -> "Recommended Songs"
                                                 currentProvider == com.example.ui.ProviderFilter.YOUTUBE -> "YouTube Videos & Audio"
-                                                currentProvider == com.example.ui.ProviderFilter.MOVIES -> "Raw Movies (VidLink Direct)"
                                                 else -> "Songs"
                                             },
                                             fontFamily = SyneFontFamily,
@@ -1311,7 +1312,23 @@ fun SearchScreen(
                                 }
                             }
 
-                            if (displayedTracks.isEmpty() && ((!isSearchingOnline && hasCompletedOnlineSearch && hasActiveSearchQuery) || currentProvider == com.example.ui.ProviderFilter.LOCAL)) {
+                            if (displayedTracks.isEmpty() && currentProvider == com.example.ui.ProviderFilter.MOVIES && !hasActiveSearchQuery && !isSearchingOnline) {
+                                item(key = "movies_search_prompt") {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 24.dp, vertical = 44.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "Search any movie or TV series (e.g., The Mentalist, Inception)",
+                                            color = SeitharolTextSecondary,
+                                            fontSize = 14.sp,
+                                            fontFamily = OutfitFontFamily
+                                        )
+                                    }
+                                }
+                            } else if (displayedTracks.isEmpty() && ((!isSearchingOnline && hasCompletedOnlineSearch && hasActiveSearchQuery) || currentProvider == com.example.ui.ProviderFilter.LOCAL)) {
                                 if (hasActiveSearchQuery || currentProvider == com.example.ui.ProviderFilter.LOCAL) {
                                     item(key = "empty_songs") {
                                         Box(
@@ -1343,13 +1360,19 @@ fun SearchScreen(
                                     track = track,
                                     isPlaying = playerState.currentTrack?.id == track.id,
                                     isHighlightedOfficial = isMostViewedOfficial,
-                                    subtitleText = if (isVideo) {
-                                        "${track.artist} • MP4 Video • ${track.durationFormatted}"
-                                    } else null,
+                                    subtitleText = when {
+                                        com.seitharol.data.resolver.VidLinkRawMovieStreamer.isMovieTrack(track) -> track.artist
+                                        isVideo -> "${track.artist} • MP4 Video • ${track.durationFormatted}"
+                                        else -> null
+                                    },
                                     onTrackClick = {
                                         focusManager.clearFocus()
                                         keyboardController?.hide()
-                                        onPlayTrackAndMaximize(track)
+                                        if (com.seitharol.data.resolver.VidLinkRawMovieStreamer.isMovieTrack(track)) {
+                                            onOpenMovieDetail(track)
+                                        } else {
+                                            onPlayTrackAndMaximize(track)
+                                        }
                                     },
                                     onLikeClick = { dismissSearchKeyboard(); viewModel.toggleLike(track) },
                                     onDownloadClick = { tier: DownloadTier ->

@@ -1523,15 +1523,21 @@ class AudioPlayerManager(
                     com.seitharol.data.resolver.VidLinkRawMovieStreamer.isMovieTrack(track)
                 }
                 val baseMediaItem = track.toMediaItem(parsedUri)
-                val mediaItem = if (movieMeta != null && !movieMeta.captionVttUrl.isNullOrBlank()) {
-                    val subConfig = MediaItem.SubtitleConfiguration.Builder(Uri.parse(movieMeta.captionVttUrl))
-                        .setMimeType(androidx.media3.common.MimeTypes.TEXT_VTT)
-                        .setLanguage("en")
-                        .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                        .build()
-                    baseMediaItem.buildUpon()
-                        .setSubtitleConfigurations(listOf(subConfig))
-                        .build()
+                val mediaItem = if (movieMeta != null) {
+                    val builder = baseMediaItem.buildUpon()
+                        .setMimeType(
+                            if (movieMeta.isHls) androidx.media3.common.MimeTypes.APPLICATION_M3U8
+                            else androidx.media3.common.MimeTypes.VIDEO_MP4
+                        )
+                    if (!movieMeta.captionVttUrl.isNullOrBlank()) {
+                        val subConfig = MediaItem.SubtitleConfiguration.Builder(Uri.parse(movieMeta.captionVttUrl))
+                            .setMimeType(androidx.media3.common.MimeTypes.TEXT_VTT)
+                            .setLanguage("en")
+                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                            .build()
+                        builder.setSubtitleConfigurations(listOf(subConfig))
+                    }
+                    builder.build()
                 } else {
                     baseMediaItem
                 }
@@ -1553,7 +1559,16 @@ class AudioPlayerManager(
                         .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36")
                         .setAllowCrossProtocolRedirects(true)
                         .setDefaultRequestProperties(headers)
-                    val movieSource = DefaultMediaSourceFactory(movieHttpFactory).createMediaSource(mediaItem)
+                    val movieSourceFactory = DefaultMediaSourceFactory(movieHttpFactory)
+                    val movieSource = runCatching {
+                        movieSourceFactory.createMediaSource(mediaItem)
+                    }.getOrElse {
+                        val fbUrl = movieMeta.fallbackUrl ?: singleUrl
+                        val fbItem = track.toMediaItem(parseSourceUri(fbUrl)).buildUpon()
+                            .setMimeType(androidx.media3.common.MimeTypes.VIDEO_MP4)
+                            .build()
+                        movieSourceFactory.createMediaSource(fbItem)
+                    }
                     if (effectiveStartPos > 0L) {
                         player.setMediaSource(movieSource, effectiveStartPos)
                     } else {
@@ -2308,8 +2323,9 @@ class AudioPlayerManager(
                         }
                     }
 
+                    val resolveTimeoutMs = if (com.seitharol.data.resolver.VidLinkRawMovieStreamer.isMovieTrack(resolvedLocalTrack)) 18_000L else 8_000L
                     val firstTry = runCatching {
-                        withTimeoutOrNull(8_000L) {
+                        withTimeoutOrNull(resolveTimeoutMs) {
                             resolveStreamForTrack(
                                 track = resolvedLocalTrack,
                                 isVideo = isVideoTrack,

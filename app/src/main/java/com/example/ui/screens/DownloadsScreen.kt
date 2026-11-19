@@ -65,16 +65,19 @@ fun DownloadsScreen(
 
     val activeDiscoverDownloading = discoverTaskState as? DownloadTaskState.Downloading
 
+    val playerState by viewModel.playerState.collectAsState()
+
     SeitharolPullToRefreshBox(
         isRefreshing = isRefreshingLibrary,
         onRefresh = { viewModel.refreshLibrary() },
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 225.dp)
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 225.dp)
         ) {
             item {
                 Row(
@@ -82,6 +85,21 @@ fun DownloadsScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ArrowBack,
+                            contentDescription = "Back",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Downloads & Offline",
@@ -333,14 +351,16 @@ fun DownloadsScreen(
             else -> 0f
         }
         if (bottomDlTitle != null && bottomDlSubtitle != null) {
+            val miniPlayerClearance = if (playerState.currentTrack != null) 76.dp else 0.dp
             Surface(
-                color = Color(0xF514161A),
+                color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
-                shadowElevation = 14.dp,
+                shadowElevation = 12.dp,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .navigationBarsPadding()
+                    .padding(bottom = miniPlayerClearance)
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
@@ -359,7 +379,7 @@ fun DownloadsScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = bottomDlTitle,
-                                color = Color.White,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 13.sp,
@@ -368,7 +388,7 @@ fun DownloadsScreen(
                             )
                             Text(
                                 text = "$bottomDlSubtitle • ${(bottomDlProgress * 100).toInt()}%",
-                                color = Color.White.copy(alpha = 0.72f),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontFamily = OutfitFontFamily,
                                 fontSize = 11.sp,
                                 maxLines = 1,
@@ -388,7 +408,7 @@ fun DownloadsScreen(
                             Icon(
                                 imageVector = Icons.Default.Close,
                                 contentDescription = "Cancel Download",
-                                tint = Color.White.copy(alpha = 0.82f),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(18.dp)
                             )
                         }

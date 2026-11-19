@@ -47,10 +47,12 @@ data class Track(
             val lowerAudioUrl = audioUrl.lowercase()
             return genre.equals("YouTube Video", ignoreCase = true) ||
                 genre.equals("Raw Movie", ignoreCase = true) ||
+                genre.equals("Raw Series", ignoreCase = true) ||
                 genre.equals("Local Video", ignoreCase = true) ||
                 genre.equals("MP4 Video", ignoreCase = true) ||
                 album.equals("YouTube Video", ignoreCase = true) ||
                 album.equals("Raw Movie", ignoreCase = true) ||
+                album.equals("Raw Series", ignoreCase = true) ||
                 album.equals("Local Video", ignoreCase = true) ||
                 album.equals("MP4 Video", ignoreCase = true) ||
                 codec.equals("MP4", ignoreCase = true) ||

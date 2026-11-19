@@ -1388,7 +1388,7 @@ class CascadeViewModel(
                         it.album.contains(cleanQuery, ignoreCase = true)
                 }
             }
-            provider == ProviderFilter.MOVIES -> onlineTracks
+            provider == ProviderFilter.MOVIES -> online
             provider == ProviderFilter.YOUTUBE -> {
                 if (cleanQuery.isBlank()) {
                     downloaded.filter { it.isVideoTrack }

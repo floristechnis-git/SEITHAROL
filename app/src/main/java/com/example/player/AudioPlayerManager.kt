@@ -1024,7 +1024,8 @@ class AudioPlayerManager(
                         val captionLine = cueGroup.cues
                             .mapNotNull { it.text?.toString()?.trim() }
                             .filter { it.isNotBlank() }
-                            .joinToString("\n")
+                            .joinToString("
+")
                         if (_state.value.activeCaptionText != captionLine) {
                             _state.value = _state.value.copy(
                                 activeCaptionText = if (_state.value.isCaptionsEnabled) captionLine else ""

@@ -678,7 +678,32 @@ private fun DiscoverShortPage(
                 }
             }
         }
+    }
+}
 
+@Composable
+fun YouTubePlayBadgeSvgIcon(
+    tint: Color,
+    modifier: Modifier = Modifier.size(20.dp)
+) {
+    Canvas(modifier = modifier) {
+        val sx = size.width / 24f
+        val sy = size.height / 24f
+        drawRoundRect(
+            color = tint,
+            topLeft = androidx.compose.ui.geometry.Offset(2f * sx, 5f * sy),
+            size = androidx.compose.ui.geometry.Size(20f * sx, 14f * sy),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(4f * sx, 4f * sy),
+            style = Stroke(width = 2f * sx)
+        )
+        val triangle = Path().apply {
+            moveTo(10f * sx, 9f * sy)
+            lineTo(15.5f * sx, 12f * sy)
+            lineTo(10f * sx, 15f * sy)
+            close()
+        }
+        drawPath(triangle, color = tint, style = Fill)
+    
         // Exact YouTube Wireframe Bottom-Edge Progress Bar (Preview + Download Progress pinned at bottom)
         Column(
             modifier = Modifier
@@ -750,32 +775,7 @@ private fun DiscoverShortPage(
                 )
             }
         }
-    }
 }
-
-@Composable
-fun YouTubePlayBadgeSvgIcon(
-    tint: Color,
-    modifier: Modifier = Modifier.size(20.dp)
-) {
-    Canvas(modifier = modifier) {
-        val sx = size.width / 24f
-        val sy = size.height / 24f
-        drawRoundRect(
-            color = tint,
-            topLeft = androidx.compose.ui.geometry.Offset(2f * sx, 5f * sy),
-            size = androidx.compose.ui.geometry.Size(20f * sx, 14f * sy),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(4f * sx, 4f * sy),
-            style = Stroke(width = 2f * sx)
-        )
-        val triangle = Path().apply {
-            moveTo(10f * sx, 9f * sy)
-            lineTo(15.5f * sx, 12f * sy)
-            lineTo(10f * sx, 15f * sy)
-            close()
-        }
-        drawPath(triangle, color = tint, style = Fill)
-    }
 }
 
 @Composable

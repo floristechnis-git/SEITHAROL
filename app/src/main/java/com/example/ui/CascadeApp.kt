@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -716,6 +717,7 @@ fun CascadeApp(
             // Full Player Sheet: Directly morphs down to the MiniPlayer dock position without hiding off-screen first
             if (isPlayerExpanded || playerMorphProgress.value > 0.01f) {
                 val density = LocalDensity.current
+                val configuration = LocalConfiguration.current
                 val containerHeightPx = with(density) { configuration.screenHeightDp.dp.toPx().coerceAtLeast(1f) }
                 val miniDockBottomOffsetPx = with(density) {
                     (if (currentSubScreen is SubScreen.None) 144.dp else 72.dp).toPx()

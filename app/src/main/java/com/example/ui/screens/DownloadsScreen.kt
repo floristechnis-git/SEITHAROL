@@ -28,6 +28,8 @@ import coil.compose.AsyncImage
 import com.example.R
 import com.example.data.model.DownloadItem
 import com.example.data.model.DownloadState
+import com.example.data.model.Track
+import com.example.player.PlayerState
 import com.example.ui.CascadeViewModel
 import com.example.ui.components.SeitharolPullToRefreshBox
 import com.example.ui.theme.*
@@ -37,6 +39,9 @@ import com.seitharol.data.download.DownloadTaskState
 @Composable
 fun DownloadsScreen(
     viewModel: CascadeViewModel,
+    playerState: PlayerState? = null,
+    onBack: () -> Unit = {},
+    onAddToPlaylist: (Track) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val downloads by viewModel.activeDownloads.collectAsState()
@@ -65,7 +70,8 @@ fun DownloadsScreen(
 
     val activeDiscoverDownloading = discoverTaskState as? DownloadTaskState.Downloading
 
-    val playerState by viewModel.playerState.collectAsState()
+    val observedPlayerState by viewModel.playerState.collectAsState()
+    val effectivePlayerState = playerState ?: observedPlayerState
 
     SeitharolPullToRefreshBox(
         isRefreshing = isRefreshingLibrary,
@@ -351,7 +357,7 @@ fun DownloadsScreen(
             else -> 0f
         }
         if (bottomDlTitle != null && bottomDlSubtitle != null) {
-            val miniPlayerClearance = if (playerState.currentTrack != null) 76.dp else 0.dp
+            val miniPlayerClearance = if (effectivePlayerState.currentTrack != null) 76.dp else 0.dp
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),

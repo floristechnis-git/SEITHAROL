@@ -524,7 +524,7 @@ object VidLinkRawMovieStreamer {
         return runCatching {
             val baseTitle = track.title.substringBefore(" • S").replace(":", "").trim()
             if (baseTitle.isBlank()) return null
-            val year = Regex("\b(19|20)\d{2}\b").find(track.artist)?.value.orEmpty()
+            val year = Regex("\\b(19|20)\\d{2}\\b").find(track.artist)?.value.orEmpty()
             val folderUrl = if (parsed.isSeries) {
                 val encTitle = URLEncoder.encode(baseTitle, "UTF-8").replace("+", "%20")
                 "https://a.111477.xyz/tvs/$encTitle/Season%20${parsed.season}/"
@@ -534,9 +534,9 @@ object VidLinkRawMovieStreamer {
                 "https://a.111477.xyz/movies/$encFolder/"
             }
             val html = httpGet(folderUrl, timeoutMs = 4500) ?: return null
-            val hrefRegex = Regex("href=\"([^\"]+\.(?:mp4|mkv|webm))\"", RegexOption.IGNORE_CASE)
+            val hrefRegex = Regex("href=\"([^\"]+\\.(?:mp4|mkv|webm))\"", RegexOption.IGNORE_CASE)
             val epTag = if (parsed.isSeries) {
-                Regex("s0*${parsed.season}e0*${parsed.episode}\b|${parsed.season}x0*${parsed.episode}\b", RegexOption.IGNORE_CASE)
+                Regex("s0*${parsed.season}e0*${parsed.episode}\\b|${parsed.season}x0*${parsed.episode}\\b", RegexOption.IGNORE_CASE)
             } else null
 
             var bestUrl: String? = null

@@ -29,7 +29,7 @@ import coil.compose.AsyncImage
 import com.example.data.model.Track
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.SyneFontFamily
-import com.seitharol.R
+import com.example.R
 import com.seitharol.data.resolver.VidLinkRawMovieStreamer
 
 /**

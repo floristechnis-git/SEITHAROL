@@ -207,7 +207,7 @@ object OuterTuneResolvingDataSource {
         }
     }
 
-    fun clearAll() {
+    fun clearAll(context: Context? = null) {
         urlCache.clear()
         urlToVideoIdMap.clear()
         knownStreamTotalLengths.clear()

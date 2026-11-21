@@ -765,8 +765,10 @@ class AudioPlayerManager(
         }
 
         bufferingWatchdogJob = coroutineScope.launch {
-            val isVid = _state.value.isVideoMode || _state.value.currentTrack?.isVideoTrack == true
-            delay(if (isVid) 12_000L else 8_000L)
+            val cur = _state.value.currentTrack
+            val isMovie = com.seitharol.data.resolver.VidLinkRawMovieStreamer.isMovieTrack(cur)
+            val isVid = isMovie || _state.value.isVideoMode || cur?.isVideoTrack == true
+            delay(if (isMovie) 15_000L else if (isVid) 12_000L else 8_000L)
             if (!isActive || !userRequestedPlay) return@launch
             val current = _state.value.currentTrack ?: return@launch
             val p = exoPlayer ?: return@launch
@@ -797,6 +799,12 @@ class AudioPlayerManager(
                 Log.w(TAG, "Buffering watchdog attempt $stallRecoveryCount (fallback=$useFallback) for '${current.title}' at ${resumePos}ms")
                 resolverEngine.invalidateTrack(current.id)
                 InnerTubeStreamExtractor.invalidateVideoStreamCache(current.id)
+                if (com.seitharol.data.resolver.VidLinkRawMovieStreamer.isMovieTrack(current)) {
+                    com.seitharol.data.resolver.VidLinkRawMovieStreamer.markStreamFailed(
+                        trackId = current.id,
+                        failedUrl = activeMovieRawStream?.streamUrl ?: _state.value.activeStream?.streamUrl
+                    )
+                }
                 try {
                     val freshStream = withContext(Dispatchers.IO) {
                         withTimeoutOrNull(12_000L) {
@@ -1188,6 +1196,12 @@ class AudioPlayerManager(
 
                             val isVideo = current.isVideoTrack || _state.value.isVideoMode
                             InnerTubeStreamExtractor.invalidateVideoStreamCache(current.id)
+                            if (com.seitharol.data.resolver.VidLinkRawMovieStreamer.isMovieTrack(current)) {
+                                com.seitharol.data.resolver.VidLinkRawMovieStreamer.markStreamFailed(
+                                    trackId = current.id,
+                                    failedUrl = activeMovieRawStream?.streamUrl ?: _state.value.activeStream?.streamUrl
+                                )
+                            }
                             trackRetryCount++
                             delay(40L)
                             if (!isActive || !userRequestedPlay || _state.value.currentTrack?.id != current.id) return@launch
@@ -1525,17 +1539,11 @@ class AudioPlayerManager(
                 val baseMediaItem = track.toMediaItem(parsedUri)
                 val mediaItem = if (movieMeta != null) {
                     val builder = baseMediaItem.buildUpon()
-                        .setMimeType(
-                            if (movieMeta.isHls) androidx.media3.common.MimeTypes.APPLICATION_M3U8
-                            else androidx.media3.common.MimeTypes.VIDEO_MP4
-                        )
-                    if (!movieMeta.captionVttUrl.isNullOrBlank()) {
-                        val subConfig = MediaItem.SubtitleConfiguration.Builder(Uri.parse(movieMeta.captionVttUrl))
-                            .setMimeType(androidx.media3.common.MimeTypes.TEXT_VTT)
-                            .setLanguage("en")
-                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                            .build()
-                        builder.setSubtitleConfigurations(listOf(subConfig))
+                    if (movieMeta.isHls || singleUrl.contains(".m3u8", ignoreCase = true)) {
+                        builder.setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8)
+                    } else {
+                        // Leave mimeType null for progressive MP4/MKV/WebM so Media3 DefaultExtractorsFactory auto-sniffs container headers natively
+                        builder.setMimeType(null)
                     }
                     builder.build()
                 } else {
@@ -1561,15 +1569,24 @@ class AudioPlayerManager(
                     movieMeta.origin?.let { headers["Origin"] = it }
                     val movieHttpFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
                         .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36")
+                        .setConnectTimeoutMs(12_000)
+                        .setReadTimeoutMs(15_000)
                         .setAllowCrossProtocolRedirects(true)
                         .setDefaultRequestProperties(headers)
                     val movieSourceFactory = DefaultMediaSourceFactory(movieHttpFactory)
                     val movieSource = runCatching {
-                        movieSourceFactory.createMediaSource(mediaItem)
+                        if (movieMeta.isHls || singleUrl.contains(".m3u8", ignoreCase = true)) {
+                            androidx.media3.exoplayer.hls.HlsMediaSource.Factory(movieHttpFactory)
+                                .setAllowChunklessPreparation(true)
+                                .createMediaSource(mediaItem)
+                        } else {
+                            movieSourceFactory.createMediaSource(mediaItem)
+                        }
                     }.getOrElse {
                         val fbUrl = movieMeta.fallbackUrl ?: singleUrl
+                        val fbIsHls = fbUrl.contains(".m3u8", ignoreCase = true)
                         val fbItem = track.toMediaItem(parseSourceUri(fbUrl)).buildUpon()
-                            .setMimeType(androidx.media3.common.MimeTypes.VIDEO_MP4)
+                            .setMimeType(if (fbIsHls) androidx.media3.common.MimeTypes.APPLICATION_M3U8 else null)
                             .build()
                         movieSourceFactory.createMediaSource(fbItem)
                     }

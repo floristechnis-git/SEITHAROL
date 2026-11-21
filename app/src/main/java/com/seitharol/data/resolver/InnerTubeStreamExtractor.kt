@@ -257,7 +257,7 @@ object InnerTubeStreamExtractor {
         ) {
             return true
         }
-        val whMatch = Regex("=w(\d+)-h(\d+)").find(lower)
+        val whMatch = Regex("=w(\\d+)-h(\\d+)").find(lower)
         if (whMatch != null) {
             val w = whMatch.groupValues[1].toIntOrNull() ?: 0
             val h = whMatch.groupValues[2].toIntOrNull() ?: 0
@@ -4538,7 +4538,9 @@ object InnerTubeStreamExtractor {
         }
 
         val cleanBaseUrl = com.seitharol.player.OuterTuneResolvingDataSource.stripRangeQueryParam(streamUrl)
-        val headers = com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(cleanBaseUrl)
+        val movieCustomHeaders = VidLinkRawMovieStreamer.getHeadersForStreamUrl(cleanBaseUrl)
+        val headers = movieCustomHeaders
+            ?: com.seitharol.player.OuterTuneResolvingDataSource.resolveClientHeadersForUrl(cleanBaseUrl)
         val isGoogleVideo = cleanBaseUrl.contains("googlevideo.com", ignoreCase = true)
         var knownClen = com.seitharol.player.OuterTuneResolvingDataSource.getKnownStreamLength(cleanBaseUrl)
 

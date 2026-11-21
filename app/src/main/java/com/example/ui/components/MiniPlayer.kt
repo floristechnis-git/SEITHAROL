@@ -302,7 +302,7 @@ fun SeitharolFloatingVideoPiP(
     val track = playerState.currentTrack ?: return
     val isVideo = playerState.isVideoMode ||
         track.isVideoTrack ||
-        track.isMovieTrack ||
+        com.seitharol.data.resolver.VidLinkRawMovieStreamer.isMovieTrack(track) ||
         track.genre.equals("Music Video", ignoreCase = true) ||
         track.genre.equals("Video", ignoreCase = true) ||
         track.genre.equals("Local Video", ignoreCase = true) ||
@@ -331,19 +331,10 @@ fun SeitharolFloatingVideoPiP(
     var offsetYPx by remember(screenHeightDp) { mutableFloatStateOf((maxOffsetYPx * 0.72f).coerceIn(minOffsetYPx, maxOffsetYPx)) }
     var showOverlayControls by remember { mutableStateOf(true) }
 
-    val activeCaptionText = remember(
-        playerState.captionsEnabled,
-        playerState.videoCaptions,
-        playerState.currentPositionMs
-    ) {
-        if (!playerState.captionsEnabled || playerState.videoCaptions.isEmpty()) {
-            null
-        } else {
-            val pos = playerState.currentPositionMs
-            playerState.videoCaptions.firstOrNull { cue ->
-                pos >= cue.startTimeMs && pos <= cue.endTimeMs
-            }?.text
-        }
+    val activeCaptionText = if (playerState.isCaptionsEnabled) {
+        playerState.activeCaptionText.takeIf { it.isNotBlank() }
+    } else {
+        null
     }
 
     val progress = if (playerState.durationMs > 0) {
@@ -390,8 +381,8 @@ fun SeitharolFloatingVideoPiP(
             modifier = Modifier.fillMaxSize()
         )
 
-        // Thumbnail fallback while buffering
-        if (!playerState.isVideoSurfaceReady) {
+        // Thumbnail fallback while buffering before first video frame renders
+        if (!playerState.isVideoFrameRendered && !(playerState.isPlaying && playerState.currentPositionMs > 150L)) {
             val upgradedArt = InnerTubeResolver.upgradeThumbnailUrl(track.artUrl)
             UniversalMediaThumbnail(
                 artUrl = upgradedArt,

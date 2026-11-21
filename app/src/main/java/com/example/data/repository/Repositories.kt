@@ -639,18 +639,7 @@ class DownloadRepository(
 
             val candidateUrls = if (isMovieTrack) {
                 // Never fall back to YouTube search for Movie/TV Series tracks (which downloaded fake related YouTube remixes!)
-                val rawMovie = com.seitharol.data.resolver.VidLinkRawMovieStreamer.resolveRawMovieStream(track, forceRefresh = false)
-                    ?: com.seitharol.data.resolver.VidLinkRawMovieStreamer.resolveRawMovieStream(track, forceRefresh = true)
-                buildList {
-                    if (rawMovie != null) {
-                        if (!rawMovie.streamUrl.contains(".m3u8", ignoreCase = true)) {
-                            add(rawMovie.streamUrl)
-                        }
-                        if (!rawMovie.fallbackUrl.isNullOrBlank() && !rawMovie.fallbackUrl.contains(".m3u8", ignoreCase = true)) {
-                            add(rawMovie.fallbackUrl)
-                        }
-                    }
-                }
+                com.seitharol.data.resolver.VidLinkRawMovieStreamer.resolveDownloadableMovieMp4Candidates(track)
             } else if (isVideo) {
                 com.seitharol.data.resolver.InnerTubeStreamExtractor.resolveDownloadableVideoCandidates(
                     videoId = track.id,

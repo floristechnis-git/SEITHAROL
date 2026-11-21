@@ -636,7 +636,7 @@ object NetworkClients {
         syncedLyricsCache.clear()
     }
 
-    private val HAN_SCRIPT_REGEX = Regex("\p{IsHan}")
+    private val HAN_SCRIPT_REGEX = Regex("\\p{IsHan}")
 
     private fun containsHanScript(text: String): Boolean {
         return HAN_SCRIPT_REGEX.containsMatchIn(text)
@@ -1304,10 +1304,22 @@ object NetworkClients {
         artist: String = "",
         externalVttUrl: String? = null
     ): List<LyricsLine> = withContext(Dispatchers.IO) {
-        // 1. If an external WebVTT subtitle URL is available (e.g. VidLink Movies/Series), parse it directly
+        // 1. If an external WebVTT/SRT subtitle URL is available (e.g. VidLink / Videasy Movies & Series), parse it directly
         if (!externalVttUrl.isNullOrBlank() && externalVttUrl.startsWith("http")) {
             val vttLines = fetchAndParseWebVttUrl(externalVttUrl)
             if (vttLines.isNotEmpty()) return@withContext vttLines
+        }
+
+        // 1b. For Movie & TV Series tracks (movie_vidlink_...), fetch OpenSubtitles v3 Stremio addon subtitles (from original.zip)
+        if (videoId.startsWith(com.seitharol.data.resolver.VidLinkRawMovieStreamer.MOVIE_ID_PREFIX)) {
+            val openSubUrl = runCatching {
+                com.seitharol.data.resolver.VidLinkRawMovieStreamer.fetchOpenSubtitlesUrl(videoId)
+            }.getOrNull()
+            if (!openSubUrl.isNullOrBlank()) {
+                val subLines = fetchAndParseWebVttUrl(openSubUrl)
+                if (subLines.isNotEmpty()) return@withContext subLines
+            }
+            return@withContext emptyList()
         }
 
         // 2. Extract YouTube captionTracks from ANDROID_VR and WEB player responses
@@ -1423,7 +1435,7 @@ object NetworkClients {
                 if (body.isBlank()) return emptyList()
                 val out = mutableListOf<LyricsLine>()
                 val lines = body.lines()
-                val timeRegex = Regex("(?:(\d{1,2}):)?(\d{2}):(\d{2})[.,](\d{3})\s*-->\s*(?:(\d{1,2}):)?(\d{2}):(\d{2})[.,](\d{3})")
+                val timeRegex = Regex("(?:(\\d{1,2}):)?(\\d{2}):(\\d{2})[.,](\\d{3})\\s*-->\\s*(?:(\\d{1,2}):)?(\\d{2}):(\\d{2})[.,](\\d{3})")
                 var i = 0
                 while (i < lines.size) {
                     val line = lines[i].trim()

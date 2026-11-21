@@ -293,23 +293,7 @@ fun TrackCard(
                         )
                     }
                 } else if (isVideoCard) {
-                    // Top-left VIDEO preface pill + Center Play badge + Bottom-right duration pill
-                    Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = Color.Black.copy(alpha = 0.72f),
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(4.dp)
-                    ) {
-                        Text(
-                            text = if (track.isLocalOnlyTrack) "LOCAL MP4" else "VIDEO",
-                            color = Color.White,
-                            fontSize = 8.5.sp,
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                        )
-                    }
+                    // Center Play badge + Bottom-right duration pill (no MP4/VIDEO tag on video thumbnails)
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = Color.Black.copy(alpha = 0.55f),

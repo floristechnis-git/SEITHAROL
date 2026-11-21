@@ -203,21 +203,6 @@ fun OnboardingScreen(
                                 }
 
                                 Column {
-                                    Surface(
-                                        shape = RoundedCornerShape(6.dp),
-                                        color = primaryColor.copy(alpha = 0.14f)
-                                    ) {
-                                        Text(
-                                            text = "SEITHAROL AUDIO",
-                                            color = primaryColor,
-                                            fontSize = 10.sp,
-                                            fontFamily = OutfitFontFamily,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            letterSpacing = 0.9.sp,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = "Welcome to Seitharol",
                                         color = primaryText,

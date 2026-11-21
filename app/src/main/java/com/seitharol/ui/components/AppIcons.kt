@@ -528,18 +528,24 @@ fun FullscreenMinimizeSvgIcon(
 @Composable
 fun InstrumentalGapMusicNoteIndicator(
     tint: Color = Color.White,
+    isActive: Boolean = true,
     modifier: Modifier = Modifier
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "instrumental_pulse")
-    val scale by infiniteTransition.animateFloat(
-        initialValue = 0.88f,
-        targetValue = 1.15f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(750, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "note_scale"
-    )
+    val scale = if (isActive) {
+        val infiniteTransition = rememberInfiniteTransition(label = "instrumental_pulse")
+        val pulse by infiniteTransition.animateFloat(
+            initialValue = 0.88f,
+            targetValue = 1.18f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(680, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "note_scale"
+        )
+        pulse
+    } else {
+        0.92f
+    }
 
     Row(
         modifier = modifier.padding(vertical = 12.dp),

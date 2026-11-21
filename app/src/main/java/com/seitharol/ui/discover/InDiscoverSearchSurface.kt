@@ -337,22 +337,6 @@ fun InDiscoverSearchSurface(
                                 Spacer(modifier = Modifier.width(12.dp))
 
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Surface(
-                                            color = if (isThisPlaying) Color(0xFF1DB954).copy(alpha = 0.2f)
-                                            else MaterialTheme.colorScheme.surfaceVariant,
-                                            shape = RoundedCornerShape(50)
-                                        ) {
-                                            Text(
-                                                text = if (isThisPlaying) "PLAYING" else "TRACK",
-                                                fontSize = 9.sp,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                color = if (isThisPlaying) Color(0xFF1DB954) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = item.title,
                                         color = MaterialTheme.colorScheme.onSurface,

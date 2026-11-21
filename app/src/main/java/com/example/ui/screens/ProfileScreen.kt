@@ -62,6 +62,7 @@ fun ProfileScreen(
     var showAccountInfo by remember { mutableStateOf(false) }
     var showSubInfo by remember { mutableStateOf(false) }
     var showClearCacheDialog by remember { mutableStateOf(false) }
+    var cacheStatsRefreshTick by remember { mutableIntStateOf(0) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
@@ -569,7 +570,7 @@ fun ProfileScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    val (cachedFileCount, cachedBytesTotal) = remember {
+                    val (cachedFileCount, cachedBytesTotal) = remember(cacheStatsRefreshTick) {
                         com.seitharol.player.OuterTuneResolvingDataSource.getCacheStatsSummary(context)
                     }
                     val cachedMbFormatted = remember(cachedBytesTotal) {
@@ -661,10 +662,12 @@ fun ProfileScreen(
                 confirmButton = {
                     Button(
                         onClick = {
-                            viewModel.clearStreamCacheAndReset()
                             showClearCacheDialog = false
-                            coroutineScope.launch {
-                                snackbarHostState.showSnackbar("Stream cache and search history cleared successfully.")
+                            viewModel.clearStreamCacheAndReset {
+                                cacheStatsRefreshTick++
+                                coroutineScope.launch {
+                                    snackbarHostState.showSnackbar("Stream cache, search history, and playback state reset.")
+                                }
                             }
                         },
                         colors = ButtonDefaults.buttonColors(

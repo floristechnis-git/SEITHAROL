@@ -900,21 +900,6 @@ fun ArtistScreen(
                                 Spacer(modifier = Modifier.width(16.dp))
 
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-                                    ) {
-                                        Text(
-                                            text = if (effectiveIsChannel) "YOUTUBE CHANNEL" else "OFFICIAL ARTIST",
-                                            color = MaterialTheme.colorScheme.primary,
-                                            fontSize = 10.sp,
-                                            fontFamily = OutfitFontFamily,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            letterSpacing = 0.8.sp,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = page.name,
                                         color = MaterialTheme.colorScheme.onBackground,
@@ -1606,7 +1591,7 @@ fun ArtistScreen(
                         item {
                             Spacer(modifier = Modifier.height(18.dp))
                             Text(
-                                text = "Albums",
+                                text = "Albums & EPs",
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.onBackground,
                                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
@@ -1640,7 +1625,10 @@ fun ArtistScreen(
                                                     .padding(8.dp)
                                             ) {
                                                 Text(
-                                                    text = "ALBUM",
+                                                    text = if (
+                                                        release.type.equals("EP", ignoreCase = true) ||
+                                                        Regex("\\bEP\\b", RegexOption.IGNORE_CASE).containsMatchIn(release.subtitle)
+                                                    ) "EP" else "ALBUM",
                                                     color = Color.White,
                                                     fontSize = 9.5.sp,
                                                     fontWeight = FontWeight.ExtraBold,
@@ -1694,7 +1682,7 @@ fun ArtistScreen(
                         item {
                             Spacer(modifier = Modifier.height(18.dp))
                             Text(
-                                text = "Singles & EPs",
+                                text = "Singles",
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.onBackground,
                                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)

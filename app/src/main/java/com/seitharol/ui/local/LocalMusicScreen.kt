@@ -447,24 +447,7 @@ fun LocalMusicScreen(
                                 modifier = Modifier.fillMaxSize()
                             )
                             if (isVideoItem) {
-                                // Top-Left Video Preface Badge
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = Color.Black.copy(alpha = 0.72f),
-                                    modifier = Modifier
-                                        .align(Alignment.TopStart)
-                                        .padding(4.dp)
-                                ) {
-                                    Text(
-                                        text = "MP4 VIDEO",
-                                        color = Color.White,
-                                        fontSize = 8.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                    )
-                                }
-                                // Center Play Overlay
+                                // Center Play Overlay (no MP4 VIDEO tag on thumbnail)
                                 Surface(
                                     shape = RoundedCornerShape(7.dp),
                                     color = Color.Black.copy(alpha = 0.52f),

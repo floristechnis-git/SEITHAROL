@@ -150,6 +150,20 @@ object InnerTubeStreamExtractor {
             sendOriginHeaders = false
         ),
         InnerTubeClientConfig(
+            clientName = "ANDROID_TESTSUITE",
+            clientVersion = "1.9",
+            userAgent = "com.google.android.youtube/1.9 (Linux; U; Android 14; en_US) gzip",
+            clientId = "30",
+            deviceMake = "Google",
+            deviceModel = "Pixel 8",
+            osName = "Android",
+            osVersion = "14",
+            androidSdkVersion = 34,
+            params = "CgIIAQ==",
+            glOverride = null,
+            sendOriginHeaders = false
+        ),
+        InnerTubeClientConfig(
             clientName = "ANDROID",
             clientVersion = "20.10.38",
             userAgent = "com.google.android.youtube/20.10.38 (Linux; U; Android 14; en_US) gzip",
@@ -220,6 +234,62 @@ object InnerTubeStreamExtractor {
             failedSet.add(failedUrl)
         }
         videoStreamCache.remove(videoId.trim())
+    }
+
+    fun clearCaches() {
+        videoStreamCache.clear()
+        failedVideoStreamsByVideoId.clear()
+        videoDescriptionCache.clear()
+        cachedVisitorData = null
+    }
+
+    fun isRectangularVideoThumbnailUrl(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        val lower = url.lowercase(Locale.US)
+        if (lower.contains("i.ytimg.com/vi/") ||
+            lower.contains("i.ytimg.com/vi_webp/") ||
+            lower.contains("img.youtube.com/vi/") ||
+            lower.contains("hqdefault") ||
+            lower.contains("mqdefault") ||
+            lower.contains("sddefault") ||
+            lower.contains("maxresdefault") ||
+            lower.contains("hq720")
+        ) {
+            return true
+        }
+        val whMatch = Regex("=w(\d+)-h(\d+)").find(lower)
+        if (whMatch != null) {
+            val w = whMatch.groupValues[1].toIntOrNull() ?: 0
+            val h = whMatch.groupValues[2].toIntOrNull() ?: 0
+            if (w > 0 && h > 0 && w > (h * 115) / 100) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun isRectangularThumbnailArray(arr: JSONArray?, resolvedUrl: String = ""): Boolean {
+        if (arr != null && arr.length() > 0) {
+            val last = arr.optJSONObject(arr.length() - 1)
+            val w = last?.optInt("width", 0) ?: 0
+            val h = last?.optInt("height", 0) ?: 0
+            if (w > 0 && h > 0) {
+                return w > (h * 115) / 100
+            }
+        }
+        return isRectangularVideoThumbnailUrl(resolvedUrl)
+    }
+
+    private fun extractMusicVideoTypeFromNode(node: JSONObject?): String? {
+        if (node == null) return null
+        val str = node.toString()
+        return when {
+            str.contains("MUSIC_VIDEO_TYPE_OMV") -> "MUSIC_VIDEO_TYPE_OMV"
+            str.contains("MUSIC_VIDEO_TYPE_UGC") -> "MUSIC_VIDEO_TYPE_UGC"
+            str.contains("MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC") -> "MUSIC_VIDEO_TYPE_OMV"
+            str.contains("MUSIC_VIDEO_TYPE_ATV") -> "MUSIC_VIDEO_TYPE_ATV"
+            else -> null
+        }
     }
 
     fun ensureVisitorData(forceFresh: Boolean = false): String? {
@@ -310,6 +380,19 @@ object InnerTubeStreamExtractor {
     }
 
     val VIDEO_CLIENTS = listOf(
+        InnerTubeClientConfig(
+            clientName = "VISIONOS",
+            clientVersion = "1.02",
+            userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15",
+            clientId = "101",
+            deviceMake = "Apple",
+            deviceModel = "RealityDevice17,1",
+            osName = "visionOS",
+            osVersion = "26.5.23O471",
+            params = null,
+            glOverride = null,
+            sendOriginHeaders = true
+        ),
         InnerTubeClientConfig(
             clientName = "ANDROID_VR",
             clientVersion = "1.61.48",
@@ -946,21 +1029,25 @@ object InnerTubeStreamExtractor {
                             }
                         }
                     }
-                    val thumb = extractBestThumbnail(
-                        twoRow.optJSONObject("thumbnailRenderer")
-                            ?.optJSONObject("musicThumbnailRenderer")
-                            ?.optJSONObject("thumbnail")
-                            ?.optJSONArray("thumbnails")
-                    ).ifBlank { "https://i.ytimg.com/vi/$vid/hqdefault.jpg" }
+                    val twoRowThumbArr = twoRow.optJSONObject("thumbnailRenderer")
+                        ?.optJSONObject("musicThumbnailRenderer")
+                        ?.optJSONObject("thumbnail")
+                        ?.optJSONArray("thumbnails")
+                    val thumb = extractBestThumbnail(twoRowThumbArr)
+                        .ifBlank { "https://i.ytimg.com/vi/$vid/hqdefault.jpg" }
+                    val explicitType = extractMusicVideoTypeFromNode(twoRow)
+                    val isVideoTwoRow = explicitType == "MUSIC_VIDEO_TYPE_OMV" ||
+                        explicitType == "MUSIC_VIDEO_TYPE_UGC" ||
+                        isRectangularThumbnailArray(twoRowThumbArr, thumb)
                     discovered.add(
                         CandidateStream(
                             videoId = vid,
                             title = title,
                             artist = artist,
-                            channelName = "$artist - Topic",
-                            albumName = null,
+                            channelName = if (isVideoTwoRow) artist else "$artist - Topic",
+                            albumName = if (isVideoTwoRow) "YouTube Video" else null,
                             durationSeconds = 210,
-                            videoType = "MUSIC_VIDEO_TYPE_ATV",
+                            videoType = if (isVideoTwoRow) "MUSIC_VIDEO_TYPE_OMV" else "MUSIC_VIDEO_TYPE_ATV",
                             thumbnailUrl = thumb,
                             isVerifiedArtist = true
                         )
@@ -1622,10 +1709,19 @@ object InnerTubeStreamExtractor {
                             ?.optJSONArray("thumbnails")
                     )
 
-                    val isSingle = subtitle.contains("Single", ignoreCase = true) ||
-                        subtitle.contains("1 song", ignoreCase = true) ||
-                        subtitle.contains("1 track", ignoreCase = true)
-                    val effectiveType = if (isSingle && type == "ALBUM") "SINGLE" else type
+                    val isEp = Regex("\bEP\b", RegexOption.IGNORE_CASE).containsMatchIn(subtitle) ||
+                        title.endsWith(" - EP", ignoreCase = true) ||
+                        title.endsWith(" EP", ignoreCase = true)
+                    val isSingle = !isEp && (
+                        subtitle.contains("Single", ignoreCase = true) ||
+                            subtitle.contains("1 song", ignoreCase = true) ||
+                            subtitle.contains("1 track", ignoreCase = true)
+                        )
+                    val effectiveType = when {
+                        isEp && type == "ALBUM" -> "EP"
+                        isSingle && type == "ALBUM" -> "SINGLE"
+                        else -> type
+                    }
 
                     out.add(
                         YtmCollectionSummary(
@@ -2759,25 +2855,21 @@ object InnerTubeStreamExtractor {
 
                         (shelfTitle.contains("single") || shelfTitle.contains("ep")) &&
                             (isOfficialAlbumBrowseId || !watchPlaylistId.isNullOrBlank()) -> {
-                            albumsOrSinglesAdd(
-                                singles,
-                                navBrowseId,
-                                watchPlaylistId,
-                                itemTitle,
-                                itemSubtitle.ifBlank { "Single • $name" },
-                                itemThumb,
-                                "SINGLE"
-                            )
-                        }
-
-                        (shelfTitle.contains("album") || shelfTitle.contains("release")) &&
-                            !shelfTitle.contains("featured") &&
-                            isOfficialAlbumBrowseId -> {
-                            val isSingleRelease = itemSubtitle.contains("Single", ignoreCase = true) ||
-                                itemSubtitle.contains("EP", ignoreCase = true) ||
-                                itemSubtitle.contains("1 song", ignoreCase = true) ||
-                                itemSubtitle.contains("1 track", ignoreCase = true)
-                            if (isSingleRelease) {
+                            val isEpRelease = Regex("\bEP\b", RegexOption.IGNORE_CASE).containsMatchIn(itemSubtitle) ||
+                                itemTitle.endsWith(" - EP", ignoreCase = true) ||
+                                itemTitle.endsWith(" EP", ignoreCase = true) ||
+                                (shelfTitle.contains("ep") && !shelfTitle.contains("single") && !itemSubtitle.contains("Single", ignoreCase = true))
+                            if (isEpRelease) {
+                                albumsOrSinglesAdd(
+                                    albums,
+                                    navBrowseId,
+                                    watchPlaylistId,
+                                    itemTitle,
+                                    itemSubtitle.ifBlank { "EP • $name" },
+                                    itemThumb,
+                                    "EP"
+                                )
+                            } else {
                                 albumsOrSinglesAdd(
                                     singles,
                                     navBrowseId,
@@ -2787,16 +2879,54 @@ object InnerTubeStreamExtractor {
                                     itemThumb,
                                     "SINGLE"
                                 )
-                            } else {
-                                albumsOrSinglesAdd(
-                                    albums,
-                                    navBrowseId,
-                                    watchPlaylistId,
-                                    itemTitle,
-                                    itemSubtitle.ifBlank { "Album • $name" },
-                                    itemThumb,
-                                    "ALBUM"
+                            }
+                        }
+
+                        (shelfTitle.contains("album") || shelfTitle.contains("release")) &&
+                            !shelfTitle.contains("featured") &&
+                            isOfficialAlbumBrowseId -> {
+                            val isEpRelease = Regex("\bEP\b", RegexOption.IGNORE_CASE).containsMatchIn(itemSubtitle) ||
+                                itemTitle.endsWith(" - EP", ignoreCase = true) ||
+                                itemTitle.endsWith(" EP", ignoreCase = true)
+                            val isSingleRelease = !isEpRelease && (
+                                itemSubtitle.contains("Single", ignoreCase = true) ||
+                                    itemSubtitle.contains("1 song", ignoreCase = true) ||
+                                    itemSubtitle.contains("1 track", ignoreCase = true)
                                 )
+                            when {
+                                isEpRelease -> {
+                                    albumsOrSinglesAdd(
+                                        albums,
+                                        navBrowseId,
+                                        watchPlaylistId,
+                                        itemTitle,
+                                        itemSubtitle.ifBlank { "EP • $name" },
+                                        itemThumb,
+                                        "EP"
+                                    )
+                                }
+                                isSingleRelease -> {
+                                    albumsOrSinglesAdd(
+                                        singles,
+                                        navBrowseId,
+                                        watchPlaylistId,
+                                        itemTitle,
+                                        itemSubtitle.ifBlank { "Single • $name" },
+                                        itemThumb,
+                                        "SINGLE"
+                                    )
+                                }
+                                else -> {
+                                    albumsOrSinglesAdd(
+                                        albums,
+                                        navBrowseId,
+                                        watchPlaylistId,
+                                        itemTitle,
+                                        itemSubtitle.ifBlank { "Album • $name" },
+                                        itemThumb,
+                                        "ALBUM"
+                                    )
+                                }
                             }
                         }
 
@@ -2840,16 +2970,18 @@ object InnerTubeStreamExtractor {
 
         val cleanedAlbums = albums.filterNot {
             it.type == "SINGLE" ||
-                it.subtitle.contains("Single", true) ||
-                it.subtitle.contains("1 song", true) ||
-                it.subtitle.contains("1 track", true) ||
+                (it.type != "EP" && (
+                    it.subtitle.contains("Single", true) ||
+                        it.subtitle.contains("1 song", true) ||
+                        it.subtitle.contains("1 track", true)
+                    )) ||
                 it.title.contains("YouTube Video", true) ||
                 it.subtitle.contains("YouTube Video", true) ||
                 (!it.browseId.startsWith("MPREb_") && !it.browseId.startsWith("OLAK5uy_"))
         }.distinctBy { it.browseId }
 
         val cleanedSingles = (singles + albums.filter {
-            it.type == "SINGLE" || it.subtitle.contains("Single", true) || it.subtitle.contains("1 song", true) || it.subtitle.contains("1 track", true)
+            it.type == "SINGLE" || (it.type != "EP" && (it.subtitle.contains("Single", true) || it.subtitle.contains("1 song", true) || it.subtitle.contains("1 track", true)))
         }).map { it.copy(type = "SINGLE") }.distinctBy { it.browseId }
 
         return YtmArtistPageData(
@@ -2940,17 +3072,113 @@ object InnerTubeStreamExtractor {
             }
         }
 
+        // Fallback 1: Browse standard YouTube WEB client for regular YouTube Video Playlists (PL... / VL...)
+        val webParsed = fetchYoutubeWebPlaylistBrowse(browseId, cleanId, fallbackTitle, fallbackThumb)
+        if (webParsed != null && webParsed.tracks.isNotEmpty()) {
+            return@withContext webParsed
+        }
+
         val rawPlaylistId = cleanId.removePrefix("VL")
         val nextTracks = fetchAutomixQueue(seedVideoId = "", playlistIdOverride = rawPlaylistId, limit = 35)
         YtmCollectionPageData(
             id = cleanId,
             title = fallbackTitle,
-            author = "YouTube Music",
-            subtitle = "${nextTracks.size} songs",
+            author = "YouTube",
+            subtitle = "${nextTracks.size} items",
             description = "",
             thumbnailUrl = fallbackThumb.ifBlank { nextTracks.firstOrNull()?.thumbnailUrl.orEmpty() },
             tracks = nextTracks
         )
+    }
+
+    private fun fetchYoutubeWebPlaylistBrowse(
+        browseId: String,
+        collectionId: String,
+        fallbackTitle: String,
+        fallbackThumb: String
+    ): YtmCollectionPageData? {
+        return runCatching {
+            val conn = (URL("https://www.youtube.com/youtubei/v1/browse?prettyPrint=false").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 4000
+                readTimeout = 4500
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+                setRequestProperty("X-YouTube-Client-Name", "1")
+                setRequestProperty("X-YouTube-Client-Version", "2.20250310.01.00")
+            }
+            val payload = JSONObject().apply {
+                put("browseId", if (browseId.startsWith("VL")) browseId else "VL${browseId.removePrefix("VL")}")
+                put("context", JSONObject().apply {
+                    put("client", JSONObject().apply {
+                        put("clientName", "WEB")
+                        put("clientVersion", "2.20250310.01.00")
+                        put("hl", "en")
+                        put("gl", resolveDeviceGl())
+                    })
+                })
+            }
+            conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+            if (conn.responseCode != 200) return null
+            val root = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+            val plHeader = root.optJSONObject("header")?.optJSONObject("playlistHeaderRenderer")
+            val microTitle = root.optJSONObject("microformat")?.optJSONObject("microformatDataRenderer")?.optString("title", "")
+                ?.removeSuffix(" - YouTube")?.trim().orEmpty()
+            val title = extractSimpleOrRunsText(plHeader?.optJSONObject("title"))
+                .ifBlank { microTitle }
+                .ifBlank { fallbackTitle }
+            val author = extractSimpleOrRunsText(plHeader?.optJSONObject("ownerText"))
+                .ifBlank { "YouTube" }
+            val videoNodes = mutableListOf<JSONObject>()
+            fun walkPlVideos(node: Any?) {
+                when (node) {
+                    is JSONObject -> {
+                        node.optJSONObject("playlistVideoRenderer")?.let { videoNodes.add(it); return }
+                        val keys = node.keys()
+                        while (keys.hasNext()) walkPlVideos(node.opt(keys.next()))
+                    }
+                    is JSONArray -> {
+                        for (i in 0 until node.length()) walkPlVideos(node.opt(i))
+                    }
+                }
+            }
+            walkPlVideos(root)
+            if (videoNodes.isEmpty()) return null
+            val tracks = mutableListOf<CandidateStream>()
+            for (pvr in videoNodes) {
+                val vid = extractVideoId(pvr.optString("videoId")) ?: continue
+                val vTitle = extractSimpleOrRunsText(pvr.optJSONObject("title")).takeIf { it.isNotBlank() } ?: continue
+                val vAuthor = extractSimpleOrRunsText(pvr.optJSONObject("shortBylineText")).ifBlank { author }
+                val durTxt = extractSimpleOrRunsText(pvr.optJSONObject("lengthText"))
+                val durSec = if (durTxt.isNotBlank()) parseDurationSeconds(durTxt) else 210
+                val thumbArr = pvr.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
+                val thumb = extractBestThumbnail(thumbArr).ifBlank { "https://i.ytimg.com/vi/$vid/hqdefault.jpg" }
+                val isTopicSong = vAuthor.endsWith("- Topic", ignoreCase = true) && !isRectangularThumbnailArray(thumbArr, thumb)
+                tracks.add(
+                    CandidateStream(
+                        videoId = vid,
+                        title = vTitle,
+                        artist = vAuthor.removeSuffix(" - Topic").removeSuffix("- Topic").trim(),
+                        channelName = vAuthor,
+                        albumName = if (isTopicSong) title else "YouTube Video",
+                        durationSeconds = durSec,
+                        videoType = if (isTopicSong) "MUSIC_VIDEO_TYPE_ATV" else "MUSIC_VIDEO_TYPE_OMV",
+                        thumbnailUrl = thumb,
+                        isVerifiedArtist = true
+                    )
+                )
+            }
+            YtmCollectionPageData(
+                id = collectionId,
+                title = title,
+                author = author,
+                subtitle = "${tracks.size} items",
+                description = "",
+                thumbnailUrl = fallbackThumb.ifBlank { tracks.firstOrNull()?.thumbnailUrl.orEmpty() },
+                tracks = CanonicalAudioResolver.deduplicateTracks(tracks)
+            )
+        }.getOrNull()
     }
 
     private fun parseCollectionBrowseResponse(
@@ -3135,6 +3363,164 @@ object InnerTubeStreamExtractor {
         )
     }
 
+    /**
+     * Accurately resolves a single YouTube videoId (from a pasted URL, deep link, or playlist import)
+     * and determines whether it is a Video (rectangular 16:9 thumbnail, OMV/UGC, or standard youtube.com/youtu.be link)
+     * or an official 1:1 square Audio Song (MUSIC_VIDEO_TYPE_ATV on music.youtube.com).
+     */
+    suspend fun fetchSingleVideoOrSongMetadata(
+        videoId: String,
+        sourceUrl: String = ""
+    ): CandidateStream? = withContext(Dispatchers.IO) {
+        val cleanId = extractVideoId(videoId) ?: return@withContext null
+        val lowerSource = sourceUrl.lowercase(Locale.US)
+        val isExplicitYoutubeVideoLink = (lowerSource.contains("youtube.com/") || lowerSource.contains("youtu.be/")) &&
+            !lowerSource.contains("music.youtube.com")
+
+        // 1. Query YouTube Music /next to inspect playlistPanelVideoRenderer (musicVideoType & thumbnail dimensions)
+        runCatching {
+            val nextPayload = webRemixPayload().apply { put("videoId", cleanId) }
+            val nextRoot = postWebRemix("https://music.youtube.com/youtubei/v1/next?prettyPrint=false", nextPayload)
+            if (nextRoot != null) {
+                var firstRenderer: JSONObject? = null
+                fun findFirstRenderer(node: Any?) {
+                    if (firstRenderer != null) return
+                    when (node) {
+                        is JSONObject -> {
+                            val pvr = node.optJSONObject("playlistPanelVideoRenderer")
+                            if (pvr != null && pvr.optString("videoId") == cleanId) {
+                                firstRenderer = pvr
+                                return
+                            }
+                            val keys = node.keys()
+                            while (keys.hasNext()) findFirstRenderer(node.opt(keys.next()))
+                        }
+                        is JSONArray -> {
+                            for (i in 0 until node.length()) findFirstRenderer(node.opt(i))
+                        }
+                    }
+                }
+                findFirstRenderer(nextRoot)
+                val pvr = firstRenderer
+                if (pvr != null) {
+                    val title = extractSimpleOrRunsText(pvr.optJSONObject("title")).ifBlank { "Track" }
+                    val bylineRuns = pvr.optJSONObject("longBylineText")?.optJSONArray("runs")
+                        ?: pvr.optJSONObject("shortBylineText")?.optJSONArray("runs")
+                    val artist = bylineRuns?.optJSONObject(0)?.optString("text")?.trim().orEmpty().ifBlank { "Artist" }
+                    val durText = extractSimpleOrRunsText(pvr.optJSONObject("lengthText")).ifBlank { "3:30" }
+                    val thumbArr = pvr.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
+                    val thumb = extractBestThumbnail(thumbArr).ifBlank { "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg" }
+                    val explicitType = extractMusicVideoTypeFromNode(pvr)
+                    val isRect = isRectangularThumbnailArray(thumbArr, thumb)
+                    val isVideo = isExplicitYoutubeVideoLink ||
+                        explicitType == "MUSIC_VIDEO_TYPE_OMV" ||
+                        explicitType == "MUSIC_VIDEO_TYPE_UGC" ||
+                        isRect
+                    val finalThumb = if (isVideo && !isRectangularVideoThumbnailUrl(thumb)) {
+                        "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg"
+                    } else thumb
+                    return@withContext CandidateStream(
+                        videoId = cleanId,
+                        title = title,
+                        artist = artist.removeSuffix(" - Topic").removeSuffix("- Topic").trim(),
+                        channelName = artist,
+                        albumName = if (isVideo) "YouTube Video" else null,
+                        durationSeconds = parseDurationSeconds(durText),
+                        videoType = if (isVideo) "MUSIC_VIDEO_TYPE_OMV" else "MUSIC_VIDEO_TYPE_ATV",
+                        thumbnailUrl = finalThumb,
+                        isVerifiedArtist = !isVideo
+                    )
+                }
+            }
+        }
+
+        // 2. Fallback to player videoDetails metadata
+        val descMeta = runCatching { fetchVideoDetailsDescription(cleanId) }.getOrNull()
+        val title = descMeta?.title?.takeIf { it.isNotBlank() } ?: "YouTube Video"
+        val author = descMeta?.author?.takeIf { it.isNotBlank() } ?: "YouTube"
+        val isTopic = author.endsWith("- Topic", ignoreCase = true) && !isExplicitYoutubeVideoLink
+        return@withContext CandidateStream(
+            videoId = cleanId,
+            title = title,
+            artist = author.removeSuffix(" - Topic").removeSuffix("- Topic").trim(),
+            channelName = author,
+            albumName = if (isTopic) null else "YouTube Video",
+            durationSeconds = 210,
+            videoType = if (isTopic) "MUSIC_VIDEO_TYPE_ATV" else "MUSIC_VIDEO_TYPE_OMV",
+            thumbnailUrl = "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg",
+            isVerifiedArtist = isTopic
+        )
+    }
+
+    /**
+     * Builds a dedicated personalized Music Videos shelf for the Home Screen ("Music Video" section)
+     * with rectangular 16:9 thumbnails so Music Videos and audio-only Songs never get mixed up.
+     */
+    suspend fun buildPersonalizedMusicVideosFeed(
+        seedVideoIds: List<String>,
+        favoriteArtists: List<String>,
+        moodCategory: String,
+        recentSearchQueries: List<String> = emptyList(),
+        limit: Int = 16
+    ): List<CandidateStream> = coroutineScope {
+        val cleanArtists = favoriteArtists
+            .map { it.removeSuffix(" - Topic").removeSuffix("- Topic").trim() }
+            .filter { it.isNotBlank() && !it.equals("Unknown Artist", true) }
+            .distinct()
+            .take(4)
+        val cleanSearches = recentSearchQueries
+            .map { it.trim() }
+            .filter { it.length >= 3 }
+            .distinct()
+            .take(3)
+        val isGeneral = moodCategory.equals("All", true) || moodCategory.equals("For You", true)
+
+        val queries = buildList {
+            if (!isGeneral) {
+                add("$moodCategory official music video")
+                if (cleanArtists.isNotEmpty()) add("${cleanArtists.first()} $moodCategory music video")
+            } else {
+                cleanArtists.take(3).forEach { artist -> add("$artist official music video") }
+                cleanSearches.take(2).forEach { q -> add("$q official music video") }
+                if (isEmpty()) {
+                    add("Manipuri official music video")
+                    add("Trending Indian official music video")
+                }
+            }
+        }.distinct().take(4)
+
+        val jobs = queries.map { q ->
+            async(Dispatchers.IO) {
+                runCatching {
+                    val payload = webRemixPayload().apply {
+                        put("query", q)
+                        put("params", "EgWKAQIQAWoKEAkQChADEAUQBA==") // YTM Videos filter
+                    }
+                    val root = postWebRemix("https://music.youtube.com/youtubei/v1/search?prettyPrint=false", payload)
+                    val ytmVids = if (root != null) {
+                        parseMusicResponsiveListItems(root).map {
+                            val vidId = extractVideoId(it.videoId) ?: it.videoId
+                            val rectThumb = if (isRectangularVideoThumbnailUrl(it.thumbnailUrl)) {
+                                it.thumbnailUrl
+                            } else {
+                                "https://i.ytimg.com/vi/$vidId/hqdefault.jpg"
+                            }
+                            it.copy(
+                                videoType = "MUSIC_VIDEO_TYPE_OMV",
+                                albumName = "YouTube Video",
+                                thumbnailUrl = rectThumb
+                            )
+                        }
+                    } else emptyList()
+                    if (ytmVids.size >= 4) ytmVids else (ytmVids + searchAllYoutubeVideos(q, limit = 8))
+                }.getOrDefault(emptyList())
+            }
+        }
+
+        val combined = jobs.awaitAll().flatten()
+        CanonicalAudioResolver.deduplicateTracks(combined).take(limit)
+    }
+
     suspend fun searchOfficialYtmSongs(query: String, limit: Int = 15): List<CandidateStream> =
         withContext(Dispatchers.IO) {
             if (query.isBlank()) return@withContext emptyList()
@@ -3282,9 +3668,18 @@ object InnerTubeStreamExtractor {
             .ifBlank { defaultArt }
             .ifBlank { "https://i.ytimg.com/vi/$videoId/hqdefault.jpg" }
 
-        val resolvedVideoType = "MUSIC_VIDEO_TYPE_ATV"
-        val resolvedAlbumName = albumName?.takeUnless {
-            it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
+        val explicitVideoType = extractMusicVideoTypeFromNode(item)
+        val isRectangularThumb = isRectangularThumbnailArray(thumbArr, thumbUrl)
+        val isVideoItem = explicitVideoType == "MUSIC_VIDEO_TYPE_OMV" ||
+            explicitVideoType == "MUSIC_VIDEO_TYPE_UGC" ||
+            (explicitVideoType == null && isRectangularThumb)
+        val resolvedVideoType = if (isVideoItem) "MUSIC_VIDEO_TYPE_OMV" else "MUSIC_VIDEO_TYPE_ATV"
+        val resolvedAlbumName = if (isVideoItem) {
+            "YouTube Video"
+        } else {
+            albumName?.takeUnless {
+                it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
+            }
         }
 
         return CandidateStream(
@@ -3292,12 +3687,12 @@ object InnerTubeStreamExtractor {
             title = title,
             artist = artist,
             artistBrowseId = artistBrowseId,
-            channelName = "$artist - Topic",
+            channelName = if (isVideoItem) artist else "$artist - Topic",
             albumName = resolvedAlbumName,
             durationSeconds = if (durationSeconds > 0) durationSeconds else 210,
             videoType = resolvedVideoType,
             thumbnailUrl = thumbUrl,
-            isVerifiedArtist = true,
+            isVerifiedArtist = !isVideoItem,
             viewCountText = viewCountText,
             viewCount = viewCount
         )
@@ -3353,8 +3748,13 @@ object InnerTubeStreamExtractor {
                 val durationText = renderer.optJSONObject("lengthText")
                     ?.optJSONArray("runs")?.optJSONObject(0)?.optString("text") ?: "3:30"
 
-                val thumb = extractBestThumbnail(renderer.optJSONObject("thumbnail")?.optJSONArray("thumbnails"))
+                val thumbArr = renderer.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
+                val thumb = extractBestThumbnail(thumbArr)
                     .ifBlank { "https://i.ytimg.com/vi/$vid/hqdefault.jpg" }
+                val explicitType = extractMusicVideoTypeFromNode(renderer)
+                val isVideoEntry = explicitType == "MUSIC_VIDEO_TYPE_OMV" ||
+                    explicitType == "MUSIC_VIDEO_TYPE_UGC" ||
+                    (explicitType == null && isRectangularThumbnailArray(thumbArr, thumb))
 
                 results.add(
                     CandidateStream(
@@ -3362,12 +3762,12 @@ object InnerTubeStreamExtractor {
                         title = title,
                         artist = artist,
                         artistBrowseId = artistBrowseId,
-                        channelName = "$artist - Topic",
-                        albumName = null,
+                        channelName = if (isVideoEntry) artist else "$artist - Topic",
+                        albumName = if (isVideoEntry) "YouTube Video" else null,
                         durationSeconds = parseDurationSeconds(durationText),
-                        videoType = "MUSIC_VIDEO_TYPE_ATV",
+                        videoType = if (isVideoEntry) "MUSIC_VIDEO_TYPE_OMV" else "MUSIC_VIDEO_TYPE_ATV",
                         thumbnailUrl = thumb,
-                        isVerifiedArtist = true
+                        isVerifiedArtist = !isVideoEntry
                     )
                 )
             }
@@ -3568,7 +3968,10 @@ object InnerTubeStreamExtractor {
         onHlsDiscovered: (String) -> Unit = {}
     ): String? {
         return runCatching {
-            val visData = if (client.isEmbedded && includeVisitorData) cachedVisitorData?.takeIf { it.isNotBlank() } else null
+            val shouldSendVisitor = includeVisitorData || client.isEmbedded || client.clientName.equals("VISIONOS", ignoreCase = true)
+            val visData = if (shouldSendVisitor) {
+                cachedVisitorData?.takeIf { it.isNotBlank() } ?: ensureVisitorData()
+            } else null
             val effectiveGl = client.glOverride ?: resolveDeviceGl()
             val conn = (URL(client.playerEndpoint).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -3732,8 +4135,8 @@ object InnerTubeStreamExtractor {
                 if (!allowAdaptiveMerge) return null
                 if (client.clientName == "IOS") return null
                 val adaptive = streamingData.optJSONArray("adaptiveFormats") ?: return null
-                val videoCandidates = mutableListOf<Pair<Int, String>>()
-                val audioCandidates = mutableListOf<Pair<Int, String>>()
+                val mp4VideoCandidates = mutableListOf<Pair<Int, String>>()
+                val m4aAudioCandidates = mutableListOf<Pair<Int, String>>()
                 val audioCpn = generateCpn()
                 for (allowCipher in cipherPasses) {
                     for (i in 0 until adaptive.length()) {
@@ -3741,36 +4144,34 @@ object InnerTubeStreamExtractor {
                         val mime = fmt.optString("mimeType", "")
                         val itag = fmt.optInt("itag", 0)
                         val isMp4Avc = mime.startsWith("video/mp4", ignoreCase = true) &&
-                            (mime.contains("avc1", ignoreCase = true) || itag in listOf(134, 135, 136, 160, 298))
-                        val isWebmVp9 = mime.startsWith("video/webm", ignoreCase = true) &&
-                            (mime.contains("vp9", ignoreCase = true) || itag in listOf(242, 243, 244, 247))
-                        if (isMp4Avc || isWebmVp9) {
+                            (mime.contains("avc1", ignoreCase = true) || itag in listOf(134, 135, 136, 137, 160, 298))
+                        val isM4aAudio = (mime.startsWith("audio/mp4", ignoreCase = true) || itag in listOf(140, 139, 141)) &&
+                            (itag in listOf(140, 139, 141) || mime.contains("mp4a", ignoreCase = true))
+                        if (isMp4Avc) {
                             val url = resolveFormatUrl(fmt, allowCipher = allowCipher, customCpn = cpn)
                             if (url.isBlank()) continue
                             val height = fmt.optInt("height", 360)
                             if (height in 144..720) {
-                                val codecBonus = if (isMp4Avc) 5000 else 2000
                                 val resScore = when (height) {
-                                    480 -> 600
-                                    360 -> 550
-                                    720 -> 500
-                                    240 -> 300
+                                    720 -> 700
+                                    480 -> 650
+                                    360 -> 600
+                                    240 -> 350
                                     else -> height
                                 }
-                                videoCandidates.add((codecBonus + resScore) to url)
+                                mp4VideoCandidates.add((5000 + resScore) to url)
                             }
-                        } else if (mime.startsWith("audio/", ignoreCase = true) || itag in listOf(140, 251, 250, 249, 139)) {
+                        } else if (isM4aAudio) {
                             val url = resolveFormatUrl(fmt, allowCipher = allowCipher, customCpn = audioCpn)
                             if (url.isBlank()) continue
-                            val isM4a = itag == 140 || mime.contains("mp4a", ignoreCase = true)
-                            val score = (if (isM4a) 10_000 else 5_000) + (fmt.optInt("bitrate", 128000) / 1000)
-                            audioCandidates.add(score to url)
+                            val score = 10_000 + (fmt.optInt("bitrate", 128000) / 1000)
+                            m4aAudioCandidates.add(score to url)
                         }
                     }
-                    if (videoCandidates.isNotEmpty() && audioCandidates.isNotEmpty()) break
+                    if (mp4VideoCandidates.isNotEmpty() && m4aAudioCandidates.isNotEmpty()) break
                 }
-                val bestVideo = videoCandidates.maxByOrNull { it.first }?.second
-                val bestAudio = audioCandidates.maxByOrNull { it.first }?.second
+                val bestVideo = mp4VideoCandidates.maxByOrNull { it.first }?.second
+                val bestAudio = m4aAudioCandidates.maxByOrNull { it.first }?.second
                 return if (!bestVideo.isNullOrBlank() && !bestAudio.isNullOrBlank()) {
                     "merged_av::$bestVideo|||$bestAudio"
                 } else null
@@ -3922,28 +4323,50 @@ object InnerTubeStreamExtractor {
 
             muxer.start()
 
-            val buffer = java.nio.ByteBuffer.allocate(512 * 1024)
+            val buffer = java.nio.ByteBuffer.allocate(2 * 1024 * 1024)
             val bufferInfo = android.media.MediaCodec.BufferInfo()
 
+            var lastVideoPtsUs = -1L
             videoExtractor.seekTo(0L, android.media.MediaExtractor.SEEK_TO_CLOSEST_SYNC)
             while (true) {
                 bufferInfo.offset = 0
                 bufferInfo.size = videoExtractor.readSampleData(buffer, 0)
                 if (bufferInfo.size < 0) break
-                bufferInfo.presentationTimeUs = videoExtractor.sampleTime
-                bufferInfo.flags = videoExtractor.sampleFlags
+                val rawPts = videoExtractor.sampleTime
+                if (rawPts < 0L) {
+                    videoExtractor.advance()
+                    continue
+                }
+                val safePts = if (rawPts <= lastVideoPtsUs) lastVideoPtsUs + 1L else rawPts
+                lastVideoPtsUs = safePts
+                bufferInfo.presentationTimeUs = safePts
+                val rawFlags = videoExtractor.sampleFlags
+                bufferInfo.flags = if ((rawFlags and android.media.MediaExtractor.SAMPLE_FLAG_SYNC) != 0) {
+                    android.media.MediaCodec.BUFFER_FLAG_KEY_FRAME
+                } else 0
                 muxer.writeSampleData(muxVideoTrack, buffer, bufferInfo)
                 videoExtractor.advance()
             }
 
             if (muxAudioTrack >= 0) {
+                var lastAudioPtsUs = -1L
                 audioExtractor.seekTo(0L, android.media.MediaExtractor.SEEK_TO_CLOSEST_SYNC)
                 while (true) {
                     bufferInfo.offset = 0
                     bufferInfo.size = audioExtractor.readSampleData(buffer, 0)
                     if (bufferInfo.size < 0) break
-                    bufferInfo.presentationTimeUs = audioExtractor.sampleTime
-                    bufferInfo.flags = audioExtractor.sampleFlags
+                    val rawPts = audioExtractor.sampleTime
+                    if (rawPts < 0L) {
+                        audioExtractor.advance()
+                        continue
+                    }
+                    val safePts = if (rawPts <= lastAudioPtsUs) lastAudioPtsUs + 1L else rawPts
+                    lastAudioPtsUs = safePts
+                    bufferInfo.presentationTimeUs = safePts
+                    val rawFlags = audioExtractor.sampleFlags
+                    bufferInfo.flags = if ((rawFlags and android.media.MediaExtractor.SAMPLE_FLAG_SYNC) != 0) {
+                        android.media.MediaCodec.BUFFER_FLAG_KEY_FRAME
+                    } else 0
                     muxer.writeSampleData(muxAudioTrack, buffer, bufferInfo)
                     audioExtractor.advance()
                 }
@@ -4128,7 +4551,9 @@ object InnerTubeStreamExtractor {
                     var downloaded = 0L
                     val chunkSize = 512L * 1024L // 512 KB OuterTune standard range chunk
                     val buffer = ByteArray(32 * 1024)
-                    var useRangeHeader = false
+                    var useRangeHeader = !cleanBaseUrl.contains("gir=yes", ignoreCase = true) ||
+                        cleanBaseUrl.contains("itag=18", ignoreCase = true) ||
+                        cleanBaseUrl.contains("itag=22", ignoreCase = true)
                     var lastProgressEmitMs = 0L
 
                     while (knownClen <= 0L || downloaded < knownClen) {

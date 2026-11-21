@@ -100,6 +100,7 @@ object SeitharolDeepLinkHelper {
                 arr.put(track.title.take(90))
                 arr.put(track.artist.take(70))
                 arr.put((track.durationMs / 1000L).toInt().coerceAtLeast(0))
+                arr.put(if (track.isVideoTrack) 1 else 0)
                 items.put(arr)
             }
             root.put("i", items)
@@ -131,6 +132,7 @@ object SeitharolDeepLinkHelper {
                 val trackTitle = arr.optString(1).ifBlank { "Track ${idx + 1}" }
                 val trackArtist = arr.optString(2).ifBlank { "Artist" }
                 val durSec = arr.optInt(3, 210).coerceAtLeast(0)
+                val isVid = arr.optInt(4, 0) == 1
                 val ytId = InnerTubeStreamExtractor.extractVideoId(id)
                 val artUrl = if (!ytId.isNullOrBlank()) "https://i.ytimg.com/vi/$ytId/hqdefault.jpg" else ""
                 tracks.add(
@@ -138,9 +140,12 @@ object SeitharolDeepLinkHelper {
                         id = id,
                         title = trackTitle,
                         artist = trackArtist,
-                        album = "",
+                        album = if (isVid) "YouTube Video" else "",
                         durationMs = durSec * 1000L,
-                        artUrl = artUrl
+                        artUrl = artUrl,
+                        genre = if (isVid) "YouTube Video" else "Music",
+                        itag = if (isVid) 18 else 251,
+                        codec = if (isVid) "MP4" else "Opus"
                     )
                 )
             }
@@ -241,7 +246,8 @@ object SeitharolDeepLinkHelper {
             val trackId: String,
             val title: String,
             val artist: String,
-            val artUrl: String
+            val artUrl: String,
+            val sourceUrl: String = ""
         ) : DeepLinkTarget
 
         data class ArtistTarget(
@@ -571,7 +577,8 @@ object SeitharolDeepLinkHelper {
                         trackId = ytId,
                         title = uri.getQueryParameter("title")?.let(::decodeParam).orEmpty(),
                         artist = uri.getQueryParameter("artist")?.let(::decodeParam).orEmpty(),
-                        artUrl = "https://i.ytimg.com/vi/$ytId/hqdefault.jpg"
+                        artUrl = "https://i.ytimg.com/vi/$ytId/hqdefault.jpg",
+                        sourceUrl = uri.toString()
                     )
                 }
             }

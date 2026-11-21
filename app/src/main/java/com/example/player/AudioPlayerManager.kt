@@ -1541,10 +1541,14 @@ class AudioPlayerManager(
                 } else {
                     baseMediaItem
                 }
+                activeVideoCaptions = emptyList()
                 _state.value = _state.value.copy(
-                    hasEmbeddedCaptions = movieMeta?.captionVttUrl != null,
+                    hasEmbeddedCaptions = movieMeta?.captionVttUrl != null || isVideo,
                     activeCaptionText = ""
                 )
+                if (isVideo) {
+                    ensureVideoCaptionsLoaded(track, movieMeta?.captionVttUrl)
+                }
                 runCatching {
                     player.trackSelectionParameters = player.trackSelectionParameters
                         .buildUpon()
@@ -1705,6 +1709,14 @@ class AudioPlayerManager(
                         val realBufFrac = if (isLocalOrCached) 1f else maxOf(exoFrac, inlineFrac).coerceIn(0f, 1f)
                         val realBufPos = if (isLocalOrCached) effectiveDur else maxOf(rawBufPos, (realBufFrac * effectiveDur).toLong())
 
+                        val syncedCaptionText = if (_state.value.isCaptionsEnabled && (_state.value.isVideoMode || curTrack?.isVideoTrack == true)) {
+                            val fromCues = resolveActiveVideoCaptionText(pos)
+                            fromCues.ifBlank { _state.value.activeCaptionText.takeIf { activeVideoCaptions.isEmpty() && _state.value.lyricLines.isEmpty() }.orEmpty() }
+                        } else if (!_state.value.isCaptionsEnabled) {
+                            ""
+                        } else {
+                            _state.value.activeCaptionText
+                        }
                         _state.value = _state.value.copy(
                             currentPositionMs = if (shouldEmitPosition) pos else _state.value.currentPositionMs,
                             durationMs = effectiveDur,
@@ -1712,6 +1724,7 @@ class AudioPlayerManager(
                             bufferedFraction = realBufFrac,
                             isStreamCachedOnDisk = isLocalOrCached,
                             activeLyricIndex = activeIdx,
+                            activeCaptionText = syncedCaptionText,
                             isVideoFrameRendered = _state.value.isVideoFrameRendered || hasVideoSize,
                             videoAspectRatio = detectedRatio ?: _state.value.videoAspectRatio
                         )
@@ -3358,6 +3371,48 @@ class AudioPlayerManager(
 
     private var lyricsFetchJob: Job? = null
     private var lastLyricsFetchTrackId: String? = null
+    @Volatile
+    private var activeVideoCaptions: List<LyricsLine> = emptyList()
+    private var captionsFetchJob: Job? = null
+
+    private fun resolveActiveVideoCaptionText(positionMs: Long): String {
+        if (!_state.value.isCaptionsEnabled) return ""
+        val cues = activeVideoCaptions.ifEmpty { _state.value.lyricLines }
+        if (cues.isEmpty()) return ""
+        val idx = findActiveLyricIndexFast(cues, positionMs + 150L)
+        if (idx !in cues.indices) return ""
+        val cue = cues[idx]
+        if (cue.isInstrumental || cue.text.isBlank()) return ""
+        val nextStart = cues.getOrNull(idx + 1)?.timestampMs ?: (cue.timestampMs + 6_500L)
+        val maxEnd = minOf(nextStart, cue.timestampMs + 8_000L)
+        return if (positionMs <= maxEnd) cue.text else ""
+    }
+
+    fun ensureVideoCaptionsLoaded(track: Track? = _state.value.currentTrack, externalVttUrl: String? = activeMovieRawStream?.captionVttUrl) {
+        val target = track ?: return
+        captionsFetchJob?.cancel()
+        captionsFetchJob = coroutineScope.launch(Dispatchers.IO) {
+            val cues = runCatching {
+                com.example.network.NetworkClients.fetchVideoCaptions(
+                    videoId = target.id,
+                    title = target.title,
+                    artist = target.artist,
+                    externalVttUrl = externalVttUrl
+                )
+            }.getOrDefault(emptyList())
+            if (_state.value.currentTrack?.id == target.id) {
+                activeVideoCaptions = cues
+                val pos = withContext(Dispatchers.Main) {
+                    (exoPlayer?.currentPosition?.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
+                }
+                val currentText = if (_state.value.isCaptionsEnabled) resolveActiveVideoCaptionText(pos) else _state.value.activeCaptionText
+                _state.value = _state.value.copy(
+                    hasEmbeddedCaptions = cues.isNotEmpty() || !externalVttUrl.isNullOrBlank(),
+                    activeCaptionText = currentText
+                )
+            }
+        }
+    }
 
     fun ensureLyricsLoaded(forceRetry: Boolean = false) {
         val track = _state.value.currentTrack ?: return
@@ -3597,9 +3652,19 @@ class AudioPlayerManager(
 
     fun toggleCaptions() {
         val nextEnabled = !_state.value.isCaptionsEnabled
+        val pos = (exoPlayer?.currentPosition?.takeIf { it > 0L } ?: _state.value.currentPositionMs).coerceAtLeast(0L)
+        if (nextEnabled && activeVideoCaptions.isEmpty()) {
+            ensureVideoCaptionsLoaded(_state.value.currentTrack, activeMovieRawStream?.captionVttUrl)
+        }
+        val immediateText = if (nextEnabled) {
+            val cues = activeVideoCaptions.ifEmpty { _state.value.lyricLines }
+            val idx = findActiveLyricIndexFast(cues, pos + 150L)
+            cues.getOrNull(idx)?.takeIf { !it.isInstrumental }?.text.orEmpty()
+        } else ""
         _state.value = _state.value.copy(
             isCaptionsEnabled = nextEnabled,
-            activeCaptionText = if (nextEnabled) _state.value.activeCaptionText else ""
+            hasEmbeddedCaptions = true,
+            activeCaptionText = immediateText
         )
         runCatching {
             exoPlayer?.let { player ->
@@ -3608,6 +3673,18 @@ class AudioPlayerManager(
                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !nextEnabled)
                     .build()
             }
+        }
+    }
+
+    fun clearPlaybackAndResetCheckpoint() {
+        stopPlayback()
+        activeVideoCaptions = emptyList()
+        sessionPlayedIds.clear()
+        sessionPlayedSignatures.clear()
+        temporaryTrackQuality = null
+        _state.value = PlayerState()
+        runCatching {
+            playbackPrefs.edit().clear().apply()
         }
     }
 

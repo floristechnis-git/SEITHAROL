@@ -471,20 +471,6 @@ fun ReorderableQueueLazyColumn(
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f, fill = false)
                                 )
-                                if (isPlaying) {
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Surface(
-                                        shape = RoundedCornerShape(6.dp),
-                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                                    ) {
-                                        Text(
-                                            text = "PLAYING",
-                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                            color = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                }
                             }
                             Text(
                                 text = track.artist,

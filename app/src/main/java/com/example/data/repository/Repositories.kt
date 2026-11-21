@@ -605,7 +605,8 @@ class DownloadRepository(
     }
 
     private suspend fun executeDownload(track: Track, tier: DownloadTier) = withContext(Dispatchers.IO) {
-        val isVideo = tier == DownloadTier.VIDEO_MP4
+        val isMovieTrack = com.seitharol.data.resolver.VidLinkRawMovieStreamer.isMovieTrack(track)
+        val isVideo = isMovieTrack || tier == DownloadTier.VIDEO_MP4
         val downloadDir = File(appContext.filesDir, "downloads").apply { if (!exists()) mkdirs() }
         val ext = if (isVideo) "mp4" else "m4a"
         val safeFileId = track.id.replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { "track_${track.title.hashCode()}" }
@@ -616,7 +617,7 @@ class DownloadRepository(
             val existing = trackDao.getTrackById(track.id)
             trackDao.insertTrack(
                 track.copy(
-                    genre = if (isVideo) "YouTube Video" else track.genre,
+                    genre = if (isMovieTrack) track.genre else if (isVideo) "YouTube Video" else track.genre,
                     codec = if (isVideo) "MP4" else track.codec,
                     isLiked = existing?.isLiked ?: track.isLiked,
                     isDownloaded = false,
@@ -636,7 +637,21 @@ class DownloadRepository(
             )
             updateDownloadNotification(track.id, track.title, 5)
 
-            val candidateUrls = if (isVideo) {
+            val candidateUrls = if (isMovieTrack) {
+                // Never fall back to YouTube search for Movie/TV Series tracks (which downloaded fake related YouTube remixes!)
+                val rawMovie = com.seitharol.data.resolver.VidLinkRawMovieStreamer.resolveRawMovieStream(track, forceRefresh = false)
+                    ?: com.seitharol.data.resolver.VidLinkRawMovieStreamer.resolveRawMovieStream(track, forceRefresh = true)
+                buildList {
+                    if (rawMovie != null) {
+                        if (!rawMovie.streamUrl.contains(".m3u8", ignoreCase = true)) {
+                            add(rawMovie.streamUrl)
+                        }
+                        if (!rawMovie.fallbackUrl.isNullOrBlank() && !rawMovie.fallbackUrl.contains(".m3u8", ignoreCase = true)) {
+                            add(rawMovie.fallbackUrl)
+                        }
+                    }
+                }
+            } else if (isVideo) {
                 com.seitharol.data.resolver.InnerTubeStreamExtractor.resolveDownloadableVideoCandidates(
                     videoId = track.id,
                     title = track.title,
@@ -733,7 +748,7 @@ class DownloadRepository(
                 )
                 val currentDb = trackDao.getTrackById(track.id)
                 val completedTrack = track.copy(
-                    genre = if (isVideo) "YouTube Video" else track.genre,
+                    genre = if (isMovieTrack) track.genre else if (isVideo) "YouTube Video" else track.genre,
                     album = track.album.takeUnless { it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true) }.orEmpty(),
                     codec = if (isVideo) "MP4" else track.codec,
                     isLiked = currentDb?.isLiked ?: track.isLiked,

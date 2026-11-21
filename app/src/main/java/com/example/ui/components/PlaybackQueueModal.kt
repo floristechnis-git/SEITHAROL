@@ -591,22 +591,6 @@ fun PlaybackQueueModal(
                                             overflow = TextOverflow.Ellipsis,
                                             modifier = Modifier.weight(1f, fill = false)
                                         )
-                                        if (isPlaying) {
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(4.dp))
-                                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
-                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                                            ) {
-                                                Text(
-                                                    text = "PLAYING",
-                                                    color = MaterialTheme.colorScheme.primary,
-                                                    fontSize = 9.sp,
-                                                    fontWeight = FontWeight.ExtraBold
-                                                )
-                                            }
-                                        }
                                     }
 
                                     Spacer(modifier = Modifier.height(2.dp))

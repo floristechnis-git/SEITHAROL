@@ -635,6 +635,28 @@ fun CascadeApp(
                 0f
             }
 
+            // Default Floating Adjustable Picture-in-Picture (PiP) Window when any video is minimized
+            if (
+                playerState.currentTrack != null &&
+                !isPlayerExpanded &&
+                !isFullscreenVideo &&
+                !isInPiPMode &&
+                currentSubScreen !is SubScreen.Discover
+            ) {
+                SeitharolFloatingVideoPiP(
+                    viewModel = viewModel,
+                    playerState = playerState,
+                    onExpandFullPlayer = {
+                        dismissGlobalKeyboard()
+                        expandFullPlayer()
+                    },
+                    onEnterSystemPiP = {
+                        (context.findActivity() as? com.example.MainActivity)?.enterPiPMode()
+                    },
+                    modifier = Modifier.zIndex(25f)
+                )
+            }
+
             // MiniPlayer + Floating Navigation Dock
             // MiniPlayer remains mounted during player slide-down and smoothly morphs in as effectiveExpandProgress -> 0f,
             // so the full player directly converts into the MiniPlayer div without hiding and popping up!

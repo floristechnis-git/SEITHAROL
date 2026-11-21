@@ -563,16 +563,15 @@ object NetworkClients {
                 val targetDurMs = effectiveDurSec * 1000L
 
                 // 1. Exact YouTube VideoID Timed Lyrics FIRST (SimpMusic VideoID & Official YouTube Music timedLyricsData)
-                // Because these match the exact playing videoId, they have zero edition/tempo/intro speed mismatch!
                 val (simpSynced, simpPlain) = simpJob.await()
-                if (simpSynced.isNotEmpty()) {
+                if (isValidLyricsForTrack(simpSynced, title, artist)) {
                     val calibrated = calibrateLyricsToTargetDuration(simpSynced, 0L, targetDurMs)
                     syncedLyricsCache[cacheKey] = calibrated
                     return@coroutineScope calibrated
                 }
 
                 val ytmResult = ytmJob.await()
-                if (ytmResult.syncedLines.isNotEmpty()) {
+                if (isValidLyricsForTrack(ytmResult.syncedLines, title, artist)) {
                     val calibrated = calibrateLyricsToTargetDuration(ytmResult.syncedLines, 0L, targetDurMs)
                     syncedLyricsCache[cacheKey] = calibrated
                     return@coroutineScope calibrated
@@ -580,21 +579,21 @@ object NetworkClients {
 
                 // 2. Duration-Verified & Tempo-Calibrated LRCLIB Synced Lyrics
                 val (lrclibSynced, lrclibPlain) = lrclibJob.await()
-                if (lrclibSynced.isNotEmpty()) {
+                if (isValidLyricsForTrack(lrclibSynced, title, artist)) {
                     syncedLyricsCache[cacheKey] = lrclibSynced
                     return@coroutineScope lrclibSynced
                 }
 
                 // 3. Duration-Verified & Tempo-Calibrated NetEase Synced Lyrics
                 val netEaseSynced = netEaseJob.await()
-                if (netEaseSynced.isNotEmpty()) {
+                if (isValidLyricsForTrack(netEaseSynced, title, artist)) {
                     syncedLyricsCache[cacheKey] = netEaseSynced
                     return@coroutineScope netEaseSynced
                 }
 
                 // 4. Duration-Verified & Tempo-Calibrated KuGou Synced Lyrics
                 val kugouSynced = kugouJob.await()
-                if (kugouSynced.isNotEmpty()) {
+                if (isValidLyricsForTrack(kugouSynced, title, artist)) {
                     syncedLyricsCache[cacheKey] = kugouSynced
                     return@coroutineScope kugouSynced
                 }
@@ -603,10 +602,10 @@ object NetworkClients {
 
                 // Prefer official plain lyrics (YTM MPLYt_ -> LRCLIB -> SimpMusic -> JioSaavn) before ASR captions
                 val bestPlain = listOfNotNull(
-                    ytmResult.plainText?.takeIf { it.isNotBlank() },
-                    lrclibPlain?.takeIf { it.isNotBlank() },
-                    simpPlain?.takeIf { it.isNotBlank() },
-                    saavnPlain?.takeIf { it.isNotBlank() }
+                    ytmResult.plainText?.takeIf { isValidPlainLyricsForTrack(it, title, artist) },
+                    lrclibPlain?.takeIf { isValidPlainLyricsForTrack(it, title, artist) },
+                    simpPlain?.takeIf { isValidPlainLyricsForTrack(it, title, artist) },
+                    saavnPlain?.takeIf { isValidPlainLyricsForTrack(it, title, artist) }
                 ).firstOrNull()
 
                 if (!bestPlain.isNullOrBlank()) {
@@ -614,13 +613,13 @@ object NetworkClients {
                         bestPlain,
                         effectiveDurSec.takeIf { it > 0L } ?: durationSec
                     )
-                    if (plainLines.isNotEmpty()) {
+                    if (isValidLyricsForTrack(plainLines, title, artist)) {
                         syncedLyricsCache[cacheKey] = plainLines
                         return@coroutineScope plainLines
                     }
                 }
 
-                if (ytmResult.asrCaptionLines.isNotEmpty()) {
+                if (isValidLyricsForTrack(ytmResult.asrCaptionLines, title, artist)) {
                     syncedLyricsCache[cacheKey] = ytmResult.asrCaptionLines
                     return@coroutineScope ytmResult.asrCaptionLines
                 }
@@ -631,6 +630,66 @@ object NetworkClients {
             Log.w(TAG, "Error fetching multi-source lyrics: ${e.message}")
             emptyList()
         }
+    }
+
+    fun clearLyricsCache() {
+        syncedLyricsCache.clear()
+    }
+
+    private val HAN_SCRIPT_REGEX = Regex("\p{IsHan}")
+
+    private fun containsHanScript(text: String): Boolean {
+        return HAN_SCRIPT_REGEX.containsMatchIn(text)
+    }
+
+    /**
+     * Validates that fetched lyrics genuinely belong to the requested song:
+     * 1. Requires at least 4 non-instrumental vocal lines (never accepts 1- or 2-line fragments).
+     * 2. Rejects Chinese/CJK Han script lyrics when neither the song's title nor artist contains Han characters.
+     */
+    private fun isValidLyricsForTrack(
+        lines: List<LyricsLine>,
+        requestedTitle: String,
+        requestedArtist: String,
+        minVocalLines: Int = 4
+    ): Boolean {
+        val vocalLines = lines.filter { !it.isInstrumental && it.text.trim().length >= 2 }
+        if (vocalLines.size < minVocalLines) return false
+
+        val trackHasHan = containsHanScript(requestedTitle) || containsHanScript(requestedArtist)
+        if (!trackHasHan) {
+            val combinedText = vocalLines.joinToString(" ") { it.text }
+            val nonSpaceChars = combinedText.count { !it.isWhitespace() }
+            if (nonSpaceChars > 0) {
+                val hanCount = HAN_SCRIPT_REGEX.findAll(combinedText).count()
+                if (hanCount >= 3 && (hanCount.toDouble() / nonSpaceChars.toDouble()) >= 0.12) {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+
+    private fun isValidPlainLyricsForTrack(
+        plainText: String?,
+        requestedTitle: String,
+        requestedArtist: String
+    ): Boolean {
+        if (plainText.isNullOrBlank()) return false
+        val lines = plainText.lines().map { it.trim() }.filter { it.length >= 2 }
+        if (lines.size < 4) return false
+        val trackHasHan = containsHanScript(requestedTitle) || containsHanScript(requestedArtist)
+        if (!trackHasHan) {
+            val combined = lines.joinToString(" ")
+            val nonSpace = combined.count { !it.isWhitespace() }
+            if (nonSpace > 0) {
+                val hanCount = HAN_SCRIPT_REGEX.findAll(combined).count()
+                if (hanCount >= 3 && (hanCount.toDouble() / nonSpace.toDouble()) >= 0.12) {
+                    return false
+                }
+            }
+        }
+        return true
     }
 
     private data class YtmLyricsResult(
@@ -681,7 +740,7 @@ object NetworkClients {
         if (primaryArtistOnly.isNotBlank() && coreTitle.isNotBlank()) {
             pairs.add(Pair(primaryArtistOnly, coreTitle))
         }
-        if (coreTitle.isNotBlank()) {
+        if (cleanedArtist.isBlank() && coreTitle.isNotBlank()) {
             pairs.add(Pair("", coreTitle))
         }
         return pairs.filter { it.second.isNotBlank() }.take(5)
@@ -742,9 +801,9 @@ object NetworkClients {
                         val titlePenalty = if (titleLower.isNotBlank() && !itemTrack.contains(titleLower) && !titleLower.contains(itemTrack)) 30L else 0L
                         val totalPenalty = durPenalty + artistPenalty + titlePenalty
 
-                        if (synced.isNotBlank() && totalPenalty < bestScore && totalPenalty <= 55L) {
+                        if (synced.isNotBlank() && totalPenalty < bestScore && totalPenalty <= 42L) {
                             val parsed = parseLrc(synced)
-                            if (parsed.size >= 2) {
+                            if (isValidLyricsForTrack(parsed, title, artist)) {
                                 bestScore = totalPenalty
                                 bestSyncedLines = calibrateLyricsToTargetDuration(
                                     lines = parsed,
@@ -753,14 +812,14 @@ object NetworkClients {
                                 )
                             }
                         }
-                        if (bestPlain == null && plain.isNotBlank() && totalPenalty <= 75L) {
+                        if (bestPlain == null && plain.isNotBlank() && totalPenalty <= 48L && isValidPlainLyricsForTrack(plain, title, artist)) {
                             bestPlain = plain
                         }
                     }
 
                     bestSyncedLines
                 }
-                if (foundSynced.size >= 2) return Pair(foundSynced, bestPlain)
+                if (isValidLyricsForTrack(foundSynced, title, artist)) return Pair(foundSynced, bestPlain)
             } catch (_: Throwable) {}
         }
         return Pair(emptyList(), bestPlain)
@@ -785,7 +844,9 @@ object NetworkClients {
                     val plain = item.optString("plainLyrics", "").takeIf { it != "null" }.orEmpty()
                     if (synced.isNotBlank()) {
                         val parsed = parseLrc(synced)
-                        if (parsed.size >= 2) return@use Pair(parsed, plain.takeIf { it.isNotBlank() })
+                        if (parsed.count { !it.isInstrumental && it.text.isNotBlank() } >= 4) {
+                            return@use Pair(parsed, plain.takeIf { it.isNotBlank() })
+                        }
                     }
                     if (plainFallback == null && plain.isNotBlank()) {
                         plainFallback = plain
@@ -811,6 +872,8 @@ object NetworkClients {
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                 .build()
 
+            val normTitle = title.lowercase().trim()
+            val normArtist = artist.lowercase().trim()
             val songIds = lyricsHttpClient.newCall(searchReq).execute().use { resp ->
                 if (!resp.isSuccessful) return@use emptyList<Long>()
                 val body = resp.body?.string() ?: return@use emptyList<Long>()
@@ -820,7 +883,22 @@ object NetworkClients {
                     val s = songs.optJSONObject(i) ?: continue
                     val id = s.optLong("id", 0L)
                     if (id <= 0L) continue
+                    val sName = s.optString("name", "").lowercase().trim()
+                    if (sName.isBlank() || (!sName.contains(normTitle) && !normTitle.contains(sName))) continue
+                    val artistsArr = s.optJSONArray("artists")
+                    var artistMatched = normArtist.isBlank()
+                    if (!artistMatched && artistsArr != null) {
+                        for (aIdx in 0 until artistsArr.length()) {
+                            val aName = artistsArr.optJSONObject(aIdx)?.optString("name", "")?.lowercase()?.trim().orEmpty()
+                            if (aName.isNotBlank() && (aName.contains(normArtist) || normArtist.contains(aName))) {
+                                artistMatched = true
+                                break
+                            }
+                        }
+                    }
+                    if (!artistMatched) continue
                     val durSec = s.optLong("duration", 0L) / 1000L
+                    if (durationSec > 30L && durSec > 30L && abs(durSec - durationSec) > 10L) continue
                     val penalty = if (durationSec > 0L && durSec > 0L) abs(durSec - durationSec) else i.toLong() * 5L
                     candidates.add(Pair(id, penalty))
                 }
@@ -862,7 +940,7 @@ object NetworkClients {
                         } else primaryLines
                     } else emptyList()
                 }
-                if (parsed.size >= 2) return parsed
+                if (isValidLyricsForTrack(parsed, title, artist)) return parsed
             }
             emptyList()
         } catch (_: Throwable) {
@@ -879,15 +957,24 @@ object NetworkClients {
                 .url(searchUrl)
                 .header("User-Agent", "Mozilla/5.0 (Android 14; Mobile)")
                 .build()
+            val normTitle = title.lowercase().trim()
+            val normArtist = artist.lowercase().trim()
             val candidate = lyricsHttpClient.newCall(searchReq).execute().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 val body = resp.body?.string() ?: return@use null
                 val cands = JSONObject(body).optJSONArray("candidates") ?: return@use null
-                if (cands.length() == 0) return@use null
-                val first = cands.optJSONObject(0) ?: return@use null
-                val id = first.optString("id", "")
-                val key = first.optString("accesskey", "")
-                if (id.isNotBlank() && key.isNotBlank()) Pair(id, key) else null
+                for (i in 0 until cands.length()) {
+                    val item = cands.optJSONObject(i) ?: continue
+                    val cSong = item.optString("song", "").lowercase().trim()
+                    val cSinger = item.optString("singer", "").lowercase().trim()
+                    val titleOk = cSong.isNotBlank() && (cSong.contains(normTitle) || normTitle.contains(cSong))
+                    val artistOk = normArtist.isBlank() || (cSinger.isNotBlank() && (cSinger.contains(normArtist) || normArtist.contains(cSinger)))
+                    if (!titleOk || !artistOk) continue
+                    val id = item.optString("id", "")
+                    val key = item.optString("accesskey", "")
+                    if (id.isNotBlank() && key.isNotBlank()) return@use Pair(id, key)
+                }
+                null
             } ?: return emptyList()
 
             val dlUrl = "https://lyrics.kugou.com/download?ver=1&client=pc&id=${candidate.first}&accesskey=${candidate.second}&fmt=lrc&charset=utf8"
@@ -902,7 +989,7 @@ object NetworkClients {
                 if (b64.isBlank()) return emptyList()
                 val decoded = String(android.util.Base64.decode(b64, android.util.Base64.DEFAULT), Charsets.UTF_8)
                 val parsed = parseLrc(decoded)
-                if (parsed.size >= 2) parsed else emptyList()
+                if (isValidLyricsForTrack(parsed, title, artist)) parsed else emptyList()
             }
         } catch (_: Throwable) {
             emptyList()
@@ -1207,7 +1294,169 @@ object NetworkClients {
         return found
     }
 
-    private fun fetchAndParseYoutubeCaptionUrl(baseUrl: String, userAgent: String): List<LyricsLine> {
+    /**
+     * Fetches timestamped Closed Captions (CC) for any playing Video (YouTube Videos, Music Videos,
+     * and Movies/Series with WebVTT subtitles) so in-app CC works natively without opening Android system settings.
+     */
+    suspend fun fetchVideoCaptions(
+        videoId: String,
+        title: String = "",
+        artist: String = "",
+        externalVttUrl: String? = null
+    ): List<LyricsLine> = withContext(Dispatchers.IO) {
+        // 1. If an external WebVTT subtitle URL is available (e.g. VidLink Movies/Series), parse it directly
+        if (!externalVttUrl.isNullOrBlank() && externalVttUrl.startsWith("http")) {
+            val vttLines = fetchAndParseWebVttUrl(externalVttUrl)
+            if (vttLines.isNotEmpty()) return@withContext vttLines
+        }
+
+        // 2. Extract YouTube captionTracks from ANDROID_VR and WEB player responses
+        val candidateIds = LinkedHashSet<String>()
+        InnerTubeStreamExtractor.extractVideoId(videoId)?.let { candidateIds.add(it) }
+        if (candidateIds.isEmpty() && title.isNotBlank()) {
+            runCatching {
+                InnerTubeStreamExtractor.searchAllYoutubeVideos("$title $artist".trim(), limit = 2)
+                    .forEach { InnerTubeStreamExtractor.extractVideoId(it.videoId)?.let(candidateIds::add) }
+            }
+        }
+
+        val vrUa = "com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
+        val webUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+        for (candVid in candidateIds) {
+            for (useVr in listOf(true, false)) {
+                val capLines = runCatching {
+                    val bodyJson = if (useVr) {
+                        JSONObject().apply {
+                            put("videoId", candVid)
+                            put("context", JSONObject().apply {
+                                put("client", JSONObject().apply {
+                                    put("clientName", "ANDROID_VR")
+                                    put("clientVersion", "1.61.48")
+                                    put("deviceMake", "Oculus")
+                                    put("deviceModel", "Quest 3")
+                                    put("osName", "Android")
+                                    put("osVersion", "12L")
+                                    put("androidSdkVersion", 32)
+                                    put("hl", "en")
+                                    put("gl", "US")
+                                })
+                            })
+                        }
+                    } else {
+                        JSONObject().apply {
+                            put("videoId", candVid)
+                            put("context", JSONObject().apply {
+                                put("client", JSONObject().apply {
+                                    put("clientName", "WEB")
+                                    put("clientVersion", "2.20250310.01.00")
+                                    put("hl", "en")
+                                    put("gl", "US")
+                                })
+                            })
+                        }
+                    }
+                    val ua = if (useVr) vrUa else webUa
+                    val req = Request.Builder()
+                        .url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
+                        .post(bodyJson.toString().toRequestBody(JSON_MEDIA_TYPE))
+                        .header("User-Agent", ua)
+                        .header("X-YouTube-Client-Name", if (useVr) "28" else "1")
+                        .header("X-YouTube-Client-Version", if (useVr) "1.61.48" else "2.20250310.01.00")
+                        .build()
+                    val captionUrl = lyricsHttpClient.newCall(req).execute().use { resp ->
+                        if (!resp.isSuccessful) return@use null
+                        val str = resp.body?.string() ?: return@use null
+                        val tracks = JSONObject(str)
+                            .optJSONObject("captions")
+                            ?.optJSONObject("playerCaptionsTracklistRenderer")
+                            ?.optJSONArray("captionTracks") ?: return@use null
+                        var bestManualEn: String? = null
+                        var bestManualAny: String? = null
+                        var bestAsrEn: String? = null
+                        var bestAsrAny: String? = null
+                        for (i in 0 until tracks.length()) {
+                            val tr = tracks.optJSONObject(i) ?: continue
+                            val baseUrl = tr.optString("baseUrl", "")
+                            if (baseUrl.isBlank()) continue
+                            val kind = tr.optString("kind", "")
+                            val lang = tr.optString("languageCode", "")
+                            val isEn = lang.startsWith("en", ignoreCase = true)
+                            if (kind != "asr") {
+                                if (isEn && bestManualEn == null) bestManualEn = baseUrl
+                                if (bestManualAny == null) bestManualAny = baseUrl
+                            } else {
+                                if (isEn && bestAsrEn == null) bestAsrEn = baseUrl
+                                if (bestAsrAny == null) bestAsrAny = baseUrl
+                            }
+                        }
+                        bestManualEn ?: bestAsrEn ?: bestManualAny ?: bestAsrAny
+                    }
+                    if (!captionUrl.isNullOrBlank()) {
+                        fetchAndParseYoutubeCaptionUrl(captionUrl, ua, minLines = 1)
+                    } else emptyList()
+                }.getOrDefault(emptyList())
+                if (capLines.isNotEmpty()) return@withContext capLines
+            }
+        }
+
+        // 3. Fallback to synced lyrics if the video is a music video without separate CC tracks
+        if (title.isNotBlank()) {
+            val syncedFallback = runCatching {
+                fetchSyncedLyrics(artist = artist, title = title, durationSec = 0L, videoId = videoId)
+            }.getOrDefault(emptyList()).filter { !it.isInstrumental && it.text.isNotBlank() }
+            if (syncedFallback.isNotEmpty()) return@withContext syncedFallback
+        }
+
+        emptyList()
+    }
+
+    private fun fetchAndParseWebVttUrl(vttUrl: String): List<LyricsLine> {
+        return try {
+            val req = Request.Builder()
+                .url(vttUrl)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .build()
+            lyricsHttpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val body = resp.body?.string().orEmpty()
+                if (body.isBlank()) return emptyList()
+                val out = mutableListOf<LyricsLine>()
+                val lines = body.lines()
+                val timeRegex = Regex("(?:(\d{1,2}):)?(\d{2}):(\d{2})[.,](\d{3})\s*-->\s*(?:(\d{1,2}):)?(\d{2}):(\d{2})[.,](\d{3})")
+                var i = 0
+                while (i < lines.size) {
+                    val line = lines[i].trim()
+                    val match = timeRegex.find(line)
+                    if (match != null) {
+                        val h = match.groupValues[1].toLongOrNull() ?: 0L
+                        val m = match.groupValues[2].toLongOrNull() ?: 0L
+                        val s = match.groupValues[3].toLongOrNull() ?: 0L
+                        val ms = match.groupValues[4].toLongOrNull() ?: 0L
+                        val startMs = (h * 3600_000L) + (m * 60_000L) + (s * 1000L) + ms
+                        i++
+                        val textBuilder = StringBuilder()
+                        while (i < lines.size && lines[i].trim().isNotEmpty() && !timeRegex.containsMatchIn(lines[i])) {
+                            if (textBuilder.isNotEmpty()) textBuilder.append(" ")
+                            textBuilder.append(lines[i].trim().replace(Regex("<[^>]+>"), ""))
+                            i++
+                        }
+                        val clean = decodeHtmlEntities(textBuilder.toString()).trim()
+                        if (clean.isNotBlank()) {
+                            out.add(LyricsLine(timestampMs = startMs, text = clean))
+                        }
+                    } else {
+                        i++
+                    }
+                }
+                out.sortedBy { it.timestampMs }
+            }
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
+    private fun fetchAndParseYoutubeCaptionUrl(baseUrl: String, userAgent: String, minLines: Int = 4): List<LyricsLine> {
         val json3Url = if (baseUrl.contains("fmt=")) {
             baseUrl.replace(Regex("fmt=[^&]+"), "fmt=json3")
         } else {
@@ -1273,7 +1522,7 @@ object NetworkClients {
                         out
                     }
                 }
-                if (lines.size >= 4) return lines.distinctBy { "${it.timestampMs / 400L}|${it.text.lowercase()}" }
+                if (lines.size >= minLines) return lines.distinctBy { "${it.timestampMs / 400L}|${it.text.lowercase()}" }
             } catch (_: Throwable) {}
         }
         return emptyList()

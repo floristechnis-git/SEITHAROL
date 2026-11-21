@@ -301,39 +301,6 @@ fun PlaylistScreen(
                             .padding(start = 28.dp, end = 28.dp, top = 56.dp, bottom = 20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        val badgeTag = remember(playlistId, displayTitle, displayDescription, isPersonalPlaylist) {
-                            when {
-                                isPersonalPlaylist -> "PERSONAL PLAYLIST"
-                                playlistId.startsWith("RD") || displayTitle.contains("Mix", ignoreCase = true) -> "MIX"
-                                playlistId.startsWith("MPREb_") || playlistId.startsWith("OLAK5uy_") || displayTitle.contains("Album", ignoreCase = true) -> "ALBUM"
-                                displayDescription.contains("Single", ignoreCase = true) -> "SINGLE"
-                                else -> "PLAYLIST"
-                            }
-                        }
-                        val badgeColor = when (badgeTag) {
-                            "MIX" -> Color(0xFF850101)
-                            "ALBUM" -> Color(0xFF8E24AA)
-                            "SINGLE" -> Color(0xFF00897B)
-                            "PERSONAL PLAYLIST" -> MaterialTheme.colorScheme.primary
-                            else -> Color(0xFF2E66FF)
-                        }
-
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = badgeColor
-                        ) {
-                            Text(
-                                text = badgeTag,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = Color.White,
-                                letterSpacing = 0.8.sp,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
                         Text(
                             text = currentPlaylist.title,
                             fontFamily = SyneFontFamily,

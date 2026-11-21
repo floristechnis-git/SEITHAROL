@@ -154,6 +154,7 @@ fun HomeScreen(
     val trendingHits by viewModel.trendingHits.collectAsState()
     val freshReleases by viewModel.freshReleases.collectAsState()
     val personalizedTracks by viewModel.personalizedTracks.collectAsState()
+    val musicVideos by viewModel.musicVideos.collectAsState()
     val suggestedYoutubeMixes by viewModel.suggestedYoutubeMixes.collectAsState()
     val suggestedYoutubePlaylists by viewModel.suggestedYoutubePlaylists.collectAsState()
     val selectedMood by viewModel.selectedMood.collectAsState()
@@ -218,6 +219,8 @@ fun HomeScreen(
 
         fun isAuthenticCleanSong(item: HomeMediaItem): Boolean {
             if (item.originalTrack?.isLocalOnlyTrack == true) return false
+            if (item.originalTrack?.isVideoTrack == true) return false
+            if (com.seitharol.data.resolver.InnerTubeStreamExtractor.isRectangularVideoThumbnailUrl(item.thumbnailUrl)) return false
             val a = item.subtitle.lowercase().trim()
             val t = item.title.lowercase().trim()
             val id = item.id.lowercase().trim()
@@ -294,8 +297,19 @@ fun HomeScreen(
         } else {
             basePool.filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
         }
-        val effectivePool = if (filtered.size >= 8) filtered else basePool.filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack }
+        val effectivePool = (if (filtered.size >= 8) filtered else basePool.filterNot { it.id in excludedHeroIds || it.isLocalOnlyTrack })
+            .filterNot { it.isVideoTrack || com.seitharol.data.resolver.InnerTubeStreamExtractor.isRectangularVideoThumbnailUrl(it.artUrl) }
         effectivePool.take(24).map { it.toHomeMediaItem() }
+    }
+
+    // Prepare dedicated Music Video items (rectangular 16:9 thumbnails, plays as Video)
+    val musicVideoItems = remember(musicVideos, downloadedTracks, isOfflineMode) {
+        val pool = if (isOfflineMode) {
+            downloadedTracks.filter { it.isVideoTrack && !it.isLocalOnlyTrack }
+        } else {
+            musicVideos.filterNot { it.isLocalOnlyTrack }
+        }
+        pool.distinctBy { it.id }.take(16)
     }
 
     // Prepare Fresh New Music Items (Deduplicated, excluding Quick Dial items & local songs)
@@ -654,23 +668,7 @@ fun HomeScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Surface(
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .testTag("home_search_btn"),
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.surfaceVariant,
-                                    onClick = onNavigateToSearch
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.Search,
-                                            contentDescription = "Search",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
-                                }
+
 
                                 Surface(
                                     modifier = Modifier
@@ -1116,11 +1114,48 @@ fun HomeScreen(
                     }
                 }
 
+                if (musicVideoItems.isNotEmpty()) {
+                    item {
+                        MusicVideosHorizontalShelf(
+                            videos = musicVideoItems,
+                            title = "Music Video",
+                            subtitle = "Official music videos & live sessions",
+                            currentPlayingId = playerState.currentTrack?.id,
+                            onVideoClick = { videoTrack ->
+                                val asVideo = videoTrack.copy(
+                                    genre = "YouTube Video",
+                                    album = "YouTube Video",
+                                    itag = 18,
+                                    codec = "MP4"
+                                )
+                                viewModel.setVideoMode(true)
+                                viewModel.playTrack(asVideo)
+                            },
+                            onPlayNext = { videoTrack ->
+                                viewModel.playNext(videoTrack.copy(genre = "YouTube Video", album = "YouTube Video", itag = 18, codec = "MP4"))
+                            },
+                            onAddToQueue = { videoTrack ->
+                                viewModel.addToQueue(videoTrack.copy(genre = "YouTube Video", album = "YouTube Video", itag = 18, codec = "MP4"))
+                            },
+                            onToggleLike = { videoTrack ->
+                                viewModel.toggleLike(videoTrack)
+                            },
+                            onAddToPlaylist = { videoTrack ->
+                                trackToAddToPlaylist = videoTrack
+                            },
+                            onGoToArtist = { artistName -> onNavigateToArtist(artistName) },
+                            onDownload = { videoTrack, tier ->
+                                viewModel.startDownload(videoTrack, tier)
+                            }
+                        )
+                    }
+                }
+
                 if (youtubeMixes.isNotEmpty()) {
                     item {
                         MediaCarouselShelf(
                             title = "Mixed for You",
-                            subtitle = "Continuous YouTube Music stations & personalized mixes",
+                            subtitle = "Continuous stations & personalized mixes",
                             items = youtubeMixes,
                             badgeText = "MIX",
                             onItemClick = { item ->
@@ -1212,24 +1247,9 @@ fun HomeScreen(
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                horizontalArrangement = Arrangement.End,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = MaterialTheme.colorScheme.primaryContainer
-                                ) {
-                                    Text(
-                                        text = "MOODS & GENRES",
-                                        fontSize = 10.sp,
-                                        fontFamily = OutfitFontFamily,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        letterSpacing = 0.8.sp,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                    )
-                                }
-
                                 Surface(
                                     onClick = { viewModel.selectHomeMood("All") },
                                     shape = RoundedCornerShape(10.dp),
@@ -2551,7 +2571,7 @@ fun OuterTuneMoodsAndGenresSection(
     Column(modifier = Modifier.fillMaxWidth()) {
         SectionHeader(
             title = "Moods & Genres",
-            subtitle = "Explore YouTube Music & OuterTune category feeds"
+            subtitle = "Explore curated music by mood, vibe, and genre"
         )
         Spacer(modifier = Modifier.height(12.dp))
 
@@ -2615,6 +2635,267 @@ fun OuterTuneMoodsAndGenresSection(
                                         .padding(end = 10.dp)
                                 )
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+@Composable
+fun MusicVideosHorizontalShelf(
+    videos: List<Track>,
+    title: String = "Music Video",
+    subtitle: String = "Official music videos & live sessions",
+    currentPlayingId: String? = null,
+    onVideoClick: (Track) -> Unit,
+    onPlayNext: (Track) -> Unit = {},
+    onAddToQueue: (Track) -> Unit = {},
+    onToggleLike: (Track) -> Unit = {},
+    onAddToPlaylist: (Track) -> Unit = {},
+    onGoToArtist: (String) -> Unit = {},
+    onDownload: (Track, DownloadTier) -> Unit = { _, _ -> }
+) {
+    val appLogoPainter = painterResource(id = R.drawable.ic_splash_logo)
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        SectionHeader(
+            title = title,
+            subtitle = subtitle
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            itemsIndexed(videos, key = { idx, item -> "mv_${item.id}_$idx" }) { _, video ->
+                val isPlaying = currentPlayingId == video.id
+                var showMenu by remember { mutableStateOf(false) }
+                var showDownloadSheet by remember { mutableStateOf(false) }
+                val vidId = com.seitharol.data.resolver.InnerTubeStreamExtractor.extractVideoId(video.id)
+                val rectThumb = remember(video.artUrl, vidId) {
+                    if (com.seitharol.data.resolver.InnerTubeStreamExtractor.isRectangularVideoThumbnailUrl(video.artUrl)) {
+                        video.artUrl
+                    } else if (!vidId.isNullOrBlank()) {
+                        "https://i.ytimg.com/vi/$vidId/hqdefault.jpg"
+                    } else {
+                        video.artUrl
+                    }
+                }
+
+                Column(
+                    modifier = Modifier
+                        .width(228.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { onVideoClick(video) }
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(128.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AsyncImage(
+                            model = rectThumb.ifBlank { R.drawable.ic_splash_logo },
+                            contentDescription = video.title,
+                            placeholder = appLogoPainter,
+                            error = appLogoPainter,
+                            fallback = appLogoPainter,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        Surface(
+                            shape = CircleShape,
+                            color = if (isPlaying) MaterialTheme.colorScheme.primary else Color.Black.copy(alpha = 0.55f),
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = if (isPlaying) Icons.Default.GraphicEq else Icons.Default.PlayArrow,
+                                    contentDescription = "Play Music Video",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                        if (video.durationMs > 0L) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color.Black.copy(alpha = 0.80f),
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(8.dp)
+                            ) {
+                                Text(
+                                    text = video.durationFormatted,
+                                    color = Color.White,
+                                    fontSize = 10.5.sp,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 6.dp)
+                        ) {
+                            Text(
+                                text = video.title,
+                                color = if (isPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
+                                fontSize = 13.5.sp,
+                                lineHeight = 17.sp,
+                                fontFamily = SyneFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = video.artist,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.5.sp,
+                                fontFamily = OutfitFontFamily,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Box {
+                            IconButton(
+                                onClick = { showMenu = true },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.MoreVert,
+                                    contentDescription = "Video Options",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
+                            DropdownMenu(
+                                expanded = showMenu,
+                                onDismissRequest = { showMenu = false },
+                                modifier = Modifier
+                                    .widthIn(min = 225.dp, max = 280.dp)
+                                    .background(MaterialTheme.colorScheme.surface)
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Play Music Video", color = MaterialTheme.colorScheme.onSurface) },
+                                    leadingIcon = { Icon(Icons.Default.PlayArrow, null, tint = MaterialTheme.colorScheme.primary) },
+                                    onClick = {
+                                        showMenu = false
+                                        onVideoClick(video)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Play Next", color = MaterialTheme.colorScheme.onSurface) },
+                                    leadingIcon = { Icon(Icons.Default.PlaylistPlay, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                    onClick = {
+                                        showMenu = false
+                                        onPlayNext(video)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Add to Queue", color = MaterialTheme.colorScheme.onSurface) },
+                                    leadingIcon = { Icon(Icons.Default.QueueMusic, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                    onClick = {
+                                        showMenu = false
+                                        onAddToQueue(video)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            if (video.isLiked) "Remove from Liked Songs" else "Save to Liked Songs",
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            if (video.isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
+                                            null,
+                                            tint = if (video.isLiked) SeitharolRedHeart else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    },
+                                    onClick = {
+                                        showMenu = false
+                                        onToggleLike(video)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Add to Playlist", color = MaterialTheme.colorScheme.onSurface) },
+                                    leadingIcon = { Icon(Icons.Default.PlaylistAdd, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                    onClick = {
+                                        showMenu = false
+                                        onAddToPlaylist(video)
+                                    }
+                                )
+                                if (video.isNavigableArtist) {
+                                    DropdownMenuItem(
+                                        text = { Text("Go to Artist", color = MaterialTheme.colorScheme.onSurface) },
+                                        leadingIcon = { Icon(Icons.Default.Person, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                        onClick = {
+                                            showMenu = false
+                                            onGoToArtist(video.artist)
+                                        }
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    text = { Text("Download Video", color = MaterialTheme.colorScheme.onSurface) },
+                                    leadingIcon = { Icon(Icons.Default.CloudDownload, null, tint = MaterialTheme.colorScheme.primary) },
+                                    onClick = {
+                                        showMenu = false
+                                        showDownloadSheet = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Share", color = MaterialTheme.colorScheme.onSurface) },
+                                    leadingIcon = { Icon(Icons.Default.Share, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                    onClick = {
+                                        showMenu = false
+                                        runCatching {
+                                            val msg = com.example.ui.components.SeitharolDeepLinkHelper.buildTrackShareMessage(video)
+                                            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                                type = "text/plain"
+                                                putExtra(android.content.Intent.EXTRA_TEXT, msg)
+                                            }
+                                            context.startActivity(android.content.Intent.createChooser(intent, "Share Video"))
+                                        }
+                                    }
+                                )
+                            }
+                        }
+
+                        if (showDownloadSheet) {
+                            com.example.ui.components.TrackDownloadFormatQualitySheet(
+                                track = video.copy(genre = "YouTube Video", album = "YouTube Video", itag = 18, codec = "MP4"),
+                                onDismiss = { showDownloadSheet = false },
+                                onConfirmDownload = { chosenTier ->
+                                    showDownloadSheet = false
+                                    onDownload(video, chosenTier)
+                                }
+                            )
                         }
                     }
                 }

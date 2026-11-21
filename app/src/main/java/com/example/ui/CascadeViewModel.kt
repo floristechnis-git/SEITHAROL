@@ -244,38 +244,68 @@ class CascadeViewModel(
         trackId: String,
         fallbackTitle: String = "",
         fallbackArtist: String = "",
-        fallbackArtUrl: String = ""
+        fallbackArtUrl: String = "",
+        sourceUrl: String = ""
     ) {
         viewModelScope.launch(vmExceptionHandler) {
             runCatching {
                 val cleanId = InnerTubeStreamExtractor.extractVideoId(trackId) ?: trackId.trim()
-                val existing = musicRepository.getTrackById(cleanId)
-                    ?: downloadedTracks.value.firstOrNull { it.id == cleanId }
+                val existing = downloadedTracks.value.firstOrNull { it.id == cleanId }
+                    ?: musicRepository.getTrackById(cleanId)
+                val resolvedMeta = if (cleanId.length == 11) {
+                    runCatching { InnerTubeStreamExtractor.fetchSingleVideoOrSongMetadata(cleanId, sourceUrl) }.getOrNull()
+                } else null
+                val lowerUrl = sourceUrl.lowercase()
+                val isYoutubeVideoLink = (lowerUrl.contains("youtube.com/") || lowerUrl.contains("youtu.be/")) &&
+                    !lowerUrl.contains("music.youtube.com")
+                val isVideo = isYoutubeVideoLink ||
+                    resolvedMeta?.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
+                    resolvedMeta?.videoType == "MUSIC_VIDEO_TYPE_UGC" ||
+                    InnerTubeStreamExtractor.isRectangularVideoThumbnailUrl(resolvedMeta?.thumbnailUrl ?: fallbackArtUrl) ||
+                    existing?.isVideoTrack == true
+
                 val trackToPlay = when {
-                    existing != null -> existing
-                    fallbackTitle.isNotBlank() -> Track(
-                        id = cleanId,
-                        title = fallbackTitle,
-                        artist = fallbackArtist.ifBlank { "Artist" },
-                        album = "",
-                        durationMs = 210_000L,
-                        artUrl = fallbackArtUrl.ifBlank {
-                            if (cleanId.length == 11) "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg" else ""
-                        }
+                    resolvedMeta != null -> {
+                        val base = resolvedMeta.toTrack()
+                        base.copy(
+                            title = fallbackTitle.ifBlank { base.title },
+                            artist = fallbackArtist.ifBlank { base.artist },
+                            album = if (isVideo) "YouTube Video" else base.album,
+                            genre = if (isVideo) "YouTube Video" else "Music",
+                            itag = if (isVideo) 18 else 251,
+                            codec = if (isVideo) "MP4" else "Opus",
+                            isDownloaded = existing?.isDownloaded == true,
+                            localPath = existing?.localPath
+                        )
+                    }
+                    existing != null -> existing.copy(
+                        album = if (isVideo) "YouTube Video" else existing.album,
+                        genre = if (isVideo) "YouTube Video" else existing.genre,
+                        itag = if (isVideo) 18 else existing.itag,
+                        codec = if (isVideo) "MP4" else existing.codec
                     )
                     else -> {
                         val oembed = runCatching {
                             resolverEngine.youtubeInnerTubeProvider.fetchMetadataById(cleanId)
                         }.getOrNull()
+                        val useVideo = isVideo || cleanId.length == 11
                         Track(
                             id = cleanId,
-                            title = oembed?.first ?: "Track",
-                            artist = oembed?.second ?: "Artist",
-                            album = "",
+                            title = fallbackTitle.ifBlank { oembed?.first ?: "Video" },
+                            artist = fallbackArtist.ifBlank { oembed?.second ?: "YouTube" },
+                            album = if (useVideo) "YouTube Video" else "",
                             durationMs = 210_000L,
-                            artUrl = if (cleanId.length == 11) "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg" else ""
+                            artUrl = fallbackArtUrl.ifBlank {
+                                if (cleanId.length == 11) "https://i.ytimg.com/vi/$cleanId/hqdefault.jpg" else ""
+                            },
+                            genre = if (useVideo) "YouTube Video" else "Music",
+                            itag = if (useVideo) 18 else 251,
+                            codec = if (useVideo) "MP4" else "Opus"
                         )
                     }
+                }
+                if (isVideo) {
+                    playerManager.setVideoMode(true)
                 }
                 playTrack(trackToPlay)
                 _playerExpandEvent.emit(Unit)
@@ -295,7 +325,7 @@ class CascadeViewModel(
         val anchorSeed = state.queue.firstOrNull { !it.isLocalOnlyTrack } ?: seedTrack ?: state.currentTrack
         val isLocalSingle = anchorSeed != null && anchorSeed.isLocalOnlyTrack && state.queue.all { it.isLocalOnlyTrack }
         // Suppress suggestions ONLY when offline or when playing a local single file (no online tracks in queue)
-        if (anchorSeed == null || isOfflineMode.value || isLocalSingle) {
+        if (anchorSeed == null || isOfflineMode.value || isLocalSingle || com.seitharol.data.resolver.VidLinkRawMovieStreamer.isMovieTrack(anchorSeed)) {
             lastSuggestionsSeedId = null
             _queueVideoSuggestions.value = emptyList()
             return
@@ -411,6 +441,7 @@ class CascadeViewModel(
     val trendingHits = MutableStateFlow<List<Track>>(emptyList())
     val freshReleases = MutableStateFlow<List<Track>>(emptyList())
     val personalizedTracks = MutableStateFlow<List<Track>>(emptyList())
+    val musicVideos = MutableStateFlow<List<Track>>(emptyList())
     val suggestedYoutubeMixes = MutableStateFlow<List<com.seitharol.data.resolver.YtmCollectionSummary>>(emptyList())
     val suggestedYoutubePlaylists = MutableStateFlow<List<com.seitharol.data.resolver.YtmCollectionSummary>>(emptyList())
     val selectedMood = MutableStateFlow("All")
@@ -459,7 +490,7 @@ class CascadeViewModel(
             when (target) {
                 is SeitharolDeepLinkHelper.DeepLinkTarget.TrackTarget -> {
                     searchQuery.value = ""
-                    openSharedTrackById(target.trackId, target.title, target.artist, target.artUrl)
+                    openSharedTrackById(target.trackId, target.title, target.artist, target.artUrl, target.sourceUrl.ifBlank { clean })
                     return
                 }
                 is SeitharolDeepLinkHelper.DeepLinkTarget.ArtistTarget -> {
@@ -654,7 +685,7 @@ class CascadeViewModel(
 
     private val recommendationRepository: com.example.player.RecommendationRepository = object : com.example.player.RecommendationRepository {
         override suspend fun getRelatedTracks(seedTrack: Track): List<Track> {
-            if (seedTrack.isLocalOnlyTrack) return emptyList()
+            if (seedTrack.isLocalOnlyTrack || com.seitharol.data.resolver.VidLinkRawMovieStreamer.isMovieTrack(seedTrack)) return emptyList()
             return try {
                 val state = playerState.value
                 val isVideo = state.isVideoMode || seedTrack.isVideoTrack || (state.queue.isNotEmpty() && state.queue.all { it.isVideoTrack })
@@ -707,7 +738,7 @@ class CascadeViewModel(
         }
 
         override suspend fun getRelatedPlaylists(seedTrack: Track): List<com.example.player.SuggestedPlaylist> {
-            if (seedTrack.isLocalOnlyTrack || isOfflineMode.value) return emptyList()
+            if (seedTrack.isLocalOnlyTrack || isOfflineMode.value || com.seitharol.data.resolver.VidLinkRawMovieStreamer.isMovieTrack(seedTrack)) return emptyList()
             return try {
                 val cleanArtist = seedTrack.artist.removeSuffix(" - Topic").removeSuffix("- Topic").trim()
                 val seedVid = InnerTubeStreamExtractor.extractVideoId(seedTrack.id)
@@ -810,6 +841,9 @@ class CascadeViewModel(
                 }
                 if (personalizedTracks.value.isNotEmpty()) {
                     personalizedTracks.value = personalizedTracks.value.map { enrichTrackStatus(it, likedIds, downloadedMap) }
+                }
+                if (musicVideos.value.isNotEmpty()) {
+                    musicVideos.value = musicVideos.value.map { enrichTrackStatus(it, likedIds, downloadedMap) }
                 }
                 if (_discoverTracks.value.isNotEmpty()) {
                     _discoverTracks.value = _discoverTracks.value.map { norm ->
@@ -1007,6 +1041,16 @@ class CascadeViewModel(
                     )
                 }
 
+                val musicVideosDeferred = async {
+                    InnerTubeStreamExtractor.buildPersonalizedMusicVideosFeed(
+                        seedVideoIds = seedIds,
+                        favoriteArtists = topArtists,
+                        moodCategory = selectedMood.value,
+                        recentSearchQueries = combinedHistoryAndSearchQueries,
+                        limit = 16
+                    )
+                }
+
                 val shelvesDeferred = async {
                     InnerTubeStreamExtractor.fetchHomeMixesAndPlaylists(
                         favoriteArtists = topArtists,
@@ -1018,6 +1062,7 @@ class CascadeViewModel(
                 val personalizedCandidates = personalizedDeferred.await()
                 val trendingCandidates = trendingDeferred.await()
                 val freshCandidates = freshDeferred.await()
+                val dedicatedVideoCandidates = runCatching { musicVideosDeferred.await() }.getOrDefault(emptyList())
                 val homeShelves = runCatching { shelvesDeferred.await() }.getOrNull()
                 if (homeShelves != null) {
                     if (homeShelves.mixes.isNotEmpty()) {
@@ -1029,7 +1074,28 @@ class CascadeViewModel(
                     }
                 }
 
-                fun cleanAndMap(list: List<com.seitharol.data.resolver.CandidateStream>): List<Track> {
+                fun isCandidateMusicVideo(candidate: com.seitharol.data.resolver.CandidateStream): Boolean {
+                    return candidate.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
+                        candidate.videoType == "MUSIC_VIDEO_TYPE_UGC" ||
+                        candidate.albumName.equals("YouTube Video", ignoreCase = true) ||
+                        InnerTubeStreamExtractor.isRectangularVideoThumbnailUrl(candidate.thumbnailUrl)
+                }
+
+                fun cleanAndMapSongsOnly(list: List<com.seitharol.data.resolver.CandidateStream>): List<Track> {
+                    return list
+                        .filterNot { candidate ->
+                            val a = candidate.artist.lowercase().trim()
+                            val t = candidate.title.lowercase().trim()
+                            isCandidateMusicVideo(candidate) ||
+                                bannedKeywords.any { b -> a.contains(b) || t.contains(b) } ||
+                                t.contains("supermix") || t.contains("radio")
+                        }
+                        .map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
+                        .filterNot { it.isLocalOnlyTrack || it.isVideoTrack }
+                        .distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
+                }
+
+                fun cleanAndMapVideosOnly(list: List<com.seitharol.data.resolver.CandidateStream>): List<Track> {
                     return list
                         .filterNot { candidate ->
                             val a = candidate.artist.lowercase().trim()
@@ -1037,14 +1103,34 @@ class CascadeViewModel(
                             bannedKeywords.any { b -> a.contains(b) || t.contains(b) } ||
                                 t.contains("supermix") || t.contains("radio")
                         }
-                        .map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
+                        .map { cand ->
+                            val vidId = InnerTubeStreamExtractor.extractVideoId(cand.videoId) ?: cand.videoId
+                            val rectThumb = if (InnerTubeStreamExtractor.isRectangularVideoThumbnailUrl(cand.thumbnailUrl)) {
+                                cand.thumbnailUrl
+                            } else {
+                                "https://i.ytimg.com/vi/$vidId/hqdefault.jpg"
+                            }
+                            val asVideo = cand.copy(
+                                videoType = "MUSIC_VIDEO_TYPE_OMV",
+                                albumName = "YouTube Video",
+                                thumbnailUrl = rectThumb
+                            ).toTrack()
+                            enrichTrackStatus(asVideo, likedIds, dlMap)
+                        }
                         .filterNot { it.isLocalOnlyTrack }
-                        .distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
+                        .distinctBy { it.id }
                 }
 
-                val mappedPersonalized = cleanAndMap(personalizedCandidates)
-                val mappedTrending = cleanAndMap(trendingCandidates)
-                val mappedFresh = cleanAndMap(freshCandidates)
+                val extractedVideosFromFeeds = (personalizedCandidates + trendingCandidates + freshCandidates)
+                    .filter { isCandidateMusicVideo(it) }
+                val mappedMusicVideos = cleanAndMapVideosOnly(dedicatedVideoCandidates + extractedVideosFromFeeds)
+                if (mappedMusicVideos.isNotEmpty()) {
+                    musicVideos.value = mappedMusicVideos.take(16)
+                }
+
+                val mappedPersonalized = cleanAndMapSongsOnly(personalizedCandidates)
+                val mappedTrending = cleanAndMapSongsOnly(trendingCandidates)
+                val mappedFresh = cleanAndMapSongsOnly(freshCandidates)
 
                 if (mappedPersonalized.isNotEmpty()) {
                     personalizedTracks.value = mappedPersonalized
@@ -1063,7 +1149,7 @@ class CascadeViewModel(
 
                 if (personalizedTracks.value.isEmpty() && trendingHits.value.isEmpty()) {
                     delay(500L)
-                    val fallbackSongs = cleanAndMap(
+                    val fallbackSongs = cleanAndMapSongsOnly(
                         InnerTubeStreamExtractor.searchOfficialYtmSongs("Manipuri & Indian Top Songs", limit = 20).shuffled()
                     )
                     if (fallbackSongs.isNotEmpty()) {
@@ -1256,10 +1342,16 @@ class CascadeViewModel(
     }
 
     private fun com.seitharol.data.resolver.CandidateStream.toTrack(): Track {
-        val isVideo = this.videoType == "MUSIC_VIDEO_TYPE_UGC" || this.videoType == "MUSIC_VIDEO_TYPE_OMV"
-        val cleanAlbum = this.albumName?.takeUnless {
-            it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
-        }.orEmpty()
+        val isVideo = this.videoType == "MUSIC_VIDEO_TYPE_UGC" ||
+            this.videoType == "MUSIC_VIDEO_TYPE_OMV" ||
+            this.albumName.equals("YouTube Video", ignoreCase = true)
+        val cleanAlbum = if (isVideo) {
+            "YouTube Video"
+        } else {
+            this.albumName?.takeUnless {
+                it.equals("YouTube Video", ignoreCase = true) || it.equals("YouTube Videos", ignoreCase = true)
+            }.orEmpty()
+        }
         return Track(
             id = this.videoId,
             title = this.title,
@@ -1320,6 +1412,14 @@ class CascadeViewModel(
                         moodCategory = targetMood
                     )
                 }
+                val categoryVideosDeferred = async {
+                    InnerTubeStreamExtractor.buildPersonalizedMusicVideosFeed(
+                        seedVideoIds = emptyList(),
+                        favoriteArtists = emptyList(),
+                        moodCategory = targetMood,
+                        limit = 14
+                    )
+                }
                 val categoryShelvesDeferred = async {
                     InnerTubeStreamExtractor.fetchHomeMixesAndPlaylists(
                         favoriteArtists = emptyList(),
@@ -1328,16 +1428,22 @@ class CascadeViewModel(
                     )
                 }
 
-                val feed = feedDeferred.await()
+                val rawFeed = feedDeferred.await()
+                val rawFresh = freshCategoryDeferred.await()
+                val catVideos = runCatching { categoryVideosDeferred.await() }.getOrDefault(emptyList())
+                val feed = rawFeed
                     .map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
-                    .filterNot { it.isLocalOnlyTrack }
+                    .filterNot { it.isLocalOnlyTrack || it.isVideoTrack || InnerTubeStreamExtractor.isRectangularVideoThumbnailUrl(it.artUrl) }
                     .distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
-                val freshCat = freshCategoryDeferred.await()
+                val freshCat = rawFresh
                     .map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }
-                    .filterNot { it.isLocalOnlyTrack }
+                    .filterNot { it.isLocalOnlyTrack || it.isVideoTrack || InnerTubeStreamExtractor.isRectangularVideoThumbnailUrl(it.artUrl) }
                     .distinctBy { "${it.title.lowercase().trim()}|${it.artist.lowercase().trim()}" }
                 val catShelves = runCatching { categoryShelvesDeferred.await() }.getOrNull()
 
+                if (catVideos.isNotEmpty()) {
+                    musicVideos.value = catVideos.map { enrichTrackStatus(it.toTrack(), likedIds, dlMap) }.distinctBy { it.id }.take(14)
+                }
                 if (feed.isNotEmpty()) {
                     trendingHits.value = feed.take(24)
                     freshReleases.value = if (freshCat.isNotEmpty()) freshCat.take(14) else feed.drop(12).ifEmpty { feed.reversed().take(12) }
@@ -1441,7 +1547,8 @@ class CascadeViewModel(
             track.copy(isDownloaded = true, localPath = dlMatch.localPath)
         } else track
 
-        if (effectiveTrack.isLocalOnlyTrack || isOfflineMode.value) {
+        val isMovie = com.seitharol.data.resolver.VidLinkRawMovieStreamer.isMovieTrack(effectiveTrack)
+        if (effectiveTrack.isLocalOnlyTrack || isOfflineMode.value || isMovie) {
             _queueVideoSuggestions.value = emptyList()
             playerManager.isAutoplayEnabled = false
         } else {
@@ -1450,7 +1557,7 @@ class CascadeViewModel(
         automixFetchJob?.cancel()
         lastSuggestionsSeedId = null
         playerManager.playTrack(effectiveTrack)
-        if (!effectiveTrack.isLocalOnlyTrack && !isOfflineMode.value) {
+        if (!effectiveTrack.isLocalOnlyTrack && !isOfflineMode.value && !isMovie) {
             refreshQueueSuggestions(effectiveTrack, forceReload = true)
         }
         automixFetchJob = viewModelScope.launch(vmExceptionHandler) {
@@ -1460,7 +1567,7 @@ class CascadeViewModel(
                 }
                 musicRepository.recordPlayHistory(effectiveTrack)
                 // Build the YouTube Music Up Next queue anchored on this FIRST song + a few songs from its artist
-                if (!effectiveTrack.isLocalOnlyTrack && !isOfflineMode.value && isAutoSuggestEnabled.value) {
+                if (!effectiveTrack.isLocalOnlyTrack && !isOfflineMode.value && !isMovie && isAutoSuggestEnabled.value) {
                     val isVideo = effectiveTrack.isVideoTrack
                     val seedMeta = com.seitharol.data.resolver.TrackMetadata(
                         id = effectiveTrack.id,
@@ -1884,20 +1991,37 @@ class CascadeViewModel(
                     return@launch
                 }
 
-                val playlistTarget: SeitharolDeepLinkHelper.DeepLinkTarget.PlaylistTarget = when (parsedTarget) {
-                    is SeitharolDeepLinkHelper.DeepLinkTarget.PlaylistTarget -> parsedTarget
+                val explicitListParam = Regex("[?&]list=([a-zA-Z0-9_-]+)").find(trimmed)?.groupValues?.getOrNull(1)
+                val playlistTarget: SeitharolDeepLinkHelper.DeepLinkTarget.PlaylistTarget = when {
+                    parsedTarget is SeitharolDeepLinkHelper.DeepLinkTarget.PlaylistTarget -> parsedTarget
+                    !explicitListParam.isNullOrBlank() -> {
+                        SeitharolDeepLinkHelper.DeepLinkTarget.PlaylistTarget(
+                            playlistId = explicitListParam,
+                            title = customName?.takeIf { it.isNotBlank() } ?: "YouTube Playlist",
+                            externalUrl = trimmed,
+                            sourcePlatform = "YOUTUBE"
+                        )
+                    }
+                    parsedTarget is SeitharolDeepLinkHelper.DeepLinkTarget.TrackTarget -> {
+                        SeitharolDeepLinkHelper.DeepLinkTarget.PlaylistTarget(
+                            playlistId = "shared",
+                            title = customName?.takeIf { it.isNotBlank() } ?: "Imported Media",
+                            trackIds = listOf(parsedTarget.trackId),
+                            externalUrl = trimmed,
+                            sourcePlatform = "SEITHAROL_PERSONAL"
+                        )
+                    }
+                    trimmed.startsWith("PL") || trimmed.startsWith("VL") || trimmed.startsWith("OLAK5uy_") || trimmed.startsWith("MPREb_") -> {
+                        SeitharolDeepLinkHelper.DeepLinkTarget.PlaylistTarget(
+                            playlistId = trimmed,
+                            title = customName?.takeIf { it.isNotBlank() } ?: "Imported Playlist",
+                            sourcePlatform = "YOUTUBE"
+                        )
+                    }
                     else -> {
-                        if (trimmed.startsWith("PL") || trimmed.startsWith("VL") || trimmed.startsWith("OLAK5uy_") || trimmed.startsWith("MPREb_")) {
-                            SeitharolDeepLinkHelper.DeepLinkTarget.PlaylistTarget(
-                                playlistId = trimmed,
-                                title = customName?.takeIf { it.isNotBlank() } ?: "Imported Playlist",
-                                sourcePlatform = "YOUTUBE"
-                            )
-                        } else {
-                            _notFoundNavigationEvent.emit(trimmed)
-                            onComplete?.invoke(null)
-                            return@launch
-                        }
+                        _notFoundNavigationEvent.emit(trimmed)
+                        onComplete?.invoke(null)
+                        return@launch
                     }
                 }
 
@@ -1952,17 +2076,27 @@ class CascadeViewModel(
                                         } else null
                                     } else {
                                         val ytId = InnerTubeStreamExtractor.extractVideoId(item.id) ?: item.id
-                                        val meta = runCatching {
-                                            resolverEngine.youtubeInnerTubeProvider.fetchMetadataById(ytId)
+                                        val singleMeta = runCatching {
+                                            InnerTubeStreamExtractor.fetchSingleVideoOrSongMetadata(ytId, playlistTarget.externalUrl.orEmpty())
                                         }.getOrNull()
-                                        Track(
-                                            id = ytId,
-                                            title = meta?.first?.takeIf { it.isNotBlank() } ?: "Track $ytId",
-                                            artist = meta?.second?.takeIf { it.isNotBlank() } ?: "Artist",
-                                            album = "",
-                                            durationMs = 210_000L,
-                                            artUrl = "https://i.ytimg.com/vi/$ytId/hqdefault.jpg"
-                                        )
+                                        if (singleMeta != null) {
+                                            singleMeta.toTrack()
+                                        } else {
+                                            val meta = runCatching {
+                                                resolverEngine.youtubeInnerTubeProvider.fetchMetadataById(ytId)
+                                            }.getOrNull()
+                                            Track(
+                                                id = ytId,
+                                                title = meta?.first?.takeIf { it.isNotBlank() } ?: "Track $ytId",
+                                                artist = meta?.second?.takeIf { it.isNotBlank() } ?: "Artist",
+                                                album = "YouTube Video",
+                                                durationMs = 210_000L,
+                                                artUrl = "https://i.ytimg.com/vi/$ytId/hqdefault.jpg",
+                                                genre = "YouTube Video",
+                                                itag = 18,
+                                                codec = "MP4"
+                                            )
+                                        }
                                     }
                                 } finally {
                                     sem.release()
@@ -2153,12 +2287,47 @@ class CascadeViewModel(
         }
     }
 
-    fun clearStreamCacheAndReset() {
+    fun clearStreamCacheAndReset(onComplete: (() -> Unit)? = null) {
         viewModelScope.launch(vmExceptionHandler) {
-            resolverEngine.clearCache()
+            val appCtx = com.example.CascadeApplication.instance
+            runCatching { playerManager.clearPlaybackAndResetCheckpoint() }
+            runCatching { resolverEngine.clearCache() }
+            runCatching { com.seitharol.player.OuterTuneResolvingDataSource.clearAll(appCtx) }
+            runCatching { InnerTubeStreamExtractor.clearCaches() }
+            runCatching { com.seitharol.data.resolver.VidLinkRawMovieStreamer.clearCaches() }
+            runCatching { NetworkClients.clearLyricsCache() }
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    appCtx.cacheDir?.listFiles()?.forEach { f ->
+                        runCatching { f.deleteRecursively() }
+                    }
+                }
+            }
+            runCatching {
+                val prefs = com.example.data.AppPreferences.getInstance(appCtx)
+                prefs.clearRecentSearches()
+                prefs.resetEqualizer()
+                prefs.setEqEnabled(false)
+            }
+            runCatching {
+                val settingsMgr = com.seitharol.data.preferences.AppSettingsManager.getInstance(appCtx)
+                settingsMgr.resetEqualizer()
+                settingsMgr.setEqEnabled(false)
+            }
+            runCatching { musicRepository.clearAllHistory() }
+            clearPlayedHistory()
+            cachedRemoteCollections.clear()
+            _queueVideoSuggestions.value = emptyList()
+            _playerRelatedData.value = PlayerRelatedData()
             searchQuery.value = ""
             onlineSearchResults.value = emptyList()
+            searchedVerifiedArtists.value = emptyList()
+            searchedOnlinePlaylists.value = emptyList()
+            searchedOnlineAlbums.value = emptyList()
             searchSuggestions.value = emptyList()
+            selectedMood.value = "All"
+            loadHomeScreenMusic(isBackgroundUpdate = false)
+            onComplete?.invoke()
         }
     }
 
@@ -2293,7 +2462,7 @@ class CascadeViewModel(
         ) {
             return
         }
-        if (track.isLocalOnlyTrack || isOfflineMode.value) {
+        if (track.isLocalOnlyTrack || isOfflineMode.value || com.seitharol.data.resolver.VidLinkRawMovieStreamer.isMovieTrack(track)) {
             _playerRelatedData.value = PlayerRelatedData(
                 seedTrackId = track.id,
                 isLoading = false,

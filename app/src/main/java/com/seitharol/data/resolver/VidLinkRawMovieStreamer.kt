@@ -3,6 +3,8 @@ package com.seitharol.data.resolver
 import android.util.Log
 import com.example.data.model.Track
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -107,6 +109,39 @@ object VidLinkRawMovieStreamer {
     private val previewCache = ConcurrentHashMap<String, TitlePreview>()
     private const val STREAM_CACHE_TTL_MS = 10 * 60 * 1000L
 
+    fun clearCaches() {
+        streamCache.clear()
+        previewCache.clear()
+    }
+
+    /**
+     * Scales raw multi-megabyte IMDb/Amazon poster URLs (`._V1_.jpg`) down to fast 480px/720px JPEG thumbnails
+     * so movie & series thumbnails render almost instantaneously instead of stalling on 15 MB studio posters.
+     */
+    fun optimizePosterUrl(rawUrl: String?, imdbId: String = "", isBackdrop: Boolean = false): String {
+        val trimmed = rawUrl?.trim().orEmpty()
+        if (trimmed.isBlank()) {
+            return if (imdbId.startsWith("tt")) {
+                if (isBackdrop) "https://images.metahub.space/background/medium/$imdbId/img"
+                else "https://images.metahub.space/poster/small/$imdbId/img"
+            } else ""
+        }
+        if (trimmed.contains("m.media-amazon.com/images/", ignoreCase = true) ||
+            trimmed.contains("ia.media-imdb.com/images/", ignoreCase = true)
+        ) {
+            val targetWidth = if (isBackdrop) "UX720" else "UX480"
+            if (trimmed.contains("._V1_")) {
+                val prefix = trimmed.substringBefore("._V1_")
+                val ext = trimmed.substringAfterLast('.', "jpg")
+                return "${prefix}._V1_QL75_${targetWidth}_.$ext"
+            }
+        }
+        if (!isBackdrop && trimmed.contains("images.metahub.space/poster/medium/", ignoreCase = true)) {
+            return trimmed.replace("/poster/medium/", "/poster/small/")
+        }
+        return trimmed
+    }
+
     fun isMovieTrack(track: Track?): Boolean {
         if (track == null) return false
         return track.id.startsWith(MOVIE_ID_PREFIX) ||
@@ -169,102 +204,120 @@ object VidLinkRawMovieStreamer {
         val clean = query.trim()
         if (clean.length < 2) return@withContext emptyList()
 
-        val results = mutableListOf<Track>()
-        val seenImdb = HashSet<String>()
         val enc = URLEncoder.encode(clean, "UTF-8").replace("+", "%20")
 
-        // 1. Cinemeta Movies + Series Search
-        for (kind in listOf("movie", "series")) {
-            val isSeries = kind == "series"
-            runCatching {
-                val url = "https://v3-cinemeta.strem.io/catalog/$kind/top/search=$enc.json"
-                val body = httpGet(url, timeoutMs = 4500)
-                if (!body.isNullOrBlank()) {
-                    val metas = JSONObject(body).optJSONArray("metas") ?: JSONArray()
-                    for (i in 0 until metas.length()) {
-                        if (results.size >= limit) break
-                        val item = metas.optJSONObject(i) ?: continue
-                        val imdb = item.optString("imdb_id").ifBlank { item.optString("id") }
-                        if (!imdb.startsWith("tt") || !seenImdb.add(imdb)) continue
-                        val title = item.optString("name").trim()
-                        if (title.isBlank()) continue
-                        val year = item.optString("releaseInfo").ifBlank { item.optString("year") }.take(4)
-                        val moviedbId = item.optString("moviedb_id").takeIf { it.isNotBlank() && it != "null" && it.all(Char::isDigit) }
-                        if (!moviedbId.isNullOrBlank()) imdbToTmdbCache[imdb] = moviedbId
-                        val poster = item.optString("poster").ifBlank {
-                            "https://images.metahub.space/poster/medium/$imdb/img"
-                        }
-                        val runtimeStr = item.optString("runtime")
-                        val rating = item.optString("imdbRating")
-                        val typeLabel = if (isSeries) "TV Series" else "Movie"
-                        val subtitle = buildString {
-                            append(typeLabel)
-                            if (year.isNotBlank()) append(" • $year")
-                            if (rating.isNotBlank()) append(" • IMDb $rating")
-                        }
-                        results.add(
-                            Track(
-                                id = encodeTrackId(imdb, moviedbId ?: imdbToTmdbCache[imdb], isSeries = isSeries),
-                                title = title,
-                                artist = subtitle,
-                                album = if (isSeries) "Raw Series" else "Raw Movie",
-                                durationMs = parseRuntimeMs(runtimeStr, defaultMins = if (isSeries) 45L else 120L),
-                                artUrl = poster,
-                                genre = if (isSeries) "Raw Series" else "Raw Movie",
-                                itag = 18,
-                                codec = "MP4",
-                                isOfficial = true
+        coroutineScope {
+            // Run IMDb Suggestion CDN + Cinemeta Movies + Cinemeta Series concurrently for sub-second loading
+            val imdbDeferred = async {
+                runCatching {
+                    val list = mutableListOf<Pair<String, Track>>()
+                    val first = clean.lowercase().firstOrNull { it.isLetterOrDigit() } ?: 'a'
+                    val encLow = URLEncoder.encode(clean.lowercase(), "UTF-8").replace("+", "%20")
+                    val body = httpGet("https://v3.sg.media-imdb.com/suggestion/$first/$encLow.json", timeoutMs = 2500)
+                    if (!body.isNullOrBlank()) {
+                        val arr = JSONObject(body).optJSONArray("d") ?: JSONArray()
+                        for (i in 0 until arr.length()) {
+                            val item = arr.optJSONObject(i) ?: continue
+                            val imdb = item.optString("id")
+                            val qid = item.optString("qid").lowercase()
+                            if (!imdb.startsWith("tt")) continue
+                            val isSeries = qid.contains("series") || qid == "tv" || qid == "tvminiseries"
+                            val isMovie = qid == "movie" || qid == "tvmovie" || qid.isBlank()
+                            if (!isSeries && !isMovie) continue
+                            val title = item.optString("l").trim()
+                            if (title.isBlank()) continue
+                            val year = item.optInt("y", 0).takeIf { it > 1900 }?.toString().orEmpty()
+                            val rawPoster = item.optJSONObject("i")?.optString("imageUrl").orEmpty()
+                            val poster = optimizePosterUrl(rawPoster, imdb, isBackdrop = false)
+                            val typeLabel = if (isSeries) "TV Series" else "Movie"
+                            list.add(
+                                imdb to Track(
+                                    id = encodeTrackId(imdb, imdbToTmdbCache[imdb], isSeries = isSeries),
+                                    title = title,
+                                    artist = if (year.isNotBlank()) "$typeLabel • $year" else typeLabel,
+                                    album = if (isSeries) "Raw Series" else "Raw Movie",
+                                    durationMs = if (isSeries) 45 * 60_000L else 120 * 60_000L,
+                                    artUrl = poster,
+                                    genre = if (isSeries) "Raw Series" else "Raw Movie",
+                                    itag = 18,
+                                    codec = "MP4",
+                                    isOfficial = true
+                                )
                             )
-                        )
+                        }
+                    }
+                    list
+                }.getOrDefault(emptyList())
+            }
+
+            val cinemetaJobs = listOf("movie", "series").map { kind ->
+                async {
+                    val isSeries = kind == "series"
+                    runCatching {
+                        val list = mutableListOf<Pair<String, Track>>()
+                        val url = "https://v3-cinemeta.strem.io/catalog/$kind/top/search=$enc.json"
+                        val body = httpGet(url, timeoutMs = 2800)
+                        if (!body.isNullOrBlank()) {
+                            val metas = JSONObject(body).optJSONArray("metas") ?: JSONArray()
+                            for (i in 0 until metas.length()) {
+                                val item = metas.optJSONObject(i) ?: continue
+                                val imdb = item.optString("imdb_id").ifBlank { item.optString("id") }
+                                if (!imdb.startsWith("tt")) continue
+                                val title = item.optString("name").trim()
+                                if (title.isBlank()) continue
+                                val year = item.optString("releaseInfo").ifBlank { item.optString("year") }.take(4)
+                                val moviedbId = item.optString("moviedb_id").takeIf { it.isNotBlank() && it != "null" && it.all(Char::isDigit) }
+                                if (!moviedbId.isNullOrBlank()) imdbToTmdbCache[imdb] = moviedbId
+                                val poster = optimizePosterUrl(item.optString("poster"), imdb, isBackdrop = false)
+                                val runtimeStr = item.optString("runtime")
+                                val rating = item.optString("imdbRating")
+                                val typeLabel = if (isSeries) "TV Series" else "Movie"
+                                val subtitle = buildString {
+                                    append(typeLabel)
+                                    if (year.isNotBlank()) append(" • $year")
+                                    if (rating.isNotBlank()) append(" • IMDb $rating")
+                                }
+                                list.add(
+                                    imdb to Track(
+                                        id = encodeTrackId(imdb, moviedbId ?: imdbToTmdbCache[imdb], isSeries = isSeries),
+                                        title = title,
+                                        artist = subtitle,
+                                        album = if (isSeries) "Raw Series" else "Raw Movie",
+                                        durationMs = parseRuntimeMs(runtimeStr, defaultMins = if (isSeries) 45L else 120L),
+                                        artUrl = poster,
+                                        genre = if (isSeries) "Raw Series" else "Raw Movie",
+                                        itag = 18,
+                                        codec = "MP4",
+                                        isOfficial = true
+                                    )
+                                )
+                            }
+                        }
+                        list
+                    }.getOrDefault(emptyList())
+                }
+            }
+
+            val imdbList = imdbDeferred.await()
+            val cinemetaLists = cinemetaJobs.map { it.await() }
+            val merged = LinkedHashMap<String, Track>()
+            for ((imdb, tr) in imdbList) {
+                if (merged.size >= limit) break
+                merged[imdb] = tr
+            }
+            for (cList in cinemetaLists) {
+                for ((imdb, tr) in cList) {
+                    val existing = merged[imdb]
+                    if (existing == null) {
+                        if (merged.size < limit) merged[imdb] = tr
+                    } else {
+                        val fastArt = if (existing.artUrl.contains("media-amazon.com")) existing.artUrl else tr.artUrl
+                        merged[imdb] = tr.copy(artUrl = fastArt)
                     }
                 }
-            }.onFailure { Log.w(TAG, "Cinemeta $kind search failed: ${it.message}") }
+            }
+            merged.values.take(limit)
         }
-
-        // 2. IMDb Suggestion CDN supplement (fast, handles both movies and TV series like "The Mentalist")
-        if (results.size < limit) {
-            runCatching {
-                val first = clean.lowercase().firstOrNull { it.isLetterOrDigit() } ?: 'a'
-                val encLow = URLEncoder.encode(clean.lowercase(), "UTF-8").replace("+", "%20")
-                val body = httpGet("https://v3.sg.media-imdb.com/suggestion/$first/$encLow.json", timeoutMs = 4000)
-                if (!body.isNullOrBlank()) {
-                    val arr = JSONObject(body).optJSONArray("d") ?: JSONArray()
-                    for (i in 0 until arr.length()) {
-                        if (results.size >= limit) break
-                        val item = arr.optJSONObject(i) ?: continue
-                        val imdb = item.optString("id")
-                        val qid = item.optString("qid").lowercase()
-                        if (!imdb.startsWith("tt") || !seenImdb.add(imdb)) continue
-                        val isSeries = qid.contains("series") || qid == "tv" || qid == "tvminiseries"
-                        val isMovie = qid == "movie" || qid == "tvmovie" || qid.isBlank()
-                        if (!isSeries && !isMovie) continue
-                        val title = item.optString("l").trim()
-                        if (title.isBlank()) continue
-                        val year = item.optInt("y", 0).takeIf { it > 1900 }?.toString().orEmpty()
-                        val poster = item.optJSONObject("i")?.optString("imageUrl").orEmpty().ifBlank {
-                            "https://images.metahub.space/poster/medium/$imdb/img"
-                        }
-                        val typeLabel = if (isSeries) "TV Series" else "Movie"
-                        results.add(
-                            Track(
-                                id = encodeTrackId(imdb, imdbToTmdbCache[imdb], isSeries = isSeries),
-                                title = title,
-                                artist = if (year.isNotBlank()) "$typeLabel • $year" else typeLabel,
-                                album = if (isSeries) "Raw Series" else "Raw Movie",
-                                durationMs = if (isSeries) 45 * 60_000L else 120 * 60_000L,
-                                artUrl = poster,
-                                genre = if (isSeries) "Raw Series" else "Raw Movie",
-                                itag = 18,
-                                codec = "MP4",
-                                isOfficial = true
-                            )
-                        )
-                    }
-                }
-            }.onFailure { Log.w(TAG, "IMDb suggestion fallback failed: ${it.message}") }
-        }
-
-        results
     }
 
     /**
@@ -281,8 +334,8 @@ object VidLinkRawMovieStreamer {
         var year = ""
         var rating = ""
         var runtime = if (parsed.isSeries) "45 min" else "120 min"
-        var poster = track.artUrl.ifBlank { "https://images.metahub.space/poster/medium/${parsed.imdbId}/img" }
-        var backdrop = "https://images.metahub.space/background/medium/${parsed.imdbId}/img"
+        var poster = optimizePosterUrl(track.artUrl, parsed.imdbId, isBackdrop = false)
+        var backdrop = optimizePosterUrl("", parsed.imdbId, isBackdrop = true)
         var description = ""
         var genres = emptyList<String>()
         var cast = emptyList<String>()
@@ -297,8 +350,8 @@ object VidLinkRawMovieStreamer {
             year = meta.optString("releaseInfo").ifBlank { meta.optString("year") }.take(9)
             rating = meta.optString("imdbRating").ifBlank { rating }
             runtime = meta.optString("runtime").ifBlank { runtime }
-            poster = meta.optString("poster").ifBlank { poster }
-            backdrop = meta.optString("background").ifBlank { backdrop }
+            poster = optimizePosterUrl(meta.optString("poster").ifBlank { poster }, parsed.imdbId, isBackdrop = false)
+            backdrop = optimizePosterUrl(meta.optString("background").ifBlank { backdrop }, parsed.imdbId, isBackdrop = true)
             description = meta.optString("description").ifBlank { description }
             val mId = meta.optString("moviedb_id").takeIf { it.isNotBlank() && it != "null" && it.all(Char::isDigit) }
             if (!mId.isNullOrBlank()) {
@@ -326,7 +379,7 @@ object VidLinkRawMovieStreamer {
                         if (s <= 0 || e <= 0) continue
                         val epTitle = v.optString("name").ifBlank { v.optString("title") }.ifBlank { "Episode $e" }
                         val epOverview = v.optString("overview").ifBlank { v.optString("description") }
-                        val epThumb = v.optString("thumbnail").ifBlank { backdrop }
+                        val epThumb = optimizePosterUrl(v.optString("thumbnail").ifBlank { backdrop }, parsed.imdbId, isBackdrop = true)
                         val epReleased = v.optString("released").take(10)
                         seasonMap.getOrPut(s) { mutableListOf() }.add(
                             EpisodeItem(

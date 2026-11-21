@@ -45,6 +45,12 @@ object QueueRecommendationEngine {
         additionalExcludedSignatures: Set<String> = emptySet()
     ): List<TrackMetadata> = withContext(Dispatchers.IO) {
         val idLower = currentTrack.id.lowercase().trim()
+        if (idLower.startsWith("movie_vidlink_") ||
+            currentTrack.album.equals("Raw Movie", ignoreCase = true) ||
+            currentTrack.album.equals("Raw Series", ignoreCase = true)
+        ) {
+            return@withContext emptyList()
+        }
         val isLocalSingle = (
             idLower.startsWith("local_") ||
                 idLower.startsWith("file_") ||

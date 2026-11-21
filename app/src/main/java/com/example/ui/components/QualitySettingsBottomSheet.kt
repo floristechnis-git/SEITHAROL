@@ -379,7 +379,7 @@ fun TrackDownloadFormatQualitySheet(
     // Audio songs only download as Audio (no Audio vs Video format selection needed).
     // The 2-option Format selection ("Audio Only" vs "Video") is only shown for video tracks.
     var isVideoSelected by remember(track.id, isVideoTrack) {
-        mutableStateOf(if (isVideoTrack) persistedState.downloadVideoFormat else false)
+        mutableStateOf(isVideoTrack)
     }
     var selectedQuality by remember(track.id) {
         mutableStateOf(persistedState.downloadQuality)

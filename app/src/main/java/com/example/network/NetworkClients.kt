@@ -463,6 +463,20 @@ object NetworkClients {
         val tracks: List<Pair<String, String>> // (title, artist)
     )
 
+    suspend fun fetchSyncedLyrics(
+        artist: String,
+        title: String,
+        durationSec: Long = 0L,
+        videoId: String = "",
+        forceRefresh: Boolean = false
+    ): List<LyricsLine> = fetchLrclibLyrics(
+        artist = artist,
+        title = title,
+        durationSec = durationSec,
+        videoId = videoId,
+        forceRefresh = forceRefresh
+    )
+
     /**
      * Multi-source parallel synchronized lyrics resolver:
      * Runs LRCLIB, SimpMusic VideoID API, YouTube Music Official Lyrics (`MPLYt_` + Timed Lyrics),
@@ -472,7 +486,7 @@ object NetworkClients {
     suspend fun fetchLrclibLyrics(
         artist: String,
         title: String,
-        durationSec: Long,
+        durationSec: Long = 0L,
         videoId: String = "",
         forceRefresh: Boolean = false
     ): List<LyricsLine> = withContext(Dispatchers.IO) {
@@ -1416,7 +1430,7 @@ object NetworkClients {
         if (title.isNotBlank()) {
             val syncedFallback = runCatching {
                 fetchSyncedLyrics(artist = artist, title = title, durationSec = 0L, videoId = videoId)
-            }.getOrDefault(emptyList()).filter { !it.isInstrumental && it.text.isNotBlank() }
+            }.getOrDefault(emptyList<LyricsLine>()).filter { !it.isInstrumental && it.text.isNotBlank() }
             if (syncedFallback.isNotEmpty()) return@withContext syncedFallback
         }
 
